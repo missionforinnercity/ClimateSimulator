@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cape Town CBD Climate Explorer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e2328'/%3E%3Cpath d='M12 46 26 18l8 16 7-11 11 23Z' fill='%2390d7ae'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
+    <aside class="panel">
+      <p class="eyebrow">CLIMATE EXPLORER</p>
+      <h1>Cape Town CBD</h1>
+      <p class="muted">Lightweight context model</p>
+      <div class="controls">
+        <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
+        <label><input type="checkbox" data-layer="grass" checked> Grass</label>
+        <label><input type="checkbox" data-layer="roads" checked> Roads</label>
+        <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
+        <label><input type="checkbox" data-layer="trees" checked> Trees</label>
+      </div>
+      <button id="fit">Fit to CBD</button>
+      <p id="status" class="status">Loading scene…</p>
+      <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
+      <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
+    </aside>
+  </main>
+  <script type="module" src="app.js?v=universal-renderer-19"></script>
+</body>
+</html>
