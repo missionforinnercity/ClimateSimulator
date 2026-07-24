@@ -10,6 +10,8 @@
 <body>
   <main id="app">
     <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
+    <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
+    <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
     <aside class="panel">
       <p class="eyebrow">CLIMATE EXPLORER</p>
       <h1>Cape Town CBD</h1>
@@ -21,12 +23,52 @@
         <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
         <label><input type="checkbox" data-layer="trees" checked> Trees</label>
       </div>
+      <section class="wind-panel" aria-label="Wind simulation controls">
+        <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox" checked> Show</label></div>
+        <label>Direction
+          <select id="wind-direction">
+            <option value="135">SE · 135°</option>
+            <option value="150">Cape Doctor · 150°</option>
+            <option value="0">N · 0°</option>
+            <option value="45">NE · 45°</option>
+            <option value="90">E · 90°</option>
+            <option value="180">S · 180°</option>
+            <option value="225">SW · 225°</option>
+            <option value="270">W · 270°</option>
+            <option value="315">NW · 315°</option>
+          </select>
+        </label>
+        <label>Season
+          <select id="wind-season">
+            <option value="annual">Annual</option>
+            <option value="summer">Summer</option>
+            <option value="autumn">Autumn</option>
+            <option value="winter">Winter</option>
+            <option value="spring">Spring</option>
+          </select>
+        </label>
+        <label>Speed <span id="wind-speed-value">10.0</span> m/s
+          <input id="wind-speed" type="range" min="0" max="30" step="0.5" value="10">
+        </label>
+        <label>Domain <span id="wind-size-value">250</span> m
+          <input id="wind-size" type="range" min="100" max="1200" step="25" value="250">
+        </label>
+        <div class="wind-actions">
+          <button id="wind-move-domain" class="secondary" type="button" aria-pressed="false">Move / resize domain</button>
+          <button id="wind-simulate" type="button">Simulate wind</button>
+        </div>
+        <p id="wind-status" class="wind-status">Choose Move / resize domain to reposition the orange box.</p>
+        <div class="wind-legend-scale" aria-label="Wind speed colour scale">
+          <div class="wind-gradient"></div>
+          <div class="wind-legend-labels"><span><b id="wind-legend-min">0.0</b> m/s · low</span><span><b id="wind-legend-max">—</b> m/s · high</span></div>
+        </div>
+      </section>
       <button id="fit">Fit to CBD</button>
       <p id="status" class="status">Loading scene…</p>
       <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
       <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
     </aside>
   </main>
-  <script type="module" src="app.js?v=universal-renderer-19"></script>
+  <script type="module" src="app.js?v=canvas-only-1"></script>
 </body>
 </html>

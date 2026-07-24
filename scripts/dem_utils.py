@@ -1,0 +1,112 @@
+"""Shared DEM loading helpers for regional terrain and terrain-aware wind."""
+
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import rasterio
+import rasterio.transform
+from pyproj import Transformer
+from rasterio.features import rasterize
+from rasterio.merge import merge
+from rasterio.warp import Resampling, reproject
+
+from scripts.build_scene import fill_nearest
+
+LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
+
+
+def load_regional_heightfield(dem_paths, center_lon, center_lat, extent_km, resolution_m):
+    """Return a regular local-CRS heightfield covering the requested extent.
+
+    Unlike a decimated visual mesh, this
+    returns a plain ``(rows, columns)`` array of elevations on a regular grid
+    in local metres, suitable for numerical terrain-following wind modelling.
+    """
+    lon_delta = extent_km / (111.32 * math.cos(math.radians(center_lat)))
+    lat_delta = extent_km / 111.32
+    bounds = (center_lon - lon_delta, center_lat - lat_delta, center_lon + lon_delta, center_lat + lat_delta)
+    sources = [rasterio.open(path) for path in dem_paths]
+    try:
+        raster, transform = merge(sources, bounds=bounds)
+        values = raster[0].astype(np.float32)
+        nodata = sources[0].nodata
+        valid = np.isfinite(values)
+        if nodata is not None:
+            valid &= ~np.isclose(values, nodata)
+        values = fill_nearest(np.where(valid, values, 0), valid)
+    finally:
+        for source in sources:
+            source.close()
+
+    to_local = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
+    origin_x, origin_y = to_local.transform(center_lon, center_lat)
+
+    # Sample the source raster onto a regular local-metre grid at the
+    # requested resolution (the source pixels are geographic and slightly
+    # non-square in local metres, so we resample rather than reuse them raw).
+    half_extent = extent_km * 1000.0 / 2.0
+    width = max(2, int(round(2 * half_extent / resolution_m)))
+    height = max(2, int(round(2 * half_extent / resolution_m)))
+    dx = 2 * half_extent / width
+    dz = 2 * half_extent / height
+
+    to_geo = Transformer.from_crs(LOCAL_CRS, "EPSG:4326", always_xy=True)
+    columns_idx, rows_idx = np.meshgrid(np.arange(width), np.arange(height))
+    local_x = -half_extent + (columns_idx + 0.5) * dx
+    local_z = -half_extent + (rows_idx + 0.5) * dz
+    lons, lats = to_geo.transform(origin_x + local_x, origin_y - local_z)
+    cols_px, rows_px = ~transform * (lons, lats)
+    rows_px = np.clip(np.round(rows_px).astype(int), 0, values.shape[0] - 1)
+    cols_px = np.clip(np.round(cols_px).astype(int), 0, values.shape[1] - 1)
+    heights = values[rows_px, cols_px]
+
+    return heights, -half_extent, -half_extent, dx, dz
+
+
+def load_cbd_building_heightfield(dtm_path, footprints_path, height_path, resolution_m):
+    """Return a local-CRS surface heightfield (bare ground + building roofs).
+
+    Unlike ``load_regional_heightfield`` (built for geographic-CRS regional DEM
+    tiles merged/reprojected from lon/lat), the CBD LiDAR DTM is already in
+    the project's local metre CRS, so this only resamples it to the requested
+    resolution (no reprojection) and rasterizes buildings on top of it -- a
+    real surface for the same mass-conserving solver used for the mountain,
+    but shaped by individual buildings and street canyons instead of ridges.
+
+    Returns (heights, origin_x, origin_z, dx, dz) in the same (row=z-index,
+    col=x-index, z south-positive) layout as ``load_regional_heightfield``.
+    """
+    from scripts.build_scene import load_building_records
+
+    with rasterio.open(dtm_path) as source:
+        center_x = (source.bounds.left + source.bounds.right) / 2.0
+        center_y = (source.bounds.bottom + source.bounds.top) / 2.0
+        west, south, east, north = source.bounds
+        width = max(2, int(round((east - west) / resolution_m)))
+        height = max(2, int(round((north - south) / resolution_m)))
+        dst_transform = rasterio.transform.from_bounds(west, south, east, north, width, height)
+        dtm = np.zeros((height, width), dtype=np.float32)
+        reproject(
+            source=rasterio.band(source, 1),
+            destination=dtm,
+            src_transform=source.transform,
+            src_crs=source.crs,
+            dst_transform=dst_transform,
+            dst_crs=source.crs,
+            resampling=Resampling.bilinear,
+        )
+
+    dx = (east - west) / width
+    dz = (north - south) / height
+    shapes = [
+        (polygon, ground + building_height)
+        for ground, building_height, polygon in load_building_records(footprints_path, height_path, dtm_path)
+    ]
+    building_top = (
+        rasterize(shapes, out_shape=(height, width), transform=dst_transform, fill=0.0, dtype="float32")
+        if shapes else np.zeros((height, width), dtype=np.float32)
+    )
+    surface = np.where(building_top > 0, building_top, dtm)
+    return surface.astype(np.float32), west - center_x, -(north - center_y), dx, dz

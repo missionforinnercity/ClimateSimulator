@@ -12,46 +12,6 @@
     902.0
   ],
   "layers": {
-    "terrain": {
-      "vertices": 58760,
-      "triangles": 116550
-    },
-    "base": {
-      "vertices": 16,
-      "triangles": 8
-    },
-    "grass": {
-      "features": 142,
-      "vertices": 3729,
-      "triangles": 1243
-    },
-    "roads": {
-      "features": 3048,
-      "vertices": 30204,
-      "triangles": 15102
-    },
-    "buildings": {
-      "vertices": 51512,
-      "triangles": 51512,
-      "features": 2322
-    },
-    "roofs": {
-      "vertices": 104253,
-      "triangles": 50574,
-      "features": 2322
-    },
-    "trees": {
-      "vertices": 25,
-      "triangles": 42,
-      "features": 4903,
-      "instances": 4903
-    },
-    "trunks": {
-      "vertices": 12,
-      "triangles": 12,
-      "features": 4903,
-      "instances": 4903
-    },
     "fallback": {
       "buildings": 2322,
       "trees": 4903,
@@ -61,15 +21,6 @@
     }
   },
   "assets": {
-    "terrain": "terrain.bin",
-    "base": "base.bin",
-    "grass": "grass.bin",
-    "roads": "roads.bin",
-    "buildings": "buildings.bin",
-    "roofs": "roofs.bin",
-    "trees": "trees.bin",
-    "trunks": "trunks.bin",
-    "tree_instances": "tree_instances.bin",
     "fallback": "fallback.json"
   }
 }
