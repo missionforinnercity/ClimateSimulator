@@ -36,6 +36,13 @@ normally orbits the camera; use **Move / resize domain** when repositioning the
 box. Existing flow remains visible while editing and changes only when
 **Simulate wind** is clicked.
 
+The **Urban heat** layer reads the generated local product in
+`data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a
+the simplified vector `heat_model_lst_c` zones on the scene ground. Heat mode
+focuses the view on white buildings, green trees, and the heat surface; the
+database `climate.heat_zones` table remains a fallback when the local product
+is absent.
+
 Install the API dependencies with:
 
 ```bash

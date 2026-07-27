@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "name": "climateExplorer_3d_scene_footprint",
+  "crs": {
+    "type": "name",
+    "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" }
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "source": "public/assets/manifest.json",
+        "local_crs": "custom Hartbeesthoek94 Lo19 east/north grid"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [18.411914801856458, -33.9149225937086],
+          [18.43440580307801, -33.91502793048714],
+          [18.434298315300698, -33.931290962966244],
+          [18.411803040388644, -33.931185561974985],
+          [18.411914801856458, -33.9149225937086]
+        ]]
+      }
+    }
+  ]
+}

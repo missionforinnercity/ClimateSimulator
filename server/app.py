@@ -24,6 +24,7 @@ from .field import (
     query_polygons,
     request_from_payload,
 )
+from .heat import HEAT_METRICS, heat_zones
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(title="Cape Town Wind Explorer API", version="0.1.0")
@@ -49,6 +50,21 @@ class PreviewPayload(BaseModel):
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "field_version": FIELD_VERSION}
+
+
+@app.get("/api/heat/metrics")
+def heat_metrics() -> dict[str, Any]:
+    return {"metrics": [{"key": key, "label": label} for key, label in HEAT_METRICS.items()]}
+
+
+@app.get("/api/heat/zones")
+def heat_preview(metric: str = "heat_model_lst_c") -> dict[str, Any]:
+    try:
+        return heat_zones(metric)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"heat data unavailable: {error}") from error
 
 
 @app.get("/api/wind/scenarios")

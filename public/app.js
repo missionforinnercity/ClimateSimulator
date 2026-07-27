@@ -13,7 +13,7 @@ function loadScene() {
   status.textContent = 'Loading scene…';
   const guide = document.querySelector('#wind-box-guide');
   if (guide) guide.hidden = false;
-  import('./sceneRenderer.js?v=29')
+  import('./sceneRenderer.js?v=52')
     .then(module => module.startScene(canvas, status))
     .then(() => {
       const guide = document.querySelector('#wind-box-guide');

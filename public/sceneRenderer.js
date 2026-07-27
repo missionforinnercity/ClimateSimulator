@@ -25,6 +25,53 @@ const cross = (a, b) => [
   a[0] * b[1] - a[1] * b[0],
 ];
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const convexGroundHull = points => {
+  const sorted = points.slice().sort((a, b) => a[0] - b[0] || a[2] - b[2]);
+  if (sorted.length <= 3) return sorted;
+  const turn = (origin, a, b) => (a[0] - origin[0]) * (b[2] - origin[2]) - (a[2] - origin[2]) * (b[0] - origin[0]);
+  const lower = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && turn(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  const upper = [];
+  for (let index = sorted.length - 1; index >= 0; index -= 1) {
+    const point = sorted[index];
+    while (upper.length >= 2 && turn(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+};
+const simplifyShadowRing = (ring, tolerance = 1) => {
+  let points = ring.slice();
+  const toleranceSquared = tolerance * tolerance;
+  // Building footprints contain many nearly collinear survey vertices. Three
+  // conservative passes remove sub-metre deviations while retaining corners
+  // and the original vertex order.
+  for (let pass = 0; pass < 3 && points.length > 3; pass += 1) {
+    const simplified = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const previous = points[(index + points.length - 1) % points.length];
+      const current = points[index];
+      const next = points[(index + 1) % points.length];
+      const dx = next[0] - previous[0];
+      const dz = next[1] - previous[1];
+      const lengthSquared = dx * dx + dz * dz;
+      const amount = lengthSquared
+        ? clamp(((current[0] - previous[0]) * dx + (current[1] - previous[1]) * dz) / lengthSquared, 0, 1)
+        : 0;
+      const nearestX = previous[0] + dx * amount;
+      const nearestZ = previous[1] + dz * amount;
+      const distanceSquared = (current[0] - nearestX) ** 2 + (current[1] - nearestZ) ** 2;
+      if (distanceSquared > toleranceSquared) simplified.push(current);
+    }
+    if (simplified.length < 3 || simplified.length === points.length) break;
+    points = simplified;
+  }
+  return points;
+};
 
 export async function startScene(canvas, status) {
   const mainContext = canvas.getContext('2d', { alpha: false });
@@ -60,7 +107,7 @@ export async function startScene(canvas, status) {
       kind: 'building', value,
       x, z, ground, height,
       radius: Math.max(...ring.map(point => Math.hypot(point[0] - x, point[1] - z))),
-      ring, minX, maxX, minZ, maxZ,
+      ring, shadowRing: simplifyShadowRing(ring), minX, maxX, minZ, maxZ,
     };
   });
   const buildingGridSize = 80;
@@ -132,6 +179,7 @@ export async function startScene(canvas, status) {
   let frame = 0;
   let interactionUntil = 0;
   let settleTimer = 0;
+  let shadowGenerationToken = 0;
   const query = new URLSearchParams(location.search);
   const windApi = query.get('windApi') || '/api';
   const windToggle = document.querySelector('#wind-toggle');
@@ -159,6 +207,84 @@ export async function startScene(canvas, status) {
     moveMode: false,
     lastTime: performance.now(),
   };
+  const heatToggle = document.querySelector('#heat-toggle');
+  const heatMetric = document.querySelector('#heat-metric');
+  const heatStatus = document.querySelector('#heat-status');
+  const heatLegendMin = document.querySelector('#heat-legend-min');
+  const heatLegendMax = document.querySelector('#heat-legend-max');
+  const sunToggle = document.querySelector('#sun-toggle');
+  const sunDate = document.querySelector('#sun-date');
+  const sunTime = document.querySelector('#sun-time');
+  const sunTimeValue = document.querySelector('#sun-time-value');
+  const sunGenerate = document.querySelector('#sun-generate');
+  const sunStatus = document.querySelector('#sun-status');
+  const heatState = {
+    enabled: Boolean(heatToggle?.checked),
+    metric: heatMetric?.value || 'heat_model_lst_c',
+    data: null,
+  };
+  const shadowState = {
+    enabled: Boolean(sunToggle?.checked),
+    date: sunDate?.value || '2026-07-27',
+    minutes: Number(sunTime?.value) || 720,
+    generated: null,
+  };
+  const savedVisibility = { ...visibility };
+
+  function setHeatMode(enabled) {
+    heatState.enabled = enabled;
+    document.body.classList.toggle('heat-mode', enabled);
+    if (enabled) {
+      shadowState.enabled = false;
+      if (sunToggle) sunToggle.checked = false;
+      document.body.classList.remove('sun-mode');
+      Object.assign(savedVisibility, visibility);
+      visibility.terrain = false;
+      visibility.grass = false;
+      visibility.roads = false;
+      visibility.trees = true;
+      visibility.buildings = true;
+      windState.enabled = false;
+      windToggle.checked = false;
+    } else {
+      Object.assign(visibility, savedVisibility);
+      windState.enabled = windToggle.checked;
+    }
+    document.querySelectorAll('[data-layer]').forEach(input => {
+      input.checked = visibility[input.dataset.layer];
+    });
+    requestRender();
+  }
+
+  function setShadowMode(enabled) {
+    shadowState.enabled = enabled;
+    if (sunToggle) sunToggle.checked = enabled;
+    document.body.classList.toggle('sun-mode', enabled);
+    if (enabled) {
+      if (heatState.enabled) {
+        heatToggle.checked = false;
+        setHeatMode(false);
+      }
+      Object.assign(savedVisibility, visibility);
+      // Keep the shadow study focused on the terrain and building footprints;
+      // removing the extra overlays makes the shade boundary easier to read.
+      visibility.terrain = true;
+      visibility.grass = false;
+      visibility.roads = false;
+      visibility.buildings = true;
+      visibility.trees = false;
+      windState.enabled = false;
+      windToggle.checked = false;
+    } else {
+      Object.assign(visibility, savedVisibility);
+      windState.enabled = windToggle.checked;
+    }
+    document.querySelectorAll('[data-layer]').forEach(input => {
+      input.checked = visibility[input.dataset.layer];
+    });
+    updateSunStatus();
+    requestRender();
+  }
 
   function requestRender() {
     dirty = true;
@@ -508,7 +634,113 @@ export async function startScene(canvas, status) {
     return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
   }
 
+  function heatColor(value, minimum, maximum, alpha) {
+    const stops = [
+      [0.00, [43, 80, 190]],
+      [0.20, [45, 174, 222]],
+      [0.42, [116, 207, 72]],
+      [0.64, [255, 226, 65]],
+      [0.82, [255, 150, 25]],
+      [1.00, [224, 48, 32]],
+    ];
+    const t = clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
+    let upper = 1;
+    while (upper < stops.length - 1 && t > stops[upper][0]) upper += 1;
+    const lower = upper - 1;
+    const amount = (t - stops[lower][0]) / Math.max(stops[upper][0] - stops[lower][0], 0.001);
+    const color = stops[lower][1].map((channel, index) => Math.round(channel + (stops[upper][1][index] - channel) * amount));
+    return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
+  }
+
+  function drawHeatGeometry(geometry, project, value, minimum, maximum) {
+    const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.type === 'MultiPolygon' ? geometry.coordinates : [];
+    for (const polygon of polygons) {
+      const rings = polygon.map(ring => ring.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.3, z])));
+      if (!rings.length || rings[0].some(point => !point)) continue;
+      context.beginPath();
+      for (const ring of rings) {
+        if (ring.some(point => !point)) continue;
+        context.moveTo(ring[0][0], ring[0][1]);
+        for (let index = 1; index < ring.length; index += 1) context.lineTo(ring[index][0], ring[index][1]);
+        context.closePath();
+      }
+      context.fillStyle = heatColor(value, minimum, maximum, 0.78);
+      context.fill('evenodd');
+    }
+  }
+
+  function drawHeatmap(project, projectPolygon) {
+    if (shadowState.enabled) return;
+    const data = heatState.enabled ? heatState.data : null;
+    if (!data?.features?.length || !data.range) return;
+    context.save();
+    const colorRange = data.color_range || data.range;
+    const [left, bottom, right, top] = manifest.bounds;
+    const boundary = [[left, terrainHeightAt(left, -top) + 0.25, -top], [right, terrainHeightAt(right, -top) + 0.25, -top], [right, terrainHeightAt(right, -bottom) + 0.25, -bottom], [left, terrainHeightAt(left, -bottom) + 0.25, -bottom]];
+    const clipped = projectPolygon(boundary);
+    if (path(clipped)) {
+      context.clip();
+      // The source product can contain small no-data holes between adjacent
+      // zones. Paint a continuous neutral heat base first so those holes do
+      // not expose the dark scene background at oblique camera angles.
+      const baseValue = (colorRange.min + colorRange.max) * 0.5;
+      context.fillStyle = heatColor(baseValue, colorRange.min, colorRange.max, 0.94);
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    const paths = Array.from({ length: 64 }, () => new Path2D());
+    for (const feature of data.features) {
+      const value = feature.value;
+      if (value == null) continue;
+      const bin = clamp(Math.floor((value - colorRange.min) / Math.max(colorRange.max - colorRange.min, 0.001) * 63), 0, 63);
+      const pathValue = paths[bin];
+      const polygons = feature.geometry.type === 'Polygon'
+        ? [feature.geometry.coordinates]
+        : feature.geometry.type === 'MultiPolygon' ? feature.geometry.coordinates : [];
+      for (const polygon of polygons) {
+        for (const ring of polygon) {
+          const points = ring.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.3, z]));
+          if (points.some(point => !point)) continue;
+          pathValue.moveTo(points[0][0], points[0][1]);
+          for (let index = 1; index < points.length; index += 1) pathValue.lineTo(points[index][0], points[index][1]);
+          pathValue.closePath();
+        }
+      }
+    }
+    // Vector zones keep boundaries crisp and avoid the slow, blurry raster
+    // pass. A fine 64-bin ramp still gives a continuous-looking heat scale.
+    for (let bin = 0; bin < paths.length; bin += 1) {
+      const value = colorRange.min + (bin + 0.5) / paths.length * (colorRange.max - colorRange.min);
+      context.fillStyle = heatColor(value, colorRange.min, colorRange.max, 0.84);
+      context.fill(paths[bin], 'evenodd');
+    }
+    context.restore();
+  }
+
+  async function loadHeat(metric = heatState.metric) {
+    heatState.metric = metric;
+    heatStatus.textContent = 'Loading heat zones…';
+    try {
+      const response = await fetch(`${windApi}/heat/zones?metric=${encodeURIComponent(metric)}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      heatState.data = await response.json();
+      const range = heatState.data.color_range || heatState.data.range;
+      heatLegendMin.textContent = range ? Number(range.min).toFixed(1) : '—';
+      heatLegendMax.textContent = range ? Number(range.max).toFixed(1) : '—';
+      const window = heatState.data.window?.label || 'current product';
+      heatStatus.textContent = heatState.data.count
+        ? `${heatState.data.count} heat zones · ${window}`
+        : 'No surface-temperature values in this product.';
+    } catch (error) {
+      heatState.data = null;
+      heatLegendMin.textContent = '—';
+      heatLegendMax.textContent = '—';
+      heatStatus.textContent = `Heat data unavailable (${error.message})`;
+    }
+    requestRender();
+  }
+
   function drawWindHeatmap(project, projectPolygon) {
+    if (shadowState.enabled) return;
     const field = windState.enabled ? windState.field : null;
     if (!field?.speed?.length) return;
     const minimum = Math.min(...field.speed);
@@ -684,6 +916,157 @@ export async function startScene(canvas, status) {
     return topValue * (1 - ty) + bottomValue * ty;
   }
 
+  // NOAA's compact solar-position approximation, evaluated for Cape Town
+  // (SAST, UTC+2). The renderer's local axes are east (x), up (y), and south
+  // (z), hence the negated north component below.
+  function sunPosition() {
+    const [year, month, day] = shadowState.date.split('-').map(Number);
+    const date = new Date(Date.UTC(year || 2026, (month || 7) - 1, day || 27));
+    const start = Date.UTC(date.getUTCFullYear(), 0, 0);
+    const dayOfYear = Math.floor((date.getTime() - start) / 86400000);
+    const hour = shadowState.minutes / 60;
+    const gamma = 2 * Math.PI / 365 * (dayOfYear - 1 + (hour - 12) / 24);
+    const equation = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma) - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
+    const declination = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma) - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma) - 0.002697 * Math.cos(3 * gamma) + 0.00148 * Math.sin(3 * gamma);
+    const latitude = -33.9249 * Math.PI / 180;
+    const solarMinutes = shadowState.minutes + equation + 4 * 18.4241 - 120;
+    const hourAngle = (solarMinutes / 4 - 180) * Math.PI / 180;
+    const cosineZenith = clamp(Math.sin(latitude) * Math.sin(declination) + Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle), -1, 1);
+    const altitude = Math.asin(cosineZenith);
+    const azimuth = (Math.atan2(Math.sin(hourAngle), Math.cos(hourAngle) * Math.sin(latitude) - Math.tan(declination) * Math.cos(latitude)) + Math.PI) % (2 * Math.PI);
+    return {
+      altitude,
+      azimuth,
+      vector: [Math.sin(azimuth) * Math.cos(altitude), Math.sin(altitude), -Math.cos(azimuth) * Math.cos(altitude)],
+    };
+  }
+
+  function updateSunStatus() {
+    if (!sunStatus) return;
+    const sun = sunPosition();
+    const hours = String(Math.floor(shadowState.minutes / 60)).padStart(2, '0');
+    const minutes = String(shadowState.minutes % 60).padStart(2, '0');
+    if (sunTimeValue) sunTimeValue.textContent = `${hours}:${minutes}`;
+    sunStatus.textContent = sun.altitude <= 0
+      ? 'Sun is below the horizon at this time.'
+      : `Sun altitude ${Math.round(sun.altitude * 180 / Math.PI)}° · click Generate shadows when ready.`;
+  }
+
+  function shadowGroundPoint(x, y, z, sun) {
+    // Intersect a ray from the elevated point toward the LiDAR DTM. Two small
+    // correction passes make the projected end follow sloping terrain rather
+    // than dropping every shadow onto a flat plane.
+    let distance = Math.max(0, (y - terrainHeightAt(x, z)) / Math.max(sun.vector[1], 0.03));
+    let targetX = x - sun.vector[0] * distance;
+    let targetZ = z - sun.vector[2] * distance;
+    for (let pass = 0; pass < 2; pass += 1) {
+      distance = Math.max(0, (y - terrainHeightAt(targetX, targetZ)) / Math.max(sun.vector[1], 0.03));
+      targetX = x - sun.vector[0] * distance;
+      targetZ = z - sun.vector[2] * distance;
+    }
+    return [targetX, terrainHeightAt(targetX, targetZ) + 0.35, targetZ];
+  }
+
+  async function generateShadows() {
+    if (!shadowState.enabled) setShadowMode(true);
+    const sun = sunPosition();
+    if (sun.altitude <= 0.008) {
+      shadowState.generated = null;
+      updateSunStatus();
+      requestRender();
+      return;
+    }
+    const generationToken = ++shadowGenerationToken;
+    sunGenerate.disabled = true;
+    sunGenerate.textContent = 'Generating…';
+    // Let the disabled/generating state paint before beginning the geometry
+    // work, then yield between batches so the browser event loop stays live.
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    if (generationToken !== shadowGenerationToken) return;
+    // Geometry is generated in world space once. Subsequent orbit/zoom frames
+    // only project these already-computed polygons, which keeps interaction
+    // responsive even with thousands of source features.
+    const buildingPolygons = [];
+    for (let buildingIndex = 0; buildingIndex < buildings.length; buildingIndex += 1) {
+      const building = buildings[buildingIndex];
+      const [, height] = building.value;
+      const ring = building.shadowRing;
+      const ground = ring.map(([x, z]) => [x, terrainHeightAt(x, z) + 0.35, z]);
+      const cast = ring.map(([x, z]) => shadowGroundPoint(x, building.ground + height, z, sun));
+      // Use one conservative outer ground silhouette per caster. This avoids
+      // drawing one overlapping quad per footprint edge on every settled
+      // camera frame while retaining a clean hard shade boundary.
+      const points = convexGroundHull(ground.concat(cast));
+      const minX = Math.min(...points.map(point => point[0]));
+      const maxX = Math.max(...points.map(point => point[0]));
+      const minZ = Math.min(...points.map(point => point[2]));
+      const maxZ = Math.max(...points.map(point => point[2]));
+      const centerX = (minX + maxX) * 0.5;
+      const centerZ = (minZ + maxZ) * 0.5;
+      buildingPolygons.push({
+        points,
+        x: centerX,
+        z: centerZ,
+        y: terrainHeightAt(centerX, centerZ) + 0.35,
+        radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5,
+      });
+      if (buildingIndex && buildingIndex % 600 === 0) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        if (generationToken !== shadowGenerationToken) return;
+      }
+    }
+    if (generationToken !== shadowGenerationToken) return;
+    shadowState.generated = { sun, buildingPolygons };
+    sunGenerate.disabled = false;
+    sunGenerate.textContent = 'Regenerate shadows';
+    sunStatus.textContent = `${buildingPolygons.length} optimized building shadows · ${Math.round(sun.altitude * 180 / Math.PI)}° sun altitude.`;
+    requestRender();
+  }
+
+  function appendSolidPolygon(target, points) {
+    if (points.length < 3 || points.some(point => !point)) return;
+    // Footprint winding varies in the source data. Normalizing every subpath
+    // prevents overlapping facade sweeps from cancelling one another and
+    // punching false sunlit gaps into an otherwise continuous shadow.
+    let signedArea = 0;
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index];
+      const next = points[(index + 1) % points.length];
+      signedArea += current[0] * next[1] - next[0] * current[1];
+    }
+    const ordered = signedArea < 0 ? points.slice().reverse() : points;
+    target.moveTo(ordered[0][0], ordered[0][1]);
+    for (let index = 1; index < ordered.length; index += 1) target.lineTo(ordered[index][0], ordered[index][1]);
+    target.closePath();
+  }
+
+  function drawGeneratedShadows(project, focal, simplified) {
+    const generated = shadowState.enabled ? shadowState.generated : null;
+    // Each caster is now a compact outer silhouette, so it is inexpensive
+    // enough to reproject during camera movement without a stale screen cache.
+    if (!generated) return;
+    // The scene's terrain is already clipped to the CBD boundary. Do not
+    // apply another projected clip here: at steep camera angles that second
+    // path can discard valid ground polygons even though they are in view.
+    context.save();
+    const groundShadows = new Path2D();
+    for (const polygon of generated.buildingPolygons) {
+      const center = project([polygon.x, polygon.y, polygon.z]);
+      if (!center) continue;
+      const screenRadius = Math.max(1, polygon.radius * focal / center[2]);
+      if (center[0] < -screenRadius || center[0] > canvas.width + screenRadius
+        || center[1] < -screenRadius || center[1] > canvas.height + screenRadius) continue;
+      // During interaction, very small distant shadows cost the same path and
+      // projection work as prominent ones but contribute little visually.
+      // Keep the large anchors live; the complete set returns on settle.
+      if (simplified && screenRadius < 35) continue;
+      appendSolidPolygon(groundShadows, polygon.points.map(project));
+    }
+    context.fillStyle = 'rgba(10, 18, 24, 0.76)';
+    context.fill(groundShadows);
+    context.restore();
+  }
+
   // Reject features whose conservative screen bounds are outside the canvas
   // before projecting their individual vertices or adding them to the depth sort.
   function isInView(x, y, z, radius, project, focal) {
@@ -791,50 +1174,98 @@ export async function startScene(canvas, status) {
   // Drag/zoom redraws every visible building each frame; even a single
   // batched fill() per building (~2 calls x ~2300 buildings) is enough
   // draw-call overhead to feel janky on Canvas 2D. This collapses the
-  // *entire* visible skyline into exactly two fill() calls — one path
-  // covering every wall quad, one covering every roof — while still
+  // *entire* visible skyline into four coarse wall-light paths plus one roof
+  // path, while still
   // normalizing each wall quad's winding so overlapping quads (from the
   // same or different buildings, common at oblique angles) reinforce
   // instead of cancelling under the nonzero fill rule. Depth ordering
   // against trees is sacrificed for this one frame, which is invisible
   // during fast camera motion and gets corrected on the settled redraw.
-  function drawBuildingsBatched(buildingList, project) {
-    context.beginPath();
+  function drawBuildingsBatched(buildingList, project, forward) {
+    const sun = shadowState.generated?.sun || sunPosition();
+    const wallPaths = Array.from({ length: 4 }, () => new Path2D());
     const roofRings = [];
     for (const building of buildingList) {
-      const [ground, height, ring] = building.value;
-      const base = ring.map(([x, z]) => project([x, ground, z]));
+      const [ground, height] = building.value;
+      const ring = building.shadowRing || building.value[2];
       const roof = ring.map(([x, z]) => project([x, ground + height, z]));
-      if (base.some(point => !point) || roof.some(point => !point)) continue;
-      const screenHeight = Math.max(...base.map((point, index) => Math.abs(point[1] - roof[index][1])));
+      if (roof.some(point => !point)) continue;
+      const centerBase = project([building.x, ground, building.z]);
+      const centerRoof = project([building.x, ground + height, building.z]);
+      if (!centerBase || !centerRoof) continue;
+      const screenHeight = Math.abs(centerBase[1] - centerRoof[1]);
       if (screenHeight > 2.2) {
+        const base = [];
         for (let index = 0; index < ring.length; index += 1) {
           const next = (index + 1) % ring.length;
-          let quad = [base[index], base[next], roof[next], roof[index]];
-          let area = 0;
-          for (let i = 0; i < quad.length; i += 1) {
-            const [x1, y1] = quad[i];
-            const [x2, y2] = quad[(i + 1) % quad.length];
-            area += x1 * y2 - x2 * y1;
+          const dx = ring[next][0] - ring[index][0];
+          const dz = ring[next][1] - ring[index][1];
+          const midpointX = (ring[index][0] + ring[next][0]) * 0.5;
+          const midpointZ = (ring[index][1] + ring[next][1]) * 0.5;
+          let normalX = dz;
+          let normalZ = -dx;
+          if ((midpointX - building.x) * normalX + (midpointZ - building.z) * normalZ < 0) {
+            normalX = -normalX;
+            normalZ = -normalZ;
           }
-          if (area < 0) quad = quad.reverse();
-          context.moveTo(quad[0][0], quad[0][1]);
-          for (let i = 1; i < quad.length; i += 1) context.lineTo(quad[i][0], quad[i][1]);
-          context.closePath();
+          // Back-facing facade quads are completely hidden by the building.
+          // Avoid projecting and path-building them in the first place.
+          if (normalX * -forward[0] + normalZ * -forward[2] <= 0) continue;
+          base[index] ||= project([ring[index][0], ground, ring[index][1]]);
+          base[next] ||= project([ring[next][0], ground, ring[next][1]]);
+          if (!base[index] || !base[next]) continue;
+          const quad = [base[index], base[next], roof[next], roof[index]];
+          const direct = Math.max(
+            0,
+            (normalX * sun.vector[0] + normalZ * sun.vector[2]) / (Math.hypot(normalX, normalZ) || 1),
+          );
+          const shadeBand = Math.min(wallPaths.length - 1, Math.floor(direct * wallPaths.length));
+          appendSolidPolygon(wallPaths[shadeBand], quad);
         }
       }
       roofRings.push(roof);
     }
-    context.fillStyle = '#42494e';
-    context.fill();
+    const wallColors = ['#aab1b4', '#bec5c8', '#d2dadd', '#e6ecee'];
+    for (let band = 0; band < wallPaths.length; band += 1) {
+      context.fillStyle = wallColors[band];
+      context.fill(wallPaths[band]);
+    }
     context.beginPath();
     for (const roof of roofRings) {
       context.moveTo(roof[0][0], roof[0][1]);
       for (let i = 1; i < roof.length; i += 1) context.lineTo(roof[i][0], roof[i][1]);
       context.closePath();
     }
-    context.fillStyle = COLORS.roof;
+    context.fillStyle = shadowState.enabled ? '#f2f4f3' : COLORS.roof;
     context.fill();
+  }
+
+  function drawBuildingsDuringInteraction(buildingList, project) {
+    // Use tiny extruded screen-space blocks instead of center lines. This is
+    // still only two projections per building, but preserves height and mass
+    // in low-angle views while the accurate mesh waits for camera settle.
+    const wallPaths = [new Path2D(), new Path2D(), new Path2D()];
+    const roofPath = new Path2D();
+    for (const building of buildingList) {
+      const [ground, height] = building.value;
+      const base = project([building.x, ground, building.z]);
+      const roof = project([building.x, ground + height, building.z]);
+      if (!base || !roof) continue;
+      const halfWidth = clamp(building.radius * canvas.height * 1.18 / roof[2] * 0.72, 1.5, 28);
+      const wallBand = height > 45 ? 2 : height > 18 ? 1 : 0;
+      const top = Math.min(base[1], roof[1]);
+      const screenHeight = Math.max(1.5, Math.abs(base[1] - roof[1]));
+      const left = (base[0] + roof[0]) * 0.5 - halfWidth;
+      wallPaths[wallBand].rect(left, top, halfWidth * 2, screenHeight);
+      roofPath.rect(roof[0] - halfWidth, roof[1] - 1, halfWidth * 2, 2);
+    }
+    const wallColors = ['#aeb5b8', '#c5cdd0', '#dce2e4'];
+    for (let band = 0; band < wallPaths.length; band += 1) {
+      context.fillStyle = wallColors[band];
+      context.fill(wallPaths[band]);
+    }
+    context.fillStyle = '#f2f4f3';
+    context.fill(roofPath);
   }
 
   // Canvas 2D spends much more time processing thousands of tiny fill() calls
@@ -843,6 +1274,7 @@ export async function startScene(canvas, status) {
   // trees and nearby buildings in the right visual order while reducing the
   // building draw-call count from thousands to a manageable few hundred.
   function drawBuildingsByDepth(buildingList, project, treeFeatures) {
+    const sun = null;
     const buckets = Array.from({ length: 128 }, () => ({ buildings: [], trees: [] }));
     const features = buildingList.concat(treeFeatures);
     let minimum = Infinity;
@@ -879,10 +1311,25 @@ export async function startScene(canvas, status) {
               }
               if (area < 0) quad = quad.reverse();
               const shade = 48 + ((index * 17 + ring.length * 7) % 16);
-              let wallPath = wallPaths.get(shade);
+              const dx = ring[next][0] - ring[index][0];
+              const dz = ring[next][1] - ring[index][1];
+              const midpointX = (ring[index][0] + ring[next][0]) * 0.5;
+              const midpointZ = (ring[index][1] + ring[next][1]) * 0.5;
+              let normalX = dz, normalZ = -dx;
+              if ((midpointX - building.x) * normalX + (midpointZ - building.z) * normalZ < 0) {
+                normalX = -normalX;
+                normalZ = -normalZ;
+              }
+              const normalLength = Math.hypot(normalX, normalZ) || 1;
+              const direct = sun && sun.altitude > 0
+                ? Math.max(0, (normalX * sun.vector[0] + normalZ * sun.vector[2]) / normalLength) * Math.cos(sun.altitude)
+                : 0;
+              const litShade = shadowState.enabled ? Math.round(172 + direct * 78) : shade;
+              const key = shadowState.enabled ? `rgb(${litShade}, ${litShade + 5}, ${litShade + 10})` : shade;
+              let wallPath = wallPaths.get(key);
               if (!wallPath) {
                 wallPath = new Path2D();
-                wallPaths.set(shade, wallPath);
+                wallPaths.set(key, wallPath);
               }
               wallPath.moveTo(quad[0][0], quad[0][1]);
               for (let point = 1; point < quad.length; point += 1) wallPath.lineTo(quad[point][0], quad[point][1]);
@@ -894,10 +1341,12 @@ export async function startScene(canvas, status) {
           roofPath.closePath();
         }
         for (const [shade, wallPath] of wallPaths) {
-          context.fillStyle = `rgb(${shade}, ${shade + 5}, ${shade + 10})`;
+          context.fillStyle = heatState.enabled ? '#c9cbc7' : (shadowState.enabled ? shade : `rgb(${shade}, ${shade + 5}, ${shade + 10})`);
           context.fill(wallPath);
         }
-        context.fillStyle = COLORS.roof;
+        const roofLight = sun && sun.altitude > 0 ? 0.55 + 0.45 * Math.sin(sun.altitude) : 0.55;
+        const roofChannel = shadowState.enabled ? Math.round(212 + 35 * Math.sin(sun?.altitude || 0)) : Math.round(150 * roofLight);
+        context.fillStyle = heatState.enabled ? '#f1f1ed' : shadowState.enabled ? `rgb(${roofChannel}, ${roofChannel + 5}, ${roofChannel + 8})` : COLORS.roof;
         context.fill(roofPath);
       }
       // Keep tree-to-tree ordering exact inside each depth slice. This avoids
@@ -916,12 +1365,12 @@ export async function startScene(canvas, status) {
     const radiusY = radius * 0.86;
     if (crown[0] < -radius || crown[0] > canvas.width + radius || crown[1] < -radiusY || crown[1] > canvas.height + radiusY) return;
     if (radius < 2.2) {
-      context.fillStyle = COLORS.canopy;
+      context.fillStyle = shadowState.enabled ? '#ffffff' : COLORS.canopy;
       context.fillRect(crown[0] - 1, crown[1] - 1, 2, 2);
       return;
     }
     if (radius > 4) {
-      context.strokeStyle = COLORS.trunk;
+      context.strokeStyle = shadowState.enabled ? '#d2d2d2' : COLORS.trunk;
       context.lineWidth = clamp(radius * 0.13, 0.7, 2.5);
       context.beginPath();
       context.moveTo(base[0], base[1]);
@@ -929,11 +1378,11 @@ export async function startScene(canvas, status) {
       context.stroke();
     }
     // Two compact, near-circular layers give the 2D fallback a rounded crown.
-    context.fillStyle = '#1d4b2e';
+    context.fillStyle = shadowState.enabled ? '#dedede' : (heatState.enabled ? '#4fae35' : '#1d4b2e');
     context.beginPath();
     context.ellipse(crown[0] + radius * 0.08, crown[1] + radiusY * 0.13, radius * 0.92, radiusY * 0.92, 0, 0, Math.PI * 2);
     context.fill();
-    context.fillStyle = COLORS.canopy;
+    context.fillStyle = shadowState.enabled ? '#ffffff' : (heatState.enabled ? '#86df45' : COLORS.canopy);
     context.beginPath();
     context.ellipse(crown[0] - radius * 0.08, crown[1] - radiusY * 0.11, radius * 0.88, radiusY * 0.88, 0, 0, Math.PI * 2);
     context.fill();
@@ -945,7 +1394,7 @@ export async function startScene(canvas, status) {
     const maxZ = -bottom;
     const point = (column, row, elevation) => [left + (right - left) * column / (terrain.columns - 1), elevation, minZ + (maxZ - minZ) * row / (terrain.rows - 1)];
     // Vertical perimeter faces turn the terrain into a shallow physical plinth.
-    context.fillStyle = '#30383b';
+    context.fillStyle = shadowState.enabled ? '#d6d6d2' : '#30383b';
     // Draw the outer rim directly from grid elevations to avoid terrain gaps.
     const edgePoint = (column, row) => point(column, row, terrain.heights[row * terrain.columns + column]);
     const side = (a, b) => {
@@ -959,7 +1408,7 @@ export async function startScene(canvas, status) {
       side(edgePoint(0, row + 1), edgePoint(0, row));
       side(edgePoint(terrain.columns - 1, row), edgePoint(terrain.columns - 1, row + 1));
     }
-    context.fillStyle = COLORS.terrain;
+    context.fillStyle = shadowState.enabled ? '#f5f5f0' : COLORS.terrain;
     context.beginPath();
     for (let row = 0; row < terrain.rows - 1; row += 1) {
       for (let column = 0; column < terrain.columns - 1; column += 1) {
@@ -991,7 +1440,7 @@ export async function startScene(canvas, status) {
   function drawRoads(project, focal, simplified) {
     const groups = new Map();
     for (const road of roads) {
-      if ((road.highway === 'footway' || road.highway === 'path') && camera.distance > 1000) continue;
+      if ((road.highway === 'footway' || road.highway === 'path') && camera.distance > 1000 && !shadowState.enabled) continue;
       if (simplified && !['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary'].includes(road.highway)) continue;
       if (!isInView(road.x, terrainHeightAt(road.x, road.z) + 0.22, road.z, road.radius + road.width, project, focal)) continue;
       const points = road.points.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.22, z]));
@@ -1039,12 +1488,14 @@ export async function startScene(canvas, status) {
       if (visibility.roads) {
         drawRoads(project, focal, simplified);
       }
+      drawGeneratedShadows(project, focal, simplified);
       // Keep ground features inside the CBD footprint, but restore the canvas
       // before drawing vertical geometry. An edge building must remain whole
       // when its wall or roof is exposed by an oblique camera angle.
       if (clipped) context.restore();
       // Render the continuous scalar result on the ground before vertical
       // geometry so buildings and trees correctly occlude the heat layer.
+      drawHeatmap(project, projectPolygon);
       drawWindHeatmap(project, projectPolygon);
       const visibleBuildings = [];
       const visibleTrees = [];
@@ -1053,6 +1504,10 @@ export async function startScene(canvas, status) {
           if (!isInView(building.x, building.ground + building.height * 0.5, building.z, building.radius + building.height * 0.5, project, focal)) continue;
           visibleBuildings.push({
             value: building.value,
+            x: building.x,
+            z: building.z,
+            radius: building.radius,
+            shadowRing: building.shadowRing,
             depth: building.x * forward[0] + building.z * forward[2],
           });
         }
@@ -1075,7 +1530,11 @@ export async function startScene(canvas, status) {
         }
       }
       if (visibleBuildings.length || visibleTrees.length) {
-        drawBuildingsByDepth(visibleBuildings, project, visibleTrees);
+        // Shadow study mode uses four batched facade-light bands plus a roof
+        // fill, preserving useful building depth without per-wall draw calls.
+        if (shadowState.enabled && simplified) drawBuildingsDuringInteraction(visibleBuildings, project);
+        else if (shadowState.enabled) drawBuildingsBatched(visibleBuildings, project, forward);
+        else drawBuildingsByDepth(visibleBuildings, project, visibleTrees);
       }
     } finally {
       context = mainContext;
@@ -1188,6 +1647,11 @@ export async function startScene(canvas, status) {
 
   windToggle.addEventListener('change', event => {
     windState.enabled = event.target.checked;
+    if (windState.enabled && shadowState.enabled) {
+      shadowState.enabled = false;
+      if (sunToggle) sunToggle.checked = false;
+      document.body.classList.remove('sun-mode');
+    }
     windStatus.textContent = windState.enabled ? '3D domain ready · drag it, then simulate.' : 'Wind display hidden.';
     requestRender();
   });
@@ -1220,6 +1684,33 @@ export async function startScene(canvas, status) {
   windMoveDomain.addEventListener('click', () => setMoveMode(!windState.moveMode));
   windSimulate.addEventListener('click', simulateWind);
 
+  heatToggle?.addEventListener('change', event => {
+    setHeatMode(event.target.checked);
+  });
+  heatMetric?.addEventListener('change', event => loadHeat(event.target.value));
+  sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
+  sunDate?.addEventListener('change', event => {
+    shadowState.date = event.target.value || shadowState.date;
+    shadowState.generated = null;
+    shadowGenerationToken += 1;
+    sunGenerate.disabled = false;
+    sunGenerate.textContent = 'Generate shadows';
+    updateSunStatus();
+    requestRender();
+  });
+  sunTime?.addEventListener('input', event => {
+    shadowState.minutes = Number(event.target.value);
+    shadowState.generated = null;
+    shadowGenerationToken += 1;
+    sunGenerate.disabled = false;
+    sunGenerate.textContent = 'Generate shadows';
+    updateSunStatus();
+  });
+  // Redraw once on release to remove the previous result. The continuous
+  // input handler above deliberately performs no canvas work.
+  sunTime?.addEventListener('change', requestRender);
+  sunGenerate?.addEventListener('click', generateShadows);
+
   addEventListener('resize', requestRender);
 
   fitScene();
@@ -1228,4 +1719,7 @@ export async function startScene(canvas, status) {
   windToggle.checked = true;
   windStatus.textContent = 'Choose Move / resize domain to position the orange box.';
   requestRender();
+  setHeatMode(heatState.enabled);
+  updateSunStatus();
+  loadHeat();
 }

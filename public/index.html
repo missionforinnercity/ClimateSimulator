@@ -23,6 +23,25 @@
         <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
         <label><input type="checkbox" data-layer="trees" checked> Trees</label>
       </div>
+      <section class="heat-panel" aria-label="Heat overlay controls">
+        <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox" checked> Show</label></div>
+        <p class="heat-metric-label">Surface temperature</p>
+        <p id="heat-status" class="heat-status">Loading heat zones…</p>
+        <div class="heat-gradient"></div>
+        <div class="heat-legend-labels"><span id="heat-legend-min">—</span><span id="heat-legend-max">—</span></div>
+      </section>
+      <section class="sun-panel" aria-label="Sunlight and shadow controls">
+        <div class="sun-heading"><span>Sunlight &amp; shadows</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
+        <label>Date
+          <input id="sun-date" type="date" value="2026-07-27">
+        </label>
+        <label>Time <span id="sun-time-value">12:00</span>
+          <input id="sun-time" type="range" min="300" max="1170" step="10" value="720">
+        </label>
+        <button id="sun-generate" type="button">Generate shadows</button>
+        <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
+        <p class="sun-note">Optimized hard-edged building shade · LiDAR terrain</p>
+      </section>
       <section class="wind-panel" aria-label="Wind simulation controls">
         <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox" checked> Show</label></div>
         <label>Direction
@@ -69,6 +88,6 @@
       <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
     </aside>
   </main>
-  <script type="module" src="app.js?v=canvas-only-1"></script>
+  <script type="module" src="app.js?v=canvas-only-9"></script>
 </body>
 </html>

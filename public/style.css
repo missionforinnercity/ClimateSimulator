@@ -12,9 +12,24 @@ h1 { margin: 0; font-size: 25px; letter-spacing: -.03em; }
 .controls { display: grid; gap: 10px; margin: 20px 0 16px; font-size: 14px; }
 label { display: flex; gap: 9px; align-items: center; }
 input { accent-color: #8fd6aa; }
-select, input[type="range"] { width: 100%; min-width: 0; accent-color: #8fd6aa; }
+select, input[type="range"], input[type="date"] { width: 100%; min-width: 0; accent-color: #8fd6aa; }
 select { padding: 5px; border: 1px solid #ffffff22; border-radius: 5px; background: #142a31; color: #e2f1eb; }
 .wind-panel { display: grid; gap: 8px; margin: 14px 0 16px; padding-top: 12px; border-top: 1px solid #ffffff1f; font-size: 12px; }
+.heat-panel { display: grid; gap: 8px; margin: 14px 0 16px; padding-top: 12px; border-top: 1px solid #ffffff1f; font-size: 12px; }
+.heat-heading { display: flex; justify-content: space-between; align-items: center; color: #ffd36b; font-weight: 700; }
+.heat-switch { font-weight: 400; color: #b9c8c7; }
+.heat-status { min-height: 16px; margin: 2px 0 0; color: #b9c8c7; line-height: 1.35; }
+.heat-metric-label { margin: 0; color: #dbe7df; font-size: 12px; }
+.heat-gradient { height: 9px; border-radius: 5px; background: linear-gradient(90deg, #2c56c7 0%, #38bde5 22%, #7bd34a 45%, #ffe44b 65%, #ff9f1c 82%, #e63924 100%); box-shadow: inset 0 0 0 1px #ffffff25; }
+.heat-legend-labels { display: flex; justify-content: space-between; color: #dbe7df; font-size: 10px; }
+.heat-mode .wind-panel { display: none; }
+.sun-panel { display: grid; gap: 8px; margin: 14px 0 16px; padding-top: 12px; border-top: 1px solid #ffffff1f; font-size: 12px; }
+.sun-heading { display: flex; justify-content: space-between; align-items: center; color: #ffd36b; font-weight: 700; }
+.sun-switch { font-weight: 400; color: #b9c8c7; }
+.sun-status { min-height: 30px; margin: 3px 0 0; color: #f0d99e; line-height: 1.35; }
+.sun-panel button { margin-top: 2px; }
+.sun-note { margin: 0; color: #a9babe; font-size: 10px; line-height: 1.35; }
+.sun-mode .heat-panel, .sun-mode .wind-panel { display: none; }
 .wind-heading { display: flex; justify-content: space-between; align-items: center; color: #9ee2b9; font-weight: 700; }
 .wind-switch { font-weight: 400; }
 .wind-status { min-height: 30px; margin: 3px 0 0; color: #b9d4c8; line-height: 1.35; }
