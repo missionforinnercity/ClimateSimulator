@@ -84,6 +84,10 @@ export async function startScene(canvas, status) {
   const trees = scene.trees.map((value, id) => ({
     kind: 'tree', value, id, x: value[0], z: value[2],
     radius: Math.max(value[3], value[5], value[4] * 0.35),
+    // A handful of canopy records overlap footprint polygons. They are
+    // usually LiDAR returns from roof gardens or edge noise, and rendering
+    // them as free-standing trees makes them appear to grow on rooftops.
+    onBuilding: containingBuilding(value[0], value[2]) !== null,
   }));
   const treeGridSize = 60;
   const treeGrid = new Map();
@@ -756,8 +760,8 @@ export async function startScene(canvas, status) {
     return true;
   }
 
-  // Only reached for the settled, full-detail frame — during drag/zoom
-  // buildings are drawn instead by the cheaper drawBuildingsBatched pass.
+  // Kept for reference/debugging: the normal renderer below batches the same
+  // geometry into depth buckets, so it does not need one fill per building.
   function drawBuilding(building, project) {
     const [ground, height, ring] = building;
     const base = ring.map(([x, z]) => project([x, ground, z]));
@@ -831,6 +835,76 @@ export async function startScene(canvas, status) {
     }
     context.fillStyle = COLORS.roof;
     context.fill();
+  }
+
+  // Canvas 2D spends much more time processing thousands of tiny fill() calls
+  // than it does processing one larger path. Keep the full walls and roofs,
+  // but batch them into coarse depth layers. Eight layers are enough to keep
+  // trees and nearby buildings in the right visual order while reducing the
+  // building draw-call count from thousands to a manageable few hundred.
+  function drawBuildingsByDepth(buildingList, project, treeFeatures) {
+    const buckets = Array.from({ length: 128 }, () => ({ buildings: [], trees: [] }));
+    const features = buildingList.concat(treeFeatures);
+    let minimum = Infinity;
+    let maximum = -Infinity;
+    for (const feature of features) {
+      minimum = Math.min(minimum, feature.depth);
+      maximum = Math.max(maximum, feature.depth);
+    }
+    const span = Math.max(1, maximum - minimum);
+    const bucketFor = depth => clamp(Math.floor((depth - minimum) / span * buckets.length), 0, buckets.length - 1);
+    for (const building of buildingList) buckets[bucketFor(building.depth)].buildings.push(building);
+    for (const tree of treeFeatures) buckets[bucketFor(tree.depth)].trees.push(tree);
+
+    for (let bucketIndex = buckets.length - 1; bucketIndex >= 0; bucketIndex -= 1) {
+      const bucket = buckets[bucketIndex];
+      if (bucket.buildings.length) {
+        const wallPaths = new Map();
+        const roofPath = new Path2D();
+        for (const building of bucket.buildings) {
+          const [ground, height, ring] = building.value;
+          const base = ring.map(([x, z]) => project([x, ground, z]));
+          const roof = ring.map(([x, z]) => project([x, ground + height, z]));
+          if (base.some(point => !point) || roof.some(point => !point)) continue;
+          const screenHeight = Math.max(...base.map((point, index) => Math.abs(point[1] - roof[index][1])));
+          if (screenHeight > 2.2) {
+            for (let index = 0; index < ring.length; index += 1) {
+              const next = (index + 1) % ring.length;
+              let quad = [base[index], base[next], roof[next], roof[index]];
+              let area = 0;
+              for (let point = 0; point < quad.length; point += 1) {
+                const [x1, y1] = quad[point];
+                const [x2, y2] = quad[(point + 1) % quad.length];
+                area += x1 * y2 - x2 * y1;
+              }
+              if (area < 0) quad = quad.reverse();
+              const shade = 48 + ((index * 17 + ring.length * 7) % 16);
+              let wallPath = wallPaths.get(shade);
+              if (!wallPath) {
+                wallPath = new Path2D();
+                wallPaths.set(shade, wallPath);
+              }
+              wallPath.moveTo(quad[0][0], quad[0][1]);
+              for (let point = 1; point < quad.length; point += 1) wallPath.lineTo(quad[point][0], quad[point][1]);
+              wallPath.closePath();
+            }
+          }
+          roofPath.moveTo(roof[0][0], roof[0][1]);
+          for (let point = 1; point < roof.length; point += 1) roofPath.lineTo(roof[point][0], roof[point][1]);
+          roofPath.closePath();
+        }
+        for (const [shade, wallPath] of wallPaths) {
+          context.fillStyle = `rgb(${shade}, ${shade + 5}, ${shade + 10})`;
+          context.fill(wallPath);
+        }
+        context.fillStyle = COLORS.roof;
+        context.fill(roofPath);
+      }
+      // Keep tree-to-tree ordering exact inside each depth slice. This avoids
+      // a nearby crown suddenly covering a farther one during camera motion.
+      bucket.trees.sort((a, b) => b.depth - a.depth);
+      for (const tree of bucket.trees) drawTree(tree.value, project, tree.focal);
+    }
   }
 
   function drawTree(tree, project, focal) {
@@ -972,16 +1046,17 @@ export async function startScene(canvas, status) {
       // Render the continuous scalar result on the ground before vertical
       // geometry so buildings and trees correctly occlude the heat layer.
       drawWindHeatmap(project, projectPolygon);
-      const features = [];
       const visibleBuildings = [];
+      const visibleTrees = [];
       if (visibility.buildings) {
         for (const building of buildings) {
           if (!isInView(building.x, building.ground + building.height * 0.5, building.z, building.radius + building.height * 0.5, project, focal)) continue;
-          if (simplified) visibleBuildings.push(building);
-          else features.push({ kind: 'building', value: building.value, depth: building.x * forward[0] + building.z * forward[2] });
+          visibleBuildings.push({
+            value: building.value,
+            depth: building.x * forward[0] + building.z * forward[2],
+          });
         }
       }
-      if (simplified && visibleBuildings.length) drawBuildingsBatched(visibleBuildings, project);
       if (visibility.trees) {
         const stride = simplified
           ? (camera.distance > 1700 ? 8 : camera.distance > 1100 ? 6 : 4)
@@ -989,15 +1064,18 @@ export async function startScene(canvas, status) {
         for (const tree of trees) {
           // Stable hash selection keeps mature-looking clusters while avoiding
           // thousands of tiny crowns in the overview.
+          if (tree.onBuilding) continue;
           if (((tree.id * 1103515245 + 12345) >>> 0) % stride) continue;
           if (!isInView(tree.x, tree.value[1] + tree.value[4] * 0.5, tree.z, tree.radius, project, focal)) continue;
-          features.push({ ...tree, depth: tree.x * forward[0] + tree.z * forward[2] });
+          visibleTrees.push({
+            value: tree.value,
+            depth: tree.x * forward[0] + tree.z * forward[2],
+            focal,
+          });
         }
       }
-      features.sort((a, b) => b.depth - a.depth);
-      for (const feature of features) {
-        if (feature.kind === 'building') drawBuilding(feature.value, project);
-        else drawTree(feature.value, project, focal);
+      if (visibleBuildings.length || visibleTrees.length) {
+        drawBuildingsByDepth(visibleBuildings, project, visibleTrees);
       }
     } finally {
       context = mainContext;
