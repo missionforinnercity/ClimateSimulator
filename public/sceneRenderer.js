@@ -86,12 +86,13 @@ export async function startScene(canvas, status) {
   const sceneContext = sceneCanvas.getContext('2d', { alpha: false });
   let context = mainContext;
 
-  const [manifest, scene] = await Promise.all([
+  const [manifest, scene, canopyAsset] = await Promise.all([
     fetch('assets/manifest.json').then(response => response.json()),
     fetch('assets/fallback.json').then(response => {
       if (!response.ok) throw new Error('fallback scene asset is missing');
       return response.json();
     }),
+    fetch('assets/canopy.json').then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };
   const visibility = { terrain: true, grass: true, roads: true, buildings: true, trees: true };
@@ -136,6 +137,13 @@ export async function startScene(canvas, status) {
     // them as free-standing trees makes them appear to grow on rooftops.
     onBuilding: containingBuilding(value[0], value[2]) !== null,
   }));
+  const canopies = (canopyAsset.canopies || []).map(record => {
+    const [, ground, crownBase, crownTop, seed, rings] = record;
+    const outer = rings[0] || [];
+    const x = outer.reduce((sum, point) => sum + point[0], 0) / Math.max(1, outer.length);
+    const z = outer.reduce((sum, point) => sum + point[1], 0) / Math.max(1, outer.length);
+    return { record, ground, crownBase, crownTop, seed, rings, x, z };
+  });
   const treeGridSize = 60;
   const treeGrid = new Map();
   for (let id = 0; id < trees.length; id += 1) {
@@ -203,6 +211,7 @@ export async function startScene(canvas, status) {
     direction: Number(windDirection.value) || 135,
     season: windSeason.value || 'annual',
     speed: Number(windSpeed.value) || 10,
+    referenceHeight: 2,
     particles: [],
     moveMode: false,
     lastTime: performance.now(),
@@ -218,11 +227,22 @@ export async function startScene(canvas, status) {
   const sunTimeValue = document.querySelector('#sun-time-value');
   const sunGenerate = document.querySelector('#sun-generate');
   const sunStatus = document.querySelector('#sun-status');
+  const mitigationMethod = document.querySelector('#mitigation-method');
+  const mitigationAdd = document.querySelector('#mitigation-add');
+  const mitigationStatus = document.querySelector('#mitigation-status');
+  const mitigationList = document.querySelector('#mitigation-list');
+  const mitigationRun = document.querySelector('#mitigation-run');
+  const mitigationClear = document.querySelector('#mitigation-clear');
+  const mitigationCompare = document.querySelector('#mitigation-compare');
+  const mitigationResults = document.querySelector('#mitigation-results');
   const heatState = {
     enabled: Boolean(heatToggle?.checked),
     metric: heatMetric?.value || 'heat_model_lst_c',
     data: null,
+    baselineData: null,
   };
+  const mitigationState = { drawing: false, points: [], interventions: [], result: null, afterData: null };
+  const streetViewState = { placing: false, point: null };
   const shadowState = {
     enabled: Boolean(sunToggle?.checked),
     date: sunDate?.value || '2026-07-27',
@@ -272,9 +292,7 @@ export async function startScene(canvas, status) {
       visibility.grass = false;
       visibility.roads = false;
       visibility.buildings = true;
-      visibility.trees = false;
-      windState.enabled = false;
-      windToggle.checked = false;
+      visibility.trees = true;
     } else {
       Object.assign(visibility, savedVisibility);
       windState.enabled = windToggle.checked;
@@ -428,6 +446,7 @@ export async function startScene(canvas, status) {
       direction_deg: windState.direction,
       season: windState.season,
       reference_speed_mps: windState.speed,
+      reference_height_m: windState.referenceHeight,
       height_m: 2,
       resolution_m: 5,
     };
@@ -723,12 +742,18 @@ export async function startScene(canvas, status) {
       const response = await fetch(`${windApi}/heat/zones?metric=${encodeURIComponent(metric)}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       heatState.data = await response.json();
+      heatState.baselineData = heatState.data;
       const range = heatState.data.color_range || heatState.data.range;
-      heatLegendMin.textContent = range ? Number(range.min).toFixed(1) : '—';
-      heatLegendMax.textContent = range ? Number(range.max).toFixed(1) : '—';
+      const scale = heatState.data.color_scale || {};
+      heatLegendMin.textContent = range
+        ? `${scale.bottom_band_label || 'Bottom 10%'} ≤ ${Number(range.min).toFixed(1)}°C`
+        : 'Bottom 10%';
+      heatLegendMax.textContent = range
+        ? `${scale.top_band_label || 'Top 10%'} ≥ ${Number(range.max).toFixed(1)}°C`
+        : 'Top 10%';
       const window = heatState.data.window?.label || 'current product';
       heatStatus.textContent = heatState.data.count
-        ? `${heatState.data.count} heat zones · ${window}`
+        ? `${heatState.data.count} heat zones · ${window} · percentile colour scale`
         : 'No surface-temperature values in this product.';
     } catch (error) {
       heatState.data = null;
@@ -1016,10 +1041,15 @@ export async function startScene(canvas, status) {
       }
     }
     if (generationToken !== shadowGenerationToken) return;
-    shadowState.generated = { sun, buildingPolygons };
+    const canopyPolygons = [];
+    for (const canopy of canopies) {
+      const rings = canopy.rings.map(ring => ring.map(([x, z]) => shadowGroundPoint(x, canopy.crownTop, z, sun)));
+      if (rings[0]?.length >= 3) canopyPolygons.push({ rings, x: canopy.x, z: canopy.z });
+    }
+    shadowState.generated = { sun, buildingPolygons, canopyPolygons };
     sunGenerate.disabled = false;
     sunGenerate.textContent = 'Regenerate shadows';
-    sunStatus.textContent = `${buildingPolygons.length} optimized building shadows · ${Math.round(sun.altitude * 180 / Math.PI)}° sun altitude.`;
+    sunStatus.textContent = `${buildingPolygons.length} building + ${canopyPolygons.length} canopy shadows · ${Math.round(sun.altitude * 180 / Math.PI)}° sun altitude.`;
     requestRender();
   }
 
@@ -1037,6 +1067,13 @@ export async function startScene(canvas, status) {
     const ordered = signedArea < 0 ? points.slice().reverse() : points;
     target.moveTo(ordered[0][0], ordered[0][1]);
     for (let index = 1; index < ordered.length; index += 1) target.lineTo(ordered[index][0], ordered[index][1]);
+    target.closePath();
+  }
+
+  function appendRawPolygon(target, points) {
+    if (points.length < 3 || points.some(point => !point)) return;
+    target.moveTo(points[0][0], points[0][1]);
+    for (let index = 1; index < points.length; index += 1) target.lineTo(points[index][0], points[index][1]);
     target.closePath();
   }
 
@@ -1062,8 +1099,11 @@ export async function startScene(canvas, status) {
       if (simplified && screenRadius < 35) continue;
       appendSolidPolygon(groundShadows, polygon.points.map(project));
     }
+    for (const canopy of generated.canopyPolygons || []) {
+      for (const ring of canopy.rings) appendRawPolygon(groundShadows, ring.map(project));
+    }
     context.fillStyle = 'rgba(10, 18, 24, 0.76)';
-    context.fill(groundShadows);
+    context.fill(groundShadows, 'nonzero');
     context.restore();
   }
 
@@ -1388,6 +1428,33 @@ export async function startScene(canvas, status) {
     context.fill();
   }
 
+  function drawCanopyFootprints(project, forward) {
+    if (!visibility.trees || !canopies.length) return;
+    const buckets = Array.from({ length: 64 }, () => []);
+    const depths = canopies.map(canopy => canopy.x * forward[0] + canopy.z * forward[2]);
+    const minimum = Math.min(...depths);
+    const span = Math.max(1, Math.max(...depths) - minimum);
+    canopies.forEach((canopy, index) => {
+      const bucket = clamp(Math.floor((depths[index] - minimum) / span * 63), 0, 63);
+      buckets[bucket].push(canopy);
+    });
+    context.fillStyle = shadowState.enabled ? '#eef2ea' : (heatState.enabled ? '#55a84e' : '#2d653f');
+    context.strokeStyle = shadowState.enabled ? '#cad4c8' : '#183d28';
+    context.lineWidth = 0.5;
+    for (let bucket = buckets.length - 1; bucket >= 0; bucket -= 1) {
+      if (!buckets[bucket].length) continue;
+      const path = new Path2D();
+      for (const canopy of buckets[bucket]) {
+        for (const ring of canopy.rings) {
+          const points = ring.map(([x, z]) => project([x, canopy.crownTop, z]));
+          appendRawPolygon(path, points);
+        }
+      }
+      context.fill(path, 'nonzero');
+      context.stroke(path);
+    }
+  }
+
   function drawTerrain(projectPolygon) {
     const [left, bottom, right, top] = manifest.bounds;
     const minZ = -top;
@@ -1512,23 +1579,6 @@ export async function startScene(canvas, status) {
           });
         }
       }
-      if (visibility.trees) {
-        const stride = simplified
-          ? (camera.distance > 1700 ? 8 : camera.distance > 1100 ? 6 : 4)
-          : (camera.distance > 1700 ? 4 : camera.distance > 1100 ? 3 : 2);
-        for (const tree of trees) {
-          // Stable hash selection keeps mature-looking clusters while avoiding
-          // thousands of tiny crowns in the overview.
-          if (tree.onBuilding) continue;
-          if (((tree.id * 1103515245 + 12345) >>> 0) % stride) continue;
-          if (!isInView(tree.x, tree.value[1] + tree.value[4] * 0.5, tree.z, tree.radius, project, focal)) continue;
-          visibleTrees.push({
-            value: tree.value,
-            depth: tree.x * forward[0] + tree.z * forward[2],
-            focal,
-          });
-        }
-      }
       if (visibleBuildings.length || visibleTrees.length) {
         // Shadow study mode uses four batched facade-light bands plus a roof
         // fill, preserving useful building depth without per-wall draw calls.
@@ -1536,6 +1586,7 @@ export async function startScene(canvas, status) {
         else if (shadowState.enabled) drawBuildingsBatched(visibleBuildings, project, forward);
         else drawBuildingsByDepth(visibleBuildings, project, visibleTrees);
       }
+      drawCanopyFootprints(project, forward);
     } finally {
       context = mainContext;
     }
@@ -1555,10 +1606,160 @@ export async function startScene(canvas, status) {
     drawWindParticles(project);
     drawWindDirection(project);
     drawWindBox(project, projectPolygon);
+    if (mitigationState.drawing && mitigationState.points.length) {
+      const points = mitigationState.points.map(([x, z]) => project([x, terrainHeightAt(x, z) + 1, z])).filter(Boolean);
+      mainContext.strokeStyle = '#f5b85f';
+      mainContext.fillStyle = '#ffd28f';
+      mainContext.lineWidth = 2;
+      mainContext.beginPath();
+      points.forEach((point, index) => index ? mainContext.lineTo(point[0], point[1]) : mainContext.moveTo(point[0], point[1]));
+      mainContext.stroke();
+      for (const point of points) {
+        mainContext.beginPath();
+        mainContext.arc(point[0], point[1], 3, 0, Math.PI * 2);
+        mainContext.fill();
+      }
+    }
+    if (streetViewState.point) {
+      const [x, z] = streetViewState.point;
+      const base = project([x, terrainHeightAt(x, z) + 0.8, z]);
+      const head = project([x, terrainHeightAt(x, z) + 13, z]);
+      if (base && head) {
+        mainContext.strokeStyle = '#249ee9';
+        mainContext.lineWidth = 4;
+        mainContext.beginPath();
+        mainContext.moveTo(base[0], base[1]);
+        mainContext.lineTo(head[0], head[1]);
+        mainContext.stroke();
+        mainContext.fillStyle = '#70c7ff';
+        mainContext.strokeStyle = '#e5f6ff';
+        mainContext.lineWidth = 2;
+        mainContext.beginPath();
+        mainContext.arc(head[0], head[1], 7, 0, Math.PI * 2);
+        mainContext.fill();
+        mainContext.stroke();
+      }
+    }
+  }
+
+  const mitigationLabel = method => ({
+    added_canopy: 'Added canopy', constructed_shade: 'Constructed shade',
+    cool_pavement: 'Cool pavement', green_roof: 'Green roof',
+    canopy_protection: 'Protect canopy',
+  }[method] || method);
+
+  function renderMitigationList() {
+    mitigationList.innerHTML = '';
+    mitigationState.interventions.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.className = 'mitigation-item';
+      const value = ['added_canopy', 'constructed_shade'].includes(item.method) ? item.height_m : item.target_albedo;
+      row.innerHTML = `<span><label><input type="checkbox" ${item.visible ? 'checked' : ''}> ${mitigationLabel(item.method)}</label></span>
+        <input type="number" min="0.1" max="30" step="0.1" value="${value}">
+        <span><button type="button" data-action="duplicate">＋</button><button type="button" data-action="remove">×</button></span>`;
+      const checkbox = row.querySelector('input[type="checkbox"]');
+      const number = row.querySelector('input[type="number"]');
+      checkbox.addEventListener('change', () => { item.visible = checkbox.checked; mitigationRun.disabled = !mitigationState.interventions.some(entry => entry.visible); });
+      number.addEventListener('change', () => {
+        if (['added_canopy', 'constructed_shade'].includes(item.method)) item.height_m = Number(number.value);
+        else item.target_albedo = Number(number.value);
+      });
+      row.addEventListener('click', event => {
+        if (event.target.dataset.action === 'remove') mitigationState.interventions.splice(index, 1);
+        if (event.target.dataset.action === 'duplicate') mitigationState.interventions.splice(index + 1, 0, {
+          ...item, id: `intervention-${Date.now()}`, geometry: JSON.parse(JSON.stringify(item.geometry)),
+        });
+        renderMitigationList();
+      });
+      mitigationList.append(row);
+    });
+    mitigationRun.disabled = !mitigationState.interventions.some(item => item.visible);
+  }
+
+  function finishMitigationDrawing() {
+    if (mitigationState.points.length < 3) {
+      mitigationStatus.textContent = 'Add at least three points before closing.';
+      return;
+    }
+    const method = mitigationMethod.value;
+    mitigationState.interventions.push({
+      id: `intervention-${Date.now()}`, method, visible: true,
+      height_m: method === 'added_canopy' ? 8 : method === 'constructed_shade' ? 3 : 0,
+      target_albedo: 0.35,
+      geometry: { type: 'Polygon', coordinates: [[...mitigationState.points, mitigationState.points[0]]] },
+    });
+    mitigationState.drawing = false;
+    mitigationState.points = [];
+    mitigationAdd.classList.remove('active');
+    mitigationAdd.setAttribute('aria-pressed', 'false');
+    mitigationAdd.textContent = 'Draw intervention';
+    mitigationStatus.textContent = `${mitigationLabel(method)} added · compare when ready.`;
+    renderMitigationList();
+    requestRender();
+  }
+
+  async function runMitigationPreview() {
+    const interventions = mitigationState.interventions.filter(item => item.visible);
+    if (!interventions.length) return;
+    mitigationRun.disabled = true;
+    mitigationRun.textContent = 'Estimating…';
+    try {
+      const response = await fetch(`${windApi}/mitigations/preview`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ interventions, sun_date: shadowState.date, sun_minutes: shadowState.minutes, baseline_metric: 'heat_model_lst_c' }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      mitigationState.result = payload;
+      mitigationState.afterData = {
+        ...(heatState.baselineData || {}),
+        features: payload.zones.map(zone => ({ geometry: zone.geometry, value: zone.estimates.central.surface_temperature_c })),
+        count: payload.zones.length,
+      };
+      const central = payload.summary.estimates.central;
+      mitigationResults.hidden = false;
+      mitigationResults.innerHTML = `<span><b>${Math.round(payload.summary.treated_area_m2).toLocaleString()} m²</b>Treated</span>
+        <span><b>${Math.round(payload.summary.affected_area_m2).toLocaleString()} m²</b>Affected</span>
+        <span><b>${central.mean_surface_reduction_c.toFixed(1)}°C</b>Surface relief</span>
+        <span><b>${central.mean_pedestrian_reduction_c.toFixed(1)}°C</b>Pedestrian relief</span>`;
+      mitigationStatus.textContent = payload.warnings.length ? payload.warnings.join(' ') : `${payload.summary.affected_zone_count} affected heat zones · ${payload.version}`;
+      mitigationCompare.value = 'after';
+      heatState.data = mitigationState.afterData;
+      heatToggle.checked = true;
+      setHeatMode(true);
+    } catch (error) {
+      mitigationStatus.textContent = `Impact estimate unavailable (${error.message})`;
+    } finally {
+      mitigationRun.disabled = false;
+      mitigationRun.textContent = 'Compare impact';
+    }
   }
 
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('pointerdown', event => {
+    if (streetViewState.placing && event.button === 0) {
+      const { screenToPlane } = cameraProjection();
+      const ground = screenToPlane(event.clientX, event.clientY, terrainHeightAt(camera.target[0], camera.target[2]));
+      if (ground) {
+        streetViewState.placing = false;
+        streetViewState.point = [Number(ground[0].toFixed(3)), Number(ground[1].toFixed(3))];
+        dispatchEvent(new CustomEvent('climate-streetview-point', {
+          detail: { x: streetViewState.point[0], z: streetViewState.point[1] },
+        }));
+        requestRender();
+      }
+      return;
+    }
+    if (mitigationState.drawing && event.button === 0) {
+      const { screenToPlane } = cameraProjection();
+      const ground = screenToPlane(event.clientX, event.clientY, terrainHeightAt(camera.target[0], camera.target[2]));
+      if (ground) {
+        mitigationState.points.push([Number(ground[0].toFixed(2)), Number(ground[1].toFixed(2))]);
+        mitigationStatus.textContent = `${mitigationState.points.length} points · double-click to close.`;
+        requestRender();
+      }
+      return;
+    }
     if (windState.enabled && windState.moveMode) {
       const { project, screenToPlane } = cameraProjection();
       const bounds = windBoxScreenBounds(project);
@@ -1638,7 +1839,18 @@ export async function startScene(canvas, status) {
     markInteraction();
     requestRender();
   }, { passive: false });
-  canvas.addEventListener('dblclick', fitScene);
+  canvas.addEventListener('dblclick', event => {
+    if (mitigationState.drawing) {
+      event.preventDefault();
+      if (mitigationState.points.length > 3) {
+        const last = mitigationState.points.at(-1), previous = mitigationState.points.at(-2);
+        if (Math.hypot(last[0] - previous[0], last[1] - previous[1]) < 2) mitigationState.points.pop();
+      }
+      finishMitigationDrawing();
+    } else {
+      fitScene();
+    }
+  });
   document.querySelector('#fit').addEventListener('click', fitScene);
   document.querySelectorAll('[data-layer]').forEach(input => input.addEventListener('change', event => {
     visibility[event.target.dataset.layer] = event.target.checked;
@@ -1647,16 +1859,12 @@ export async function startScene(canvas, status) {
 
   windToggle.addEventListener('change', event => {
     windState.enabled = event.target.checked;
-    if (windState.enabled && shadowState.enabled) {
-      shadowState.enabled = false;
-      if (sunToggle) sunToggle.checked = false;
-      document.body.classList.remove('sun-mode');
-    }
     windStatus.textContent = windState.enabled ? '3D domain ready · drag it, then simulate.' : 'Wind display hidden.';
     requestRender();
   });
   windDirection.addEventListener('change', event => {
     windState.direction = Number(event.target.value);
+    windState.referenceHeight = 2;
     windState.field = null;
     windState.particles = [];
     windStatus.textContent = 'Direction changed · click Simulate wind.';
@@ -1671,6 +1879,7 @@ export async function startScene(canvas, status) {
   });
   windSpeed.addEventListener('input', event => {
     windState.speed = Number(event.target.value);
+    windState.referenceHeight = 2;
     windSpeedValue.textContent = windState.speed.toFixed(1);
   });
   windSize.addEventListener('input', event => {
@@ -1710,12 +1919,93 @@ export async function startScene(canvas, status) {
   // input handler above deliberately performs no canvas work.
   sunTime?.addEventListener('change', requestRender);
   sunGenerate?.addEventListener('click', generateShadows);
+  mitigationAdd?.addEventListener('click', () => {
+    mitigationState.drawing = !mitigationState.drawing;
+    mitigationState.points = [];
+    mitigationAdd.classList.toggle('active', mitigationState.drawing);
+    mitigationAdd.setAttribute('aria-pressed', String(mitigationState.drawing));
+    mitigationAdd.textContent = mitigationState.drawing ? 'Cancel drawing' : 'Draw intervention';
+    mitigationStatus.textContent = mitigationState.drawing ? 'Click terrain points, then double-click to close.' : 'Drawing cancelled.';
+    requestRender();
+  });
+  mitigationRun?.addEventListener('click', runMitigationPreview);
+  mitigationClear?.addEventListener('click', () => {
+    mitigationState.drawing = false;
+    mitigationState.points = [];
+    mitigationState.interventions = [];
+    mitigationState.result = null;
+    mitigationState.afterData = null;
+    mitigationList.innerHTML = '';
+    mitigationResults.hidden = true;
+    mitigationRun.disabled = true;
+    mitigationCompare.value = 'before';
+    heatState.data = heatState.baselineData;
+    mitigationStatus.textContent = 'Choose a method, draw at least three points, then double-click to close.';
+    requestRender();
+  });
+  mitigationCompare?.addEventListener('change', () => {
+    if (mitigationCompare.value === 'after' && !mitigationState.afterData) {
+      mitigationCompare.value = 'before';
+      mitigationStatus.textContent = 'Run Compare impact before switching to the after map.';
+    }
+    heatState.data = mitigationCompare.value === 'after' ? mitigationState.afterData : heatState.baselineData;
+    requestRender();
+  });
+  addEventListener('climate-streetview-mode', event => {
+    streetViewState.placing = Boolean(event.detail?.enabled);
+    if (streetViewState.placing && mitigationState.drawing) {
+      mitigationState.drawing = false;
+      mitigationState.points = [];
+      mitigationAdd.classList.remove('active');
+      mitigationAdd.setAttribute('aria-pressed', 'false');
+      mitigationAdd.textContent = 'Draw intervention';
+    }
+    canvas.style.cursor = streetViewState.placing ? 'crosshair' : 'grab';
+    requestRender();
+  });
+  addEventListener('climate-streetview-clear', () => {
+    streetViewState.placing = false;
+    streetViewState.point = null;
+    canvas.style.cursor = 'grab';
+    requestRender();
+  });
+  addEventListener('climate-current-weather', event => {
+    const weather = event.detail || {};
+    const valid = new Date(weather.valid_at);
+    if (!Number.isNaN(valid.getTime())) {
+      shadowState.date = valid.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(valid);
+      const hour = Number(parts.find(part => part.type === 'hour')?.value || 12);
+      const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+      shadowState.minutes = Math.round((hour * 60 + minute) / 10) * 10;
+      sunDate.value = shadowState.date;
+      sunTime.value = String(clamp(shadowState.minutes, Number(sunTime.min), Number(sunTime.max)));
+      shadowState.minutes = Number(sunTime.value);
+    }
+    windState.direction = Number(weather.wind_direction_10m_deg) || 0;
+    windState.speed = Math.max(0, Number(weather.wind_speed_10m_mps) || 0);
+    windState.referenceHeight = 10;
+    windSpeed.value = String(clamp(windState.speed, Number(windSpeed.min), Number(windSpeed.max)));
+    windSpeedValue.textContent = windState.speed.toFixed(1);
+    shadowState.generated = null;
+    shadowGenerationToken += 1;
+    sunGenerate.disabled = false;
+    sunGenerate.textContent = 'Generate shadows';
+    updateSunStatus();
+    windState.field = null;
+    windState.particles = [];
+    updateWindLegend();
+    windStatus.textContent = `Current forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
+    requestRender();
+  });
 
   addEventListener('resize', requestRender);
 
   fitScene();
   applyViewFromUrl();
-  status.textContent = `${scene.buildings.length} buildings · ${scene.trees.length} trees · ${roads.length} OSM roads · Canvas 2D compatibility`;
+  status.textContent = `${scene.buildings.length} buildings · ${canopies.length} canopy footprints · ${roads.length} OSM roads · Canvas 2D compatibility`;
   windToggle.checked = true;
   windStatus.textContent = 'Choose Move / resize domain to position the orange box.';
   requestRender();

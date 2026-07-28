@@ -23,12 +23,32 @@
         <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
         <label><input type="checkbox" data-layer="trees" checked> Trees</label>
       </div>
+      <section class="streetview-panel" aria-label="Street View location pin">
+        <div class="streetview-heading"><span>Street View pin</span><span class="pin-badge">Google Maps</span></div>
+        <p id="streetview-status" class="streetview-status">Drop a pin on the terrain to create a Street View link.</p>
+        <div class="streetview-actions">
+          <button id="streetview-drop" class="secondary" type="button" aria-pressed="false">Drop pin</button>
+          <button id="streetview-clear" class="secondary" type="button" disabled>Clear</button>
+        </div>
+        <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open nearest Street View ↗</a>
+        <p class="panel-note">The link opens the panorama nearest to the selected point when Google imagery is available.</p>
+      </section>
+      <section class="current-panel" aria-label="Current Cape Town conditions">
+        <div class="current-heading"><span>Current conditions</span><span id="current-freshness" class="freshness">Not loaded</span></div>
+        <p id="current-status" class="current-status">Modelled Cape Town CBD conditions are available on demand.</p>
+        <div id="current-metrics" class="current-metrics" hidden></div>
+        <div class="current-actions">
+          <button id="current-apply" type="button">Set current values</button>
+          <button id="current-refresh" class="secondary" type="button">Refresh</button>
+        </div>
+        <p class="panel-note">Open-Meteo modelled conditions · not a weather-station observation</p>
+      </section>
       <section class="heat-panel" aria-label="Heat overlay controls">
         <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox" checked> Show</label></div>
-        <p class="heat-metric-label">Surface temperature</p>
+        <p class="heat-metric-label">Surface temperature · Summer 2025–26 baseline — not live</p>
         <p id="heat-status" class="heat-status">Loading heat zones…</p>
         <div class="heat-gradient"></div>
-        <div class="heat-legend-labels"><span id="heat-legend-min">—</span><span id="heat-legend-max">—</span></div>
+        <div class="heat-legend-labels"><span id="heat-legend-min">Bottom 10%</span><span id="heat-legend-max">Top 10%</span></div>
       </section>
       <section class="sun-panel" aria-label="Sunlight and shadow controls">
         <div class="sun-heading"><span>Sunlight &amp; shadows</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
@@ -36,7 +56,7 @@
           <input id="sun-date" type="date" value="2026-07-27">
         </label>
         <label>Time <span id="sun-time-value">12:00</span>
-          <input id="sun-time" type="range" min="300" max="1170" step="10" value="720">
+          <input id="sun-time" type="range" min="0" max="1430" step="10" value="720">
         </label>
         <button id="sun-generate" type="button">Generate shadows</button>
         <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
@@ -82,12 +102,39 @@
           <div class="wind-legend-labels"><span><b id="wind-legend-min">0.0</b> m/s · low</span><span><b id="wind-legend-max">—</b> m/s · high</span></div>
         </div>
       </section>
+      <section class="mitigation-panel" aria-label="Heat mitigation planning controls">
+        <div class="mitigation-heading"><span>Mitigation planner</span><span class="estimate-badge">Estimate</span></div>
+        <label>Method
+          <select id="mitigation-method">
+            <option value="added_canopy">Added mature canopy</option>
+            <option value="constructed_shade">Constructed shade</option>
+            <option value="cool_pavement">Cool pavement</option>
+            <option value="green_roof">Green roof</option>
+            <option value="canopy_protection">Protect existing canopy</option>
+          </select>
+        </label>
+        <button id="mitigation-add" class="secondary" type="button" aria-pressed="false">Draw intervention</button>
+        <p id="mitigation-status" class="mitigation-status">Choose a method, draw at least three points, then double-click to close.</p>
+        <div id="mitigation-list" class="mitigation-list"></div>
+        <div class="mitigation-actions">
+          <button id="mitigation-run" type="button" disabled>Compare impact</button>
+          <button id="mitigation-clear" class="secondary" type="button">Clear</button>
+        </div>
+        <label>Map
+          <select id="mitigation-compare">
+            <option value="before">Before · summer baseline</option>
+            <option value="after">After · central estimate</option>
+          </select>
+        </label>
+        <div id="mitigation-results" class="mitigation-results" hidden></div>
+        <p class="panel-note">Planning estimate—not measured or engineering-grade.</p>
+      </section>
       <button id="fit">Fit to CBD</button>
       <p id="status" class="status">Loading scene…</p>
       <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
       <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
     </aside>
   </main>
-  <script type="module" src="app.js?v=webgl-12"></script>
+  <script type="module" src="app.js?v=webgl-13"></script>
 </body>
 </html>

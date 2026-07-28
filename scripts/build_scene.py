@@ -12,7 +12,7 @@ import numpy as np
 import rasterio
 from pyproj import Transformer
 from scipy.ndimage import distance_transform_edt
-from shapely.geometry import LineString, Point, box, shape
+from shapely.geometry import LineString, Point, Polygon, box, shape
 from shapely.ops import transform as transform_geometry
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
@@ -153,6 +153,98 @@ def build_tree_instances(tree_path, height_path, dtm_path, origin_x, origin_y):
     return instances
 
 
+def build_canopy_records(tree_path, height_path, dtm_path, origin_x, origin_y):
+    """Preserve source canopy components and attach robust LiDAR crown heights.
+
+    Each compact record is:
+      [source_id, ground_y, crown_base_y, crown_top_y, seed, [outer, ...holes]]
+    Rings use viewer-local [x, z] metres and omit the repeated closing vertex.
+    """
+    with rasterio.open(height_path) as height_source, rasterio.open(dtm_path) as dtm_source:
+        surface_raster = height_source.read(1, masked=True)
+        surface = fill_nearest(surface_raster.filled(0.0).astype(np.float32), ~np.asarray(surface_raster.mask))
+        surface_transform = height_source.transform
+        dtm_raster = dtm_source.read(1, masked=True)
+        dtm = fill_nearest(dtm_raster.filled(0.0).astype(np.float32), ~np.asarray(dtm_raster.mask))
+        dtm_transform = dtm_source.transform
+        clip = box(*dtm_source.bounds)
+    collection = json.loads(tree_path.read_text(encoding="utf-8"))
+    transformer = Transformer.from_crs("EPSG:3857", LOCAL_CRS, always_xy=True)
+    records = []
+    source_area = 0.0
+    exported_area = 0.0
+
+    for feature_index, feature in enumerate(collection.get("features", [])):
+        geometry = transform_geometry(
+            lambda x, y, z=None: transformer.transform(x, y),
+            shape(feature["geometry"]),
+        ).intersection(clip)
+        parts = geometry.geoms if geometry.geom_type == "MultiPolygon" else (geometry,)
+        source_id = (feature.get("properties") or {}).get("fid", feature_index)
+        for part_index, polygon in enumerate(parts):
+            if polygon.is_empty or polygon.area < 1.0:
+                continue
+            original_polygon = polygon
+            source_area += original_polygon.area
+            # 0.25 m keeps aggregate canopy area drift below 2% for the
+            # supplied layer while still removing most survey noise.
+            simplified = polygon.simplify(0.25, preserve_topology=True)
+            # Preserve small but valid source components when a fixed
+            # simplification tolerance would collapse too much of their area.
+            polygon = simplified if not simplified.is_empty and simplified.area >= 1.0 else original_polygon
+            representative = polygon.representative_point()
+            sample_points = [representative, polygon.centroid]
+            boundary = list(polygon.exterior.coords)[:-1]
+            if boundary:
+                stride = max(1, len(boundary) // 8)
+                sample_points.extend(Point(*boundary[index]) for index in range(0, len(boundary), stride))
+            grounds = [
+                sample(dtm, dtm_transform, point.x, point.y, default=float("nan"))
+                for point in sample_points
+            ]
+            grounds = [value for value in grounds if math.isfinite(value)]
+            if not grounds:
+                ground = float(np.percentile(dtm, 2))
+            else:
+                ground = float(np.median(grounds))
+            lidar_heights = []
+            for point in sample_points:
+                point_ground = sample(dtm, dtm_transform, point.x, point.y, default=float("nan"))
+                point_surface = sample_median(surface, surface_transform, point.x, point.y, radius=2)
+                if math.isfinite(point_ground) and math.isfinite(point_surface):
+                    lidar_heights.append(point_surface - point_ground)
+            plausible = [value for value in lidar_heights if 3.0 <= value <= 18.0]
+            fallback_height = 4.5 + min(10.0, math.sqrt(polygon.area) * 0.25)
+            height = float(np.percentile(plausible, 75)) if plausible else fallback_height
+            height = max(4.0, min(18.0, height))
+            rings = []
+            for ring in [polygon.exterior, *polygon.interiors]:
+                coordinates = [
+                    [round(x - origin_x, 1), round(-(y - origin_y), 1)]
+                    for x, y in list(ring.coords)[:-1]
+                ]
+                if len(coordinates) >= 3:
+                    rings.append(coordinates)
+            if not rings:
+                continue
+            exported_area += Polygon(rings[0], rings[1:]).area
+            seed = (int(source_id) * 2654435761 + part_index * 2246822519) & 0xFFFFFFFF
+            records.append([
+                int(source_id),
+                round(ground, 1),
+                round(ground + height * 0.54, 1),
+                round(ground + height, 1),
+                seed,
+                rings,
+            ])
+    return {
+        "canopies": records,
+        "source_area_m2": round(source_area, 2),
+        "exported_area_m2": round(exported_area, 2),
+        "area_drift_pct": round(abs(exported_area - source_area) / max(source_area, 1.0) * 100, 4),
+    }
+
+
 def load_building_records(footprints_path, height_path, dtm_path):
     """Yield (ground, height, polygon) per building footprint, in raw local CRS.
 
@@ -224,6 +316,22 @@ def build_canvas_fallback(footprints_path, height_path, dtm_path, roads_path, gr
     return {"buildings": len(buildings), "trees": len(trees), "roads": len(roads), "grass": len(grass), "bytes": output.stat().st_size}
 
 
+def write_canopy_asset(asset, output):
+    output.write_text(
+        json.dumps({
+            "version": 1,
+            "format": "[source_id,ground_y,crown_base_y,crown_top_y,seed,rings]",
+            **asset,
+        }, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    return {
+        "components": len(asset["canopies"]),
+        "area_drift_pct": asset["area_drift_pct"],
+        "bytes": output.stat().st_size,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dtm", type=Path, default=Path("data/raw/LiDAR2025/LiDAR2025_2m_DTM.tif"))
@@ -239,9 +347,11 @@ def main():
         origin_x = (source.bounds.left + source.bounds.right) / 2.0
         origin_y = (source.bounds.bottom + source.bounds.top) / 2.0
         bounds = source.bounds
-    manifest = {"version": 1, "crs": "custom Hartbeesthoek94 Lo19 east/north grid", "origin": [origin_x, origin_y], "bounds": [bounds.left - origin_x, bounds.bottom - origin_y, bounds.right - origin_x, bounds.top - origin_y], "layers": {}, "assets": {"fallback": "fallback.json"}}
+    manifest = {"version": 2, "crs": "custom Hartbeesthoek94 Lo19 east/north grid", "origin": [origin_x, origin_y], "bounds": [bounds.left - origin_x, bounds.bottom - origin_y, bounds.right - origin_x, bounds.top - origin_y], "layers": {}, "assets": {"fallback": "fallback.json", "canopy": "canopy.json"}}
     instances = build_tree_instances(args.trees, args.height, args.dtm, origin_x, origin_y)
+    canopies = build_canopy_records(args.trees, args.height, args.dtm, origin_x, origin_y)
     manifest["layers"]["fallback"] = build_canvas_fallback(args.footprints, args.height, args.dtm, args.roads, args.green, instances, args.out / "fallback.json", origin_x, origin_y)
+    manifest["layers"]["canopy"] = write_canopy_asset(canopies, args.out / "canopy.json")
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
 

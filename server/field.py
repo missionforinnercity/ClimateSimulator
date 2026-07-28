@@ -69,6 +69,7 @@ class PreviewRequest:
     direction_deg: float
     season: str
     reference_speed_mps: float
+    reference_height_m: float
     height_m: float
     resolution_m: float
 
@@ -226,6 +227,8 @@ def request_from_payload(payload: dict[str, Any], config: dict[str, Any]) -> Pre
     resolution_m = min(20.0, max(2.0, float(payload.get("resolution_m", 5.0))))
     reference_speed_mps = min(50.0, max(0.0, float(payload.get("reference_speed_mps", 10.0))))
     height_m = min(10.0, max(1.0, float(payload.get("height_m", 2.0))))
+    reference_height_value = payload.get("reference_height_m")
+    reference_height_m = min(100.0, max(1.0, float(reference_height_value if reference_height_value is not None else height_m)))
     if bbox is None and center_local is None:
         center_local = (0.0, 0.0)
     return PreviewRequest(
@@ -235,6 +238,7 @@ def request_from_payload(payload: dict[str, Any], config: dict[str, Any]) -> Pre
         direction_deg=direction_deg,
         season=season,
         reference_speed_mps=reference_speed_mps,
+        reference_height_m=reference_height_m,
         height_m=height_m,
         resolution_m=resolution_m,
     )
@@ -360,6 +364,11 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
     regional_field = load_regional_field(request.direction_deg)
     cbd_field = load_cbd_field(request.direction_deg)
     tree = STRtree([feature["local_geometry"] for feature in polygons]) if polygons else None
+    # A neutral urban power-law profile converts a 10 m weather forcing to the
+    # requested pedestrian level. Manual requests remain unchanged because
+    # reference_height_m defaults to height_m.
+    height_factor = (request.height_m / request.reference_height_m) ** 0.33
+    output_reference_speed = request.reference_speed_mps * height_factor
     u, v, speed = [], [], []
     for row in range(height):
         z = min_z + (row + 0.5) * dz
@@ -377,7 +386,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
                 # replacing it, since both shape the same arriving wind.
                 point_flow_x, point_flow_z, cbd_factor = sample_terrain_flow(cbd_field, x, z)
                 terrain_speed_factor *= min(cbd_factor, 2.5)
-            local_speed = request.reference_speed_mps * factor * terrain_speed_factor
+            local_speed = output_reference_speed * factor * terrain_speed_factor
             u.append(point_flow_x * local_speed)
             v.append(point_flow_z * local_speed)
             speed.append(local_speed)
@@ -400,7 +409,9 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         "direction_deg": request.direction_deg,
         "season": request.season,
         "height_m": request.height_m,
+        "reference_height_m": request.reference_height_m,
         "reference_speed_mps": request.reference_speed_mps,
+        "height_adjusted_reference_speed_mps": output_reference_speed,
         "u": u,
         "v": v,
         "speed": speed,

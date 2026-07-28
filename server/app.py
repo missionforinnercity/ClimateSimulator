@@ -25,6 +25,9 @@ from .field import (
     request_from_payload,
 )
 from .heat import HEAT_METRICS, heat_zones
+from .mitigation import mitigation_preview
+from .location import streetview_location
+from .weather import current_weather
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(title="Cape Town Wind Explorer API", version="0.1.0")
@@ -43,8 +46,16 @@ class PreviewPayload(BaseModel):
     direction_deg: float = Field(default=135.0, ge=0.0, lt=360.0)
     season: str = "annual"
     reference_speed_mps: float = Field(default=10.0, ge=0.0, le=50.0)
+    reference_height_m: float | None = Field(default=None, ge=1.0, le=100.0)
     height_m: float = Field(default=2.0, ge=1.0, le=10.0)
     resolution_m: float = Field(default=5.0, ge=2.0, le=20.0)
+
+
+class MitigationPayload(BaseModel):
+    interventions: list[dict[str, Any]]
+    sun_date: str = "2026-01-15"
+    sun_minutes: int = Field(default=720, ge=0, lt=1440)
+    baseline_metric: str = "heat_model_lst_c"
 
 
 @app.get("/api/health")
@@ -55,6 +66,22 @@ def health() -> dict[str, str]:
 @app.get("/api/heat/metrics")
 def heat_metrics() -> dict[str, Any]:
     return {"metrics": [{"key": key, "label": label} for key, label in HEAT_METRICS.items()]}
+
+
+@app.get("/api/weather/current")
+def weather_current(refresh: bool = False) -> dict[str, Any]:
+    try:
+        return current_weather(force=refresh)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/location/streetview")
+def location_streetview(x: float, z: float) -> dict[str, Any]:
+    try:
+        return streetview_location(x, z)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @app.get("/api/heat/zones")
@@ -99,6 +126,16 @@ def preview(payload: PreviewPayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"wind data unavailable: {error}") from error
+
+
+@app.post("/api/mitigations/preview")
+def mitigations_preview(payload: MitigationPayload) -> dict[str, Any]:
+    try:
+        return mitigation_preview(payload.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"mitigation preview unavailable: {error}") from error
 
 
 @app.get("/api/wind/field/{direction}/{tile}")

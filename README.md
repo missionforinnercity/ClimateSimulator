@@ -9,7 +9,8 @@ python scripts/build_scene.py
 ```
 
 This writes `public/assets/fallback.json` (the footprint/tree/road/grass scene
-data) and `public/assets/manifest.json`. The viewer uses a vendored, pinned
+data), `public/assets/canopy.json` (the footprint-preserving LiDAR canopy),
+and `public/assets/manifest.json`. The viewer uses a vendored, pinned
 Three.js WebGL renderer for the city, terrain-following wind heatmaps, white
 GPU gusts, heat geometry, and directional-light shadow maps. The existing
 Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
@@ -20,6 +21,8 @@ outline approximation. The shadow map is regenerated only when **Generate
 shadows** is clicked after changing the date or time; orbiting the camera reuses
 the GPU depth texture. A dedicated shadow-catching terrain layer keeps the
 ground shadows solid and visually separate from building surface lighting.
+Canopy shadows use all clipped components from `tree_canopy.geojson`, including
+holes, rather than sampled ellipsoid crowns.
 
 ## Run locally
 
@@ -53,6 +56,22 @@ the simplified vector `heat_model_lst_c` zones on the scene ground. Heat mode
 focuses the view on white buildings, green trees, and the heat surface; the
 database `climate.heat_zones` table remains a fallback when the local product
 is absent.
+
+## Current conditions and mitigation planning
+
+Run the FastAPI application to enable **Current conditions**. The server
+proxies and normalizes Open-Meteo's modelled Cape Town CBD weather, caches it
+for ten minutes, and retains the last successful value when a refresh fails.
+Activating Current updates Cape Town local sun time and shadows, then uses the
+10 m wind as forcing for the exploratory 2 m pedestrian wind field. Set
+`WEATHER_API_BASE_URL` to use a compatible paid or self-hosted endpoint.
+
+The current weather is not a station observation, and the heat layer remains
+the explicitly labelled Summer 2025–26 baseline. The **Mitigation planner**
+accepts drawn polygons for added canopy, constructed shade, cool pavement,
+green roofs, and existing-canopy protection. Before/after temperature and
+pedestrian-exposure outputs are low/central/high planning estimates, not
+measurements or engineering-grade results.
 
 Install the API dependencies with:
 

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "crs": "custom Hartbeesthoek94 Lo19 east/north grid",
   "origin": [
     -53344.592859971526,
@@ -18,9 +18,15 @@
       "roads": 3048,
       "grass": 142,
       "bytes": 828691
+    },
+    "canopy": {
+      "components": 4591,
+      "area_drift_pct": 1.6865,
+      "bytes": 1088168
     }
   },
   "assets": {
-    "fallback": "fallback.json"
+    "fallback": "fallback.json",
+    "canopy": "canopy.json"
   }
 }

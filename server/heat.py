@@ -23,6 +23,13 @@ HEAT_METRICS = {
     "heat_model_lst_c": "Surface temperature",
 }
 HEAT_COLOR_PERCENTILES = {"heat_model_lst_c": (0.10, 0.90)}
+HEAT_COLOR_SCALE = {
+    "mode": "percentile_clipped_gradient",
+    "bottom_percentile": 10,
+    "top_percentile": 90,
+    "bottom_band_label": "Bottom 10%",
+    "top_band_label": "Top 10%",
+}
 
 
 def _scene_to_web_box(bounds: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -170,6 +177,7 @@ def heat_zones(metric: str) -> dict[str, Any]:
         "features": features,
         "range": data["ranges"].get(metric),
         "color_range": data["color_ranges"].get(metric),
+        "color_scale": HEAT_COLOR_SCALE,
         "count": len(features),
         "source": data["source"],
         "window": data["window"],
