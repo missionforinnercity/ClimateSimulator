@@ -9,24 +9,30 @@ function freshCanvas() {
   canvas = replacement;
 }
 
-function loadScene() {
+async function loadScene() {
   status.textContent = 'Loading scene…';
   const guide = document.querySelector('#wind-box-guide');
   if (guide) guide.hidden = false;
-  import('./sceneRenderer.js?v=52')
-    .then(module => module.startScene(canvas, status))
-    .then(() => {
-      const guide = document.querySelector('#wind-box-guide');
-      if (guide) guide.hidden = true;
-      windContext.clearRect(0, 0, windCanvas.width, windCanvas.height);
-    })
-    .catch(error => {
-      console.error(error);
-      status.textContent = `Compatibility view failed: ${error.message}`;
-    });
+  try {
+    const module = await import('./webglRenderer.js?v=12');
+    await module.startWebGLScene(canvas, status);
+  } catch (webglError) {
+    console.warn('WebGL renderer unavailable; loading Canvas fallback:', webglError);
+    status.textContent = 'GPU renderer unavailable · loading compatibility view…';
+    freshCanvas();
+    try {
+      const module = await import('./sceneRenderer.js?v=52');
+      await module.startScene(canvas, status);
+    } catch (fallbackError) {
+      console.error(fallbackError);
+      status.textContent = `Viewer failed: ${fallbackError.message}`;
+      return;
+    }
+  }
+  const currentGuide = document.querySelector('#wind-box-guide');
+  if (currentGuide) currentGuide.hidden = true;
+  windContext.clearRect(0, 0, windCanvas.width, windCanvas.height);
 }
 
-// WebGL rendering was unreliable across browsers/GPUs in this environment, so
-// the viewer always uses the Canvas 2D compatibility renderer.
 freshCanvas();
 loadScene();

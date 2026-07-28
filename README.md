@@ -9,8 +9,17 @@ python scripts/build_scene.py
 ```
 
 This writes `public/assets/fallback.json` (the footprint/tree/road/grass scene
-data) and `public/assets/manifest.json`. The viewer renders everything with
-Canvas 2D — there is no WebGL/GPU mesh path.
+data) and `public/assets/manifest.json`. The viewer uses a vendored, pinned
+Three.js WebGL renderer for the city, terrain-following wind heatmaps, white
+GPU gusts, heat geometry, and directional-light shadow maps. The existing
+Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
+is unavailable.
+
+Sun shadows use the complete building footprint geometry rather than a convex
+outline approximation. The shadow map is regenerated only when **Generate
+shadows** is clicked after changing the date or time; orbiting the camera reuses
+the GPU depth texture. A dedicated shadow-catching terrain layer keeps the
+ground shadows solid and visually separate from building surface lighting.
 
 ## Run locally
 
@@ -33,8 +42,10 @@ Open http://localhost:8000. The Wind explorer supports an explicitly editable
 analysis domain, directional and seasonal scenarios, a speed slider, and a
 particle-first flow display without a blocky raster overlay. Clicking the city
 normally orbits the camera; use **Move / resize domain** when repositioning the
-box. Existing flow remains visible while editing and changes only when
-**Simulate wind** is clicked.
+box, or drag its corner handle to resize it. Gusts are constrained to free
+pedestrian ground and use a wall-normal/tangential response to slide around
+building footprints. Editing clears the old field; click **Simulate wind** to
+calculate the new domain.
 
 The **Urban heat** layer reads the generated local product in
 `data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a

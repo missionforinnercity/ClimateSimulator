@@ -76,8 +76,17 @@ def local_green_areas(green_path, clip):
                 yield polygon
 
 
-def canvas_terrain_grid(dtm, transform, bounds, origin_x, origin_y, size=32):
-    """A small elevation grid grounds the Canvas2D compatibility renderer."""
+def canvas_terrain_grid(dtm, transform, bounds, origin_x, origin_y, size=128):
+    """An elevation grid grounds the renderer's roads and terrain mesh.
+
+    The CBD climbs almost 50m from the harbour toward the mountain, and a
+    single grid cell at the old size=32 spanned ~65m x ~58m - wide enough for
+    the DTM to vary by several metres within one cell. Roads and the terrain
+    mesh are draped on this bilinearly-interpolated grid, while buildings use
+    a direct per-building DTM sample, so that coarse grid made roads drift
+    vertically relative to nearby building bases and visibly cut through
+    rooftops on sloped blocks.
+    """
     left, bottom, right, top = bounds
     heights = []
     for row in range(size):

@@ -40,7 +40,7 @@
         </label>
         <button id="sun-generate" type="button">Generate shadows</button>
         <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
-        <p class="sun-note">Optimized hard-edged building shade · LiDAR terrain</p>
+        <p class="sun-note">GPU shadow map · exact building geometry · LiDAR terrain</p>
       </section>
       <section class="wind-panel" aria-label="Wind simulation controls">
         <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox" checked> Show</label></div>
@@ -88,6 +88,6 @@
       <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
     </aside>
   </main>
-  <script type="module" src="app.js?v=canvas-only-9"></script>
+  <script type="module" src="app.js?v=webgl-12"></script>
 </body>
 </html>
