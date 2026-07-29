@@ -424,6 +424,7 @@ export async function startWebGLScene(canvas, status) {
   const windLegendMin = document.querySelector('#wind-legend-min');
   const windLegendMax = document.querySelector('#wind-legend-max');
   const mitigationMethod = document.querySelector('#mitigation-method');
+  const mitigationMethodNote = document.querySelector('#mitigation-method-note');
   const mitigationAdd = document.querySelector('#mitigation-add');
   const mitigationStatus = document.querySelector('#mitigation-status');
   const mitigationList = document.querySelector('#mitigation-list');
@@ -456,6 +457,9 @@ export async function startWebGLScene(canvas, status) {
   };
   const mitigationState = {
     drawing: false,
+    stroking: false,
+    pointerId: null,
+    lastScreen: null,
     points: [],
     interventions: [],
     result: null,
@@ -937,29 +941,123 @@ export async function startWebGLScene(canvas, status) {
     }));
   }
 
+  const mitigationMethods = {
+    added_canopy: {
+      label: 'Added canopy', color: 0x398a55, parameter: 'maturity_pct',
+      parameterLabel: 'maturity %', defaultValue: 100, min: 20, max: 100, step: 5,
+      note: 'Tree canopy casts time-dependent shade; maturity scales its estimated benefit.',
+    },
+    constructed_shade: {
+      label: 'Constructed shade', color: 0xd49b45, parameter: 'height_m',
+      parameterLabel: 'height m', defaultValue: 3, min: 1.5, max: 12, step: 0.5,
+      note: 'A canopy or shelter casts shade according to its height, date and time.',
+    },
+    cool_pavement: {
+      label: 'Cool pavement', color: 0x86b9cf, parameter: 'target_albedo',
+      parameterLabel: 'target albedo', defaultValue: 0.35, min: 0.25, max: 0.65, step: 0.05,
+      note: 'A more reflective ground finish lowers treated surface temperature.',
+    },
+    green_roof: {
+      label: 'Green roof', color: 0x6ea64b, parameter: 'substrate_depth_cm',
+      parameterLabel: 'soil depth cm', defaultValue: 15, min: 6, max: 60, step: 1,
+      note: 'Only the portion painted over building footprints is eligible; pedestrian relief is not claimed.',
+    },
+    canopy_protection: {
+      label: 'Protect canopy', color: 0x1e6b42, parameter: 'maturity_pct',
+      parameterLabel: 'retained %', defaultValue: 100, min: 20, max: 100, step: 5,
+      note: 'Only existing mapped canopy is retained and counted.',
+    },
+    permeable_pavement: {
+      label: 'Permeable pavement', color: 0x5b91a0, parameter: 'runoff_capture_mm',
+      parameterLabel: 'storm capture mm', defaultValue: 25, min: 5, max: 100, step: 5,
+      note: 'Adds modest cooling and records a conceptual stormwater-capture depth.',
+    },
+    rain_garden: {
+      label: 'Rain garden / bioswale', color: 0x3f8f78, parameter: 'influence_m',
+      parameterLabel: 'cooling reach m', defaultValue: 6, min: 2, max: 20, step: 1,
+      note: 'A planted drainage area cools its footprint and a configurable nearby buffer.',
+    },
+    depave_plant: {
+      label: 'De-pave and plant', color: 0x78a84f, parameter: 'influence_m',
+      parameterLabel: 'cooling reach m', defaultValue: 4, min: 1, max: 15, step: 1,
+      note: 'Replaces hard ground with planting and extends cooling beyond the treated footprint.',
+    },
+    water_feature: {
+      label: 'Water feature', color: 0x3d9ac4, parameter: 'influence_m',
+      parameterLabel: 'cooling reach m', defaultValue: 8, min: 2, max: 25, step: 1,
+      note: 'Models localized evaporative cooling; water demand still needs a separate feasibility check.',
+    },
+  };
+
+  function flatPolygonMesh(geometry, color, opacity = 0.34) {
+    const positions = [];
+    for (const polygon of geometryPolygons(geometry)) {
+      const contour = (polygon[0] || []).map(([x, z]) => new THREE.Vector2(x, z));
+      if (contour.length > 1 && contour[0].equals(contour.at(-1))) contour.pop();
+      const holes = polygon.slice(1).map(ring => {
+        const points = ring.map(([x, z]) => new THREE.Vector2(x, z));
+        if (points.length > 1 && points[0].equals(points.at(-1))) points.pop();
+        return points;
+      });
+      const vertices = contour.concat(...holes);
+      for (const face of THREE.ShapeUtils.triangulateShape(contour, holes)) {
+        for (const index of face) {
+          const point = vertices[index];
+          positions.push(point.x, terrainHeightAt(point.x, point.y) + 1.15, point.y);
+        }
+      }
+    }
+    const geometryBuffer = new THREE.BufferGeometry();
+    geometryBuffer.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    return new THREE.Mesh(geometryBuffer, new THREE.MeshBasicMaterial({
+      color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, depthTest: false,
+    }));
+  }
+
   function updateMitigationDrawing() {
     mitigationDrawingGroup.clear();
-    if (!mitigationState.points.length) return;
+    for (const item of mitigationState.interventions.filter(entry => entry.visible)) {
+      const config = mitigationMethods[item.method] || { color: 0xf5b85f };
+      const mesh = flatPolygonMesh(item.geometry, config.color);
+      mesh.renderOrder = 12;
+      mitigationDrawingGroup.add(mesh);
+      for (const polygon of geometryPolygons(item.geometry)) {
+        const ring = polygon[0] || [];
+        const linePoints = ring.map(([x, z]) => new THREE.Vector3(x, terrainHeightAt(x, z) + 1.35, z));
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(linePoints),
+          new THREE.LineBasicMaterial({ color: config.color, depthTest: false }),
+        );
+        line.renderOrder = 13;
+        mitigationDrawingGroup.add(line);
+      }
+    }
+    if (!mitigationState.points.length) {
+      requestRender();
+      return;
+    }
     const points = mitigationState.points.map(([x, z]) => new THREE.Vector3(x, terrainHeightAt(x, z) + 1.0, z));
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
     mitigationDrawingGroup.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xf5b85f, depthTest: false })));
-    for (const point of points) {
-      mitigationDrawingGroup.add(new THREE.Mesh(
-        new THREE.SphereGeometry(2.2, 8, 6),
-        new THREE.MeshBasicMaterial({ color: 0xffd28f, depthTest: false }),
-      )).position.copy(point);
+    if (mitigationState.points.length >= 3) {
+      const ring = [...mitigationState.points, mitigationState.points[0]];
+      const preview = flatPolygonMesh({ type: 'Polygon', coordinates: [ring] }, 0xf5b85f, 0.22);
+      preview.renderOrder = 14;
+      mitigationDrawingGroup.add(preview);
     }
     requestRender();
   }
 
   function methodLabel(method) {
-    return {
-      added_canopy: 'Added canopy',
-      constructed_shade: 'Constructed shade',
-      cool_pavement: 'Cool pavement',
-      green_roof: 'Green roof',
-      canopy_protection: 'Protect canopy',
-    }[method] || method;
+    return mitigationMethods[method]?.label || method;
+  }
+
+  function invalidateMitigationResult() {
+    mitigationState.result = null;
+    mitigationGroup.clear();
+    mitigationResults.hidden = true;
+    mitigationCompare.value = 'before';
+    if (heatToggle?.checked) setHeatMode(true);
   }
 
   function renderMitigationInterventions() {
@@ -967,21 +1065,21 @@ export async function startWebGLScene(canvas, status) {
     mitigationState.interventions.forEach((item, index) => {
       const row = document.createElement('div');
       row.className = 'mitigation-item';
-      const parameterLabel = ['added_canopy', 'constructed_shade'].includes(item.method) ? 'height m' : 'albedo';
-      const parameterValue = ['added_canopy', 'constructed_shade'].includes(item.method)
-        ? item.height_m : (item.target_albedo || 0.35);
+      const config = mitigationMethods[item.method] || mitigationMethods.cool_pavement;
+      const parameterValue = item[config.parameter] ?? config.defaultValue;
       row.innerHTML = `
         <span><label><input type="checkbox" data-action="visible" ${item.visible ? 'checked' : ''}> ${methodLabel(item.method)}</label></span>
-        <input type="number" data-action="parameter" aria-label="${parameterLabel}" min="0.1" max="30" step="0.1" value="${parameterValue}">
+        <input type="number" data-action="parameter" aria-label="${config.parameterLabel}" title="${config.parameterLabel}"
+          min="${config.min}" max="${config.max}" step="${config.step}" value="${parameterValue}">
         <span><button type="button" data-action="duplicate" title="Duplicate">＋</button><button type="button" data-action="remove" title="Remove">×</button></span>`;
       row.addEventListener('change', event => {
         if (event.target.dataset.action === 'visible') item.visible = event.target.checked;
         if (event.target.dataset.action === 'parameter') {
-          if (['added_canopy', 'constructed_shade'].includes(item.method)) item.height_m = Number(event.target.value);
-          else item.target_albedo = Number(event.target.value);
+          item[config.parameter] = Number(event.target.value);
         }
-        mitigationState.result = null;
+        invalidateMitigationResult();
         mitigationRun.disabled = !mitigationState.interventions.some(entry => entry.visible);
+        updateMitigationDrawing();
       });
       row.addEventListener('click', event => {
         if (event.target.dataset.action === 'remove') mitigationState.interventions.splice(index, 1);
@@ -990,7 +1088,9 @@ export async function startWebGLScene(canvas, status) {
             ...item, id: `intervention-${Date.now()}`, geometry: JSON.parse(JSON.stringify(item.geometry)),
           });
         }
+        invalidateMitigationResult();
         renderMitigationInterventions();
+        updateMitigationDrawing();
       });
       mitigationList.append(row);
     });
@@ -1004,19 +1104,24 @@ export async function startWebGLScene(canvas, status) {
     }
     const ring = [...mitigationState.points, mitigationState.points[0]];
     const method = mitigationMethod.value;
+    const config = mitigationMethods[method] || mitigationMethods.cool_pavement;
     mitigationState.interventions.push({
       id: `intervention-${Date.now()}`,
       method,
-      height_m: method === 'added_canopy' ? 8 : method === 'constructed_shade' ? 3 : 0,
-      target_albedo: 0.35,
+      [config.parameter]: config.defaultValue,
+      height_m: method === 'added_canopy' ? 8 : method === 'constructed_shade' ? config.defaultValue : 0,
       visible: true,
       geometry: { type: 'Polygon', coordinates: [ring] },
     });
+    invalidateMitigationResult();
     mitigationState.drawing = false;
+    mitigationState.stroking = false;
+    mitigationState.pointerId = null;
     mitigationState.points = [];
     mitigationAdd.classList.remove('active');
     mitigationAdd.setAttribute('aria-pressed', 'false');
     mitigationAdd.textContent = 'Draw intervention';
+    canvas.style.cursor = '';
     mitigationStatus.textContent = `${methodLabel(method)} added · draw another or compare impact.`;
     updateMitigationDrawing();
     renderMitigationInterventions();
@@ -1031,11 +1136,16 @@ export async function startWebGLScene(canvas, status) {
     mitigationState.result = payload;
     const central = payload.summary.estimates.central;
     mitigationResults.hidden = false;
+    const coBenefits = payload.summary.co_benefits || {};
     mitigationResults.innerHTML = `
       <span><b>${Math.round(payload.summary.treated_area_m2).toLocaleString()} m²</b>Treated</span>
       <span><b>${Math.round(payload.summary.affected_area_m2).toLocaleString()} m²</b>Affected / shaded</span>
       <span><b>${central.mean_surface_reduction_c.toFixed(1)}°C</b>Mean surface relief</span>
-      <span><b>${central.mean_pedestrian_reduction_c.toFixed(1)}°C</b>Pedestrian relief</span>`;
+      <span><b>${central.mean_pedestrian_reduction_c.toFixed(1)}°C</b>Pedestrian relief</span>
+      ${coBenefits.conceptual_runoff_capture_m3 > 0
+        ? `<span><b>${coBenefits.conceptual_runoff_capture_m3.toFixed(1)} m³</b>Conceptual runoff capture</span>` : ''}
+      ${coBenefits.added_canopy_m2 > 0
+        ? `<span><b>${Math.round(coBenefits.added_canopy_m2)} m²</b>Added mature canopy</span>` : ''}`;
     mitigationStatus.textContent = payload.warnings.length
       ? payload.warnings.join(' ')
       : `${payload.summary.affected_zone_count} affected heat zones · ${payload.version}`;
@@ -1371,12 +1481,39 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function pointerGround(event) {
-    const pointer = new THREE.Vector2(event.clientX / innerWidth * 2 - 1, -(event.clientY / innerHeight) * 2 + 1);
+    const rect = canvas.getBoundingClientRect();
+    const pointer = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    );
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(pointer, camera);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -terrainHeightAt(windState.center[0], windState.center[1]));
+    const terrainHit = raycaster.intersectObject(terrainMesh, false)[0];
+    if (terrainHit) return terrainHit.point;
+    // The terrain mesh is finite. Retain a plane fallback for clicks just
+    // outside it, but use the local target height rather than wind state.
+    const plane = new THREE.Plane(
+      new THREE.Vector3(0, 1, 0),
+      -terrainHeightAt(cameraState.target.x, cameraState.target.z),
+    );
     const point = new THREE.Vector3();
     return raycaster.ray.intersectPlane(plane, point) ? point : null;
+  }
+
+  function appendMitigationPoint(event, force = false) {
+    const point = pointerGround(event);
+    if (!point) return false;
+    const screen = [event.clientX, event.clientY];
+    if (!force && mitigationState.lastScreen
+      && Math.hypot(screen[0] - mitigationState.lastScreen[0], screen[1] - mitigationState.lastScreen[1]) < 5) return false;
+    const next = [Number(point.x.toFixed(2)), Number(point.z.toFixed(2))];
+    const previous = mitigationState.points.at(-1);
+    if (previous && Math.hypot(next[0] - previous[0], next[1] - previous[1]) < 0.35) return false;
+    mitigationState.points.push(next);
+    mitigationState.lastScreen = screen;
+    mitigationStatus.textContent = `Painting ${methodLabel(mitigationMethod.value)} · release to finish.`;
+    updateMitigationDrawing();
+    return true;
   }
 
   function windHandleScreenPoint() {
@@ -1414,12 +1551,12 @@ export async function startWebGLScene(canvas, status) {
       return;
     }
     if (mitigationState.drawing && event.button === 0) {
-      const point = pointerGround(event);
-      if (point) {
-        mitigationState.points.push([Number(point.x.toFixed(2)), Number(point.z.toFixed(2))]);
-        mitigationStatus.textContent = `${mitigationState.points.length} points · double-click to close.`;
-        updateMitigationDrawing();
-      }
+      mitigationState.points = [];
+      mitigationState.stroking = true;
+      mitigationState.pointerId = event.pointerId;
+      mitigationState.lastScreen = null;
+      appendMitigationPoint(event, true);
+      capturePointer(event);
       return;
     }
     if (windState.enabled && windState.moveMode) {
@@ -1457,6 +1594,10 @@ export async function startWebGLScene(canvas, status) {
     capturePointer(event);
   });
   canvas.addEventListener('pointermove', event => {
+    if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
+      appendMitigationPoint(event);
+      return;
+    }
     if (windDrag) {
       const point = pointerGround(event);
       if (!point) return;
@@ -1490,13 +1631,35 @@ export async function startWebGLScene(canvas, status) {
     }
     updateCamera();
   });
-  for (const name of ['pointerup', 'pointercancel']) canvas.addEventListener(name, () => {
+  canvas.addEventListener('pointerup', event => {
+    if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
+      appendMitigationPoint(event, true);
+      mitigationState.stroking = false;
+      mitigationState.pointerId = null;
+      if (mitigationState.points.length >= 3) finishMitigationDrawing();
+      else {
+        mitigationState.points = [];
+        mitigationStatus.textContent = 'Drag across the terrain to paint an area; a click is too small.';
+        updateMitigationDrawing();
+      }
+      return;
+    }
     drag = null;
     if (windDrag && windState.moveMode) {
       windStatus.textContent = windDrag.mode === 'resize'
         ? `Domain resized to ${windState.size} m · click Simulate wind.`
         : 'Domain moved · click Simulate wind.';
     }
+    windDrag = null;
+  });
+  canvas.addEventListener('pointercancel', event => {
+    if (event.pointerId === mitigationState.pointerId) {
+      mitigationState.stroking = false;
+      mitigationState.pointerId = null;
+      mitigationState.points = [];
+      updateMitigationDrawing();
+    }
+    drag = null;
     windDrag = null;
   });
   canvas.addEventListener('wheel', event => {
@@ -1507,13 +1670,6 @@ export async function startWebGLScene(canvas, status) {
   canvas.addEventListener('dblclick', event => {
     if (mitigationState.drawing) {
       event.preventDefault();
-      // The second click of a double-click may add a near-duplicate vertex.
-      if (mitigationState.points.length > 3) {
-        const last = mitigationState.points.at(-1);
-        const previous = mitigationState.points.at(-2);
-        if (Math.hypot(last[0] - previous[0], last[1] - previous[1]) < 2) mitigationState.points.pop();
-      }
-      finishMitigationDrawing();
     } else {
       fitScene();
     }
@@ -1595,9 +1751,17 @@ export async function startWebGLScene(canvas, status) {
     mitigationAdd.setAttribute('aria-pressed', String(mitigationState.drawing));
     mitigationAdd.textContent = mitigationState.drawing ? 'Cancel drawing' : 'Draw intervention';
     mitigationStatus.textContent = mitigationState.drawing
-      ? 'Click terrain points, then double-click to close.'
+      ? `Drag on the terrain to paint ${methodLabel(mitigationMethod.value)}; release to finish.`
       : 'Drawing cancelled.';
+    canvas.style.cursor = mitigationState.drawing ? 'crosshair' : '';
     updateMitigationDrawing();
+  });
+  mitigationMethod?.addEventListener('change', () => {
+    const config = mitigationMethods[mitigationMethod.value];
+    if (mitigationMethodNote && config) mitigationMethodNote.textContent = config.note;
+    if (mitigationState.drawing) {
+      mitigationStatus.textContent = `Drag on the terrain to paint ${methodLabel(mitigationMethod.value)}; release to finish.`;
+    }
   });
   mitigationRun?.addEventListener('click', runMitigationPreview);
   mitigationClear?.addEventListener('click', () => {
@@ -1611,7 +1775,8 @@ export async function startWebGLScene(canvas, status) {
     mitigationResults.hidden = true;
     mitigationRun.disabled = true;
     mitigationCompare.value = 'before';
-    mitigationStatus.textContent = 'Choose a method, draw at least three points, then double-click to close.';
+    mitigationStatus.textContent = 'Choose a method, then drag on the terrain to paint its area.';
+    canvas.style.cursor = '';
     if (heatToggle?.checked) setHeatMode(true);
   });
   mitigationCompare?.addEventListener('change', () => {

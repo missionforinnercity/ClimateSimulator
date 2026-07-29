@@ -4,26 +4,61 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230e2328'/%3E%3Cpath d='M12 46 26 18l8 16 7-11 11 23Z' fill='%2390d7ae'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23252525'/%3E%3Cpath d='M12 46 26 18l8 16 7-11 11 23Z' fill='%23b84e92'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css?v=14">
 </head>
 <body>
   <main id="app">
     <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
-    <aside class="panel">
-      <p class="eyebrow">CLIMATE EXPLORER</p>
-      <h1>Cape Town CBD</h1>
-      <p class="muted">Lightweight context model</p>
-      <div class="controls">
+    <aside class="panel" aria-label="Climate explorer tools">
+      <header class="panel-header">
+        <div class="panel-brand">
+          <p class="eyebrow">CLIMATE EXPLORER</p>
+          <p class="place-name">Cape Town CBD</p>
+        </div>
+        <nav class="menu-tabs" aria-label="Explorer tools" role="tablist">
+          <button class="menu-tab active" type="button" role="tab" aria-selected="true" aria-controls="menu-layers" data-menu-target="layers" title="Layers">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-9 5 9 5 9-5-9-5Zm-7.5 9L12 16l7.5-4M4.5 16 12 20l7.5-4"/></svg>
+            <span>Layers</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-streetview" data-menu-target="streetview" title="Street View">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.3 6-11a6 6 0 1 0-12 0c0 5.7 6 11 6 11Z"/><circle cx="12" cy="10" r="2"/></svg>
+            <span>Pin</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-current" data-menu-target="current" title="Current conditions">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a4 4 0 0 1 .5-8A5.5 5.5 0 0 1 18 10a3 3 0 0 1 0 6H7Z"/><path d="M8 20h8M10 18.5 9 21m5-2.5 1 2.5"/></svg>
+            <span>Current</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-heat" data-menu-target="heat" title="Urban heat">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14.8V5a3 3 0 0 1 6 0v9.8a5 5 0 1 1-6 0Z"/><path d="M12 7v9"/></svg>
+            <span>Heat</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-sun" data-menu-target="sun" title="Sunlight and shadows">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+            <span>Sun</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-wind" data-menu-target="wind" title="Wind explorer">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h11.5a2.5 2.5 0 1 0-2.3-3.5M3 12h16a2 2 0 1 1-1.7 3M3 16h8"/></svg>
+            <span>Wind</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-mitigation" data-menu-target="mitigation" title="Mitigation planner">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4C11 4 6 8.5 6 14c0 3 2 5 5 5 5.5 0 9-6 9-15Z"/><path d="M4 21c2-6 6-10 12-13"/></svg>
+            <span>Plan</span>
+          </button>
+        </nav>
+      </header>
+      <div class="panel-body">
+      <section id="menu-layers" class="controls menu-section menu-active" data-menu-panel="layers" role="tabpanel">
+        <h2>Layers</h2>
         <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
         <label><input type="checkbox" data-layer="grass" checked> Grass</label>
         <label><input type="checkbox" data-layer="roads" checked> Roads</label>
         <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
         <label><input type="checkbox" data-layer="trees" checked> Trees</label>
-      </div>
-      <section class="streetview-panel" aria-label="Street View location pin">
+      </section>
+      <section id="menu-streetview" class="streetview-panel menu-section" data-menu-panel="streetview" role="tabpanel" aria-label="Street View location pin" hidden>
         <div class="streetview-heading"><span>Street View pin</span><span class="pin-badge">Google Maps</span></div>
         <p id="streetview-status" class="streetview-status">Drop a pin on the terrain to create a Street View link.</p>
         <div class="streetview-actions">
@@ -33,7 +68,7 @@
         <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open nearest Street View ↗</a>
         <p class="panel-note">The link opens the panorama nearest to the selected point when Google imagery is available.</p>
       </section>
-      <section class="current-panel" aria-label="Current Cape Town conditions">
+      <section id="menu-current" class="current-panel menu-section" data-menu-panel="current" role="tabpanel" aria-label="Current Cape Town conditions" hidden>
         <div class="current-heading"><span>Current conditions</span><span id="current-freshness" class="freshness">Not loaded</span></div>
         <p id="current-status" class="current-status">Modelled Cape Town CBD conditions are available on demand.</p>
         <div id="current-metrics" class="current-metrics" hidden></div>
@@ -43,14 +78,14 @@
         </div>
         <p class="panel-note">Open-Meteo modelled conditions · not a weather-station observation</p>
       </section>
-      <section class="heat-panel" aria-label="Heat overlay controls">
+      <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
         <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox" checked> Show</label></div>
         <p class="heat-metric-label">Surface temperature · Summer 2025–26 baseline — not live</p>
         <p id="heat-status" class="heat-status">Loading heat zones…</p>
         <div class="heat-gradient"></div>
         <div class="heat-legend-labels"><span id="heat-legend-min">Bottom 10%</span><span id="heat-legend-max">Top 10%</span></div>
       </section>
-      <section class="sun-panel" aria-label="Sunlight and shadow controls">
+      <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
         <div class="sun-heading"><span>Sunlight &amp; shadows</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
         <label>Date
           <input id="sun-date" type="date" value="2026-07-27">
@@ -62,7 +97,7 @@
         <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
         <p class="sun-note">GPU shadow map · exact building geometry · LiDAR terrain</p>
       </section>
-      <section class="wind-panel" aria-label="Wind simulation controls">
+      <section id="menu-wind" class="wind-panel menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox" checked> Show</label></div>
         <label>Direction
           <select id="wind-direction">
@@ -102,7 +137,7 @@
           <div class="wind-legend-labels"><span><b id="wind-legend-min">0.0</b> m/s · low</span><span><b id="wind-legend-max">—</b> m/s · high</span></div>
         </div>
       </section>
-      <section class="mitigation-panel" aria-label="Heat mitigation planning controls">
+      <section id="menu-mitigation" class="mitigation-panel menu-section" data-menu-panel="mitigation" role="tabpanel" aria-label="Heat mitigation planning controls" hidden>
         <div class="mitigation-heading"><span>Mitigation planner</span><span class="estimate-badge">Estimate</span></div>
         <label>Method
           <select id="mitigation-method">
@@ -111,10 +146,15 @@
             <option value="cool_pavement">Cool pavement</option>
             <option value="green_roof">Green roof</option>
             <option value="canopy_protection">Protect existing canopy</option>
+            <option value="permeable_pavement">Permeable pavement</option>
+            <option value="rain_garden">Rain garden / bioswale</option>
+            <option value="depave_plant">De-pave and plant</option>
+            <option value="water_feature">Water feature</option>
           </select>
         </label>
+        <p id="mitigation-method-note" class="panel-note">Tree canopy casts time-dependent shade and improves pedestrian comfort.</p>
         <button id="mitigation-add" class="secondary" type="button" aria-pressed="false">Draw intervention</button>
-        <p id="mitigation-status" class="mitigation-status">Choose a method, draw at least three points, then double-click to close.</p>
+        <p id="mitigation-status" class="mitigation-status">Choose a method, then drag on the terrain to paint its area.</p>
         <div id="mitigation-list" class="mitigation-list"></div>
         <div class="mitigation-actions">
           <button id="mitigation-run" type="button" disabled>Compare impact</button>
@@ -129,12 +169,18 @@
         <div id="mitigation-results" class="mitigation-results" hidden></div>
         <p class="panel-note">Planning estimate—not measured or engineering-grade.</p>
       </section>
-      <button id="fit">Fit to CBD</button>
-      <p id="status" class="status">Loading scene…</p>
-      <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
-      <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
+      </div>
+      <footer class="panel-footer">
+        <button id="fit" class="secondary">Fit to CBD</button>
+        <p id="status" class="status">Loading scene…</p>
+        <details class="help">
+          <summary>Controls &amp; sources</summary>
+          <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
+          <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
+        </details>
+      </footer>
     </aside>
   </main>
-  <script type="module" src="app.js?v=webgl-13"></script>
+  <script type="module" src="app.js?v=webgl-14"></script>
 </body>
 </html>

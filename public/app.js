@@ -3,6 +3,42 @@ const windCanvas = document.querySelector('#wind-overlay');
 const windContext = windCanvas.getContext('2d');
 const status = document.querySelector('#status');
 
+function setupMenuNavigation() {
+  const tabs = [...document.querySelectorAll('[data-menu-target]')];
+  const panels = [...document.querySelectorAll('[data-menu-panel]')];
+  if (!tabs.length || !panels.length) return;
+
+  const activate = (name, focus = false) => {
+    tabs.forEach(tab => {
+      const selected = tab.dataset.menuTarget === name;
+      tab.classList.toggle('active', selected);
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (selected && focus) tab.focus();
+    });
+    panels.forEach(panel => {
+      const selected = panel.dataset.menuPanel === name;
+      panel.classList.toggle('menu-active', selected);
+      panel.hidden = !selected;
+    });
+  };
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => activate(tab.dataset.menuTarget));
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let next = index;
+      if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      if (event.key === 'Home') next = 0;
+      if (event.key === 'End') next = tabs.length - 1;
+      activate(tabs[next].dataset.menuTarget, true);
+    });
+  });
+  activate(tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || tabs[0].dataset.menuTarget);
+}
+
 function freshCanvas() {
   const replacement = canvas.cloneNode(false);
   canvas.replaceWith(replacement);
@@ -150,5 +186,6 @@ function setupStreetView() {
   });
 }
 
+setupMenuNavigation();
 freshCanvas();
 loadScene();

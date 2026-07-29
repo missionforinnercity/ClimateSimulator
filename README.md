@@ -68,10 +68,15 @@ Activating Current updates Cape Town local sun time and shadows, then uses the
 
 The current weather is not a station observation, and the heat layer remains
 the explicitly labelled Summer 2025–26 baseline. The **Mitigation planner**
-accepts drawn polygons for added canopy, constructed shade, cool pavement,
-green roofs, and existing-canopy protection. Before/after temperature and
-pedestrian-exposure outputs are low/central/high planning estimates, not
-measurements or engineering-grade results.
+uses press-drag-release freehand areas that follow the LiDAR terrain. It
+supports added canopy, constructed shade, cool and permeable pavement, green
+roofs, existing-canopy protection, rain gardens, de-paving and planting, and
+water features. Roof and canopy measures clip to their eligible mapped
+surfaces; shade follows the selected sun date/time; planted measures can use a
+local cooling buffer; and relevant measures include conceptual runoff or
+canopy co-benefits. Before/after temperature and pedestrian-exposure outputs
+remain low/central/high planning estimates, not measurements, drainage models,
+or engineering-grade results.
 
 Install the API dependencies with:
 

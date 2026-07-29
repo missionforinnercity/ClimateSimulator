@@ -69,3 +69,34 @@ def test_invalid_intervention_polygon_is_rejected(monkeypatch):
         assert "Polygon" in str(error)
     else:
         raise AssertionError("non-polygon intervention should fail")
+
+
+def test_permeable_pavement_reports_conceptual_runoff_capture(monkeypatch):
+    result = preview("permeable_pavement", monkeypatch)
+    # The eligible 100 m² drawing excludes the 36 m² building footprint.
+    assert result["summary"]["treated_area_m2"] == 64
+    assert result["summary"]["co_benefits"]["conceptual_runoff_capture_m3"] == 1.6
+    assert result["interventions"][0]["parameter"]["key"] == "runoff_capture_mm"
+
+
+def test_rain_garden_uses_a_cooling_buffer(monkeypatch):
+    result = preview("rain_garden", monkeypatch)
+    intervention = result["interventions"][0]
+    assert intervention["affected_or_shaded_area_m2"] > intervention["treated_area_m2"]
+    assert intervention["parameter"]["key"] == "influence_m"
+
+
+def test_canopy_maturity_scales_temperature_effect(monkeypatch):
+    monkeypatch.setattr(mitigation, "_reference_layers", reference_layers)
+    result = mitigation.mitigation_preview({
+        "interventions": [{
+            "method": "added_canopy",
+            "maturity_pct": 50,
+            "height_m": 8,
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]},
+        }],
+        "sun_date": "2026-01-15",
+        "sun_minutes": 720,
+    })
+    assert result["interventions"][0]["co_benefits"]["added_canopy_m2"] == 32
+    assert result["zones"][0]["estimates"]["central"]["surface_reduction_c"] < 5

@@ -19,16 +19,60 @@ BUILDING_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "Building
 CANOPY_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "tree_canopy.geojson"
 SCENE_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "fallback.json"
 CANOPY_ASSET_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "canopy.json"
-ASSUMPTION_VERSION = "planning-estimates-2026-07-v1"
+ASSUMPTION_VERSION = "planning-estimates-2026-07-v2"
 ASSUMPTIONS = {
-    "added_canopy": {"label": "Added mature canopy", "relief_c": {"low": 2.0, "central": 5.0, "high": 10.0}},
-    "constructed_shade": {"label": "Constructed shade", "relief_c": {"low": 3.0, "central": 6.0, "high": 10.0}},
-    "cool_pavement": {"label": "Cool pavement", "relief_c": {"low": 5.0, "central": 7.0, "high": 15.0}},
-    "green_roof": {"label": "Green roof", "relief_c": {"low": 1.0, "central": 2.0, "high": 3.0}},
-    "canopy_protection": {"label": "Existing-canopy protection", "relief_c": {"low": 2.0, "central": 5.0, "high": 10.0}},
+    "added_canopy": {
+        "label": "Added mature canopy", "impact_mode": "cast_shade",
+        "relief_c": {"low": 2.0, "central": 5.0, "high": 10.0},
+        "parameter": {"key": "maturity_pct", "label": "maturity", "unit": "%", "default": 100.0, "min": 20.0, "max": 100.0},
+    },
+    "constructed_shade": {
+        "label": "Constructed shade", "impact_mode": "cast_shade",
+        "relief_c": {"low": 3.0, "central": 6.0, "high": 10.0},
+        "parameter": {"key": "height_m", "label": "height", "unit": "m", "default": 3.0, "min": 1.5, "max": 12.0},
+    },
+    "cool_pavement": {
+        "label": "Cool pavement", "impact_mode": "treatment",
+        "relief_c": {"low": 5.0, "central": 7.0, "high": 15.0},
+        "parameter": {"key": "target_albedo", "label": "albedo", "unit": "", "default": 0.35, "min": 0.25, "max": 0.65},
+    },
+    "green_roof": {
+        "label": "Green roof", "impact_mode": "roof_only",
+        "relief_c": {"low": 1.0, "central": 2.0, "high": 3.0},
+        "parameter": {"key": "substrate_depth_cm", "label": "soil depth", "unit": "cm", "default": 15.0, "min": 6.0, "max": 60.0},
+    },
+    "canopy_protection": {
+        "label": "Existing-canopy protection", "impact_mode": "existing_canopy",
+        "relief_c": {"low": 2.0, "central": 5.0, "high": 10.0},
+        "parameter": {"key": "maturity_pct", "label": "retained", "unit": "%", "default": 100.0, "min": 20.0, "max": 100.0},
+    },
+    "permeable_pavement": {
+        "label": "Permeable pavement", "impact_mode": "treatment",
+        "relief_c": {"low": 0.5, "central": 1.5, "high": 3.0},
+        "parameter": {"key": "runoff_capture_mm", "label": "storm capture", "unit": "mm", "default": 25.0, "min": 5.0, "max": 100.0},
+    },
+    "rain_garden": {
+        "label": "Rain garden / bioswale", "impact_mode": "cooling_buffer",
+        "relief_c": {"low": 1.0, "central": 2.5, "high": 5.0},
+        "parameter": {"key": "influence_m", "label": "cooling reach", "unit": "m", "default": 6.0, "min": 2.0, "max": 20.0},
+    },
+    "depave_plant": {
+        "label": "De-pave and plant", "impact_mode": "cooling_buffer",
+        "relief_c": {"low": 1.5, "central": 3.5, "high": 6.0},
+        "parameter": {"key": "influence_m", "label": "cooling reach", "unit": "m", "default": 4.0, "min": 1.0, "max": 15.0},
+    },
+    "water_feature": {
+        "label": "Water feature", "impact_mode": "cooling_buffer",
+        "relief_c": {"low": 0.5, "central": 2.0, "high": 4.0},
+        "parameter": {"key": "influence_m", "label": "cooling reach", "unit": "m", "default": 8.0, "min": 2.0, "max": 25.0},
+    },
 }
 SHADE_METHODS = {"added_canopy", "constructed_shade", "canopy_protection"}
-PEDESTRIAN_FACTOR = {"added_canopy": 0.35, "constructed_shade": 0.35, "cool_pavement": 0.10, "green_roof": 0.0, "canopy_protection": 0.35}
+PEDESTRIAN_FACTOR = {
+    "added_canopy": 0.35, "constructed_shade": 0.35, "cool_pavement": 0.10,
+    "green_roof": 0.0, "canopy_protection": 0.35, "permeable_pavement": 0.08,
+    "rain_garden": 0.20, "depave_plant": 0.25, "water_feature": 0.18,
+}
 
 
 @functools.lru_cache(maxsize=4)
@@ -74,7 +118,12 @@ def _reference_layers() -> dict[str, Any]:
             geometry = Polygon(rings[0], rings[1:])
             if geometry.is_valid and not geometry.is_empty:
                 canopies.append(geometry)
-    return {"heat": heat, "buildings": unary_union(buildings), "canopies": unary_union(canopies)}
+    return {
+        "heat": heat,
+        "buildings": unary_union(buildings),
+        "canopies": unary_union(canopies),
+        "scene": scene_clip,
+    }
 
 
 def _polygon(payload: dict[str, Any]) -> Any:
@@ -122,6 +171,25 @@ def _translate_shadow(geometry: Any, height: float, altitude: float, sun_x: floa
     return transform_geometry(lambda x, y, z=None: (x + dx, y + dz), geometry)
 
 
+def _parameter_value(item: dict[str, Any], method: str) -> float:
+    parameter = ASSUMPTIONS[method]["parameter"]
+    value = float(item.get(parameter["key"], parameter["default"]))
+    return max(float(parameter["min"]), min(float(parameter["max"]), value))
+
+
+def _effect_scale(item: dict[str, Any], method: str) -> float:
+    value = _parameter_value(item, method)
+    if method in {"added_canopy", "canopy_protection"}:
+        return value / 100.0
+    if method == "cool_pavement":
+        return max(0.25, min(1.75, (value - 0.15) / 0.20))
+    if method == "green_roof":
+        return max(0.5, min(1.4, value / 15.0))
+    if method == "permeable_pavement":
+        return max(0.5, min(1.5, value / 25.0))
+    return 1.0
+
+
 def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
     interventions = payload.get("interventions")
     if not isinstance(interventions, list) or not interventions:
@@ -132,6 +200,9 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("sun_minutes must be between 0 and 1439")
     altitude, sun_x, sun_z = _sun(date_text, minutes)
     layers = _reference_layers()
+    scene_geometry = layers.get("scene")
+    if scene_geometry is None:
+        scene_geometry = unary_union([zone["geometry"] for zone in layers["heat"]])
     normalized = []
     warnings: list[str] = []
     for index, item in enumerate(interventions):
@@ -139,8 +210,9 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
         if method not in ASSUMPTIONS:
             raise ValueError(f"unsupported intervention method: {method}")
         geometry = _polygon(item.get("geometry") or {})
+        assumption = ASSUMPTIONS[method]
         height = float(item.get("height_m") or (8.0 if method == "added_canopy" else 3.0))
-        treatment = geometry
+        treatment = geometry.intersection(scene_geometry)
         if method == "green_roof":
             treatment = geometry.intersection(layers["buildings"])
             if treatment.is_empty:
@@ -149,13 +221,23 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
             treatment = geometry.intersection(layers["canopies"])
             if treatment.is_empty:
                 warnings.append(f"Intervention {index + 1} does not intersect existing canopy.")
-        shadow = unary_union([treatment, _translate_shadow(treatment, height, altitude, sun_x, sun_z)]) if method in SHADE_METHODS else treatment
+        elif method not in {"constructed_shade", "cool_pavement"}:
+            treatment = treatment.difference(layers["buildings"])
+            if treatment.is_empty:
+                warnings.append(f"Intervention {index + 1} falls entirely on building footprints.")
+        impact = treatment
+        if method in SHADE_METHODS:
+            impact = unary_union([treatment, _translate_shadow(treatment, height, altitude, sun_x, sun_z)])
+        elif assumption["impact_mode"] == "cooling_buffer":
+            impact = treatment.buffer(_parameter_value(item, method), cap_style=1, join_style=1).intersection(scene_geometry)
         normalized.append({
             "id": str(item.get("id") or f"intervention-{index + 1}"),
             "method": method,
             "height_m": height,
             "treatment": treatment,
-            "impact": shadow,
+            "impact": impact,
+            "parameter_value": _parameter_value(item, method),
+            "effect_scale": _effect_scale(item, method),
         })
 
     zones = []
@@ -203,7 +285,7 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
             local_peak = 0.0
             for item, fraction in sorted(overlaps, key=lambda entry: ASSUMPTIONS[entry[0]["method"]]["relief_c"][case], reverse=True):
                 effective_fraction = min(remaining, fraction)
-                relief = ASSUMPTIONS[item["method"]]["relief_c"][case]
+                relief = ASSUMPTIONS[item["method"]]["relief_c"][case] * item["effect_scale"]
                 if item["method"] in SHADE_METHODS:
                     relief *= max(0.0, math.sin(altitude))
                 local_peak = max(local_peak, relief)
@@ -234,8 +316,24 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
         })
 
     per_intervention = []
+    total_runoff_capture_m3 = 0.0
+    total_added_canopy_m2 = 0.0
     for item in normalized:
         assumption = ASSUMPTIONS[item["method"]]
+        method = item["method"]
+        runoff_depth_mm = 0.0
+        if method == "permeable_pavement":
+            runoff_depth_mm = item["parameter_value"]
+        elif method == "rain_garden":
+            runoff_depth_mm = 35.0
+        elif method == "depave_plant":
+            runoff_depth_mm = 20.0
+        elif method == "green_roof":
+            runoff_depth_mm = min(40.0, item["parameter_value"] * 2.0)
+        runoff_capture_m3 = item["treatment"].area * runoff_depth_mm / 1000.0
+        added_canopy_m2 = item["treatment"].area * item["effect_scale"] if method == "added_canopy" else 0.0
+        total_runoff_capture_m3 += runoff_capture_m3
+        total_added_canopy_m2 += added_canopy_m2
         per_intervention.append({
             "id": item["id"],
             "method": item["method"],
@@ -245,6 +343,14 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "treatment_geometry": mapping(item["treatment"]),
             "impact_geometry": mapping(item["impact"]),
             "relief_c": assumption["relief_c"],
+            "parameter": {
+                **assumption["parameter"],
+                "value": item["parameter_value"],
+            },
+            "co_benefits": {
+                "conceptual_runoff_capture_m3": round(runoff_capture_m3, 2),
+                "added_canopy_m2": round(added_canopy_m2, 2),
+            },
         })
     summary_cases = {}
     for case in ("low", "central", "high"):
@@ -266,6 +372,10 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "affected_zone_count": affected_zone_count,
             "baseline_mean_surface_temperature_c": round(baseline_weighted / (affected_area or 1.0), 3) if affected_area else None,
             "estimates": summary_cases,
+            "co_benefits": {
+                "conceptual_runoff_capture_m3": round(total_runoff_capture_m3, 2),
+                "added_canopy_m2": round(total_added_canopy_m2, 2),
+            },
         },
         "interventions": per_intervention,
         "zones": zones,
@@ -275,5 +385,7 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "Temperature effects are literature-bounded planning estimates, not local measurements.",
             "Shade effects scale with solar altitude and are zero when the sun is below the horizon.",
             "Green-roof results describe roof surfaces and do not claim a pedestrian-level air-temperature benefit.",
+            "Stormwater capture is a geometric concept estimate; it does not model soils, drainage capacity, or overflow routing.",
+            "Water-feature cooling does not include potable-water demand or drought restrictions.",
         ],
     }
