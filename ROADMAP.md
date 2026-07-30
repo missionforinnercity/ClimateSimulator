@@ -2,10 +2,14 @@
 
 ## 1. Target state
 
-The target is a Cape Town urban-planning digital twin focused first on climate
-resilience. It should represent the current city, allow proposed changes to be
-placed into that context, run defensible impact models, and publish the result
-as an interactive 3D experience.
+The target is a Cape Town simulation and scenario-analysis twin focused first
+on climate resilience. It should represent the physical environment, allow
+proposed changes to be placed into that context, run defensible impact models,
+and publish the result as an interactive 3D experience.
+
+This system is deliberately separate from the existing business and property
+dashboard. It is not a property-management, valuation, sales, leasing,
+ownership, tenant, or commercial intelligence product.
 
 The important distinction is:
 
@@ -16,10 +20,44 @@ The important distinction is:
   respond under weather, heat, wind, flood, or other scenarios.
 
 The current project is a strong prototype for the third category's climate
-visualisation layer, but it needs the first two categories and stronger
-validation before it can be used for real planning decisions.
+visualisation layer, but it needs stronger validation and scenario tooling
+before it can be used for real planning decisions.
 
-## 2. Current baseline
+## 2. Product boundary
+
+### In scope
+
+- Physical city representation: terrain, buildings, roads, trees, land cover,
+  water, and infrastructure relevant to simulation.
+- Environmental simulation: heat, wind, shade, solar, runoff/flooding, and
+  related climate-resilience analysis.
+- Planning scenarios: proposed buildings, public-realm interventions, zoning
+  envelopes, and before/after model comparisons.
+- Scientific and planning metadata: source, date, resolution, uncertainty,
+  model version, and validation status.
+- Spatial references needed to connect a simulation result to a place.
+
+### Explicitly out of scope
+
+- Property listings, sales, leasing, tenants, owners, valuations, rent,
+  financial performance, or market analytics.
+- Business profiles, customer data, company intelligence, footfall/commercial
+  analytics, or property-dashboard visualisations.
+- Rebuilding dashboard features that already exist elsewhere.
+- Exposing confidential property or business data to simulation users.
+
+### Boundary between systems
+
+The simulation twin may consume a minimal, approved spatial reference such as a
+parcel/building ID or geometry. It may return simulation outputs such as heat
+exposure, wind comfort, shade coverage, runoff, or scenario impacts. It should
+not copy or store business/property attributes.
+
+Keep the systems separated at the database, API, permissions, and UI layers.
+If a future workflow needs property context, resolve it in the separate
+dashboard rather than adding that data to this project.
+
+## 3. Current baseline
 
 Already present in this repository:
 
@@ -48,7 +86,7 @@ Current limitations explicitly acknowledged by the code and README:
 - There is no formal data catalogue, provenance system, scenario/version
   workflow, planning-rule engine, or approval/audit workflow.
 
-## 3. Recommended product boundary
+## 4. Recommended product boundary
 
 Start with one high-value planning question:
 
@@ -60,7 +98,7 @@ Keep the first production area bounded to the CBD and a small set of adjacent
 neighbourhoods. Expand only after the data pipeline, model validation, and
 performance budgets work at that scale.
 
-## 4. Roadmap
+## 5. Roadmap
 
 ### Phase 0 — Define the twin and its evidence (1–2 weeks)
 
@@ -92,10 +130,11 @@ performance budgets work at that scale.
   confidence.
 - Separate `Building`, `BuildingPart`, `RoofSurface`, `Road`, `LandCover`,
   `Tree`, `Water`, and `Terrain` as stable feature types with persistent IDs.
-- Add authoritative cadastral/land-parcel, zoning, public-land, land-use,
-  transport, drainage, and utility references where licensing permits.
-- Add building address/parcel joins and a change-detection report between data
-  releases.
+- Add authoritative planning geometry such as land parcels, zoning, public
+  land, land use, transport, drainage, and utility references where licensing
+  permits. Do not import ownership or commercial attributes.
+- Add stable spatial building/parcel references and a change-detection report
+  between data releases.
 
 **Mesh and geometry**
 
@@ -246,7 +285,8 @@ process.
    report.
 5. Add scenario persistence: baseline, draft, saved version, author, date,
    and model versions.
-6. Add parcel/zoning layers and a first height/FAR/setback rule check.
+6. Add planning geometry/zoning layers and a first height/FAR/setback rule
+   check, without property/business attributes.
 7. Add a validation dashboard for heat and wind against observations/reference
    simulations.
 8. Replace mitigation point estimates with explicit assumptions, uncertainty
@@ -256,10 +296,10 @@ process.
 10. Add automated asset QA, tile-size budgets, and a reproducible data-build
     manifest.
 
-## 6. Suggested architecture
+## 7. Suggested architecture
 
 ```text
-Sources: LiDAR | imagery | cadastral | OSM | weather | sensors | planning data
+Sources: LiDAR | imagery | planning geometry | OSM | weather | sensors
                                   |
                     ingestion + CRS/vertical-datum QA
                                   |
@@ -275,9 +315,11 @@ Sources: LiDAR | imagery | cadastral | OSM | weather | sensors | planning data
 
 The current FastAPI service can remain the first API boundary. The main change
 is to make assets, scenarios, and models versioned products rather than files
-that are implicitly tied to one local build.
+that are implicitly tied to one local build. Any integration with the separate
+business/property dashboard should use only an approved spatial-ID/result
+contract.
 
-## 7. Definition of “ready for planning use”
+## 8. Definition of “ready for planning use”
 
 Do not call the system a planning-grade twin until it has:
 
@@ -290,7 +332,7 @@ Do not call the system a planning-grade twin until it has:
 - clear labels separating observation, forecast, model, and assumption;
 - access control, audit history, and exportable review packages.
 
-## 8. Strategic choice
+## 9. Strategic choice
 
 Build the next milestone as a **climate-resilience planning twin for the CBD**,
 not as a generic replica of the whole city. It is the shortest route from the

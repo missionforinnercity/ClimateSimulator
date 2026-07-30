@@ -59,7 +59,7 @@ button, select, input { font: inherit; }
 .eyebrow { color: var(--ink); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
 .place-name { color: var(--quiet); font-size: 10px; }
 
-.menu-tabs { display: grid; grid-template-columns: repeat(7, 1fr); padding: 0 5px; }
+.menu-tabs { display: grid; grid-template-columns: repeat(8, 1fr); padding: 0 5px; }
 .menu-tab {
   position: relative;
   width: auto;
@@ -131,6 +131,7 @@ button, select, input { font: inherit; }
 .heat-heading,
 .sun-heading,
 .wind-heading,
+.flood-heading,
 .mitigation-heading {
   min-height: 19px;
   margin: 0 0 2px;
@@ -188,28 +189,29 @@ button.secondary { border-color: var(--line-light); background: var(--control); 
 button.secondary:hover { border-color: #727272; background: var(--control-hover); }
 button.secondary.active { border-color: var(--accent); background: var(--accent-dark); color: #fff; box-shadow: inset 3px 0 0 var(--accent-pale); }
 button:disabled { cursor: not-allowed; opacity: .5; }
-.current-actions, .mitigation-actions, .streetview-actions, .wind-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.current-actions, .mitigation-actions, .streetview-actions, .wind-actions, .flood-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .wind-actions button { min-height: 38px; padding: 6px; font-size: 10px; line-height: 1.2; }
 
-.heat-switch, .sun-switch, .wind-switch {
+.heat-switch, .sun-switch, .wind-switch, .flood-switch {
   color: var(--muted);
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
 }
-.heat-status, .sun-status, .wind-status, .current-status, .mitigation-status, .streetview-status {
+.heat-status, .sun-status, .wind-status, .flood-status, .current-status, .mitigation-status, .streetview-status {
   min-height: 16px;
   margin: 1px 0;
   color: var(--muted);
   line-height: 1.4;
 }
 .heat-metric-label { margin: 0; color: #dbdbd8; font-size: 11px; line-height: 1.4; }
-.heat-gradient, .wind-gradient { height: 9px; border-radius: 2px; box-shadow: inset 0 0 0 1px #ffffff35; }
+.heat-gradient, .wind-gradient, .flood-gradient { height: 9px; border-radius: 2px; box-shadow: inset 0 0 0 1px #ffffff35; }
 .heat-gradient { background: linear-gradient(90deg, #2c56c7 0%, #38bde5 22%, #7bd34a 45%, #ffe44b 65%, #ff9f1c 82%, #e63924 100%); }
 .wind-gradient { background: linear-gradient(90deg, #2055d6 0%, #22c7ee 25%, #3dd579 50%, #f4da45 75%, #ef3b2d 100%); }
-.heat-legend-labels, .wind-legend-labels { display: flex; justify-content: space-between; gap: 8px; color: #d7d7d3; font-size: 9px; line-height: 1.25; }
-.heat-legend-labels span:last-child, .wind-legend-labels span:last-child { text-align: right; }
+.flood-gradient { background: linear-gradient(90deg, #bdeeff 0%, #42bde8 35%, #1975c5 68%, #4437a4 100%); }
+.heat-legend-labels, .wind-legend-labels, .flood-legend-labels { display: flex; justify-content: space-between; gap: 8px; color: #d7d7d3; font-size: 9px; line-height: 1.25; }
+.heat-legend-labels span:last-child, .wind-legend-labels span:last-child, .flood-legend-labels span:last-child { text-align: right; }
 .wind-legend-scale { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
 .wind-legend-labels b { color: var(--ink); }
 .sun-note, .panel-note { margin: 0; color: var(--quiet); font-size: 9px; line-height: 1.4; }
@@ -229,6 +231,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .current-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .current-metrics span { padding: 7px; border: 1px solid var(--line); border-radius: 3px; background: #2d2d2d; color: #c7c7c3; font-size: 9px; }
 .current-metrics b { display: block; margin-bottom: 2px; color: var(--accent-pale); font-size: 13px; }
+.flood-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.flood-results span { padding: 7px; border: 1px solid #285b76; border-radius: 3px; background: #203a48; color: #c9e9f5; font-size: 9px; }
+.flood-results b { display: block; margin-bottom: 2px; color: #77d3f5; font-size: 13px; }
 
 .mitigation-list { display: grid; gap: 6px; }
 .mitigation-item { display: grid; grid-template-columns: 1fr auto auto; gap: 5px; align-items: center; padding: 7px; border: 1px solid var(--line); border-radius: 3px; background: #2d2d2d; }

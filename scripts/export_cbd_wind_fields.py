@@ -20,7 +20,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.dem_utils import load_cbd_building_heightfield
+from scripts.dem_utils import load_cbd_obstacle_fields
 from server.field import VALID_DIRECTIONS, load_regional_field
 from server.terrain_wind import resample_bilinear_grid, solve_terrain_field
 
@@ -41,9 +41,14 @@ def main() -> None:
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    heights, origin_x, origin_z, dx, dz = load_cbd_building_heightfield(
-        args.dtm, args.footprints, args.height, args.resolution_m
+    solid_mask, canopy_drag, origin_x, origin_z, dx, dz = load_cbd_obstacle_fields(
+        args.dtm, args.footprints, args.height, Path("public/assets/canopy.json"), args.resolution_m
     )
+    import rasterio
+    with rasterio.open(args.dtm) as source:
+        heights = source.read(
+            1, out_shape=solid_mask.shape, resampling=rasterio.enums.Resampling.bilinear
+        ).astype(np.float32)
     print(f"CBD building grid: {heights.shape[1]}x{heights.shape[0]} @ {dx:.1f}m x {dz:.1f}m")
 
     rows, columns = heights.shape
@@ -74,6 +79,8 @@ def main() -> None:
                 prominence_window_m=args.prominence_window_m,
                 background_u=background_u,
                 background_v=background_v,
+                solid_mask=solid_mask,
+                porous_drag=canopy_drag,
             )
         else:
             u, v = solve_terrain_field(
@@ -83,6 +90,8 @@ def main() -> None:
                 direction_deg,
                 sample_height_m=args.sample_height_m,
                 prominence_window_m=args.prominence_window_m,
+                solid_mask=solid_mask,
+                porous_drag=canopy_drag,
             )
         speed = np.hypot(u, v)
         output = args.output_dir / f"{name.lower()}.npz"
@@ -91,6 +100,7 @@ def main() -> None:
             u=u.astype(np.float32),
             v=v.astype(np.float32),
             speed=speed.astype(np.float32),
+            canopy_drag=canopy_drag.astype(np.float32),
             origin_x=np.float64(origin_x),
             origin_z=np.float64(origin_z),
             dx=np.float64(dx),

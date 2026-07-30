@@ -11,22 +11,53 @@
     1040.0,
     902.0
   ],
+  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile]",
   "layers": {
+    "terrain": {
+      "source": "data/derived/company_gardens_hybrid_dem_2m.tif",
+      "resolution_m": 2.0,
+      "valid_area_m2": 2225516.0,
+      "lidar_cells": 514848,
+      "coarse_cells": 41531,
+      "coarse_source": "calibrated_30m_srtm_company_gardens"
+    },
+    "roof_surface": {
+      "buildings": 1028,
+      "detailed_buildings": 957,
+      "fallback_buildings": 71,
+      "roof_models": {
+        "regularized_flat": 200,
+        "dominant_flat": 194,
+        "fitted_plane": 296,
+        "flat_plane": 79,
+        "height_fallback": 71,
+        "parametric_hip": 114,
+        "parametric_gable": 74
+      },
+      "vertices": 224213,
+      "triangles": 426842,
+      "sample_spacing_m": 2,
+      "height_semantics": "height_above_dtm",
+      "bytes": 8709520,
+      "cache_key": "16face2b7bed8c24"
+    },
     "fallback": {
-      "buildings": 2322,
-      "trees": 4903,
-      "roads": 3048,
-      "grass": 142,
-      "bytes": 828691
+      "buildings": 1028,
+      "trees": 2903,
+      "roads": 2191,
+      "railways": 100,
+      "grass": 82,
+      "bytes": 807716
     },
     "canopy": {
-      "components": 4591,
-      "area_drift_pct": 1.6865,
-      "bytes": 1088168
+      "components": 2659,
+      "area_drift_pct": 1.5351,
+      "bytes": 641734
     }
   },
   "assets": {
     "fallback": "fallback.json",
-    "canopy": "canopy.json"
+    "canopy": "canopy.json",
+    "roof_surface": "roof_surface.bin"
   }
 }

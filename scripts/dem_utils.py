@@ -110,3 +110,45 @@ def load_cbd_building_heightfield(dtm_path, footprints_path, height_path, resolu
     )
     surface = np.where(building_top > 0, building_top, dtm)
     return surface.astype(np.float32), west - center_x, -(north - center_y), dx, dz
+
+
+def load_cbd_obstacle_fields(dtm_path, footprints_path, height_path, canopy_path, resolution_m):
+    """Return explicit solid building and porous canopy layers on the DTM grid."""
+    import json
+    from shapely.geometry import Polygon
+
+    with rasterio.open(dtm_path) as source:
+        west, south, east, north = source.bounds
+        center_x = (west + east) / 2.0
+        center_y = (south + north) / 2.0
+        width = max(2, int(round((east - west) / resolution_m)))
+        height = max(2, int(round((north - south) / resolution_m)))
+        dst_transform = rasterio.transform.from_bounds(west, south, east, north, width, height)
+    dx = (east - west) / width
+    dz = (north - south) / height
+
+    def raster_polygon(ring, local=False):
+        # Viewer local coordinates are x,z; the source raster is absolute x,y
+        # and z is south-positive, hence y = centre_y - z.
+        if hasattr(ring, "exterior"):
+            return Polygon(
+                [(x + center_x if local else x, center_y - z if local else z) for x, z in ring.exterior.coords],
+                [[(x + center_x if local else x, center_y - z if local else z) for x, z in hole.coords] for hole in ring.interiors],
+            )
+        return Polygon([(x + center_x if local else x, center_y - z if local else z) for x, z in ring])
+
+    from scripts.build_scene import load_building_records
+    building_shapes = [(raster_polygon(record[2]), 1) for record in load_building_records(footprints_path, height_path, dtm_path)]
+    solid = rasterize(building_shapes, out_shape=(height, width), transform=dst_transform, fill=0, dtype="uint8")
+
+    canopy_shapes = []
+    canopy_data = json.loads(canopy_path.read_text(encoding="utf-8"))
+    for record in canopy_data.get("canopies", []):
+        for component in record[-1] if record and isinstance(record[-1], list) else []:
+            ring = component[0] if component and isinstance(component[0][0], (list, tuple)) else component
+            if len(ring) >= 3:
+                canopy_shapes.append((raster_polygon(ring, local=True), 1))
+    canopy = rasterize(canopy_shapes, out_shape=(height, width), transform=dst_transform, fill=0, dtype="float32")
+    # Canopy is a momentum sink, not a wall. This leaves all gaps traversable.
+    drag = np.clip(canopy * 0.45, 0.0, 0.75).astype(np.float32)
+    return solid.astype(bool), drag, west - center_x, -(north - center_y), dx, dz

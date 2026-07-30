@@ -91,7 +91,13 @@ def _localize(raw_geometry: dict[str, Any], source_crs: str) -> Any:
 @functools.lru_cache(maxsize=1)
 def _reference_layers() -> dict[str, Any]:
     bounds = tuple(load_viewer_config()["bounds"])
-    scene_clip = box(bounds[0], bounds[1], bounds[2], bounds[3])
+    scene_source = json.loads(SCENE_PATH.read_text(encoding="utf-8"))
+    footprint_polygons = [
+        Polygon(rings[0], rings[1:])
+        for rings in scene_source.get("terrain", {}).get("footprint", [])
+        if rings and len(rings[0]) >= 3
+    ]
+    scene_clip = unary_union(footprint_polygons) if footprint_polygons else box(bounds[0], bounds[1], bounds[2], bounds[3])
     heat_source = json.loads(HEAT_PATH.read_text(encoding="utf-8"))
     heat = []
     for feature in heat_source.get("features", []):
@@ -107,7 +113,6 @@ def _reference_layers() -> dict[str, Any]:
             "land_type": properties.get("land_type"),
         })
 
-    scene_source = json.loads(SCENE_PATH.read_text(encoding="utf-8"))
     buildings = [Polygon(record[2]) for record in scene_source.get("buildings", []) if len(record[2]) >= 3]
 
     canopy_source = json.loads(CANOPY_ASSET_PATH.read_text(encoding="utf-8"))

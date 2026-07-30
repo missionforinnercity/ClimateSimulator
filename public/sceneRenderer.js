@@ -95,7 +95,7 @@ export async function startScene(canvas, status) {
     fetch('assets/canopy.json').then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };
-  const visibility = { terrain: true, grass: true, roads: true, buildings: true, trees: true };
+  const visibility = { terrain: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true };
   const buildings = scene.buildings.map(value => {
     const [ground, height, ring] = value;
     const x = ring.reduce((sum, point) => sum + point[0], 0) / ring.length;
@@ -172,6 +172,10 @@ export async function startScene(canvas, status) {
     const z = (minZ + maxZ) * 0.5;
     return { width: value[0], highway: value[1], points, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
   });
+  const railways = (scene.railways || []).map(value => ({
+    railway: value[0],
+    points: value[1],
+  }));
   const grass = (scene.grass || []).map(points => {
     const minX = Math.min(...points.map(point => point[0]));
     const maxX = Math.max(...points.map(point => point[0]));
@@ -204,7 +208,7 @@ export async function startScene(canvas, status) {
   const windLegendMax = document.querySelector('#wind-legend-max');
   let windDrag = null;
   const windState = {
-    enabled: true,
+    enabled: Boolean(windToggle?.checked),
     field: null,
     center: [0, 0],
     size: Number(windSize.value) || 250,
@@ -265,6 +269,8 @@ export async function startScene(canvas, status) {
       Object.assign(savedVisibility, visibility);
       visibility.terrain = false;
       visibility.grass = false;
+      visibility.railways = false;
+      visibility.paths = false;
       visibility.roads = false;
       visibility.trees = true;
       visibility.buildings = true;
@@ -294,6 +300,8 @@ export async function startScene(canvas, status) {
       // removing the extra overlays makes the shade boundary easier to read.
       visibility.terrain = true;
       visibility.grass = false;
+      visibility.railways = false;
+      visibility.paths = false;
       visibility.roads = false;
       visibility.buildings = true;
       visibility.trees = true;
@@ -703,12 +711,6 @@ export async function startScene(canvas, status) {
     const clipped = projectPolygon(boundary);
     if (path(clipped)) {
       context.clip();
-      // The source product can contain small no-data holes between adjacent
-      // zones. Paint a continuous neutral heat base first so those holes do
-      // not expose the dark scene background at oblique camera angles.
-      const baseValue = (colorRange.min + colorRange.max) * 0.5;
-      context.fillStyle = heatColor(baseValue, colorRange.min, colorRange.max, 0.94);
-      context.fillRect(0, 0, canvas.width, canvas.height);
     }
     const paths = Array.from({ length: 64 }, () => new Path2D());
     for (const feature of data.features) {
@@ -945,6 +947,21 @@ export async function startScene(canvas, status) {
     return topValue * (1 - ty) + bottomValue * ty;
   }
 
+  function pointInTerrainFootprint(x, z) {
+    if (!terrain.footprint?.length) return true;
+    const inRing = ring => {
+      let inside = false;
+      for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+        const [xi, zi] = ring[index];
+        const [xj, zj] = ring[previous];
+        if (((zi > z) !== (zj > z))
+          && x < (xj - xi) * (z - zi) / ((zj - zi) || Number.EPSILON) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    return terrain.footprint.some(polygon => inRing(polygon[0]) && !polygon.slice(1).some(inRing));
+  }
+
   // NOAA's compact solar-position approximation, evaluated for Cape Town
   // (SAST, UTC+2). The renderer's local axes are east (x), up (y), and south
   // (z), hence the negated north component below.
@@ -1171,7 +1188,7 @@ export async function startScene(canvas, status) {
         if (Math.abs(nextY - planeY) < 0.05) break;
         planeY = nextY;
       }
-      return point;
+      return point && pointInTerrainFootprint(point[0], point[1]) ? point : null;
     };
     const projectPolygon = points => {
       const source = points.map(toCamera);
@@ -1478,25 +1495,14 @@ export async function startScene(canvas, status) {
     const minZ = -top;
     const maxZ = -bottom;
     const point = (column, row, elevation) => [left + (right - left) * column / (terrain.columns - 1), elevation, minZ + (maxZ - minZ) * row / (terrain.rows - 1)];
-    // Vertical perimeter faces turn the terrain into a shallow physical plinth.
-    context.fillStyle = shadowState.enabled ? '#d6d6d2' : '#30383b';
-    // Draw the outer rim directly from grid elevations to avoid terrain gaps.
     const edgePoint = (column, row) => point(column, row, terrain.heights[row * terrain.columns + column]);
-    const side = (a, b) => {
-      if (path(projectPolygon([a, b, [b[0], terrain.base, b[2]], [a[0], terrain.base, a[2]]]))) context.fill();
-    };
-    for (let column = 0; column < terrain.columns - 1; column += 1) {
-      side(edgePoint(column, 0), edgePoint(column + 1, 0));
-      side(edgePoint(column + 1, terrain.rows - 1), edgePoint(column, terrain.rows - 1));
-    }
-    for (let row = 0; row < terrain.rows - 1; row += 1) {
-      side(edgePoint(0, row + 1), edgePoint(0, row));
-      side(edgePoint(terrain.columns - 1, row), edgePoint(terrain.columns - 1, row + 1));
-    }
     context.fillStyle = shadowState.enabled ? '#f5f5f0' : COLORS.terrain;
     context.beginPath();
     for (let row = 0; row < terrain.rows - 1; row += 1) {
       for (let column = 0; column < terrain.columns - 1; column += 1) {
+        const centerX = left + (right - left) * (column + 0.5) / (terrain.columns - 1);
+        const centerZ = minZ + (maxZ - minZ) * (row + 0.5) / (terrain.rows - 1);
+        if (!pointInTerrainFootprint(centerX, centerZ)) continue;
         const points = projectPolygon([edgePoint(column, row), edgePoint(column + 1, row), edgePoint(column + 1, row + 1), edgePoint(column, row + 1)]);
         if (points.length < 3) continue;
         context.moveTo(points[0][0], points[0][1]);
@@ -1519,18 +1525,24 @@ export async function startScene(canvas, status) {
   function roadStyle(highway) {
     const major = ['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link'];
     const secondary = ['secondary', 'secondary_link', 'tertiary'];
-    return { color: major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road };
+    const paths = ['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator'];
+    return {
+      color: paths.includes(highway) ? '#858f90' : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road,
+      path: paths.includes(highway),
+    };
   }
 
   function drawRoads(project, focal, simplified) {
     const groups = new Map();
     for (const road of roads) {
+      const style = roadStyle(road.highway);
+      if ((style.path && !visibility.paths) || (!style.path && !visibility.roads)) continue;
       if ((road.highway === 'footway' || road.highway === 'path') && camera.distance > 1000 && !shadowState.enabled) continue;
       if (simplified && !['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary'].includes(road.highway)) continue;
       if (!isInView(road.x, terrainHeightAt(road.x, road.z) + 0.22, road.z, road.radius + road.width, project, focal)) continue;
       const points = road.points.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.22, z]));
       if (points.length < 2 || points.some(point => !point)) continue;
-      const group = groups.get(road.highway) || { roads: [], width: road.width, ...roadStyle(road.highway) };
+      const group = groups.get(road.highway) || { roads: [], width: road.width, ...style };
       group.roads.push(points);
       groups.set(road.highway, group);
     }
@@ -1548,6 +1560,21 @@ export async function startScene(canvas, status) {
       context.stroke();
       context.lineWidth = width;
       context.strokeStyle = group.color;
+      context.stroke();
+    }
+  }
+
+  function drawRailways(project, focal, simplified) {
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    for (const railway of railways) {
+      const projected = railway.points.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.14, z]));
+      if (projected.length < 2 || projected.some(point => !point)) continue;
+      context.beginPath();
+      context.moveTo(projected[0][0], projected[0][1]);
+      for (let index = 1; index < projected.length; index += 1) context.lineTo(projected[index][0], projected[index][1]);
+      context.lineWidth = simplified ? 1 : clamp(2.1 * focal / camera.distance, 1, 3.2);
+      context.strokeStyle = '#bfc4c2';
       context.stroke();
     }
   }
@@ -1570,7 +1597,8 @@ export async function startScene(canvas, status) {
       if (clipped) context.save();
       if (clipped) context.clip();
       if (visibility.grass) drawGrass(projectPolygon, project, focal, simplified);
-      if (visibility.roads) {
+      if (visibility.railways) drawRailways(project, focal, simplified);
+      if (visibility.roads || visibility.paths) {
         drawRoads(project, focal, simplified);
       }
       drawGeneratedShadows(project, focal, simplified);
@@ -2127,9 +2155,10 @@ export async function startScene(canvas, status) {
 
   fitScene();
   applyViewFromUrl();
-  status.textContent = `${scene.buildings.length} buildings · ${canopies.length} canopy footprints · ${roads.length} OSM roads · Canvas 2D compatibility`;
-  windToggle.checked = true;
-  windStatus.textContent = 'Choose Move / resize domain to position the orange box.';
+  status.textContent = `${scene.buildings.length} buildings · ${railways.length} railway lines · ${canopies.length} canopy footprints · ${roads.length} OSM roads · Canvas 2D compatibility`;
+  windStatus.textContent = windState.enabled
+    ? 'Choose Move / resize domain to position the orange box.'
+    : 'Wind display hidden.';
   requestRender();
   setHeatMode(heatState.enabled);
   updateSunStatus();

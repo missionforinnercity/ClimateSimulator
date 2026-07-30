@@ -5,16 +5,45 @@ Standalone lightweight Cape Town CBD 3D viewer.
 ## Build the scene
 
 ```bash
+python scripts/build_hybrid_dem.py
 python scripts/build_scene.py
 ```
 
-This writes `public/assets/fallback.json` (the footprint/tree/road/grass scene
-data), `public/assets/canopy.json` (the footprint-preserving LiDAR canopy),
-and `public/assets/manifest.json`. The viewer uses a vendored, pinned
+`build_hybrid_dem.py` retains every valid 2025 LiDAR cell, then fills only the
+Company's Garden supplement with locally calibrated 30 m SRTM. The supplement
+includes the garden and mapped surrounding edge streets, uses a rounded
+boundary, and records provenance per 2 m output cell (`1=LiDAR`, `2=SRTM`).
+The current product adds about 110,080 m² of lower-accuracy terrain and applies
+a documented −7.923 m SRTM-to-local offset plus seam blending.
+
+This writes `public/assets/fallback.json` (the footprint/tree/road/rail/grass
+scene data), `public/assets/canopy.json` (the footprint-preserving LiDAR canopy),
+`public/assets/roof_surface.bin` (the footprint-clipped 1 m height-map roof
+surface sampled at 2 m), and `public/assets/manifest.json`. Roof processing
+tests raster coverage per building, anchors samples to surveyed height, rejects
+robust height outliers, fills small gaps, and fits credible flat, gently sloped,
+gable, and hip roof volumes. Ambiguous surfaces become regularized flat roofs
+instead of retaining tree, façade-edge, or pixel-scale spikes. Buildings
+without enough raster coverage retain their mapped `BLD_HGT` extrusion. The
+supplied height map already stores height above ground, so roof vertices are
+placed at DTM elevation plus the raster value; the DTM is not subtracted a
+second time.
+The scene boundary is derived from the hybrid DTM's valid-pixel mask, not the
+rectangular GeoTIFF envelope. Terrain triangles, buildings, canopy, roads,
+railways, grass, heat zones, and interaction are clipped to the irregular
+LiDAR-plus-Company's-Garden footprint; remaining NoData pixels are not
+presented as mapped ground.
+The viewer uses a vendored, pinned
 Three.js WebGL renderer for the city, terrain-following wind heatmaps, white
 GPU gusts, heat geometry, and directional-light shadow maps. The existing
 Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
 is unavailable.
+
+Active rail and tram centre-lines come from `data/osm_cbd_railways.geojson`.
+The renderer places tracks below road ribbons so roads cover rails at
+crossings. Road and path ribbons use their mapped class widths, render as
+separate layers, and use capped endpoints plus deterministic class priority at
+overlaps.
 
 Sun shadows use the complete building footprint geometry rather than a convex
 outline approximation. The shadow map is regenerated only when **Generate
@@ -77,6 +106,35 @@ local cooling buffer; and relevant measures include conceptual runoff or
 canopy co-benefits. Before/after temperature and pedestrian-exposure outputs
 remain low/central/high planning estimates, not measurements, drainage models,
 or engineering-grade results.
+
+## Surface flood simulator
+
+The WebGL viewer includes a rain-on-grid surface-flood tool. It runs a
+local-inertial 2D shallow-water solve over the hybrid terrain grid and returns
+maximum depth, final velocity, arrival time, wet area, and model metadata.
+Buildings are impermeable barriers; rainfall on their roofs is conserved and
+routed to the nearest open ground cell without inventing downpipe locations.
+Rainfall intensity, storm duration, infiltration, Manning roughness, domain,
+and grid resolution are editable.
+
+The model deliberately excludes unknown stormwater drains and unverified OSM
+curbs. It therefore represents a conservative above-ground surface-water
+scenario, not a drainage-capacity or engineering flood study. The user drags
+a rectangular analysis box whose perimeter is a closed hydraulic boundary:
+surface water cannot leave it. The API returns 21 physical depth states and
+the WebGL viewer animates the box filling from dry terrain to storm completion.
+The supplied Town Survey Marks are used for LiDAR QA only: 62 valid marks
+overlap the original LiDAR DTM, whose sampled levels are about 0.343 m higher
+at the median with 0.377 m RMSE. No vertical correction is applied until datum
+compatibility is confirmed. SRTM cells are explicitly reported as a
+lower-accuracy percentage in every flood result.
+
+Run the FastAPI application, open the **Flood** tool, choose **Draw flood box**,
+and drag between opposite corners on the terrain before simulating. A 4 m grid
+is the practical detailed default; 2 m scenarios are substantially slower.
+The complete rectangular flood box must fall inside available terrain
+coverage; the browser marks an invalid box red and the API independently
+rejects it.
 
 Install the API dependencies with:
 

@@ -8,17 +8,24 @@ from pathlib import Path
 from typing import Any
 
 from pyproj import Transformer
-from shapely.geometry import box, mapping, shape
-from shapely.ops import transform as transform_geometry
+from shapely.geometry import Polygon, box, mapping, shape
+from shapely.ops import transform as transform_geometry, unary_union
+from shapely.strtree import STRtree
 
 from .field import LOCAL_CRS, WEB_CRS, get_connection, load_viewer_config
 
 HEAT_TABLE = "heat_zones"
 HEAT_SOURCE_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "scene_footprint_heat_2026_academic_v3_zones.geojson"
+SCENE_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "fallback.json"
 # The source polygons are more detailed than the Canvas scene can display.
 # Simplifying in the projected metre-based CRS keeps the visual result while
 # preventing multi-million-vertex browser payloads and draw calls.
 HEAT_SIMPLIFY_METRES = 2.0
+# Adjacent source zones are simplified independently, which leaves sub-metre
+# seams between boundaries that were originally contiguous. Expand each zone
+# just enough to overlap those seams; this keeps every rendered pixel assigned
+# to a real zone value instead of relying on a background colour layer.
+HEAT_STITCH_METRES = 1.0
 HEAT_METRICS = {
     "heat_model_lst_c": "Surface temperature",
 }
@@ -30,6 +37,17 @@ HEAT_COLOR_SCALE = {
     "bottom_band_label": "Bottom 10%",
     "top_band_label": "Top 10%",
 }
+
+
+def _lidar_scene_clip(fallback_bounds: tuple[float, float, float, float]) -> Any:
+    if not SCENE_PATH.exists():
+        return box(*fallback_bounds)
+    scene = json.loads(SCENE_PATH.read_text(encoding="utf-8"))
+    polygons = []
+    for rings in scene.get("terrain", {}).get("footprint", []):
+        if rings and len(rings[0]) >= 3:
+            polygons.append(Polygon(rings[0], rings[1:]))
+    return unary_union(polygons) if polygons else box(*fallback_bounds)
 
 
 def _scene_to_web_box(bounds: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -69,7 +87,7 @@ def _load_heat_zones() -> dict[str, Any]:
     transformer = Transformer.from_crs(WEB_CRS, LOCAL_CRS, always_xy=True)
     origin_x, origin_y = config["origin"]
     left, bottom, right, top = scene_bounds
-    scene_clip = box(left, bottom, right, top)
+    scene_clip = _lidar_scene_clip(scene_bounds)
     source_name = "climate.heat_zones"
     if HEAT_SOURCE_PATH.exists():
         source = json.loads(HEAT_SOURCE_PATH.read_text(encoding="utf-8"))
@@ -125,6 +143,7 @@ def _load_heat_zones() -> dict[str, Any]:
         # Scene z is the inverse of the projected northing axis.
         local = transform_geometry(lambda x, y, z=None: (x - origin_x, -(y - origin_y)), local)
         local = local.intersection(scene_clip).simplify(HEAT_SIMPLIFY_METRES, preserve_topology=True)
+        local = local.buffer(HEAT_STITCH_METRES, join_style=2).intersection(scene_clip)
         if local.is_empty:
             continue
         normalized_properties = {
@@ -132,6 +151,27 @@ def _load_heat_zones() -> dict[str, Any]:
             for metric in HEAT_METRICS
         }
         features.append({"geometry": mapping(local), "properties": normalized_properties})
+
+    # Close any remaining enclosed seams with the value of the nearest real
+    # zone. These are geometry patches, not a blanket colour underlay, so the
+    # resulting surface stays data-coloured and continuous.
+    zone_geometries = [shape(feature["geometry"]) for feature in features]
+    if zone_geometries:
+        coverage = unary_union(zone_geometries)
+        parts = coverage.geoms if coverage.geom_type == "MultiPolygon" else (coverage,)
+        gaps = [
+            Polygon(interior)
+            for part in parts if part.geom_type == "Polygon"
+            for interior in part.interiors
+            if Polygon(interior).area <= 100.0
+        ]
+        zone_tree = STRtree(zone_geometries)
+        for gap in gaps:
+            nearest_index = int(zone_tree.nearest(gap.representative_point()))
+            features.append({
+                "geometry": mapping(gap),
+                "properties": features[nearest_index]["properties"].copy(),
+            })
 
     values = {
         metric: [feature["properties"][metric] for feature in features if feature["properties"][metric] is not None]

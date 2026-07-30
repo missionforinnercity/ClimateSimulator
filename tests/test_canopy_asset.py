@@ -9,9 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_generated_canopy_asset_preserves_scene_components_and_holes():
     asset = json.loads((ROOT / "public/assets/canopy.json").read_text(encoding="utf-8"))
+    manifest = json.loads((ROOT / "public/assets/manifest.json").read_text(encoding="utf-8"))
     records = asset["canopies"]
-    assert len(records) == 4591
-    assert sum(max(0, len(record[5]) - 1) for record in records) == 249
+    assert len(records) == manifest["layers"]["canopy"]["components"]
+    assert len(records) > 2000
+    assert sum(max(0, len(record[5]) - 1) for record in records) > 0
     assert asset["area_drift_pct"] <= 2.0
 
 

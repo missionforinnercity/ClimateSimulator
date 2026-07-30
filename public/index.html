@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23252525'/%3E%3Cpath d='M12 46 26 18l8 16 7-11 11 23Z' fill='%23b84e92'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=14">
+  <link rel="stylesheet" href="style.css?v=15">
 </head>
 <body>
   <main id="app">
@@ -43,6 +43,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h11.5a2.5 2.5 0 1 0-2.3-3.5M3 12h16a2 2 0 1 1-1.7 3M3 16h8"/></svg>
             <span>Wind</span>
           </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-flood" data-menu-target="flood" title="Surface flooding">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15c2.2 0 2.2-1.5 4.5-1.5S9.8 15 12 15s2.2-1.5 4.5-1.5S18.8 15 21 15M3 19c2.2 0 2.2-1.5 4.5-1.5S9.8 19 12 19s2.2-1.5 4.5-1.5S18.8 19 21 19"/><path d="M12 3 8.5 9a4 4 0 0 0 7 0L12 3Z"/></svg>
+            <span>Flood</span>
+          </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-mitigation" data-menu-target="mitigation" title="Mitigation planner">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4C11 4 6 8.5 6 14c0 3 2 5 5 5 5.5 0 9-6 9-15Z"/><path d="M4 21c2-6 6-10 12-13"/></svg>
             <span>Plan</span>
@@ -54,9 +58,18 @@
         <h2>Layers</h2>
         <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
         <label><input type="checkbox" data-layer="grass" checked> Grass</label>
+        <label><input type="checkbox" data-layer="railways" checked> Railways</label>
+        <label><input type="checkbox" data-layer="paths" checked> Paths</label>
         <label><input type="checkbox" data-layer="roads" checked> Roads</label>
         <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
         <label><input type="checkbox" data-layer="trees" checked> Trees</label>
+        <label>Building appearance
+          <select id="building-appearance">
+            <option value="neutral" selected>Neutral analysis</option>
+            <option value="elevation">Elevation colour</option>
+          </select>
+        </label>
+        <p class="panel-note">Elevation colour uses mapped building height, not façade material or land use.</p>
       </section>
       <section id="menu-streetview" class="streetview-panel menu-section" data-menu-panel="streetview" role="tabpanel" aria-label="Street View location pin" hidden>
         <div class="streetview-heading"><span>Street View pin</span><span class="pin-badge">Google Maps</span></div>
@@ -79,7 +92,7 @@
         <p class="panel-note">Open-Meteo modelled conditions · not a weather-station observation</p>
       </section>
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
-        <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox" checked> Show</label></div>
+        <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox"> Show</label></div>
         <p class="heat-metric-label">Surface temperature · Summer 2025–26 baseline — not live</p>
         <p id="heat-status" class="heat-status">Loading heat zones…</p>
         <div class="heat-gradient"></div>
@@ -98,7 +111,7 @@
         <p class="sun-note">GPU shadow map · exact building geometry · LiDAR terrain</p>
       </section>
       <section id="menu-wind" class="wind-panel menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
-        <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox" checked> Show</label></div>
+        <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
         <label>Direction
           <select id="wind-direction">
             <option value="135">SE · 135°</option>
@@ -121,8 +134,8 @@
             <option value="spring">Spring</option>
           </select>
         </label>
-        <label>Speed <span id="wind-speed-value">10.0</span> m/s
-          <input id="wind-speed" type="range" min="0" max="30" step="0.5" value="10">
+        <label>Speed <span id="wind-speed-value">36 km/h</span>
+          <input id="wind-speed" type="range" min="0" max="180" step="1" value="36">
         </label>
         <label>Domain <span id="wind-size-value">250</span> m
           <input id="wind-size" type="range" min="100" max="1200" step="25" value="250">
@@ -136,6 +149,44 @@
           <div class="wind-gradient"></div>
           <div class="wind-legend-labels"><span><b id="wind-legend-min">0.0</b> m/s · low</span><span><b id="wind-legend-max">—</b> m/s · high</span></div>
         </div>
+      </section>
+      <section id="menu-flood" class="flood-panel menu-section" data-menu-panel="flood" role="tabpanel" aria-label="Surface flood simulation controls" hidden>
+        <div class="flood-heading"><span>Surface flooding</span><label class="flood-switch"><input id="flood-toggle" type="checkbox"> Show</label></div>
+        <label>Rain intensity <span id="flood-rain-value">50 mm/h</span>
+          <input id="flood-rain" type="range" min="5" max="200" step="5" value="50">
+        </label>
+        <label>Storm duration <span id="flood-duration-value">60 min</span>
+          <input id="flood-duration" type="range" min="15" max="180" step="15" value="60">
+        </label>
+        <label>Infiltration <span id="flood-infiltration-value">5 mm/h</span>
+          <input id="flood-infiltration" type="range" min="0" max="30" step="1" value="5">
+        </label>
+        <label>Surface roughness
+          <select id="flood-roughness">
+            <option value="0.03">Mostly paved · n 0.03</option>
+            <option value="0.04" selected>Mixed urban · n 0.04</option>
+            <option value="0.07">Rough / vegetated · n 0.07</option>
+          </select>
+        </label>
+        <label>Domain <span id="flood-size-value">400 m</span>
+          <input id="flood-size" type="range" min="200" max="1000" step="50" value="400">
+        </label>
+        <label>Grid resolution
+          <select id="flood-resolution">
+            <option value="2">2 m · slowest</option>
+            <option value="4" selected>4 m · detailed</option>
+            <option value="6">6 m · faster</option>
+          </select>
+        </label>
+        <div class="flood-actions">
+          <button id="flood-move-domain" class="secondary" type="button" aria-pressed="false">Move / resize domain</button>
+          <button id="flood-simulate" type="button">Simulate flood</button>
+        </div>
+        <p id="flood-status" class="flood-status">Choose Move / resize domain to reposition the box.</p>
+        <div class="flood-gradient"></div>
+        <div class="flood-legend-labels"><span id="flood-time">Dry · 0 min</span><span id="flood-legend-max">— m</span></div>
+        <div id="flood-results" class="flood-results" hidden></div>
+        <p class="panel-note">2D shallow-water model · 2025 LiDAR plus lower-accuracy calibrated SRTM in Company’s Garden · drains and unverified curbs omitted.</p>
       </section>
       <section id="menu-mitigation" class="mitigation-panel menu-section" data-menu-panel="mitigation" role="tabpanel" aria-label="Heat mitigation planning controls" hidden>
         <div class="mitigation-heading"><span>Mitigation planner</span><span class="estimate-badge">Estimate</span></div>
@@ -181,6 +232,6 @@
       </footer>
     </aside>
   </main>
-  <script type="module" src="app.js?v=webgl-14"></script>
+  <script type="module" src="app.js?v=webgl-29"></script>
 </body>
 </html>

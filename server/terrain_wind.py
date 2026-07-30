@@ -73,6 +73,8 @@ def mass_conserve(
     prominence_window_m: float = 1000.0,
     iterations: int = 500,
     omega: float = 1.0,
+    solid_mask: np.ndarray | None = None,
+    porous_drag: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Remove divergence from (u0, v0), treating prominent terrain as solid.
 
@@ -96,10 +98,18 @@ def mass_conserve(
     rows, columns = heights.shape
     window_cells = max(3, int(round(prominence_window_m / min(dx, dz))) | 1)
     local_base = minimum_filter(heights, size=window_cells, mode="nearest")
-    blocked = (heights - local_base) > sample_height_m
+    blocked = (heights - local_base) > sample_height_m if solid_mask is None else np.asarray(solid_mask, dtype=bool)
+    if blocked.shape != heights.shape:
+        raise ValueError("solid_mask must have the same shape as heights")
 
     u0 = np.where(blocked, 0.0, u0)
     v0 = np.where(blocked, 0.0, v0)
+    if porous_drag is not None:
+        drag = np.clip(np.asarray(porous_drag, dtype=np.float64), 0.0, 0.95)
+        if drag.shape != heights.shape:
+            raise ValueError("porous_drag must have the same shape as heights")
+        u0 *= 1.0 - drag
+        v0 *= 1.0 - drag
 
     divergence = np.zeros_like(u0)
     divergence[:, 1:-1] += (u0[:, 2:] - u0[:, :-2]) / (2 * dx)
@@ -142,6 +152,8 @@ def solve_terrain_field(
     prominence_window_m: float = 1000.0,
     background_u: np.ndarray | None = None,
     background_v: np.ndarray | None = None,
+    solid_mask: np.ndarray | None = None,
+    porous_drag: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Full pipeline: terrain-following seed field -> mass-conserving correction.
 
@@ -150,7 +162,8 @@ def solve_terrain_field(
     """
     u0, v0 = initial_field(heights, dx, dz, direction_deg, background_u, background_v)
     return mass_conserve(
-        u0, v0, heights, dx, dz, sample_height_m=sample_height_m, prominence_window_m=prominence_window_m
+        u0, v0, heights, dx, dz, sample_height_m=sample_height_m, prominence_window_m=prominence_window_m,
+        solid_mask=solid_mask, porous_drag=porous_drag,
     )
 
 

@@ -1,0 +1,8744 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 4259379,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4256542,
+            -33.9224297
+          ],
+          [
+            18.4257729,
+            -33.9225147
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26295954,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4307212,
+            -33.9247678
+          ],
+          [
+            18.4305240,
+            -33.9246569
+          ],
+          [
+            18.4302745,
+            -33.9245173
+          ],
+          [
+            18.4295129,
+            -33.9239851
+          ],
+          [
+            18.4264756,
+            -33.9217939
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26348867,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4251963,
+            -33.9228696
+          ],
+          [
+            18.4253065,
+            -33.9229492
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26348869,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255499,
+            -33.9225513
+          ],
+          [
+            18.4256486,
+            -33.9226239
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26348871,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255368,
+            -33.9227365
+          ],
+          [
+            18.4254290,
+            -33.9226615
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26348872,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4253114,
+            -33.9227720
+          ],
+          [
+            18.4254168,
+            -33.9228486
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26348885,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4258852,
+            -33.9222040
+          ],
+          [
+            18.4260087,
+            -33.9222939
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26348886,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4260027,
+            -33.9220910
+          ],
+          [
+            18.4261302,
+            -33.9221859
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26349018,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4262457,
+            -33.9218556
+          ],
+          [
+            18.4263426,
+            -33.9219271
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 26349028,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4261453,
+            -33.9219531
+          ],
+          [
+            18.4262474,
+            -33.9220294
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680741,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4284625,
+            -33.9241604
+          ],
+          [
+            18.4286603,
+            -33.9242839
+          ],
+          [
+            18.4288322,
+            -33.9243843
+          ],
+          [
+            18.4288930,
+            -33.9244225
+          ],
+          [
+            18.4290177,
+            -33.9245004
+          ],
+          [
+            18.4292363,
+            -33.9246311
+          ],
+          [
+            18.4293825,
+            -33.9247185
+          ],
+          [
+            18.4295360,
+            -33.9247986
+          ],
+          [
+            18.4299019,
+            -33.9249501
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680745,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4277220,
+            -33.9237092
+          ],
+          [
+            18.4279116,
+            -33.9238678
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680754,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4258366,
+            -33.9222072
+          ],
+          [
+            18.4258917,
+            -33.9222462
+          ],
+          [
+            18.4277600,
+            -33.9236081
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680755,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4276182,
+            -33.9236092
+          ],
+          [
+            18.4277220,
+            -33.9237092
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680756,
+        "railway": "rail",
+        "name": "Simon's Town Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4431404,
+            -33.9257561
+          ],
+          [
+            18.4428079,
+            -33.9258445
+          ],
+          [
+            18.4425797,
+            -33.9259059
+          ],
+          [
+            18.4424203,
+            -33.9259480
+          ],
+          [
+            18.4421333,
+            -33.9260098
+          ],
+          [
+            18.4418959,
+            -33.9260615
+          ],
+          [
+            18.4416941,
+            -33.9260988
+          ],
+          [
+            18.4414715,
+            -33.9261344
+          ],
+          [
+            18.4413058,
+            -33.9261550
+          ],
+          [
+            18.4411595,
+            -33.9261659
+          ],
+          [
+            18.4409820,
+            -33.9261784
+          ],
+          [
+            18.4408009,
+            -33.9261817
+          ],
+          [
+            18.4402162,
+            -33.9261854
+          ],
+          [
+            18.4396999,
+            -33.9261898
+          ],
+          [
+            18.4389046,
+            -33.9261832
+          ],
+          [
+            18.4384151,
+            -33.9261798
+          ],
+          [
+            18.4381134,
+            -33.9261698
+          ],
+          [
+            18.4371357,
+            -33.9261286
+          ],
+          [
+            18.4362667,
+            -33.9260930
+          ],
+          [
+            18.4338359,
+            -33.9259930
+          ],
+          [
+            18.4334809,
+            -33.9259780
+          ],
+          [
+            18.4330044,
+            -33.9259556
+          ],
+          [
+            18.4328703,
+            -33.9259459
+          ],
+          [
+            18.4327376,
+            -33.9259348
+          ],
+          [
+            18.4325790,
+            -33.9259192
+          ],
+          [
+            18.4323489,
+            -33.9258890
+          ],
+          [
+            18.4322186,
+            -33.9258688
+          ],
+          [
+            18.4320543,
+            -33.9258407
+          ],
+          [
+            18.4319232,
+            -33.9258140
+          ],
+          [
+            18.4317284,
+            -33.9257723
+          ],
+          [
+            18.4315426,
+            -33.9257270
+          ],
+          [
+            18.4314240,
+            -33.9256952
+          ],
+          [
+            18.4311919,
+            -33.9256271
+          ],
+          [
+            18.4309288,
+            -33.9255450
+          ],
+          [
+            18.4306479,
+            -33.9254491
+          ],
+          [
+            18.4299363,
+            -33.9252098
+          ],
+          [
+            18.4291887,
+            -33.9249555
+          ],
+          [
+            18.4286610,
+            -33.9247769
+          ],
+          [
+            18.4283072,
+            -33.9246545
+          ],
+          [
+            18.4280229,
+            -33.9245599
+          ],
+          [
+            18.4278389,
+            -33.9244939
+          ],
+          [
+            18.4277376,
+            -33.9244598
+          ],
+          [
+            18.4274869,
+            -33.9243755
+          ],
+          [
+            18.4272076,
+            -33.9242600
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680759,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4277220,
+            -33.9237092
+          ],
+          [
+            18.4279396,
+            -33.9238405
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680761,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4320227,
+            -33.9257051
+          ],
+          [
+            18.4322484,
+            -33.9257358
+          ],
+          [
+            18.4324638,
+            -33.9257738
+          ],
+          [
+            18.4326963,
+            -33.9258221
+          ],
+          [
+            18.4328197,
+            -33.9258438
+          ],
+          [
+            18.4329438,
+            -33.9258541
+          ],
+          [
+            18.4338500,
+            -33.9258928
+          ],
+          [
+            18.4381455,
+            -33.9260664
+          ],
+          [
+            18.4383503,
+            -33.9260793
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680762,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4304975,
+            -33.9249760
+          ],
+          [
+            18.4306770,
+            -33.9250284
+          ],
+          [
+            18.4310630,
+            -33.9251093
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680763,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4258882,
+            -33.9224010
+          ],
+          [
+            18.4275895,
+            -33.9236353
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680771,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4287082,
+            -33.9247540
+          ],
+          [
+            18.4289532,
+            -33.9248092
+          ],
+          [
+            18.4291465,
+            -33.9248637
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680772,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4285961,
+            -33.9245484
+          ],
+          [
+            18.4288866,
+            -33.9246702
+          ],
+          [
+            18.4293022,
+            -33.9248386
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680773,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4260786,
+            -33.9219738
+          ],
+          [
+            18.4261334,
+            -33.9220123
+          ],
+          [
+            18.4279900,
+            -33.9233812
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680774,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4271509,
+            -33.9242330
+          ],
+          [
+            18.4272153,
+            -33.9242444
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680776,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4334445,
+            -33.9255088
+          ],
+          [
+            18.4336484,
+            -33.9255063
+          ],
+          [
+            18.4338107,
+            -33.9254956
+          ],
+          [
+            18.4340069,
+            -33.9254949
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680777,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255768,
+            -33.9225255
+          ],
+          [
+            18.4256788,
+            -33.9225989
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680778,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4293683,
+            -33.9247662
+          ],
+          [
+            18.4295762,
+            -33.9248359
+          ],
+          [
+            18.4299019,
+            -33.9249501
+          ],
+          [
+            18.4299451,
+            -33.9249644
+          ],
+          [
+            18.4302770,
+            -33.9250707
+          ],
+          [
+            18.4306734,
+            -33.9251880
+          ],
+          [
+            18.4309351,
+            -33.9252621
+          ],
+          [
+            18.4311403,
+            -33.9253194
+          ],
+          [
+            18.4312962,
+            -33.9253608
+          ],
+          [
+            18.4314521,
+            -33.9253962
+          ],
+          [
+            18.4316493,
+            -33.9254351
+          ],
+          [
+            18.4318897,
+            -33.9254732
+          ],
+          [
+            18.4320513,
+            -33.9254910
+          ],
+          [
+            18.4321847,
+            -33.9255027
+          ],
+          [
+            18.4323681,
+            -33.9255144
+          ],
+          [
+            18.4325964,
+            -33.9255250
+          ],
+          [
+            18.4329609,
+            -33.9255383
+          ],
+          [
+            18.4334375,
+            -33.9255584
+          ],
+          [
+            18.4334792,
+            -33.9255603
+          ],
+          [
+            18.4366072,
+            -33.9256873
+          ],
+          [
+            18.4369754,
+            -33.9256950
+          ],
+          [
+            18.4371597,
+            -33.9256945
+          ],
+          [
+            18.4373978,
+            -33.9256889
+          ],
+          [
+            18.4377485,
+            -33.9256720
+          ],
+          [
+            18.4417259,
+            -33.9254584
+          ],
+          [
+            18.4429125,
+            -33.9253922
+          ],
+          [
+            18.4441347,
+            -33.9253267
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680782,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4273823,
+            -33.9238777
+          ],
+          [
+            18.4274999,
+            -33.9239421
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680785,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4281654,
+            -33.9239789
+          ],
+          [
+            18.4283032,
+            -33.9240520
+          ],
+          [
+            18.4284205,
+            -33.9241097
+          ],
+          [
+            18.4285367,
+            -33.9241635
+          ],
+          [
+            18.4287792,
+            -33.9242676
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680793,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4259657,
+            -33.9220828
+          ],
+          [
+            18.4260129,
+            -33.9221167
+          ],
+          [
+            18.4278796,
+            -33.9234901
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680794,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306957,
+            -33.9249380
+          ],
+          [
+            18.4308915,
+            -33.9250123
+          ],
+          [
+            18.4311061,
+            -33.9250829
+          ],
+          [
+            18.4313610,
+            -33.9251611
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680799,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4253364,
+            -33.9227470
+          ],
+          [
+            18.4254423,
+            -33.9228247
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680801,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306783,
+            -33.9248381
+          ],
+          [
+            18.4303574,
+            -33.9246841
+          ],
+          [
+            18.4299585,
+            -33.9244431
+          ],
+          [
+            18.4293359,
+            -33.9240667
+          ],
+          [
+            18.4288081,
+            -33.9236894
+          ],
+          [
+            18.4280625,
+            -33.9231514
+          ],
+          [
+            18.4263864,
+            -33.9218858
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680805,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4275091,
+            -33.9239693
+          ],
+          [
+            18.4277436,
+            -33.9241414
+          ],
+          [
+            18.4278030,
+            -33.9241824
+          ],
+          [
+            18.4279029,
+            -33.9242492
+          ],
+          [
+            18.4279861,
+            -33.9243009
+          ],
+          [
+            18.4281108,
+            -33.9243683
+          ],
+          [
+            18.4282590,
+            -33.9244450
+          ],
+          [
+            18.4285267,
+            -33.9245754
+          ],
+          [
+            18.4289767,
+            -33.9247676
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680806,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4293683,
+            -33.9247662
+          ],
+          [
+            18.4298101,
+            -33.9249570
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680807,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4275301,
+            -33.9239402
+          ],
+          [
+            18.4277769,
+            -33.9241089
+          ],
+          [
+            18.4278754,
+            -33.9241718
+          ],
+          [
+            18.4280695,
+            -33.9242867
+          ],
+          [
+            18.4281939,
+            -33.9243577
+          ],
+          [
+            18.4283049,
+            -33.9244191
+          ],
+          [
+            18.4283860,
+            -33.9244603
+          ],
+          [
+            18.4285961,
+            -33.9245484
+          ],
+          [
+            18.4287978,
+            -33.9246147
+          ],
+          [
+            18.4291653,
+            -33.9247406
+          ],
+          [
+            18.4294842,
+            -33.9248483
+          ],
+          [
+            18.4298101,
+            -33.9249570
+          ],
+          [
+            18.4299565,
+            -33.9250061
+          ],
+          [
+            18.4306689,
+            -33.9252451
+          ],
+          [
+            18.4309163,
+            -33.9253227
+          ],
+          [
+            18.4311383,
+            -33.9253839
+          ],
+          [
+            18.4312948,
+            -33.9254194
+          ],
+          [
+            18.4314488,
+            -33.9254560
+          ],
+          [
+            18.4316120,
+            -33.9254877
+          ],
+          [
+            18.4318628,
+            -33.9255286
+          ],
+          [
+            18.4320502,
+            -33.9255517
+          ],
+          [
+            18.4323007,
+            -33.9255765
+          ],
+          [
+            18.4325998,
+            -33.9255940
+          ],
+          [
+            18.4329810,
+            -33.9256115
+          ],
+          [
+            18.4334655,
+            -33.9256306
+          ],
+          [
+            18.4337083,
+            -33.9256417
+          ],
+          [
+            18.4372416,
+            -33.9257844
+          ],
+          [
+            18.4374945,
+            -33.9257954
+          ],
+          [
+            18.4377105,
+            -33.9257994
+          ],
+          [
+            18.4380149,
+            -33.9257926
+          ],
+          [
+            18.4383065,
+            -33.9257846
+          ],
+          [
+            18.4388551,
+            -33.9257555
+          ],
+          [
+            18.4395753,
+            -33.9257163
+          ],
+          [
+            18.4403167,
+            -33.9256764
+          ],
+          [
+            18.4406802,
+            -33.9256570
+          ],
+          [
+            18.4410546,
+            -33.9256379
+          ],
+          [
+            18.4417893,
+            -33.9256000
+          ],
+          [
+            18.4424090,
+            -33.9255659
+          ],
+          [
+            18.4428522,
+            -33.9255404
+          ],
+          [
+            18.4432545,
+            -33.9254957
+          ],
+          [
+            18.4435180,
+            -33.9254595
+          ],
+          [
+            18.4437674,
+            -33.9254306
+          ],
+          [
+            18.4439942,
+            -33.9254129
+          ],
+          [
+            18.4442275,
+            -33.9254007
+          ],
+          [
+            18.4445116,
+            -33.9253861
+          ],
+          [
+            18.4446189,
+            -33.9253846
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680810,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4310572,
+            -33.9249108
+          ],
+          [
+            18.4308272,
+            -33.9248128
+          ],
+          [
+            18.4307212,
+            -33.9247678
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680812,
+        "railway": "abandoned",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4288322,
+            -33.9243843
+          ],
+          [
+            18.4289600,
+            -33.9244347
+          ],
+          [
+            18.4291712,
+            -33.9245232
+          ],
+          [
+            18.4293436,
+            -33.9245994
+          ],
+          [
+            18.4298077,
+            -33.9247956
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680819,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4324638,
+            -33.9257738
+          ],
+          [
+            18.4326285,
+            -33.9257990
+          ],
+          [
+            18.4327054,
+            -33.9258057
+          ],
+          [
+            18.4328774,
+            -33.9258165
+          ],
+          [
+            18.4375815,
+            -33.9260066
+          ],
+          [
+            18.4378524,
+            -33.9260233
+          ],
+          [
+            18.4381302,
+            -33.9260514
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680820,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4272995,
+            -33.9242000
+          ],
+          [
+            18.4274396,
+            -33.9242803
+          ],
+          [
+            18.4275496,
+            -33.9243363
+          ],
+          [
+            18.4276995,
+            -33.9244098
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680826,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4259104,
+            -33.9221796
+          ],
+          [
+            18.4260342,
+            -33.9222690
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680828,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4316211,
+            -33.9251024
+          ],
+          [
+            18.4315527,
+            -33.9250824
+          ],
+          [
+            18.4314756,
+            -33.9250623
+          ],
+          [
+            18.4312939,
+            -33.9250045
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680832,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4252206,
+            -33.9228494
+          ],
+          [
+            18.4253293,
+            -33.9229302
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680833,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4288271,
+            -33.9247541
+          ],
+          [
+            18.4291465,
+            -33.9248637
+          ],
+          [
+            18.4295374,
+            -33.9249972
+          ],
+          [
+            18.4299417,
+            -33.9251330
+          ],
+          [
+            18.4309428,
+            -33.9254716
+          ],
+          [
+            18.4312054,
+            -33.9255539
+          ],
+          [
+            18.4314109,
+            -33.9256054
+          ],
+          [
+            18.4315735,
+            -33.9256368
+          ],
+          [
+            18.4318404,
+            -33.9256796
+          ],
+          [
+            18.4320227,
+            -33.9257051
+          ],
+          [
+            18.4322632,
+            -33.9257194
+          ],
+          [
+            18.4328352,
+            -33.9257450
+          ],
+          [
+            18.4334701,
+            -33.9257696
+          ],
+          [
+            18.4341025,
+            -33.9257962
+          ],
+          [
+            18.4372348,
+            -33.9259232
+          ],
+          [
+            18.4374347,
+            -33.9259360
+          ],
+          [
+            18.4376124,
+            -33.9259616
+          ],
+          [
+            18.4379093,
+            -33.9260154
+          ],
+          [
+            18.4381302,
+            -33.9260514
+          ],
+          [
+            18.4383503,
+            -33.9260793
+          ],
+          [
+            18.4383765,
+            -33.9260814
+          ],
+          [
+            18.4387369,
+            -33.9261101
+          ],
+          [
+            18.4389290,
+            -33.9261157
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680838,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4257184,
+            -33.9223213
+          ],
+          [
+            18.4257662,
+            -33.9223561
+          ],
+          [
+            18.4276427,
+            -33.9237239
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680840,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4276263,
+            -33.9238589
+          ],
+          [
+            18.4278999,
+            -33.9240580
+          ],
+          [
+            18.4281057,
+            -33.9242060
+          ],
+          [
+            18.4282720,
+            -33.9243140
+          ],
+          [
+            18.4283733,
+            -33.9243713
+          ],
+          [
+            18.4285382,
+            -33.9244603
+          ],
+          [
+            18.4287039,
+            -33.9245443
+          ],
+          [
+            18.4289056,
+            -33.9246362
+          ],
+          [
+            18.4291653,
+            -33.9247406
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680841,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4278287,
+            -33.9243235
+          ],
+          [
+            18.4280524,
+            -33.9244117
+          ],
+          [
+            18.4282206,
+            -33.9244691
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680844,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4329582,
+            -33.9252705
+          ],
+          [
+            18.4325860,
+            -33.9252629
+          ],
+          [
+            18.4322733,
+            -33.9252491
+          ],
+          [
+            18.4320147,
+            -33.9252037
+          ],
+          [
+            18.4318719,
+            -33.9251725
+          ],
+          [
+            18.4316211,
+            -33.9251024
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680846,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4265500,
+            -33.9215599
+          ],
+          [
+            18.4266379,
+            -33.9216237
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680850,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4274999,
+            -33.9239421
+          ],
+          [
+            18.4277436,
+            -33.9241414
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680852,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4279203,
+            -33.9236314
+          ],
+          [
+            18.4283180,
+            -33.9239193
+          ],
+          [
+            18.4284993,
+            -33.9240519
+          ],
+          [
+            18.4289827,
+            -33.9243364
+          ],
+          [
+            18.4290732,
+            -33.9243899
+          ],
+          [
+            18.4291882,
+            -33.9244565
+          ],
+          [
+            18.4293658,
+            -33.9245521
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680856,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4282023,
+            -33.9236379
+          ],
+          [
+            18.4284336,
+            -33.9238071
+          ],
+          [
+            18.4286576,
+            -33.9239679
+          ],
+          [
+            18.4288360,
+            -33.9240986
+          ],
+          [
+            18.4290068,
+            -33.9242202
+          ],
+          [
+            18.4290983,
+            -33.9242863
+          ],
+          [
+            18.4291907,
+            -33.9243517
+          ],
+          [
+            18.4292431,
+            -33.9243863
+          ],
+          [
+            18.4293113,
+            -33.9244308
+          ],
+          [
+            18.4293810,
+            -33.9244731
+          ],
+          [
+            18.4296473,
+            -33.9246291
+          ],
+          [
+            18.4297476,
+            -33.9246871
+          ],
+          [
+            18.4299293,
+            -33.9247833
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680857,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4264671,
+            -33.9216404
+          ],
+          [
+            18.4265618,
+            -33.9216947
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680860,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4261851,
+            -33.9218711
+          ],
+          [
+            18.4262369,
+            -33.9219097
+          ],
+          [
+            18.4293477,
+            -33.9241670
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680861,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4280455,
+            -33.9245275
+          ],
+          [
+            18.4279369,
+            -33.9244723
+          ],
+          [
+            18.4278390,
+            -33.9244289
+          ],
+          [
+            18.4276262,
+            -33.9243262
+          ],
+          [
+            18.4274677,
+            -33.9242492
+          ],
+          [
+            18.4273225,
+            -33.9241665
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680863,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4337083,
+            -33.9256417
+          ],
+          [
+            18.4339128,
+            -33.9256407
+          ],
+          [
+            18.4340487,
+            -33.9256317
+          ],
+          [
+            18.4342597,
+            -33.9256283
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680864,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4260293,
+            -33.9220639
+          ],
+          [
+            18.4261582,
+            -33.9221576
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680865,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4272310,
+            -33.9242266
+          ],
+          [
+            18.4274015,
+            -33.9243061
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680868,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4275895,
+            -33.9236353
+          ],
+          [
+            18.4279116,
+            -33.9238678
+          ],
+          [
+            18.4280373,
+            -33.9239612
+          ],
+          [
+            18.4283029,
+            -33.9241532
+          ],
+          [
+            18.4285557,
+            -33.9243318
+          ],
+          [
+            18.4287204,
+            -33.9244359
+          ],
+          [
+            18.4289707,
+            -33.9245760
+          ],
+          [
+            18.4291035,
+            -33.9246411
+          ],
+          [
+            18.4293683,
+            -33.9247662
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680869,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306783,
+            -33.9248381
+          ],
+          [
+            18.4310290,
+            -33.9249633
+          ],
+          [
+            18.4311926,
+            -33.9250162
+          ],
+          [
+            18.4314340,
+            -33.9250863
+          ],
+          [
+            18.4317478,
+            -33.9251775
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680870,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4278754,
+            -33.9241718
+          ],
+          [
+            18.4280980,
+            -33.9242854
+          ],
+          [
+            18.4283364,
+            -33.9244052
+          ],
+          [
+            18.4285362,
+            -33.9244865
+          ],
+          [
+            18.4287039,
+            -33.9245443
+          ],
+          [
+            18.4290718,
+            -33.9246677
+          ],
+          [
+            18.4292416,
+            -33.9247252
+          ],
+          [
+            18.4293683,
+            -33.9247662
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680871,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4254556,
+            -33.9226363
+          ],
+          [
+            18.4255604,
+            -33.9227111
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680877,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4290565,
+            -33.9247962
+          ],
+          [
+            18.4292127,
+            -33.9248571
+          ],
+          [
+            18.4295374,
+            -33.9249972
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680878,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4333483,
+            -33.9254236
+          ],
+          [
+            18.4334450,
+            -33.9254488
+          ],
+          [
+            18.4336867,
+            -33.9254802
+          ],
+          [
+            18.4340069,
+            -33.9254949
+          ],
+          [
+            18.4352232,
+            -33.9255434
+          ],
+          [
+            18.4357199,
+            -33.9255646
+          ],
+          [
+            18.4362310,
+            -33.9255841
+          ],
+          [
+            18.4366424,
+            -33.9255962
+          ],
+          [
+            18.4368863,
+            -33.9256000
+          ],
+          [
+            18.4371889,
+            -33.9256047
+          ],
+          [
+            18.4373150,
+            -33.9256037
+          ],
+          [
+            18.4374387,
+            -33.9256007
+          ],
+          [
+            18.4375828,
+            -33.9255956
+          ],
+          [
+            18.4395429,
+            -33.9254897
+          ],
+          [
+            18.4402833,
+            -33.9254480
+          ],
+          [
+            18.4410488,
+            -33.9254065
+          ],
+          [
+            18.4417685,
+            -33.9253726
+          ],
+          [
+            18.4419906,
+            -33.9253526
+          ],
+          [
+            18.4422011,
+            -33.9253251
+          ],
+          [
+            18.4426233,
+            -33.9252753
+          ],
+          [
+            18.4430013,
+            -33.9252325
+          ],
+          [
+            18.4431731,
+            -33.9252168
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680881,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4274299,
+            -33.9240575
+          ],
+          [
+            18.4275616,
+            -33.9241412
+          ],
+          [
+            18.4276729,
+            -33.9242047
+          ],
+          [
+            18.4277721,
+            -33.9242570
+          ],
+          [
+            18.4279485,
+            -33.9243410
+          ],
+          [
+            18.4282206,
+            -33.9244691
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680882,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4279396,
+            -33.9238405
+          ],
+          [
+            18.4281654,
+            -33.9239789
+          ],
+          [
+            18.4283263,
+            -33.9240792
+          ],
+          [
+            18.4284625,
+            -33.9241604
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680886,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4264845,
+            -33.9215822
+          ],
+          [
+            18.4265425,
+            -33.9216227
+          ],
+          [
+            18.4296513,
+            -33.9238786
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680892,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4312939,
+            -33.9250045
+          ],
+          [
+            18.4314273,
+            -33.9250651
+          ],
+          [
+            18.4317478,
+            -33.9251775
+          ],
+          [
+            18.4319048,
+            -33.9252198
+          ],
+          [
+            18.4319973,
+            -33.9252434
+          ],
+          [
+            18.4321205,
+            -33.9252678
+          ],
+          [
+            18.4322237,
+            -33.9252853
+          ],
+          [
+            18.4323772,
+            -33.9253051
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680893,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4431404,
+            -33.9257561
+          ],
+          [
+            18.4421004,
+            -33.9259714
+          ],
+          [
+            18.4418946,
+            -33.9259981
+          ],
+          [
+            18.4416988,
+            -33.9260181
+          ],
+          [
+            18.4414990,
+            -33.9260242
+          ],
+          [
+            18.4413032,
+            -33.9260215
+          ],
+          [
+            18.4410698,
+            -33.9260070
+          ],
+          [
+            18.4409409,
+            -33.9259951
+          ],
+          [
+            18.4406869,
+            -33.9259597
+          ],
+          [
+            18.4403543,
+            -33.9259107
+          ],
+          [
+            18.4401599,
+            -33.9258857
+          ],
+          [
+            18.4398856,
+            -33.9258556
+          ],
+          [
+            18.4396590,
+            -33.9258479
+          ],
+          [
+            18.4393297,
+            -33.9258523
+          ],
+          [
+            18.4390119,
+            -33.9258612
+          ],
+          [
+            18.4387738,
+            -33.9258681
+          ],
+          [
+            18.4383166,
+            -33.9258838
+          ],
+          [
+            18.4377592,
+            -33.9258904
+          ],
+          [
+            18.4375681,
+            -33.9258837
+          ],
+          [
+            18.4372366,
+            -33.9258688
+          ],
+          [
+            18.4341001,
+            -33.9257409
+          ],
+          [
+            18.4338641,
+            -33.9257348
+          ],
+          [
+            18.4334652,
+            -33.9257170
+          ],
+          [
+            18.4329991,
+            -33.9256966
+          ],
+          [
+            18.4325579,
+            -33.9256783
+          ],
+          [
+            18.4322487,
+            -33.9256633
+          ],
+          [
+            18.4320821,
+            -33.9256510
+          ],
+          [
+            18.4319088,
+            -33.9256322
+          ],
+          [
+            18.4317451,
+            -33.9256118
+          ],
+          [
+            18.4315889,
+            -33.9255853
+          ],
+          [
+            18.4314280,
+            -33.9255559
+          ],
+          [
+            18.4312627,
+            -33.9255189
+          ],
+          [
+            18.4311021,
+            -33.9254769
+          ],
+          [
+            18.4309418,
+            -33.9254301
+          ],
+          [
+            18.4306830,
+            -33.9253480
+          ],
+          [
+            18.4299464,
+            -33.9250963
+          ],
+          [
+            18.4293865,
+            -33.9249049
+          ],
+          [
+            18.4290565,
+            -33.9247962
+          ],
+          [
+            18.4289767,
+            -33.9247676
+          ],
+          [
+            18.4285534,
+            -33.9246239
+          ],
+          [
+            18.4282166,
+            -33.9245064
+          ],
+          [
+            18.4278287,
+            -33.9243235
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680898,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4276526,
+            -33.9238308
+          ],
+          [
+            18.4279220,
+            -33.9240263
+          ],
+          [
+            18.4281688,
+            -33.9242027
+          ],
+          [
+            18.4283190,
+            -33.9242956
+          ],
+          [
+            18.4284149,
+            -33.9243485
+          ],
+          [
+            18.4287071,
+            -33.9244978
+          ],
+          [
+            18.4290718,
+            -33.9246677
+          ],
+          [
+            18.4291753,
+            -33.9247196
+          ],
+          [
+            18.4294842,
+            -33.9248483
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680899,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4256857,
+            -33.9223982
+          ],
+          [
+            18.4258025,
+            -33.9224825
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680902,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4282724,
+            -33.9235431
+          ],
+          [
+            18.4286586,
+            -33.9238202
+          ],
+          [
+            18.4289590,
+            -33.9240300
+          ],
+          [
+            18.4291843,
+            -33.9242186
+          ],
+          [
+            18.4293446,
+            -33.9243466
+          ],
+          [
+            18.4294800,
+            -33.9244640
+          ],
+          [
+            18.4296188,
+            -33.9245619
+          ],
+          [
+            18.4297509,
+            -33.9246431
+          ],
+          [
+            18.4299429,
+            -33.9247513
+          ],
+          [
+            18.4300681,
+            -33.9248238
+          ],
+          [
+            18.4301516,
+            -33.9248688
+          ],
+          [
+            18.4302709,
+            -33.9249306
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680904,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4307429,
+            -33.9243126
+          ],
+          [
+            18.4309133,
+            -33.9244342
+          ],
+          [
+            18.4310622,
+            -33.9245243
+          ],
+          [
+            18.4312117,
+            -33.9246061
+          ],
+          [
+            18.4314203,
+            -33.9246918
+          ],
+          [
+            18.4316492,
+            -33.9247914
+          ],
+          [
+            18.4318501,
+            -33.9248760
+          ],
+          [
+            18.4320174,
+            -33.9249460
+          ],
+          [
+            18.4322802,
+            -33.9250467
+          ],
+          [
+            18.4323824,
+            -33.9250716
+          ],
+          [
+            18.4325431,
+            -33.9251135
+          ],
+          [
+            18.4326725,
+            -33.9251414
+          ],
+          [
+            18.4328633,
+            -33.9251745
+          ],
+          [
+            18.4334178,
+            -33.9252565
+          ],
+          [
+            18.4336940,
+            -33.9252951
+          ],
+          [
+            18.4338043,
+            -33.9253058
+          ],
+          [
+            18.4339846,
+            -33.9253210
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680905,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4275895,
+            -33.9236353
+          ],
+          [
+            18.4277220,
+            -33.9237092
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680906,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4307061,
+            -33.9245777
+          ],
+          [
+            18.4308067,
+            -33.9246322
+          ],
+          [
+            18.4310998,
+            -33.9247694
+          ],
+          [
+            18.4313478,
+            -33.9248867
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680912,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4272153,
+            -33.9242444
+          ],
+          [
+            18.4274015,
+            -33.9243061
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680913,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4274999,
+            -33.9239421
+          ],
+          [
+            18.4277769,
+            -33.9241089
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680914,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4257960,
+            -33.9222907
+          ],
+          [
+            18.4259134,
+            -33.9223766
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680918,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306770,
+            -33.9249892
+          ],
+          [
+            18.4302512,
+            -33.9248418
+          ],
+          [
+            18.4300808,
+            -33.9247638
+          ],
+          [
+            18.4300197,
+            -33.9247333
+          ],
+          [
+            18.4299441,
+            -33.9246904
+          ],
+          [
+            18.4298537,
+            -33.9246343
+          ],
+          [
+            18.4297477,
+            -33.9245619
+          ],
+          [
+            18.4296779,
+            -33.9245073
+          ],
+          [
+            18.4295419,
+            -33.9243784
+          ],
+          [
+            18.4293641,
+            -33.9242407
+          ],
+          [
+            18.4262805,
+            -33.9219960
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680922,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4323772,
+            -33.9253051
+          ],
+          [
+            18.4334297,
+            -33.9253455
+          ],
+          [
+            18.4339090,
+            -33.9253698
+          ],
+          [
+            18.4342782,
+            -33.9253845
+          ],
+          [
+            18.4356040,
+            -33.9254387
+          ],
+          [
+            18.4360211,
+            -33.9254502
+          ],
+          [
+            18.4363132,
+            -33.9254539
+          ],
+          [
+            18.4365153,
+            -33.9254519
+          ],
+          [
+            18.4367641,
+            -33.9254447
+          ],
+          [
+            18.4370600,
+            -33.9254310
+          ],
+          [
+            18.4388428,
+            -33.9253317
+          ],
+          [
+            18.4392296,
+            -33.9253139
+          ],
+          [
+            18.4396092,
+            -33.9252921
+          ],
+          [
+            18.4399307,
+            -33.9252566
+          ],
+          [
+            18.4401276,
+            -33.9252171
+          ],
+          [
+            18.4402919,
+            -33.9251759
+          ],
+          [
+            18.4404126,
+            -33.9251398
+          ],
+          [
+            18.4407048,
+            -33.9250482
+          ],
+          [
+            18.4424451,
+            -33.9244890
+          ],
+          [
+            18.4432085,
+            -33.9242434
+          ],
+          [
+            18.4435946,
+            -33.9241203
+          ],
+          [
+            18.4437325,
+            -33.9240773
+          ],
+          [
+            18.4438912,
+            -33.9240326
+          ],
+          [
+            18.4440134,
+            -33.9239985
+          ],
+          [
+            18.4442630,
+            -33.9239444
+          ],
+          [
+            18.4447639,
+            -33.9238551
+          ],
+          [
+            18.4465897,
+            -33.9236275
+          ],
+          [
+            18.4468264,
+            -33.9235974
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680924,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4266412,
+            -33.9214311
+          ],
+          [
+            18.4267078,
+            -33.9214774
+          ],
+          [
+            18.4298225,
+            -33.9237452
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680927,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4274124,
+            -33.9238510
+          ],
+          [
+            18.4274999,
+            -33.9239421
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680928,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4278931,
+            -33.9236599
+          ],
+          [
+            18.4284062,
+            -33.9240368
+          ],
+          [
+            18.4284884,
+            -33.9240937
+          ],
+          [
+            18.4285845,
+            -33.9241543
+          ],
+          [
+            18.4287792,
+            -33.9242676
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680929,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4334792,
+            -33.9255603
+          ],
+          [
+            18.4336419,
+            -33.9255765
+          ],
+          [
+            18.4339037,
+            -33.9256113
+          ],
+          [
+            18.4342597,
+            -33.9256283
+          ],
+          [
+            18.4370005,
+            -33.9257403
+          ],
+          [
+            18.4373075,
+            -33.9257530
+          ],
+          [
+            18.4375388,
+            -33.9257598
+          ],
+          [
+            18.4377265,
+            -33.9257651
+          ],
+          [
+            18.4380068,
+            -33.9257615
+          ],
+          [
+            18.4383024,
+            -33.9257491
+          ],
+          [
+            18.4417336,
+            -33.9255646
+          ],
+          [
+            18.4423786,
+            -33.9255306
+          ],
+          [
+            18.4426141,
+            -33.9255153
+          ],
+          [
+            18.4428300,
+            -33.9254856
+          ],
+          [
+            18.4429103,
+            -33.9254712
+          ],
+          [
+            18.4430971,
+            -33.9254464
+          ],
+          [
+            18.4431394,
+            -33.9254424
+          ],
+          [
+            18.4433311,
+            -33.9254270
+          ],
+          [
+            18.4434862,
+            -33.9254133
+          ],
+          [
+            18.4439005,
+            -33.9253520
+          ],
+          [
+            18.4441347,
+            -33.9253267
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680934,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4251368,
+            -33.9228818
+          ],
+          [
+            18.4251802,
+            -33.9229132
+          ],
+          [
+            18.4266861,
+            -33.9239998
+          ],
+          [
+            18.4268162,
+            -33.9240695
+          ],
+          [
+            18.4270113,
+            -33.9241738
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680940,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4338022,
+            -33.9254017
+          ],
+          [
+            18.4340579,
+            -33.9254018
+          ],
+          [
+            18.4342782,
+            -33.9253845
+          ],
+          [
+            18.4345253,
+            -33.9253670
+          ],
+          [
+            18.4345791,
+            -33.9253620
+          ],
+          [
+            18.4346245,
+            -33.9253575
+          ],
+          [
+            18.4347360,
+            -33.9253477
+          ],
+          [
+            18.4349129,
+            -33.9253347
+          ],
+          [
+            18.4350284,
+            -33.9253231
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680943,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4323772,
+            -33.9253051
+          ],
+          [
+            18.4325715,
+            -33.9253345
+          ],
+          [
+            18.4328475,
+            -33.9253622
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680944,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4263135,
+            -33.9217472
+          ],
+          [
+            18.4263661,
+            -33.9217834
+          ],
+          [
+            18.4279566,
+            -33.9229376
+          ],
+          [
+            18.4294751,
+            -33.9240394
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680945,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4307116,
+            -33.9245135
+          ],
+          [
+            18.4308181,
+            -33.9245827
+          ],
+          [
+            18.4309562,
+            -33.9246706
+          ],
+          [
+            18.4310582,
+            -33.9247307
+          ],
+          [
+            18.4313478,
+            -33.9248867
+          ],
+          [
+            18.4314578,
+            -33.9249360
+          ],
+          [
+            18.4316295,
+            -33.9250056
+          ],
+          [
+            18.4318494,
+            -33.9250813
+          ],
+          [
+            18.4320077,
+            -33.9251241
+          ],
+          [
+            18.4321713,
+            -33.9251608
+          ],
+          [
+            18.4322426,
+            -33.9251735
+          ],
+          [
+            18.4325660,
+            -33.9252245
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680952,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4322484,
+            -33.9257358
+          ],
+          [
+            18.4324915,
+            -33.9257612
+          ],
+          [
+            18.4326682,
+            -33.9257726
+          ],
+          [
+            18.4372422,
+            -33.9259582
+          ],
+          [
+            18.4374293,
+            -33.9259688
+          ],
+          [
+            18.4376124,
+            -33.9259827
+          ],
+          [
+            18.4377425,
+            -33.9259938
+          ],
+          [
+            18.4379093,
+            -33.9260154
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 65680959,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4279629,
+            -33.9235137
+          ],
+          [
+            18.4283518,
+            -33.9237926
+          ],
+          [
+            18.4287257,
+            -33.9240838
+          ],
+          [
+            18.4288715,
+            -33.9241982
+          ],
+          [
+            18.4290182,
+            -33.9243038
+          ],
+          [
+            18.4291706,
+            -33.9244030
+          ],
+          [
+            18.4293609,
+            -33.9245092
+          ],
+          [
+            18.4294928,
+            -33.9245841
+          ],
+          [
+            18.4296298,
+            -33.9246559
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 137485405,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4265889,
+            -33.9215222
+          ],
+          [
+            18.4307064,
+            -33.9245481
+          ],
+          [
+            18.4308107,
+            -33.9246150
+          ],
+          [
+            18.4310998,
+            -33.9247694
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 137485406,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4264231,
+            -33.9216832
+          ],
+          [
+            18.4265129,
+            -33.9217480
+          ],
+          [
+            18.4295501,
+            -33.9239371
+          ],
+          [
+            18.4303430,
+            -33.9245041
+          ],
+          [
+            18.4307212,
+            -33.9247678
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 239784875,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4334116,
+            -33.9251716
+          ],
+          [
+            18.4347631,
+            -33.9252271
+          ],
+          [
+            18.4348502,
+            -33.9252316
+          ],
+          [
+            18.4353450,
+            -33.9252511
+          ],
+          [
+            18.4354400,
+            -33.9252571
+          ],
+          [
+            18.4355316,
+            -33.9252665
+          ],
+          [
+            18.4357197,
+            -33.9252916
+          ],
+          [
+            18.4357985,
+            -33.9253005
+          ],
+          [
+            18.4359020,
+            -33.9253086
+          ],
+          [
+            18.4359680,
+            -33.9253111
+          ],
+          [
+            18.4362528,
+            -33.9252994
+          ],
+          [
+            18.4365215,
+            -33.9252630
+          ],
+          [
+            18.4366415,
+            -33.9252379
+          ],
+          [
+            18.4367227,
+            -33.9252184
+          ],
+          [
+            18.4368581,
+            -33.9251812
+          ],
+          [
+            18.4369875,
+            -33.9251367
+          ],
+          [
+            18.4370730,
+            -33.9251110
+          ],
+          [
+            18.4373912,
+            -33.9250037
+          ],
+          [
+            18.4396863,
+            -33.9242673
+          ],
+          [
+            18.4419951,
+            -33.9235284
+          ],
+          [
+            18.4421433,
+            -33.9234811
+          ],
+          [
+            18.4422666,
+            -33.9234458
+          ],
+          [
+            18.4424222,
+            -33.9234026
+          ],
+          [
+            18.4425801,
+            -33.9233704
+          ],
+          [
+            18.4429036,
+            -33.9233376
+          ],
+          [
+            18.4431221,
+            -33.9233223
+          ],
+          [
+            18.4432047,
+            -33.9233226
+          ],
+          [
+            18.4435280,
+            -33.9233191
+          ],
+          [
+            18.4438526,
+            -33.9233200
+          ],
+          [
+            18.4439420,
+            -33.9233201
+          ],
+          [
+            18.4442059,
+            -33.9233169
+          ],
+          [
+            18.4449509,
+            -33.9233130
+          ],
+          [
+            18.4453914,
+            -33.9233119
+          ],
+          [
+            18.4456162,
+            -33.9233082
+          ],
+          [
+            18.4462732,
+            -33.9233097
+          ],
+          [
+            18.4468231,
+            -33.9233103
+          ],
+          [
+            18.4472415,
+            -33.9233020
+          ],
+          [
+            18.4474212,
+            -33.9232925
+          ],
+          [
+            18.4480080,
+            -33.9232463
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 239784913,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4319327,
+            -33.9247602
+          ],
+          [
+            18.4320030,
+            -33.9248041
+          ],
+          [
+            18.4321365,
+            -33.9248732
+          ],
+          [
+            18.4323594,
+            -33.9249659
+          ],
+          [
+            18.4324287,
+            -33.9249894
+          ],
+          [
+            18.4325546,
+            -33.9250318
+          ],
+          [
+            18.4326814,
+            -33.9250721
+          ],
+          [
+            18.4327745,
+            -33.9250945
+          ],
+          [
+            18.4328919,
+            -33.9251215
+          ],
+          [
+            18.4334165,
+            -33.9252013
+          ],
+          [
+            18.4335762,
+            -33.9252220
+          ],
+          [
+            18.4336849,
+            -33.9252313
+          ],
+          [
+            18.4338020,
+            -33.9252379
+          ],
+          [
+            18.4340632,
+            -33.9252476
+          ],
+          [
+            18.4341870,
+            -33.9252492
+          ],
+          [
+            18.4342951,
+            -33.9252451
+          ],
+          [
+            18.4345881,
+            -33.9252297
+          ],
+          [
+            18.4346612,
+            -33.9252274
+          ],
+          [
+            18.4347631,
+            -33.9252271
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422732634,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4316859,
+            -33.9159541
+          ],
+          [
+            18.4318815,
+            -33.9160880
+          ],
+          [
+            18.4320147,
+            -33.9161861
+          ],
+          [
+            18.4321216,
+            -33.9162651
+          ],
+          [
+            18.4322130,
+            -33.9163246
+          ],
+          [
+            18.4323244,
+            -33.9163965
+          ],
+          [
+            18.4328182,
+            -33.9167579
+          ],
+          [
+            18.4328597,
+            -33.9167878
+          ],
+          [
+            18.4329021,
+            -33.9168179
+          ],
+          [
+            18.4340380,
+            -33.9176540
+          ],
+          [
+            18.4340985,
+            -33.9176995
+          ],
+          [
+            18.4362763,
+            -33.9193018
+          ],
+          [
+            18.4373778,
+            -33.9201085
+          ],
+          [
+            18.4374827,
+            -33.9201831
+          ],
+          [
+            18.4376375,
+            -33.9202815
+          ],
+          [
+            18.4377544,
+            -33.9203544
+          ],
+          [
+            18.4378884,
+            -33.9204266
+          ],
+          [
+            18.4380905,
+            -33.9205318
+          ],
+          [
+            18.4382977,
+            -33.9206291
+          ],
+          [
+            18.4384536,
+            -33.9206956
+          ],
+          [
+            18.4385982,
+            -33.9207501
+          ],
+          [
+            18.4388904,
+            -33.9208497
+          ],
+          [
+            18.4392191,
+            -33.9209402
+          ],
+          [
+            18.4395587,
+            -33.9210135
+          ],
+          [
+            18.4397504,
+            -33.9210438
+          ],
+          [
+            18.4399450,
+            -33.9210701
+          ],
+          [
+            18.4402603,
+            -33.9211011
+          ],
+          [
+            18.4406831,
+            -33.9211322
+          ],
+          [
+            18.4408485,
+            -33.9211288
+          ],
+          [
+            18.4408984,
+            -33.9211285
+          ],
+          [
+            18.4410221,
+            -33.9211216
+          ],
+          [
+            18.4412096,
+            -33.9211211
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422732640,
+        "railway": "abandoned",
+        "name": null,
+        "service": null,
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4340387,
+            -33.9174962
+          ],
+          [
+            18.4339611,
+            -33.9174004
+          ],
+          [
+            18.4339178,
+            -33.9172893
+          ],
+          [
+            18.4338196,
+            -33.9170897
+          ],
+          [
+            18.4336947,
+            -33.9167434
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422738103,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4420265,
+            -33.9211116
+          ],
+          [
+            18.4418401,
+            -33.9211136
+          ],
+          [
+            18.4417402,
+            -33.9211177
+          ],
+          [
+            18.4416272,
+            -33.9211259
+          ],
+          [
+            18.4415220,
+            -33.9211302
+          ],
+          [
+            18.4413712,
+            -33.9211296
+          ],
+          [
+            18.4412096,
+            -33.9211211
+          ],
+          [
+            18.4406901,
+            -33.9210914
+          ],
+          [
+            18.4402637,
+            -33.9210662
+          ],
+          [
+            18.4399205,
+            -33.9210293
+          ],
+          [
+            18.4395641,
+            -33.9209793
+          ],
+          [
+            18.4392290,
+            -33.9209046
+          ],
+          [
+            18.4389047,
+            -33.9208143
+          ],
+          [
+            18.4386154,
+            -33.9207173
+          ],
+          [
+            18.4383217,
+            -33.9205976
+          ],
+          [
+            18.4381113,
+            -33.9204991
+          ],
+          [
+            18.4379107,
+            -33.9203955
+          ],
+          [
+            18.4376630,
+            -33.9202513
+          ],
+          [
+            18.4374063,
+            -33.9200799
+          ],
+          [
+            18.4368405,
+            -33.9196736
+          ],
+          [
+            18.4363023,
+            -33.9192762
+          ],
+          [
+            18.4346147,
+            -33.9180346
+          ],
+          [
+            18.4341263,
+            -33.9176745
+          ],
+          [
+            18.4340646,
+            -33.9176266
+          ],
+          [
+            18.4329529,
+            -33.9168062
+          ],
+          [
+            18.4328893,
+            -33.9167589
+          ],
+          [
+            18.4328275,
+            -33.9167177
+          ],
+          [
+            18.4324048,
+            -33.9164066
+          ],
+          [
+            18.4322314,
+            -33.9162926
+          ],
+          [
+            18.4316859,
+            -33.9159541
+          ],
+          [
+            18.4315300,
+            -33.9158590
+          ],
+          [
+            18.4313890,
+            -33.9157696
+          ],
+          [
+            18.4312078,
+            -33.9156559
+          ],
+          [
+            18.4310506,
+            -33.9155530
+          ],
+          [
+            18.4306883,
+            -33.9152820
+          ],
+          [
+            18.4306450,
+            -33.9152497
+          ],
+          [
+            18.4291864,
+            -33.9141785
+          ],
+          [
+            18.4288763,
+            -33.9139540
+          ],
+          [
+            18.4287579,
+            -33.9138782
+          ],
+          [
+            18.4285742,
+            -33.9137847
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422738111,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4399127,
+            -33.9204523
+          ],
+          [
+            18.4397682,
+            -33.9203497
+          ],
+          [
+            18.4375625,
+            -33.9187297
+          ],
+          [
+            18.4375431,
+            -33.9187161
+          ],
+          [
+            18.4360601,
+            -33.9176239
+          ],
+          [
+            18.4358892,
+            -33.9174987
+          ],
+          [
+            18.4357034,
+            -33.9173594
+          ],
+          [
+            18.4356808,
+            -33.9173428
+          ],
+          [
+            18.4339168,
+            -33.9160463
+          ],
+          [
+            18.4334767,
+            -33.9157181
+          ],
+          [
+            18.4334485,
+            -33.9156973
+          ],
+          [
+            18.4312810,
+            -33.9141052
+          ],
+          [
+            18.4309056,
+            -33.9138295
+          ],
+          [
+            18.4308807,
+            -33.9138112
+          ],
+          [
+            18.4297575,
+            -33.9129862
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422738116,
+        "railway": "rail",
+        "name": null,
+        "service": "yard",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4402082,
+            -33.9206199
+          ],
+          [
+            18.4400156,
+            -33.9204890
+          ],
+          [
+            18.4399398,
+            -33.9204341
+          ],
+          [
+            18.4398693,
+            -33.9203807
+          ],
+          [
+            18.4371687,
+            -33.9183945
+          ],
+          [
+            18.4363118,
+            -33.9177623
+          ],
+          [
+            18.4353173,
+            -33.9170303
+          ],
+          [
+            18.4343438,
+            -33.9163120
+          ],
+          [
+            18.4331675,
+            -33.9154423
+          ],
+          [
+            18.4305157,
+            -33.9134930
+          ],
+          [
+            18.4297867,
+            -33.9129571
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945693,
+        "railway": "disused",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4339024,
+            -33.9164593
+          ],
+          [
+            18.4338877,
+            -33.9164310
+          ],
+          [
+            18.4338686,
+            -33.9163860
+          ],
+          [
+            18.4338497,
+            -33.9163302
+          ],
+          [
+            18.4338242,
+            -33.9162273
+          ],
+          [
+            18.4338078,
+            -33.9161697
+          ],
+          [
+            18.4337856,
+            -33.9161119
+          ],
+          [
+            18.4337560,
+            -33.9160482
+          ],
+          [
+            18.4337222,
+            -33.9159890
+          ],
+          [
+            18.4336890,
+            -33.9159383
+          ],
+          [
+            18.4336409,
+            -33.9158773
+          ],
+          [
+            18.4336010,
+            -33.9158343
+          ],
+          [
+            18.4335545,
+            -33.9157890
+          ],
+          [
+            18.4334767,
+            -33.9157181
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945696,
+        "railway": "disused",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4318418,
+            -33.9147340
+          ],
+          [
+            18.4333596,
+            -33.9158490
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945698,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4318561,
+            -33.9150862
+          ],
+          [
+            18.4322007,
+            -33.9153807
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945701,
+        "railway": "disused",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4354684,
+            -33.9176694
+          ],
+          [
+            18.4342030,
+            -33.9167425
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945703,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4343438,
+            -33.9163120
+          ],
+          [
+            18.4342315,
+            -33.9162380
+          ],
+          [
+            18.4341602,
+            -33.9161941
+          ],
+          [
+            18.4341121,
+            -33.9161665
+          ],
+          [
+            18.4340645,
+            -33.9161398
+          ],
+          [
+            18.4340167,
+            -33.9161118
+          ],
+          [
+            18.4339168,
+            -33.9160463
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945706,
+        "railway": "abandoned",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4332222,
+            -33.9159956
+          ],
+          [
+            18.4316942,
+            -33.9148881
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945708,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4346071,
+            -33.9171506
+          ],
+          [
+            18.4344877,
+            -33.9170523
+          ],
+          [
+            18.4343691,
+            -33.9169469
+          ],
+          [
+            18.4342489,
+            -33.9168504
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945713,
+        "railway": "rail",
+        "name": null,
+        "service": "siding",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4331675,
+            -33.9154423
+          ],
+          [
+            18.4333222,
+            -33.9155827
+          ],
+          [
+            18.4334485,
+            -33.9156973
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945714,
+        "railway": "abandoned",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4336457,
+            -33.9163962
+          ],
+          [
+            18.4334286,
+            -33.9161713
+          ],
+          [
+            18.4333665,
+            -33.9161102
+          ],
+          [
+            18.4332844,
+            -33.9160429
+          ],
+          [
+            18.4332222,
+            -33.9159956
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945715,
+        "railway": "abandoned",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4342030,
+            -33.9167425
+          ],
+          [
+            18.4341185,
+            -33.9166781
+          ],
+          [
+            18.4340805,
+            -33.9166526
+          ],
+          [
+            18.4340354,
+            -33.9166242
+          ],
+          [
+            18.4339893,
+            -33.9165981
+          ],
+          [
+            18.4336658,
+            -33.9164111
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945719,
+        "railway": "disused",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4333596,
+            -33.9158490
+          ],
+          [
+            18.4333911,
+            -33.9158754
+          ],
+          [
+            18.4334292,
+            -33.9159112
+          ],
+          [
+            18.4334747,
+            -33.9159634
+          ],
+          [
+            18.4335829,
+            -33.9160994
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422945723,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4276190,
+            -33.9120064
+          ],
+          [
+            18.4278632,
+            -33.9121864
+          ],
+          [
+            18.4293065,
+            -33.9132505
+          ],
+          [
+            18.4298514,
+            -33.9136492
+          ],
+          [
+            18.4306206,
+            -33.9142155
+          ],
+          [
+            18.4312167,
+            -33.9146567
+          ],
+          [
+            18.4322007,
+            -33.9153807
+          ],
+          [
+            18.4333246,
+            -33.9162088
+          ],
+          [
+            18.4346071,
+            -33.9171506
+          ],
+          [
+            18.4350578,
+            -33.9174855
+          ],
+          [
+            18.4351389,
+            -33.9175409
+          ],
+          [
+            18.4352087,
+            -33.9175867
+          ],
+          [
+            18.4352801,
+            -33.9176282
+          ],
+          [
+            18.4353896,
+            -33.9176926
+          ],
+          [
+            18.4354523,
+            -33.9177310
+          ],
+          [
+            18.4355391,
+            -33.9177886
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 422947091,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4355391,
+            -33.9177886
+          ],
+          [
+            18.4342489,
+            -33.9168504
+          ],
+          [
+            18.4341859,
+            -33.9168043
+          ],
+          [
+            18.4336658,
+            -33.9164111
+          ],
+          [
+            18.4336457,
+            -33.9163962
+          ],
+          [
+            18.4318561,
+            -33.9150862
+          ],
+          [
+            18.4316487,
+            -33.9149344
+          ],
+          [
+            18.4312220,
+            -33.9146111
+          ],
+          [
+            18.4311350,
+            -33.9145483
+          ],
+          [
+            18.4311149,
+            -33.9145327
+          ],
+          [
+            18.4296181,
+            -33.9134314
+          ],
+          [
+            18.4295506,
+            -33.9133810
+          ],
+          [
+            18.4293418,
+            -33.9132272
+          ],
+          [
+            18.4292824,
+            -33.9131828
+          ],
+          [
+            18.4290103,
+            -33.9129681
+          ],
+          [
+            18.4278919,
+            -33.9121582
+          ],
+          [
+            18.4276446,
+            -33.9119791
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 424212321,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4266303,
+            -33.9214819
+          ],
+          [
+            18.4267110,
+            -33.9215418
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 424717499,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": "branch",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4323339,
+            -33.9250093
+          ],
+          [
+            18.4321079,
+            -33.9249538
+          ],
+          [
+            18.4319886,
+            -33.9249193
+          ],
+          [
+            18.4318501,
+            -33.9248760
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 424717500,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4309843,
+            -33.9240848
+          ],
+          [
+            18.4318485,
+            -33.9247075
+          ],
+          [
+            18.4319327,
+            -33.9247602
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 424717501,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4309101,
+            -33.9241471
+          ],
+          [
+            18.4317968,
+            -33.9247738
+          ],
+          [
+            18.4318795,
+            -33.9248221
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 428936290,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306770,
+            -33.9250284
+          ],
+          [
+            18.4308386,
+            -33.9250779
+          ],
+          [
+            18.4309546,
+            -33.9251124
+          ],
+          [
+            18.4310800,
+            -33.9251436
+          ],
+          [
+            18.4312610,
+            -33.9251831
+          ],
+          [
+            18.4315318,
+            -33.9252337
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 428936291,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4307926,
+            -33.9241537
+          ],
+          [
+            18.4309013,
+            -33.9242338
+          ],
+          [
+            18.4309723,
+            -33.9242889
+          ],
+          [
+            18.4310327,
+            -33.9243435
+          ],
+          [
+            18.4311152,
+            -33.9244186
+          ],
+          [
+            18.4311889,
+            -33.9244853
+          ],
+          [
+            18.4312540,
+            -33.9245454
+          ],
+          [
+            18.4313163,
+            -33.9245922
+          ],
+          [
+            18.4313733,
+            -33.9246345
+          ],
+          [
+            18.4314498,
+            -33.9246812
+          ],
+          [
+            18.4316492,
+            -33.9247914
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 428936292,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4311152,
+            -33.9244186
+          ],
+          [
+            18.4310434,
+            -33.9243346
+          ],
+          [
+            18.4309871,
+            -33.9242739
+          ],
+          [
+            18.4309288,
+            -33.9242199
+          ],
+          [
+            18.4308811,
+            -33.9241749
+          ],
+          [
+            18.4308087,
+            -33.9241153
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 428936293,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4307370,
+            -33.9243563
+          ],
+          [
+            18.4308483,
+            -33.9244303
+          ],
+          [
+            18.4309241,
+            -33.9244759
+          ],
+          [
+            18.4310079,
+            -33.9245193
+          ],
+          [
+            18.4310863,
+            -33.9245527
+          ],
+          [
+            18.4312117,
+            -33.9246061
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 428936294,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4314203,
+            -33.9246918
+          ],
+          [
+            18.4312667,
+            -33.9246078
+          ],
+          [
+            18.4311319,
+            -33.9245332
+          ],
+          [
+            18.4310126,
+            -33.9244559
+          ],
+          [
+            18.4309234,
+            -33.9243985
+          ],
+          [
+            18.4307571,
+            -33.9242761
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 706353613,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306894,
+            -33.9247244
+          ],
+          [
+            18.4310572,
+            -33.9249108
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 706353614,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4312939,
+            -33.9250045
+          ],
+          [
+            18.4310183,
+            -33.9249333
+          ],
+          [
+            18.4306783,
+            -33.9248381
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 708928931,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4271509,
+            -33.9242330
+          ],
+          [
+            18.4272076,
+            -33.9242600
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 709180524,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4306770,
+            -33.9249892
+          ],
+          [
+            18.4310630,
+            -33.9251093
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 732922667,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4257703,
+            -33.9223166
+          ],
+          [
+            18.4258882,
+            -33.9224010
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 788850744,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4325660,
+            -33.9252245
+          ],
+          [
+            18.4334178,
+            -33.9252565
+          ],
+          [
+            18.4336187,
+            -33.9252662
+          ],
+          [
+            18.4340753,
+            -33.9252835
+          ],
+          [
+            18.4344576,
+            -33.9252986
+          ],
+          [
+            18.4350284,
+            -33.9253231
+          ],
+          [
+            18.4356095,
+            -33.9253473
+          ],
+          [
+            18.4360330,
+            -33.9253633
+          ],
+          [
+            18.4363143,
+            -33.9253687
+          ],
+          [
+            18.4364806,
+            -33.9253691
+          ],
+          [
+            18.4366372,
+            -33.9253658
+          ],
+          [
+            18.4368000,
+            -33.9253602
+          ],
+          [
+            18.4383914,
+            -33.9252739
+          ],
+          [
+            18.4388300,
+            -33.9252502
+          ],
+          [
+            18.4392040,
+            -33.9252292
+          ],
+          [
+            18.4394713,
+            -33.9252060
+          ],
+          [
+            18.4398833,
+            -33.9251495
+          ],
+          [
+            18.4401440,
+            -33.9250986
+          ],
+          [
+            18.4403609,
+            -33.9250512
+          ],
+          [
+            18.4406124,
+            -33.9249817
+          ],
+          [
+            18.4407442,
+            -33.9249434
+          ],
+          [
+            18.4423520,
+            -33.9244302
+          ],
+          [
+            18.4431658,
+            -33.9241674
+          ],
+          [
+            18.4435428,
+            -33.9240477
+          ],
+          [
+            18.4437915,
+            -33.9239679
+          ],
+          [
+            18.4439591,
+            -33.9239156
+          ],
+          [
+            18.4441462,
+            -33.9238594
+          ],
+          [
+            18.4443252,
+            -33.9238127
+          ],
+          [
+            18.4445459,
+            -33.9237626
+          ],
+          [
+            18.4447430,
+            -33.9237264
+          ],
+          [
+            18.4450400,
+            -33.9236791
+          ],
+          [
+            18.4453666,
+            -33.9236357
+          ],
+          [
+            18.4459614,
+            -33.9235595
+          ],
+          [
+            18.4463054,
+            -33.9235172
+          ],
+          [
+            18.4469489,
+            -33.9234549
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 788850745,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4325660,
+            -33.9252245
+          ],
+          [
+            18.4329582,
+            -33.9252705
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 788855272,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4316211,
+            -33.9251024
+          ],
+          [
+            18.4318772,
+            -33.9251547
+          ],
+          [
+            18.4320529,
+            -33.9251814
+          ],
+          [
+            18.4322708,
+            -33.9252039
+          ],
+          [
+            18.4325660,
+            -33.9252245
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 788938418,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4310630,
+            -33.9251093
+          ],
+          [
+            18.4313610,
+            -33.9251611
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 788938419,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4328475,
+            -33.9253622
+          ],
+          [
+            18.4323949,
+            -33.9253428
+          ],
+          [
+            18.4321770,
+            -33.9253327
+          ],
+          [
+            18.4320026,
+            -33.9253172
+          ],
+          [
+            18.4319047,
+            -33.9253021
+          ],
+          [
+            18.4318494,
+            -33.9252927
+          ],
+          [
+            18.4315318,
+            -33.9252337
+          ],
+          [
+            18.4312706,
+            -33.9251737
+          ],
+          [
+            18.4310630,
+            -33.9251093
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745837,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4312939,
+            -33.9250045
+          ],
+          [
+            18.4310572,
+            -33.9249108
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745838,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4274015,
+            -33.9243061
+          ],
+          [
+            18.4275311,
+            -33.9243567
+          ],
+          [
+            18.4276995,
+            -33.9244098
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745839,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4274015,
+            -33.9243061
+          ],
+          [
+            18.4277376,
+            -33.9244598
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745840,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4276995,
+            -33.9244098
+          ],
+          [
+            18.4280229,
+            -33.9245599
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745841,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4276995,
+            -33.9244098
+          ],
+          [
+            18.4280455,
+            -33.9245275
+          ],
+          [
+            18.4283480,
+            -33.9246317
+          ],
+          [
+            18.4285901,
+            -33.9247134
+          ],
+          [
+            18.4287082,
+            -33.9247540
+          ],
+          [
+            18.4299397,
+            -33.9251703
+          ],
+          [
+            18.4306491,
+            -33.9254137
+          ],
+          [
+            18.4309298,
+            -33.9255047
+          ],
+          [
+            18.4311960,
+            -33.9255876
+          ],
+          [
+            18.4314126,
+            -33.9256499
+          ],
+          [
+            18.4315420,
+            -33.9256833
+          ],
+          [
+            18.4317418,
+            -33.9257306
+          ],
+          [
+            18.4318856,
+            -33.9257628
+          ],
+          [
+            18.4319413,
+            -33.9257726
+          ],
+          [
+            18.4322132,
+            -33.9258207
+          ],
+          [
+            18.4323685,
+            -33.9258426
+          ],
+          [
+            18.4326195,
+            -33.9258727
+          ],
+          [
+            18.4328019,
+            -33.9258900
+          ],
+          [
+            18.4329977,
+            -33.9259028
+          ],
+          [
+            18.4334658,
+            -33.9259269
+          ],
+          [
+            18.4338292,
+            -33.9259395
+          ],
+          [
+            18.4340700,
+            -33.9259518
+          ],
+          [
+            18.4382501,
+            -33.9261224
+          ],
+          [
+            18.4384043,
+            -33.9261235
+          ],
+          [
+            18.4386638,
+            -33.9261213
+          ],
+          [
+            18.4389290,
+            -33.9261157
+          ],
+          [
+            18.4390239,
+            -33.9261118
+          ],
+          [
+            18.4391882,
+            -33.9261079
+          ],
+          [
+            18.4394443,
+            -33.9260973
+          ],
+          [
+            18.4395717,
+            -33.9260895
+          ],
+          [
+            18.4396810,
+            -33.9260773
+          ],
+          [
+            18.4398265,
+            -33.9260617
+          ],
+          [
+            18.4399687,
+            -33.9260400
+          ],
+          [
+            18.4401227,
+            -33.9260117
+          ],
+          [
+            18.4404402,
+            -33.9259552
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745842,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4284625,
+            -33.9241604
+          ],
+          [
+            18.4286824,
+            -33.9242650
+          ],
+          [
+            18.4289151,
+            -33.9243635
+          ],
+          [
+            18.4291013,
+            -33.9244411
+          ],
+          [
+            18.4293658,
+            -33.9245521
+          ],
+          [
+            18.4295015,
+            -33.9246086
+          ],
+          [
+            18.4296298,
+            -33.9246559
+          ],
+          [
+            18.4297536,
+            -33.9247127
+          ],
+          [
+            18.4299293,
+            -33.9247833
+          ],
+          [
+            18.4300234,
+            -33.9248266
+          ],
+          [
+            18.4302709,
+            -33.9249306
+          ],
+          [
+            18.4306761,
+            -33.9250962
+          ],
+          [
+            18.4308835,
+            -33.9251792
+          ],
+          [
+            18.4310498,
+            -33.9252359
+          ],
+          [
+            18.4312100,
+            -33.9252860
+          ],
+          [
+            18.4313137,
+            -33.9253149
+          ],
+          [
+            18.4315111,
+            -33.9253606
+          ],
+          [
+            18.4316667,
+            -33.9253917
+          ],
+          [
+            18.4318142,
+            -33.9254129
+          ],
+          [
+            18.4319899,
+            -33.9254340
+          ],
+          [
+            18.4321996,
+            -33.9254511
+          ],
+          [
+            18.4326182,
+            -33.9254735
+          ],
+          [
+            18.4329454,
+            -33.9254874
+          ],
+          [
+            18.4334445,
+            -33.9255088
+          ],
+          [
+            18.4338970,
+            -33.9255245
+          ],
+          [
+            18.4352131,
+            -33.9255791
+          ],
+          [
+            18.4357167,
+            -33.9255988
+          ],
+          [
+            18.4366153,
+            -33.9256355
+          ],
+          [
+            18.4370498,
+            -33.9256439
+          ],
+          [
+            18.4374253,
+            -33.9256366
+          ],
+          [
+            18.4377612,
+            -33.9256199
+          ],
+          [
+            18.4417247,
+            -33.9254097
+          ],
+          [
+            18.4423700,
+            -33.9253677
+          ],
+          [
+            18.4428706,
+            -33.9253328
+          ],
+          [
+            18.4434275,
+            -33.9252987
+          ],
+          [
+            18.4441220,
+            -33.9252834
+          ],
+          [
+            18.4442854,
+            -33.9252791
+          ],
+          [
+            18.4444721,
+            -33.9252725
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745843,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4287792,
+            -33.9242676
+          ],
+          [
+            18.4289439,
+            -33.9243357
+          ],
+          [
+            18.4290732,
+            -33.9243899
+          ],
+          [
+            18.4292172,
+            -33.9244482
+          ],
+          [
+            18.4293609,
+            -33.9245092
+          ],
+          [
+            18.4295113,
+            -33.9245712
+          ],
+          [
+            18.4296473,
+            -33.9246291
+          ],
+          [
+            18.4297992,
+            -33.9246932
+          ],
+          [
+            18.4299429,
+            -33.9247513
+          ],
+          [
+            18.4301114,
+            -33.9248220
+          ],
+          [
+            18.4304975,
+            -33.9249760
+          ],
+          [
+            18.4306971,
+            -33.9250568
+          ],
+          [
+            18.4308573,
+            -33.9251185
+          ],
+          [
+            18.4310102,
+            -33.9251725
+          ],
+          [
+            18.4311685,
+            -33.9252192
+          ],
+          [
+            18.4313321,
+            -33.9252626
+          ],
+          [
+            18.4315379,
+            -33.9253055
+          ],
+          [
+            18.4316768,
+            -33.9253322
+          ],
+          [
+            18.4318424,
+            -33.9253528
+          ],
+          [
+            18.4320067,
+            -33.9253711
+          ],
+          [
+            18.4322581,
+            -33.9253884
+          ],
+          [
+            18.4325585,
+            -33.9253995
+          ],
+          [
+            18.4329280,
+            -33.9254162
+          ],
+          [
+            18.4333483,
+            -33.9254236
+          ],
+          [
+            18.4337239,
+            -33.9254425
+          ],
+          [
+            18.4351514,
+            -33.9255025
+          ],
+          [
+            18.4355965,
+            -33.9255244
+          ],
+          [
+            18.4360885,
+            -33.9255416
+          ],
+          [
+            18.4362531,
+            -33.9255435
+          ],
+          [
+            18.4364194,
+            -33.9255429
+          ],
+          [
+            18.4365767,
+            -33.9255400
+          ],
+          [
+            18.4367694,
+            -33.9255321
+          ],
+          [
+            18.4371304,
+            -33.9255144
+          ],
+          [
+            18.4388261,
+            -33.9254190
+          ],
+          [
+            18.4395333,
+            -33.9253833
+          ],
+          [
+            18.4402405,
+            -33.9253434
+          ],
+          [
+            18.4410355,
+            -33.9253004
+          ],
+          [
+            18.4417898,
+            -33.9252598
+          ],
+          [
+            18.4422439,
+            -33.9252380
+          ],
+          [
+            18.4426331,
+            -33.9252287
+          ],
+          [
+            18.4431731,
+            -33.9252168
+          ],
+          [
+            18.4432628,
+            -33.9252145
+          ],
+          [
+            18.4442828,
+            -33.9251945
+          ],
+          [
+            18.4450120,
+            -33.9251774
+          ],
+          [
+            18.4460104,
+            -33.9251596
+          ],
+          [
+            18.4463249,
+            -33.9251490
+          ],
+          [
+            18.4466810,
+            -33.9251468
+          ],
+          [
+            18.4468989,
+            -33.9251540
+          ],
+          [
+            18.4470843,
+            -33.9251655
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745844,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4287792,
+            -33.9242676
+          ],
+          [
+            18.4289459,
+            -33.9243613
+          ],
+          [
+            18.4291013,
+            -33.9244411
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745845,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4313610,
+            -33.9251611
+          ],
+          [
+            18.4315507,
+            -33.9252209
+          ],
+          [
+            18.4318494,
+            -33.9252927
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 790745846,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4313610,
+            -33.9251611
+          ],
+          [
+            18.4317040,
+            -33.9252265
+          ],
+          [
+            18.4320207,
+            -33.9252832
+          ],
+          [
+            18.4322172,
+            -33.9253005
+          ],
+          [
+            18.4323772,
+            -33.9253051
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 791673677,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4443695,
+            -33.9241338
+          ],
+          [
+            18.4440561,
+            -33.9241883
+          ],
+          [
+            18.4438133,
+            -33.9242392
+          ],
+          [
+            18.4436394,
+            -33.9242827
+          ],
+          [
+            18.4434273,
+            -33.9243399
+          ],
+          [
+            18.4431635,
+            -33.9244251
+          ],
+          [
+            18.4425646,
+            -33.9246119
+          ],
+          [
+            18.4420655,
+            -33.9247803
+          ],
+          [
+            18.4411869,
+            -33.9250618
+          ],
+          [
+            18.4409288,
+            -33.9251425
+          ],
+          [
+            18.4407684,
+            -33.9251863
+          ],
+          [
+            18.4406015,
+            -33.9252239
+          ],
+          [
+            18.4404311,
+            -33.9252544
+          ],
+          [
+            18.4402664,
+            -33.9252765
+          ],
+          [
+            18.4400817,
+            -33.9252993
+          ],
+          [
+            18.4398949,
+            -33.9253171
+          ],
+          [
+            18.4396638,
+            -33.9253293
+          ],
+          [
+            18.4388271,
+            -33.9253711
+          ],
+          [
+            18.4371346,
+            -33.9254644
+          ],
+          [
+            18.4368082,
+            -33.9254805
+          ],
+          [
+            18.4366395,
+            -33.9254881
+          ],
+          [
+            18.4364572,
+            -33.9254930
+          ],
+          [
+            18.4363076,
+            -33.9254960
+          ],
+          [
+            18.4360327,
+            -33.9254928
+          ],
+          [
+            18.4355999,
+            -33.9254756
+          ],
+          [
+            18.4338022,
+            -33.9254017
+          ],
+          [
+            18.4334311,
+            -33.9253860
+          ],
+          [
+            18.4329179,
+            -33.9253639
+          ],
+          [
+            18.4328475,
+            -33.9253622
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 791673678,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4444178,
+            -33.9238772
+          ],
+          [
+            18.4442367,
+            -33.9239117
+          ],
+          [
+            18.4440672,
+            -33.9239471
+          ],
+          [
+            18.4438448,
+            -33.9240019
+          ],
+          [
+            18.4436786,
+            -33.9240471
+          ],
+          [
+            18.4435396,
+            -33.9240888
+          ],
+          [
+            18.4431838,
+            -33.9242012
+          ],
+          [
+            18.4424216,
+            -33.9244441
+          ],
+          [
+            18.4420239,
+            -33.9245719
+          ],
+          [
+            18.4407569,
+            -33.9249752
+          ],
+          [
+            18.4403884,
+            -33.9250818
+          ],
+          [
+            18.4401819,
+            -33.9251336
+          ],
+          [
+            18.4398888,
+            -33.9251881
+          ],
+          [
+            18.4394958,
+            -33.9252393
+          ],
+          [
+            18.4388191,
+            -33.9252882
+          ],
+          [
+            18.4370439,
+            -33.9253809
+          ],
+          [
+            18.4367347,
+            -33.9253979
+          ],
+          [
+            18.4365303,
+            -33.9254056
+          ],
+          [
+            18.4363307,
+            -33.9254079
+          ],
+          [
+            18.4361862,
+            -33.9254062
+          ],
+          [
+            18.4360265,
+            -33.9254033
+          ],
+          [
+            18.4356070,
+            -33.9253870
+          ],
+          [
+            18.4347360,
+            -33.9253477
+          ],
+          [
+            18.4341475,
+            -33.9253272
+          ],
+          [
+            18.4339846,
+            -33.9253210
+          ],
+          [
+            18.4334267,
+            -33.9252958
+          ],
+          [
+            18.4329582,
+            -33.9252705
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792856981,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4282206,
+            -33.9244691
+          ],
+          [
+            18.4285267,
+            -33.9245754
+          ],
+          [
+            18.4288661,
+            -33.9246881
+          ],
+          [
+            18.4293022,
+            -33.9248386
+          ],
+          [
+            18.4299538,
+            -33.9250590
+          ],
+          [
+            18.4306714,
+            -33.9253049
+          ],
+          [
+            18.4308878,
+            -33.9253734
+          ],
+          [
+            18.4311135,
+            -33.9254401
+          ],
+          [
+            18.4312751,
+            -33.9254810
+          ],
+          [
+            18.4314360,
+            -33.9255175
+          ],
+          [
+            18.4316110,
+            -33.9255528
+          ],
+          [
+            18.4317964,
+            -33.9255820
+          ],
+          [
+            18.4319309,
+            -33.9255984
+          ],
+          [
+            18.4321220,
+            -33.9256199
+          ],
+          [
+            18.4322558,
+            -33.9256288
+          ],
+          [
+            18.4325555,
+            -33.9256446
+          ],
+          [
+            18.4329870,
+            -33.9256619
+          ],
+          [
+            18.4334587,
+            -33.9256822
+          ],
+          [
+            18.4338728,
+            -33.9256975
+          ],
+          [
+            18.4340686,
+            -33.9257047
+          ],
+          [
+            18.4372429,
+            -33.9258368
+          ],
+          [
+            18.4376767,
+            -33.9258492
+          ],
+          [
+            18.4379255,
+            -33.9258525
+          ],
+          [
+            18.4383144,
+            -33.9258362
+          ],
+          [
+            18.4386276,
+            -33.9258175
+          ],
+          [
+            18.4389474,
+            -33.9258008
+          ],
+          [
+            18.4396040,
+            -33.9257655
+          ],
+          [
+            18.4403261,
+            -33.9257267
+          ],
+          [
+            18.4406883,
+            -33.9257076
+          ],
+          [
+            18.4410566,
+            -33.9256860
+          ],
+          [
+            18.4417959,
+            -33.9256473
+          ],
+          [
+            18.4424291,
+            -33.9256104
+          ],
+          [
+            18.4428369,
+            -33.9255827
+          ],
+          [
+            18.4438976,
+            -33.9254853
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792856982,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4282206,
+            -33.9244691
+          ],
+          [
+            18.4283575,
+            -33.9245391
+          ],
+          [
+            18.4285534,
+            -33.9246239
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925196,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4253065,
+            -33.9229492
+          ],
+          [
+            18.4263996,
+            -33.9237502
+          ],
+          [
+            18.4267811,
+            -33.9240183
+          ],
+          [
+            18.4269293,
+            -33.9241104
+          ],
+          [
+            18.4270945,
+            -33.9242050
+          ],
+          [
+            18.4271509,
+            -33.9242330
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925197,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4253293,
+            -33.9229302
+          ],
+          [
+            18.4264319,
+            -33.9237330
+          ],
+          [
+            18.4268060,
+            -33.9239866
+          ],
+          [
+            18.4269548,
+            -33.9240810
+          ],
+          [
+            18.4271161,
+            -33.9241773
+          ],
+          [
+            18.4272310,
+            -33.9242266
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925198,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4254168,
+            -33.9228486
+          ],
+          [
+            18.4272995,
+            -33.9242000
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925199,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4254423,
+            -33.9228247
+          ],
+          [
+            18.4273225,
+            -33.9241665
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925200,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255368,
+            -33.9227365
+          ],
+          [
+            18.4274305,
+            -33.9241051
+          ],
+          [
+            18.4275640,
+            -33.9241837
+          ],
+          [
+            18.4277423,
+            -33.9242795
+          ],
+          [
+            18.4278287,
+            -33.9243235
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925201,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255604,
+            -33.9227111
+          ],
+          [
+            18.4274299,
+            -33.9240575
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925202,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4256486,
+            -33.9226239
+          ],
+          [
+            18.4273823,
+            -33.9238777
+          ],
+          [
+            18.4275091,
+            -33.9239693
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925203,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4256788,
+            -33.9225989
+          ],
+          [
+            18.4274124,
+            -33.9238510
+          ],
+          [
+            18.4275301,
+            -33.9239402
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925204,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4257729,
+            -33.9225147
+          ],
+          [
+            18.4276263,
+            -33.9238589
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925205,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4258025,
+            -33.9224825
+          ],
+          [
+            18.4276526,
+            -33.9238308
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925206,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4259134,
+            -33.9223766
+          ],
+          [
+            18.4276182,
+            -33.9236092
+          ],
+          [
+            18.4279396,
+            -33.9238405
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925207,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4260087,
+            -33.9222939
+          ],
+          [
+            18.4278931,
+            -33.9236599
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925208,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4260342,
+            -33.9222690
+          ],
+          [
+            18.4279203,
+            -33.9236314
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925209,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4261302,
+            -33.9221859
+          ],
+          [
+            18.4279629,
+            -33.9235137
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925210,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4261582,
+            -33.9221576
+          ],
+          [
+            18.4279555,
+            -33.9234599
+          ],
+          [
+            18.4282023,
+            -33.9236379
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925211,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4262474,
+            -33.9220294
+          ],
+          [
+            18.4282724,
+            -33.9235431
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925212,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4262805,
+            -33.9219960
+          ],
+          [
+            18.4261780,
+            -33.9219214
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925213,
+        "railway": "rail",
+        "name": "Central Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4263426,
+            -33.9219271
+          ],
+          [
+            18.4280410,
+            -33.9231792
+          ],
+          [
+            18.4293050,
+            -33.9240920
+          ],
+          [
+            18.4299111,
+            -33.9244873
+          ],
+          [
+            18.4303540,
+            -33.9247598
+          ],
+          [
+            18.4306957,
+            -33.9249380
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925214,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4263864,
+            -33.9218858
+          ],
+          [
+            18.4262897,
+            -33.9218128
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925215,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4264756,
+            -33.9217939
+          ],
+          [
+            18.4263801,
+            -33.9217250
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925216,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4265618,
+            -33.9216947
+          ],
+          [
+            18.4295775,
+            -33.9238900
+          ],
+          [
+            18.4303782,
+            -33.9244735
+          ],
+          [
+            18.4306894,
+            -33.9247244
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925217,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4266379,
+            -33.9216237
+          ],
+          [
+            18.4307061,
+            -33.9245777
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 792925218,
+        "railway": "rail",
+        "name": "Northern Line",
+        "service": null,
+        "usage": "main",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4267110,
+            -33.9215418
+          ],
+          [
+            18.4307116,
+            -33.9245135
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1294964535,
+        "railway": "tram",
+        "name": "Historic Sea Point Tram Rails",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4193687,
+            -33.9175989
+          ],
+          [
+            18.4194543,
+            -33.9177711
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1294964536,
+        "railway": "tram",
+        "name": "Historic Sea Point Tram Rails",
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4193968,
+            -33.9175904
+          ],
+          [
+            18.4194805,
+            -33.9177555
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307322742,
+        "railway": "rail",
+        "name": null,
+        "service": "spur",
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4318795,
+            -33.9248221
+          ],
+          [
+            18.4319436,
+            -33.9248648
+          ],
+          [
+            18.4320757,
+            -33.9249188
+          ],
+          [
+            18.4321616,
+            -33.9249522
+          ],
+          [
+            18.4323339,
+            -33.9250093
+          ],
+          [
+            18.4324074,
+            -33.9250253
+          ],
+          [
+            18.4325378,
+            -33.9250579
+          ],
+          [
+            18.4326599,
+            -33.9250827
+          ],
+          [
+            18.4328919,
+            -33.9251215
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307429465,
+        "railway": "disused",
+        "name": null,
+        "service": null,
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4336947,
+            -33.9167434
+          ],
+          [
+            18.4336596,
+            -33.9166526
+          ],
+          [
+            18.4336357,
+            -33.9165963
+          ],
+          [
+            18.4336071,
+            -33.9165404
+          ],
+          [
+            18.4335631,
+            -33.9164728
+          ],
+          [
+            18.4335214,
+            -33.9164160
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307429466,
+        "railway": "abandoned",
+        "name": null,
+        "service": null,
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4335214,
+            -33.9164160
+          ],
+          [
+            18.4335061,
+            -33.9163974
+          ],
+          [
+            18.4334549,
+            -33.9163345
+          ],
+          [
+            18.4333962,
+            -33.9162718
+          ],
+          [
+            18.4333246,
+            -33.9162088
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307429467,
+        "railway": "abandoned",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4338959,
+            -33.9164663
+          ],
+          [
+            18.4339597,
+            -33.9165576
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307429468,
+        "railway": "disused",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4337168,
+            -33.9162573
+          ],
+          [
+            18.4337626,
+            -33.9163069
+          ],
+          [
+            18.4338263,
+            -33.9163775
+          ],
+          [
+            18.4338959,
+            -33.9164663
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307429469,
+        "railway": "abandoned",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4335829,
+            -33.9160994
+          ],
+          [
+            18.4337168,
+            -33.9162573
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307429470,
+        "railway": "abandoned",
+        "name": null,
+        "service": "spur",
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4341859,
+            -33.9168043
+          ],
+          [
+            18.4340745,
+            -33.9166960
+          ],
+          [
+            18.4340261,
+            -33.9166425
+          ],
+          [
+            18.4339893,
+            -33.9165981
+          ],
+          [
+            18.4339597,
+            -33.9165576
+          ],
+          [
+            18.4339170,
+            -33.9164876
+          ],
+          [
+            18.4339024,
+            -33.9164593
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1307471711,
+        "railway": "abandoned",
+        "name": null,
+        "service": null,
+        "usage": "industrial",
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4346147,
+            -33.9180346
+          ],
+          [
+            18.4343549,
+            -33.9178131
+          ],
+          [
+            18.4342242,
+            -33.9176879
+          ],
+          [
+            18.4341663,
+            -33.9176364
+          ],
+          [
+            18.4341129,
+            -33.9175818
+          ],
+          [
+            18.4340703,
+            -33.9175341
+          ],
+          [
+            18.4340387,
+            -33.9174962
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1372627740,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255694,
+            -33.9225025
+          ],
+          [
+            18.4256380,
+            -33.9224371
+          ],
+          [
+            18.4267100,
+            -33.9232109
+          ],
+          [
+            18.4266416,
+            -33.9232761
+          ],
+          [
+            18.4255694,
+            -33.9225025
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1372627741,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255694,
+            -33.9225025
+          ],
+          [
+            18.4266416,
+            -33.9232761
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1372627742,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4256380,
+            -33.9224371
+          ],
+          [
+            18.4267100,
+            -33.9232109
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1372627743,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4255251,
+            -33.9225442
+          ],
+          [
+            18.4265962,
+            -33.9233184
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1372627744,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4254544,
+            -33.9226115
+          ],
+          [
+            18.4265253,
+            -33.9233859
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1372627745,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4254544,
+            -33.9226115
+          ],
+          [
+            18.4255251,
+            -33.9225442
+          ],
+          [
+            18.4265962,
+            -33.9233184
+          ],
+          [
+            18.4265253,
+            -33.9233859
+          ],
+          [
+            18.4254544,
+            -33.9226115
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1391220041,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4253378,
+            -33.9227268
+          ],
+          [
+            18.4264087,
+            -33.9235012
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1391220042,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4253378,
+            -33.9227268
+          ],
+          [
+            18.4254085,
+            -33.9226595
+          ],
+          [
+            18.4264796,
+            -33.9234337
+          ],
+          [
+            18.4264087,
+            -33.9235012
+          ],
+          [
+            18.4253378,
+            -33.9227268
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1391220043,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4254085,
+            -33.9226595
+          ],
+          [
+            18.4264796,
+            -33.9234337
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1391220044,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4252188,
+            -33.9228431
+          ],
+          [
+            18.4262897,
+            -33.9236175
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1391220045,
+        "railway": "platform",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4252188,
+            -33.9228431
+          ],
+          [
+            18.4252895,
+            -33.9227758
+          ],
+          [
+            18.4263606,
+            -33.9235500
+          ],
+          [
+            18.4262897,
+            -33.9236175
+          ],
+          [
+            18.4252188,
+            -33.9228431
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1391220046,
+        "railway": "platform_edge",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4252895,
+            -33.9227758
+          ],
+          [
+            18.4263606,
+            -33.9235500
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "osm_id": 1503906559,
+        "railway": "rail",
+        "name": null,
+        "service": null,
+        "usage": null,
+        "bridge": null,
+        "tunnel": null
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            18.4283072,
+            -33.9246545
+          ],
+          [
+            18.4280455,
+            -33.9245275
+          ]
+        ]
+      }
+    }
+  ]
+}

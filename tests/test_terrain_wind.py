@@ -94,3 +94,26 @@ def test_resample_bilinear_grid_matches_scalar_sample_bilinear():
         for column in range(2):
             scalar_value = sample_bilinear(field, origin_x=-20.0, origin_z=-20.0, dx=10.0, dz=10.0, x=target_x[row, column], z=target_z[row, column])
             assert grid_values[row, column] == pytest.approx(scalar_value)
+
+
+def test_explicit_solid_mask_preserves_a_gap():
+    heights = np.zeros((30, 30), dtype=np.float32)
+    solid = np.zeros_like(heights, dtype=bool)
+    solid[:, 14:16] = True
+    solid[13:17, 14:16] = False
+    u0 = np.full_like(heights, 3.0, dtype=np.float64)
+    v0 = np.zeros_like(heights, dtype=np.float64)
+    u, v = mass_conserve(u0, v0, heights, 5.0, 5.0, solid_mask=solid, iterations=250)
+    assert np.any(u[13:17, 14:16] > 0.5)
+    assert np.allclose(u[:, 14:16][solid[:, 14:16]], 0.0)
+
+
+def test_porous_drag_slows_but_does_not_block_flow():
+    heights = np.zeros((20, 20), dtype=np.float32)
+    drag = np.zeros_like(heights)
+    drag[7:13, 7:13] = 0.6
+    u0 = np.full_like(heights, 3.0, dtype=np.float64)
+    v0 = np.zeros_like(heights, dtype=np.float64)
+    u, _ = mass_conserve(u0, np.zeros_like(u0), heights, 5.0, 5.0, porous_drag=drag, iterations=100)
+    assert np.all(u[7:13, 7:13] > 0.0)
+    assert u[9, 9] < u[3, 3]

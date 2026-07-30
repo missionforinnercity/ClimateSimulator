@@ -25,6 +25,7 @@ from .field import (
     request_from_payload,
 )
 from .heat import HEAT_METRICS, heat_zones
+from .flood import dem_control_summary, flood_preview
 from .mitigation import mitigation_preview
 from .location import streetview_location
 from .weather import current_weather
@@ -56,6 +57,17 @@ class MitigationPayload(BaseModel):
     sun_date: str = "2026-01-15"
     sun_minutes: int = Field(default=720, ge=0, lt=1440)
     baseline_metric: str = "heat_model_lst_c"
+
+
+class FloodPayload(BaseModel):
+    center_local: list[float] = Field(default=[0.0, 0.0], min_length=2, max_length=2)
+    bounds_local: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    size_m: float = Field(default=500.0, ge=150.0, le=1200.0)
+    resolution_m: float = Field(default=4.0, ge=2.0, le=10.0)
+    rainfall_mm_h: float = Field(default=50.0, ge=1.0, le=300.0)
+    duration_min: float = Field(default=60.0, ge=5.0, le=360.0)
+    infiltration_mm_h: float = Field(default=5.0, ge=0.0, le=100.0)
+    manning_n: float = Field(default=0.04, ge=0.015, le=0.15)
 
 
 @app.get("/api/health")
@@ -136,6 +148,21 @@ def mitigations_preview(payload: MitigationPayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"mitigation preview unavailable: {error}") from error
+
+
+@app.get("/api/flood/dem-quality")
+def flood_dem_quality() -> dict[str, Any]:
+    return dem_control_summary()
+
+
+@app.post("/api/flood/preview")
+def flood_surface_preview(payload: FloodPayload) -> dict[str, Any]:
+    try:
+        return flood_preview(payload.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"flood simulation unavailable: {error}") from error
 
 
 @app.get("/api/wind/field/{direction}/{tile}")
