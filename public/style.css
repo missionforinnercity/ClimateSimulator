@@ -132,7 +132,8 @@ button, select, input { font: inherit; }
 .sun-heading,
 .wind-heading,
 .flood-heading,
-.mitigation-heading {
+.mitigation-heading,
+.traffic-heading {
   min-height: 19px;
   margin: 0 0 2px;
   display: flex;
@@ -189,17 +190,71 @@ button.secondary { border-color: var(--line-light); background: var(--control); 
 button.secondary:hover { border-color: #727272; background: var(--control-hover); }
 button.secondary.active { border-color: var(--accent); background: var(--accent-dark); color: #fff; box-shadow: inset 3px 0 0 var(--accent-pale); }
 button:disabled { cursor: not-allowed; opacity: .5; }
-.current-actions, .mitigation-actions, .streetview-actions, .wind-actions, .flood-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.current-actions, .mitigation-actions, .streetview-actions, .wind-actions, .flood-actions, .traffic-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.traffic-closure-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.traffic-closure-choice button { min-height: 42px; padding: 7px 6px; font-size: 9px; line-height: 1.2; }
+.traffic-closure-choice button.active {
+  border-color: #45e2bd;
+  background: #1c5e51;
+  color: #e8fff9;
+  box-shadow: inset 0 -3px 0 #67f1d0, 0 0 12px #26cda433;
+}
+.traffic-selection-status {
+  margin: 0;
+  padding: 8px;
+  border: 1px dashed #4a7770;
+  border-radius: 3px;
+  background: #192725;
+  color: #bcecdf;
+  font-size: 9px;
+  line-height: 1.4;
+}
 .wind-actions button { min-height: 38px; padding: 6px; font-size: 10px; line-height: 1.2; }
 
-.heat-switch, .sun-switch, .wind-switch, .flood-switch {
+.heat-switch, .sun-switch, .wind-switch, .flood-switch, .traffic-switch, .traffic-restrictions-switch {
   color: var(--muted);
   font-size: 9px;
   font-weight: 500;
   letter-spacing: 0;
   text-transform: none;
 }
-.heat-status, .sun-status, .wind-status, .flood-status, .current-status, .mitigation-status, .streetview-status {
+.traffic-restrictions-switch {
+  padding: 7px 8px;
+  border: 1px solid #335f58;
+  border-radius: 3px;
+  background: linear-gradient(135deg, #193d38, #263331);
+  color: #a9f4df;
+}
+/* Matches the HSL red→green speed ramp the cars are shaded with. */
+.traffic-gradient { height: 9px; border-radius: 2px; box-shadow: inset 0 0 0 1px #ffffff35; background: linear-gradient(90deg, #ee2f2f 0%, #eec92f 50%, #3fd44f 100%); }
+.traffic-legend-labels { display: flex; justify-content: space-between; gap: 8px; color: #d7d7d3; font-size: 9px; line-height: 1.25; }
+.road-status-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+  padding: 7px;
+  border: 1px solid #3f4c4a;
+  border-radius: 3px;
+  background: #1c2524;
+  color: #c9d6d3;
+  font-size: 9px;
+}
+.road-status-legend span { display: flex; align-items: center; gap: 6px; }
+.status-swatch { width: 18px; height: 4px; border-radius: 4px; box-shadow: 0 0 7px currentColor; }
+.status-swatch.pedestrian { color: #36e0b5; background: #36e0b5; }
+.status-swatch.closure { color: #ff4b45; background: repeating-linear-gradient(90deg, #ff4b45 0 5px, #fff2d0 5px 8px); }
+.status-swatch.diverted { color: #ff9c3a; background: #ff9c3a; }
+.status-swatch.relieved { color: #4cc7ff; background: #4cc7ff; }
+.status-swatch.direction {
+  height: 12px;
+  background: transparent;
+  color: #f2fdff;
+  box-shadow: none;
+  font-size: 16px;
+  font-style: normal;
+  line-height: 10px;
+}
+.heat-status, .sun-status, .wind-status, .flood-status, .current-status, .mitigation-status, .streetview-status, .traffic-status {
   min-height: 16px;
   margin: 1px 0;
   color: var(--muted);
@@ -232,6 +287,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .current-metrics span { padding: 7px; border: 1px solid var(--line); border-radius: 3px; background: #2d2d2d; color: #c7c7c3; font-size: 9px; }
 .current-metrics b { display: block; margin-bottom: 2px; color: var(--accent-pale); font-size: 13px; }
 .flood-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.flood-results span:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .flood-results span { padding: 7px; border: 1px solid #285b76; border-radius: 3px; background: #203a48; color: #c9e9f5; font-size: 9px; }
 .flood-results b { display: block; margin-bottom: 2px; color: #77d3f5; font-size: 13px; }
 
@@ -242,6 +298,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .mitigation-results { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .mitigation-results span { padding: 7px; border: 1px solid #693657; border-radius: 3px; background: #3b2835; color: #e8c6dc; font-size: 9px; }
 .mitigation-results b { display: block; color: var(--accent-pale); font-size: 13px; }
+
+.traffic-results { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.traffic-results span:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.traffic-results span { padding: 7px; border: 1px solid #6b5a20; border-radius: 3px; background: #423a1c; color: #f0e0b0; font-size: 9px; }
+.traffic-results b { display: block; margin-bottom: 2px; color: #f4c451; font-size: 13px; }
 
 .streetview-link {
   display: block;

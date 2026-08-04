@@ -61,6 +61,30 @@ python -m http.server 8000 -d public
 
 Open http://localhost:8000 in any modern browser.
 
+## Traffic and street-status explorer
+
+Run the FastAPI application to enable paired SUMO closure previews. The
+traffic panel lets you draw a short or long closure directly on the 3D map. The
+freehand pen snaps to the SUMO road network and can close one lane or the whole
+street, then compare mapped traffic-signal programs with priority right-of-way
+and replay baseline or
+closure traffic. Demand uses a representative car, minibus-taxi, delivery-van,
+and shuttle fleet; it remains synthetic and is not a calibrated transport
+forecast.
+
+The 3D street-status layer distinguishes permanent OSM pedestrian streets,
+live provider closures, the simulated closure, and roads gaining or losing
+traffic after rerouting. The selected road carries directional arrows, while
+closure blocks use barricades, beacons, and a floating road-closure sign.
+The SUMO network is generated with left-hand traffic for South African lane
+placement and junction behaviour. Closure results include queue, route-length,
+completion, speed, delay, and road-level diversion metrics. Rebuild the SUMO
+network after refreshing OSM data with:
+
+```bash
+python scripts/build_sumo_network.py --reuse-osm
+```
+
 ## Wind explorer API
 
 The viewer can run as a single FastAPI application. It loads `DATABASE_URL`

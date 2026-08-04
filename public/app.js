@@ -21,6 +21,7 @@ function setupMenuNavigation() {
       panel.classList.toggle('menu-active', selected);
       panel.hidden = !selected;
     });
+    dispatchEvent(new CustomEvent('climate-menu-change', { detail: { name } }));
   };
 
   tabs.forEach((tab, index) => {
@@ -50,7 +51,7 @@ async function loadScene() {
   const guide = document.querySelector('#wind-box-guide');
   if (guide) guide.hidden = false;
   try {
-    const module = await import('./webglRenderer.js?v=25');
+    const module = await import('./webglRenderer.js?v=30');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
     console.warn('WebGL renderer unavailable; loading Canvas fallback:', webglError);

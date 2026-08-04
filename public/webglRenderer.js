@@ -14,6 +14,7 @@ const COLORS = {
   road: 0x465257,
   roadMajor: 0xb08b4f,
   roadSecondary: 0x557d89,
+  pedestrian: 0x28a98d,
   path: 0x858f90,
   rail: 0x929b9c,
   sleeper: 0x3f4545,
@@ -103,6 +104,21 @@ export async function startWebGLScene(canvas, status) {
     const a = at(row, column) * (1 - tx) + at(row, column + 1) * tx;
     const b = at(row + 1, column) * (1 - tx) + at(row + 1, column + 1) * tx;
     return a * (1 - tz) + b * tz;
+  }
+
+  // terrainHeightAt clamps to the grid edge, so anything asked about a point
+  // beyond the terrain gets the nearest edge height and appears to float over
+  // the void. This reports whether a point is actually on rendered ground.
+  // Nearest-neighbour on the same grid, so it is O(1) and safe to call per
+  // car per frame (the footprint ray-cast in pointInLidarFootprint is not).
+  function terrainValidAt(x, z) {
+    if (!terrain.valid?.length) return true;
+    const u = (x - left) / terrainWidth * (terrain.columns - 1);
+    const v = (z - minZ) / terrainDepth * (terrain.rows - 1);
+    if (!(u >= 0 && v >= 0 && u <= terrain.columns - 1 && v <= terrain.rows - 1)) return false;
+    const column = Math.round(u);
+    const row = Math.round(v);
+    return terrain.valid[row * terrain.columns + column] > 0;
   }
 
   function pointInRing(x, z, ring) {
@@ -423,12 +439,12 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function makeRoads() {
-    const positionsByStyle = [[], [], [], []];
+    const positionsByStyle = [[], [], [], [], []];
     const major = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link']);
     const secondary = new Set(['secondary', 'secondary_link', 'tertiary']);
     const paths = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator']);
     for (const [mappedWidth, highway, points] of data.roads || []) {
-      const styleIndex = paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
+      const styleIndex = highway === 'pedestrian' ? 4 : paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
       if (points.length > 1) {
         positionsByStyle[styleIndex].push({
           points,
@@ -436,16 +452,16 @@ export async function startWebGLScene(canvas, status) {
         });
       }
     }
-    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path];
+    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian];
     // Higher-priority carriageways sit a few centimetres above lower classes
     // at overlaps. This provides deterministic crossing order without visible
     // floating roads.
-    const classOffsets = [0.30, 0.42, 0.36, 0.47];
+    const classOffsets = [0.30, 0.42, 0.36, 0.47, 0.50];
     const buildRibbon = (roads, styleIndex, outer = false) => {
       const vertices = [];
       const indices = [];
       for (const road of roads) {
-        const halfWidth = road.width * 0.5 + (outer ? (styleIndex === 3 ? 0.24 : 0.48) : 0);
+        const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.24 : 0.48) : 0);
         const elevationOffset = classOffsets[styleIndex] + (outer ? -0.10 : 0);
         const base = vertices.length / 3;
         for (let index = 0; index < road.points.length; index += 1) {
@@ -512,7 +528,7 @@ export async function startWebGLScene(canvas, status) {
     };
     positionsByStyle.forEach((roads, index) => {
       if (!roads.length) return;
-      const target = index === 3 ? layerGroups.paths : layerGroups.roads;
+      const target = index === 3 || index === 4 ? layerGroups.paths : layerGroups.roads;
       target.add(buildRibbon(roads, index, true));
       target.add(buildRibbon(roads, index, false));
     });
@@ -693,6 +709,14 @@ export async function startWebGLScene(canvas, status) {
   const floodGroup = new THREE.Group();
   const mitigationGroup = new THREE.Group();
   const mitigationDrawingGroup = new THREE.Group();
+  const trafficGroup = new THREE.Group();
+  const trafficStatusGroup = new THREE.Group();
+  const trafficDrawingGroup = new THREE.Group();
+  const permanentStatusGroup = new THREE.Group();
+  const liveClosureGroup = new THREE.Group();
+  const selectedRoadDirectionGroup = new THREE.Group();
+  const scenarioStatusGroup = new THREE.Group();
+  trafficStatusGroup.add(permanentStatusGroup, liveClosureGroup, selectedRoadDirectionGroup, scenarioStatusGroup);
   const streetViewGroup = new THREE.Group();
   const streetViewStem = new THREE.Mesh(
     new THREE.CylinderGeometry(0.9, 0.9, 10, 10),
@@ -707,7 +731,7 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, windGroup, floodGroup, mitigationGroup, mitigationDrawingGroup, streetViewGroup);
+  scene.add(heatGroup, windGroup, floodGroup, mitigationGroup, mitigationDrawingGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatStatus = document.querySelector('#heat-status');
@@ -757,6 +781,25 @@ export async function startWebGLScene(canvas, status) {
   const mitigationClear = document.querySelector('#mitigation-clear');
   const mitigationCompare = document.querySelector('#mitigation-compare');
   const mitigationResults = document.querySelector('#mitigation-results');
+  const trafficToggle = document.querySelector('#traffic-toggle');
+  const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
+  const trafficFreshness = document.querySelector('#traffic-freshness');
+  const trafficLiveStatus = document.querySelector('#traffic-live-status');
+  const trafficLiveMetrics = document.querySelector('#traffic-live-metrics');
+  const trafficDuration = document.querySelector('#traffic-duration');
+  const trafficDurationValue = document.querySelector('#traffic-duration-value');
+  const trafficScenario = document.querySelector('#traffic-scenario');
+  const trafficDrawLane = document.querySelector('#traffic-draw-lane');
+  const trafficDrawRoad = document.querySelector('#traffic-draw-road');
+  const trafficSelectionStatus = document.querySelector('#traffic-selection-status');
+  const trafficControlModel = document.querySelector('#traffic-control-model');
+  const trafficRun = document.querySelector('#traffic-run');
+  const trafficClear = document.querySelector('#traffic-clear');
+  const trafficStatus = document.querySelector('#traffic-status');
+  const trafficCompare = document.querySelector('#traffic-compare');
+  const trafficResults = document.querySelector('#traffic-results');
+  const trafficOnScreen = document.querySelector('#traffic-onscreen');
+  let trafficOnScreenShownAt = 0;
   const query = new URLSearchParams(location.search);
   const windApi = query.get('windApi') || '/api';
 
@@ -802,11 +845,37 @@ export async function startWebGLScene(canvas, status) {
     interventions: [],
     result: null,
   };
+  const trafficState = {
+    sceneActive: document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'traffic',
+    enabled: Boolean(trafficToggle?.checked),
+    result: null,
+    tracks: [],
+    durationS: 900,
+    sampleIntervalS: 2,
+    simClock: 0,
+    lastTime: performance.now(),
+    roadStatuses: [],
+    roadsByName: new Map(),
+    liveRoads: [],
+    networkEdges: [],
+    edgesById: new Map(),
+    snapGrid: new Map(),
+    snapCellSize: 45,
+    snapRadius: 24,
+    closureMode: 'lane',
+    drawing: false,
+    stroking: false,
+    pointerId: null,
+    lastScreen: null,
+    snappedPoints: [],
+    selectedEdgeIds: [],
+  };
   const streetViewState = { placing: false, point: null };
   let heatMesh = null;
   let heatRange = null;
   let windHeatMesh = null;
   let windPoints = null;
+  let trafficCars = null;
   let windBox = null;
   let windEdges = null;
   let windHandle = null;
@@ -826,6 +895,12 @@ export async function startWebGLScene(canvas, status) {
   const savedVisibility = Object.fromEntries(
     Object.entries(layerGroups).map(([name, group]) => [name, group.visible]),
   );
+
+  function syncTrafficSceneVisibility() {
+    trafficGroup.visible = trafficState.sceneActive && trafficState.enabled;
+    trafficStatusGroup.visible = trafficState.sceneActive && Boolean(trafficRestrictionsToggle?.checked);
+    trafficDrawingGroup.visible = trafficState.sceneActive && Boolean(trafficState.selectedEdgeIds.length);
+  }
 
   function rememberNormalVisibility() {
     for (const [name, group] of Object.entries(layerGroups)) savedVisibility[name] = group.visible;
@@ -1019,6 +1094,21 @@ export async function startWebGLScene(canvas, status) {
     cameraState.target.set(0, 20, 0);
     cameraState.distance = Math.max(500, Math.min(2800, Math.hypot(terrainWidth, terrainDepth) * 0.82));
     cameraState.elevation = 0.68;
+    updateCamera();
+  }
+
+  // Frame a local-space [minX, minZ, maxX, maxZ] box. Used after a traffic
+  // run so the corridor the user just closed fills the view: at full-CBD
+  // zoom an individual car is only a few pixels and lost between buildings.
+  function frameBounds(bounds, { elevation = 0.5 } = {}) {
+    if (!bounds || bounds.length !== 4) return;
+    const [minX, minZ, maxX, maxZ] = bounds;
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minZ + maxZ) / 2;
+    const span = Math.max(Math.hypot(maxX - minX, maxZ - minZ), 240);
+    cameraState.target.set(centerX, terrainHeightAt(centerX, centerZ) + 15, centerZ);
+    cameraState.distance = clamp(span * 0.9, 360, 2400);
+    cameraState.elevation = elevation;
     updateCamera();
   }
 
@@ -1270,6 +1360,9 @@ export async function startWebGLScene(canvas, status) {
       floodState.enabled = false;
       if (floodToggle) floodToggle.checked = false;
       floodGroup.visible = false;
+      trafficState.enabled = false;
+      if (trafficToggle) trafficToggle.checked = false;
+      trafficGroup.visible = false;
       setSunMaterials(false);
     } else if (!shadowState.enabled) {
       restoreNormalVisibility();
@@ -1277,6 +1370,8 @@ export async function startWebGLScene(canvas, status) {
       windGroup.visible = windState.enabled;
       floodState.enabled = Boolean(floodToggle?.checked);
       floodGroup.visible = floodState.enabled;
+      trafficState.enabled = Boolean(trafficToggle?.checked);
+      syncTrafficSceneVisibility();
     }
     syncLayerControls();
     requestRender();
@@ -1560,6 +1655,808 @@ export async function startWebGLScene(canvas, status) {
     } finally {
       mitigationRun.disabled = false;
       mitigationRun.textContent = 'Compare impact';
+    }
+  }
+
+  const trafficPlaybackSpeed = 10; // simulated seconds advanced per real second
+  // Vehicles are released over the first 70% of the run, so simulated t=0 is
+  // an empty street that takes tens of real seconds to fill. Start playback
+  // once the corridor is already loaded, and rewind to the same point rather
+  // than to 0, so switching between before/after compares like with like.
+  const trafficWarmStartFraction = 0.45;
+  const trafficMaxCars = 900;
+  // Free-flow reference for the speed colour ramp. 13.9 m/s is 50 km/h, the
+  // CBD limit, so a car at the limit renders green and a stationary one red.
+  const trafficFreeFlowMps = 13.9;
+  const carMatrix = new THREE.Matrix4();
+  const carQuaternion = new THREE.Quaternion();
+  const carPosition = new THREE.Vector3();
+  const carScale = new THREE.Vector3(1, 1, 1);
+  const carColor = new THREE.Color();
+  const carUp = new THREE.Vector3(0, 1, 0);
+
+  function visiblePolyline(points) {
+    if (!points || points.length < 2) return [];
+    const parts = [];
+    let current = [];
+    const pushCurrent = () => {
+      if (current.length >= 2) parts.push(current);
+      current = [];
+    };
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const [x0, z0] = points[index];
+      const [x1, z1] = points[index + 1];
+      const length = Math.hypot(x1 - x0, z1 - z0);
+      const samples = Math.max(1, Math.ceil(length / 4));
+      for (let sample = 0; sample <= samples; sample += 1) {
+        const ratio = sample / samples;
+        const x = x0 + (x1 - x0) * ratio;
+        const z = z0 + (z1 - z0) * ratio;
+        if (terrainValidAt(x, z)) {
+          const previous = current[current.length - 1];
+          if (!previous || Math.hypot(previous[0] - x, previous[1] - z) > 0.01) current.push([x, z]);
+        } else {
+          pushCurrent();
+        }
+      }
+    }
+    pushCurrent();
+    return parts.sort((left, right) => right.length - left.length);
+  }
+
+  function statusRibbon(points, width, color, opacity = 0.9, elevation = 0.66, xray = false) {
+    points = visiblePolyline(points)[0];
+    if (!points || points.length < 2) return null;
+    const vertices = [];
+    const indices = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const [x, z] = points[index];
+      const previous = points[Math.max(0, index - 1)];
+      const next = points[Math.min(points.length - 1, index + 1)];
+      const dx = next[0] - previous[0];
+      const dz = next[1] - previous[1];
+      const length = Math.hypot(dx, dz) || 1;
+      const nx = -dz / length * width * 0.5;
+      const nz = dx / length * width * 0.5;
+      const leftX = x + nx, leftZ = z + nz;
+      const rightX = x - nx, rightZ = z - nz;
+      vertices.push(
+        leftX, terrainHeightAt(leftX, leftZ) + elevation, leftZ,
+        rightX, terrainHeightAt(rightX, rightZ) + elevation, rightZ,
+      );
+      if (index > 0) {
+        const previousLeft = (index - 1) * 2;
+        const previousRight = previousLeft + 1;
+        const left = index * 2;
+        const right = left + 1;
+        indices.push(previousLeft, previousRight, left, previousRight, right, left);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    const material = new THREE.MeshBasicMaterial({
+      color, transparent: opacity < 1, opacity, depthWrite: false,
+      side: THREE.DoubleSide, blending: THREE.NormalBlending, depthTest: !xray,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 9;
+    return mesh;
+  }
+
+  function pointsAlongLine(points, spacing = 12) {
+    const sampled = [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const [x0, z0] = points[index];
+      const [x1, z1] = points[index + 1];
+      const length = Math.hypot(x1 - x0, z1 - z0);
+      const count = Math.max(1, Math.floor(length / spacing));
+      for (let step = 0; step < count; step += 1) {
+        const ratio = step / count;
+        sampled.push([x0 + (x1 - x0) * ratio, z0 + (z1 - z0) * ratio]);
+      }
+    }
+    sampled.push(points[points.length - 1]);
+    return sampled;
+  }
+
+  function clearStatusGroup(group) {
+    for (const child of [...group.children]) {
+      group.remove(child);
+      disposeObject(child);
+    }
+  }
+
+  function appendDirectionArrow(vertices, x, z, dx, dz, lateral = 0) {
+    const length = Math.hypot(dx, dz) || 1;
+    const tx = dx / length, tz = dz / length;
+    const nx = -tz, nz = tx;
+    const centerX = x + nx * lateral;
+    const centerZ = z + nz * lateral;
+    const tipX = centerX + tx * 5.2, tipZ = centerZ + tz * 5.2;
+    const backX = centerX - tx * 3.6, backZ = centerZ - tz * 3.6;
+    const elevation = terrainHeightAt(centerX, centerZ) + 0.88;
+    vertices.push(
+      tipX, elevation, tipZ,
+      backX + nx * 2.7, elevation, backZ + nz * 2.7,
+      backX - nx * 2.7, elevation, backZ - nz * 2.7,
+    );
+  }
+
+  function buildSelectedRoadDirections(road) {
+    clearStatusGroup(selectedRoadDirectionGroup);
+    if (!road) return;
+    const arrowVertices = [];
+    for (const segment of road.direction_segments || []) {
+      const points = visiblePolyline(segment.points || [])[0] || [];
+      const guide = statusRibbon(points, segment.direction === 'oneway' ? 1.3 : 0.8, 0xe8fbff, 0.32, 0.73, true);
+      if (guide) selectedRoadDirectionGroup.add(guide);
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const [x0, z0] = points[index];
+        const [x1, z1] = points[index + 1];
+        const dx = x1 - x0, dz = z1 - z0;
+        const distance = Math.hypot(dx, dz);
+        if (distance < 5) continue;
+        const arrowCount = Math.max(1, Math.floor(distance / 48));
+        for (let arrow = 0; arrow < arrowCount; arrow += 1) {
+          const ratio = (arrow + 0.5) / arrowCount;
+          const x = x0 + dx * ratio, z = z0 + dz * ratio;
+          if (segment.direction === 'oneway') {
+            appendDirectionArrow(arrowVertices, x, z, dx, dz, 0);
+          } else {
+            appendDirectionArrow(arrowVertices, x, z, dx, dz, -1.8);
+            appendDirectionArrow(arrowVertices, x, z, -dx, -dz, 1.8);
+          }
+        }
+      }
+    }
+    if (arrowVertices.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(arrowVertices, 3));
+      const arrows = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        color: 0xf2fdff, transparent: true, opacity: 0.92,
+        depthWrite: false, depthTest: false, side: THREE.DoubleSide,
+      }));
+      arrows.renderOrder = 11;
+      selectedRoadDirectionGroup.add(arrows);
+    }
+    selectedRoadDirectionGroup.name = `${road.name}-directions`;
+  }
+
+  function buildPermanentRoadStatuses(statuses) {
+    clearStatusGroup(permanentStatusGroup);
+    for (const statusItem of statuses || []) {
+      const halo = statusRibbon(statusItem.points, 5.2, 0x1ce8b5, 0.18, 0.59);
+      const core = statusRibbon(statusItem.points, 2.2, 0x52f4ca, 0.82, 0.64);
+      if (halo) permanentStatusGroup.add(halo);
+      if (core) permanentStatusGroup.add(core);
+    }
+    permanentStatusGroup.name = 'permanent-pedestrian-streets';
+  }
+
+  function buildLiveRoadClosures(sampledRoads) {
+    clearStatusGroup(liveClosureGroup);
+    for (const sample of sampledRoads || []) {
+      if (!sample.road_closure) continue;
+      const road = trafficState.roadsByName.get(sample.name);
+      for (const points of road?.geometry_local || []) {
+        const halo = statusRibbon(points, 9, 0xff2d2d, 0.24, 0.70);
+        const core = statusRibbon(points, 4.2, 0xff514c, 0.95, 0.76);
+        if (halo) liveClosureGroup.add(halo);
+        if (core) liveClosureGroup.add(core);
+      }
+    }
+    liveClosureGroup.name = 'live-road-closures';
+  }
+
+  function lineMidpoint(points) {
+    const lengths = [];
+    let total = 0;
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const length = Math.hypot(points[index + 1][0] - points[index][0], points[index + 1][1] - points[index][1]);
+      lengths.push(length);
+      total += length;
+    }
+    let target = total * 0.5;
+    for (let index = 0; index < lengths.length; index += 1) {
+      if (target <= lengths[index]) {
+        const ratio = lengths[index] ? target / lengths[index] : 0;
+        return [
+          points[index][0] + (points[index + 1][0] - points[index][0]) * ratio,
+          points[index][1] + (points[index + 1][1] - points[index][1]) * ratio,
+        ];
+      }
+      target -= lengths[index];
+    }
+    return points[Math.floor(points.length / 2)];
+  }
+
+  function closureLabel(lines, mode, roadName) {
+    if (!lines.length) return null;
+    const longest = [...lines].sort((a, b) => pointsAlongLine(b, 5).length - pointsAlongLine(a, 5).length)[0];
+    const [x, z] = lineMidpoint(longest);
+    const canvasLabel = document.createElement('canvas');
+    canvasLabel.width = 768;
+    canvasLabel.height = 192;
+    const context = canvasLabel.getContext('2d');
+    context.fillStyle = mode === 'full' ? '#d92f2b' : '#d97b18';
+    context.fillRect(0, 0, canvasLabel.width, canvasLabel.height);
+    context.strokeStyle = '#fff4df';
+    context.lineWidth = 12;
+    context.strokeRect(8, 8, canvasLabel.width - 16, canvasLabel.height - 16);
+    context.fillStyle = '#ffffff';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.font = '900 68px sans-serif';
+    context.fillText(mode === 'full' ? 'ROAD CLOSED' : 'LANE CLOSED', canvasLabel.width / 2, 72);
+    context.font = '700 34px sans-serif';
+    context.fillText(roadName || 'Selected section', canvasLabel.width / 2, 142);
+    const texture = new THREE.CanvasTexture(canvasLabel);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({
+      map: texture, transparent: true, depthTest: false, depthWrite: false,
+    });
+    const label = new THREE.Sprite(material);
+    label.position.set(x, terrainHeightAt(x, z) + 28, z);
+    label.scale.set(76, 19, 1);
+    label.renderOrder = 20;
+    label.userData.closurePulse = true;
+    label.userData.baseWidth = 76;
+    label.userData.baseHeight = 19;
+    return label;
+  }
+
+  function addClosureFurniture(lines, mode, roadName) {
+    const positions = lines.flatMap(points => pointsAlongLine(points, mode === 'full' ? 10 : 14));
+    if (!positions.length) return;
+    const geometry = new THREE.ConeGeometry(0.72, 2.6, 10);
+    geometry.translate(0, 1.3, 0);
+    const material = new THREE.MeshBasicMaterial({
+      color: mode === 'full' ? 0xff584f : 0xffa62f,
+      depthTest: false,
+    });
+    const cones = new THREE.InstancedMesh(geometry, material, Math.min(positions.length, 500));
+    const matrix = new THREE.Matrix4();
+    positions.slice(0, 500).forEach(([x, z], index) => {
+      matrix.makeTranslation(x, terrainHeightAt(x, z) + 0.62, z);
+      cones.setMatrixAt(index, matrix);
+    });
+    cones.renderOrder = 12;
+    scenarioStatusGroup.add(cones);
+
+    const endpoints = lines.flatMap(points => [points[0], points[points.length - 1]]);
+    const beaconGeometry = new THREE.CylinderGeometry(0.42, 0.9, 18, 12);
+    const beaconMaterial = new THREE.MeshBasicMaterial({
+      color: mode === 'full' ? 0xff3e38 : 0xffb02e,
+      transparent: true, opacity: 0.72, depthTest: false,
+    });
+    const beacons = new THREE.InstancedMesh(beaconGeometry, beaconMaterial, endpoints.length);
+    endpoints.forEach(([x, z], index) => {
+      matrix.makeTranslation(x, terrainHeightAt(x, z) + 9.5, z);
+      beacons.setMatrixAt(index, matrix);
+    });
+    beacons.renderOrder = 13;
+    scenarioStatusGroup.add(beacons);
+
+    const barrierRed = new THREE.MeshBasicMaterial({ color: 0xf13f37, depthTest: false });
+    const barrierWhite = new THREE.MeshBasicMaterial({ color: 0xfff4df, depthTest: false });
+    for (const points of lines) {
+      if (points.length < 2) continue;
+      const ends = [
+        { point: points[0], neighbour: points[1] },
+        { point: points[points.length - 1], neighbour: points[points.length - 2] },
+      ];
+      for (const { point, neighbour } of ends) {
+        const [x, z] = point;
+        const dx = neighbour[0] - x, dz = neighbour[1] - z;
+        const barrier = new THREE.Group();
+        const panel = new THREE.Mesh(new THREE.BoxGeometry(11, 2.4, 0.8), barrierRed.clone());
+        panel.position.y = 2.5;
+        barrier.add(panel);
+        for (const stripeX of [-4, -1.35, 1.35, 4]) {
+          const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.25, 2.5, 0.86), barrierWhite.clone());
+          stripe.position.set(stripeX, 2.5, 0);
+          barrier.add(stripe);
+        }
+        for (const legX of [-4.3, 4.3]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.65, 4.8, 0.65), barrierRed.clone());
+          leg.position.set(legX, 0.3, 0);
+          barrier.add(leg);
+        }
+        barrier.position.set(x, terrainHeightAt(x, z) + 0.7, z);
+        barrier.rotation.y = Math.atan2(dx, dz);
+        barrier.renderOrder = 16;
+        scenarioStatusGroup.add(barrier);
+      }
+    }
+    barrierRed.dispose();
+    barrierWhite.dispose();
+
+    const label = closureLabel(lines, mode, roadName);
+    if (label) scenarioStatusGroup.add(label);
+  }
+
+  function buildScenarioRoadStatuses(payload) {
+    clearStatusGroup(scenarioStatusGroup);
+    const closureLines = (payload?.closure?.geometry_local || [])
+      .flatMap(points => visiblePolyline(points))
+      .filter(points => points.length >= 2);
+    const isFull = payload?.closure_mode === 'full';
+    for (const points of closureLines) {
+      const halo = statusRibbon(points, isFull ? 10 : 6, isFull ? 0xff342f : 0xff9d27, 0.25, 0.69, true);
+      const closure = statusRibbon(points, isFull ? 6.5 : 2.7, isFull ? 0xff4b45 : 0xffbd45, 0.95, 0.75, true);
+      if (halo) scenarioStatusGroup.add(halo);
+      if (closure) scenarioStatusGroup.add(closure);
+      if (isFull) {
+        const pedestrianCore = statusRibbon(points, 4.2, 0x2be0ad, 0.92, 0.79, true);
+        if (pedestrianCore) scenarioStatusGroup.add(pedestrianCore);
+      }
+    }
+    addClosureFurniture(closureLines, payload?.closure_mode, payload?.road_name);
+
+    for (const segment of payload?.flow_comparison || []) {
+      const delta = Number(segment.vehicle_delta) || 0;
+      const halted = Number(segment.closure_halted) || 0;
+      const magnitude = Math.min(1, Math.abs(delta) / 3 + halted / 5);
+      const color = delta >= 0 ? (halted > 1 ? 0xff4a35 : 0xffa033) : 0x42c8ff;
+      const ribbon = statusRibbon(segment.points, 0.8 + magnitude * 2.8, color, 0.4 + magnitude * 0.48, 0.71);
+      if (ribbon) {
+        ribbon.userData.flowPulse = true;
+        ribbon.userData.baseOpacity = ribbon.material.opacity;
+        scenarioStatusGroup.add(ribbon);
+      }
+    }
+    scenarioStatusGroup.name = 'simulated-closure-and-diversions';
+    syncTrafficSceneVisibility();
+  }
+
+  function buildTrafficSnapIndex(edges) {
+    trafficState.snapGrid = new Map();
+    const cellSize = trafficState.snapCellSize;
+    const radius = trafficState.snapRadius;
+    const add = (column, row, segment) => {
+      const key = `${column}:${row}`;
+      if (!trafficState.snapGrid.has(key)) trafficState.snapGrid.set(key, []);
+      trafficState.snapGrid.get(key).push(segment);
+    };
+    for (const edge of edges) {
+      for (let index = 0; index < (edge.points?.length || 0) - 1; index += 1) {
+        const a = edge.points[index], b = edge.points[index + 1];
+        const segment = { edge, a, b };
+        const minColumn = Math.floor((Math.min(a[0], b[0]) - radius) / cellSize);
+        const maxColumn = Math.floor((Math.max(a[0], b[0]) + radius) / cellSize);
+        const minRow = Math.floor((Math.min(a[1], b[1]) - radius) / cellSize);
+        const maxRow = Math.floor((Math.max(a[1], b[1]) + radius) / cellSize);
+        for (let column = minColumn; column <= maxColumn; column += 1) {
+          for (let row = minRow; row <= maxRow; row += 1) add(column, row, segment);
+        }
+      }
+    }
+  }
+
+  function snapToTrafficRoad(x, z) {
+    const cellSize = trafficState.snapCellSize;
+    const column = Math.floor(x / cellSize), row = Math.floor(z / cellSize);
+    const candidates = trafficState.snapGrid.get(`${column}:${row}`) || [];
+    let nearest = null;
+    for (const candidate of candidates) {
+      const dx = candidate.b[0] - candidate.a[0];
+      const dz = candidate.b[1] - candidate.a[1];
+      const denominator = dx * dx + dz * dz || 1;
+      const ratio = clamp(((x - candidate.a[0]) * dx + (z - candidate.a[1]) * dz) / denominator, 0, 1);
+      const snappedX = candidate.a[0] + dx * ratio;
+      const snappedZ = candidate.a[1] + dz * ratio;
+      const distance = Math.hypot(x - snappedX, z - snappedZ);
+      if (!nearest || distance < nearest.distance) {
+        nearest = { x: snappedX, z: snappedZ, distance, edge: candidate.edge };
+      }
+    }
+    return nearest && nearest.distance <= trafficState.snapRadius ? nearest : null;
+  }
+
+  function trafficSelectionLabel() {
+    const names = [...new Set(trafficState.selectedEdgeIds
+      .map(edgeId => trafficState.edgesById.get(edgeId)?.name)
+      .filter(name => name && name !== 'Unnamed road'))];
+    return names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '') || 'Selected road section';
+  }
+
+  function updateTrafficDrawing() {
+    clearStatusGroup(trafficDrawingGroup);
+    const fullClosure = trafficState.closureMode === 'full';
+    for (const edgeId of trafficState.selectedEdgeIds) {
+      const edge = trafficState.edgesById.get(edgeId);
+      if (!edge) continue;
+      const halo = statusRibbon(edge.points, fullClosure ? 11 : 7, fullClosure ? 0xff352f : 0xff9825, 0.28, 0.82, true);
+      const core = statusRibbon(edge.points, fullClosure ? 6 : 3.2, fullClosure ? 0xff554d : 0xffc24a, 0.94, 0.87, true);
+      if (halo) trafficDrawingGroup.add(halo);
+      if (core) trafficDrawingGroup.add(core);
+    }
+    const selectedEdges = trafficState.selectedEdgeIds
+      .map(edgeId => trafficState.edgesById.get(edgeId))
+      .filter(Boolean);
+    buildSelectedRoadDirections({
+      name: trafficSelectionLabel(),
+      direction_segments: selectedEdges.map(edge => ({ points: edge.points, direction: 'oneway' })),
+    });
+    trafficDrawingGroup.visible = trafficState.sceneActive;
+    requestRender();
+  }
+
+  function resetTrafficResult() {
+    trafficState.result = null;
+    trafficState.tracks = [];
+    clearStatusGroup(scenarioStatusGroup);
+    if (trafficCars) trafficCars.count = 0;
+    if (trafficResults) trafficResults.hidden = true;
+  }
+
+  function clearTrafficSelection() {
+    trafficState.drawing = false;
+    trafficState.stroking = false;
+    trafficState.pointerId = null;
+    trafficState.lastScreen = null;
+    trafficState.snappedPoints = [];
+    trafficState.selectedEdgeIds = [];
+    resetTrafficResult();
+    clearStatusGroup(trafficDrawingGroup);
+    clearStatusGroup(selectedRoadDirectionGroup);
+    trafficDrawLane?.classList.remove('active');
+    trafficDrawRoad?.classList.remove('active');
+    if (trafficDrawLane) trafficDrawLane.textContent = 'Draw lane closure';
+    if (trafficDrawRoad) trafficDrawRoad.textContent = 'Draw street closure';
+    if (trafficRun) trafficRun.disabled = true;
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'Choose a closure tool, then drag along a road. The pen will snap to the road network.';
+    if (trafficStatus) trafficStatus.textContent = 'Draw a closure to begin.';
+    canvas.style.cursor = '';
+    requestRender();
+  }
+
+  function beginTrafficDrawing(mode) {
+    clearTrafficSelection();
+    mitigationState.drawing = false;
+    mitigationState.stroking = false;
+    mitigationState.points = [];
+    updateMitigationDrawing();
+    streetViewState.placing = false;
+    floodState.moveMode = false;
+    windState.moveMode = false;
+    floodMoveDomain?.classList.remove('active');
+    windMoveDomain?.classList.remove('active');
+    trafficState.closureMode = mode;
+    trafficState.drawing = true;
+    const button = mode === 'full' ? trafficDrawRoad : trafficDrawLane;
+    button?.classList.add('active');
+    if (button) button.textContent = mode === 'full' ? 'Drawing street…' : 'Drawing lane…';
+    if (trafficSelectionStatus) {
+      trafficSelectionStatus.textContent = `Drawing ${mode === 'full' ? 'street closure' : 'lane closure'} · drag along the road and release to finish.`;
+    }
+    canvas.style.cursor = 'crosshair';
+  }
+
+  function finishTrafficDrawing() {
+    trafficState.drawing = false;
+    trafficState.stroking = false;
+    trafficState.pointerId = null;
+    trafficDrawLane?.classList.remove('active');
+    trafficDrawRoad?.classList.remove('active');
+    if (trafficDrawLane) trafficDrawLane.textContent = 'Draw lane closure';
+    if (trafficDrawRoad) trafficDrawRoad.textContent = 'Draw street closure';
+    canvas.style.cursor = '';
+    const count = trafficState.selectedEdgeIds.length;
+    if (!count) {
+      if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'No road was close enough to the stroke. Try again directly over a road.';
+      if (trafficRun) trafficRun.disabled = true;
+      return;
+    }
+    const label = trafficSelectionLabel();
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${count} snapped road ${count === 1 ? 'section' : 'sections'} · ${label}.`;
+    if (trafficStatus) trafficStatus.textContent = `${label} selected · adjust the scenario or simulate the closure.`;
+    if (trafficRun) trafficRun.disabled = false;
+    updateTrafficDrawing();
+  }
+
+  async function loadTrafficRoads() {
+    try {
+      const response = await fetch(`${windApi}/traffic/roads`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const roads = payload.roads || [];
+      trafficState.roadsByName = new Map(roads.map(road => [road.name, road]));
+      trafficState.networkEdges = payload.network_edges || [];
+      trafficState.edgesById = new Map(trafficState.networkEdges.map(edge => [edge.id, edge]));
+      buildTrafficSnapIndex(trafficState.networkEdges);
+      trafficState.roadStatuses = payload.road_statuses || [];
+      buildPermanentRoadStatuses(trafficState.roadStatuses);
+      buildLiveRoadClosures(trafficState.liveRoads);
+      requestRender();
+      if (trafficScenario && payload.scenarios?.length) {
+        trafficScenario.innerHTML = payload.scenarios
+          .map(scenario => `<option value="${scenario.key}"${scenario.key === 'am_peak' ? ' selected' : ''}>${scenario.label}</option>`)
+          .join('');
+      }
+      if (trafficDrawLane) trafficDrawLane.disabled = !trafficState.networkEdges.length;
+      if (trafficDrawRoad) trafficDrawRoad.disabled = !trafficState.networkEdges.length;
+      if (trafficState.networkEdges.length && trafficStatus) {
+        trafficStatus.textContent = `${trafficState.networkEdges.length} road sections ready for snapping.`;
+      }
+    } catch (error) {
+      if (trafficStatus) trafficStatus.textContent = `Road list unavailable (${error.message})`;
+    }
+  }
+
+  async function loadTrafficLive(force) {
+    if (!trafficLiveStatus) return;
+    trafficLiveStatus.textContent = force ? 'Refreshing live traffic…' : 'Loading live traffic…';
+    try {
+      const response = await fetch(`${windApi}/traffic/live${force ? '?refresh=true' : ''}`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      if (trafficFreshness) {
+        trafficFreshness.textContent = payload.stale ? 'Stale' : 'Live';
+        trafficFreshness.classList.toggle('stale', Boolean(payload.stale));
+      }
+      const level = (payload.congestion_level || 'unknown').replace(/_/g, ' ');
+      trafficState.liveRoads = payload.sampled_roads || [];
+      buildLiveRoadClosures(trafficState.liveRoads);
+      const liveClosures = trafficState.liveRoads.filter(road => road.road_closure).length;
+      trafficLiveStatus.textContent = `${level} congestion · ${payload.sampled_count}/${payload.requested_count} roads sampled`
+        + (liveClosures ? ` · ${liveClosures} live ${liveClosures === 1 ? 'closure' : 'closures'}` : '')
+        + (payload.warning ? ` · ${payload.warning}` : '');
+      if (trafficLiveMetrics) {
+        trafficLiveMetrics.hidden = false;
+        trafficLiveMetrics.innerHTML = `
+          <span><b>${Math.round((payload.average_speed_ratio || 0) * 100)}%</b>Avg speed vs free-flow</span>
+          <span><b>${level}</b>Congestion level</span>`;
+      }
+    } catch (error) {
+      trafficLiveStatus.textContent = `Live traffic unavailable (${error.message})`;
+    }
+  }
+
+  // The server sends each vehicle as a contiguous run of positions starting
+  // at `t0`, sampled every `sample_interval_s`. Heading and speed are derived
+  // here from consecutive samples rather than shipped: it halves the payload
+  // and guarantees a car's nose points along the path it is actually on.
+  //
+  // Headings are resolved once, at load, rather than per frame. A car stopped
+  // in a queue has two identical consecutive samples, and atan2(0, 0) is 0 --
+  // so deriving heading live made every stationary car point due north
+  // regardless of the street it was sitting on, which is what turned queues
+  // into sideways heaps. Segments with no real movement instead inherit the
+  // last direction the car actually travelled.
+  const headingMinTravelM = 0.25;
+  function tracksFromTrajectories(rawTracks) {
+    const tracks = [];
+    for (const track of rawTracks || []) {
+      const count = track?.x?.length || 0;
+      if (count < 2) continue;
+      const segments = count - 1;
+      const heading = new Float32Array(segments);
+      const travelled = new Float32Array(segments);
+      for (let index = 0; index < segments; index += 1) {
+        const dx = track.x[index + 1] - track.x[index];
+        const dz = track.z[index + 1] - track.z[index];
+        const distance = Math.hypot(dx, dz);
+        travelled[index] = distance;
+        heading[index] = distance > headingMinTravelM ? Math.atan2(dx, dz) : NaN;
+      }
+      // Carry the last known heading forward over stopped stretches, then
+      // backwards for a car that is stationary from its very first sample.
+      let carried = NaN;
+      for (let index = 0; index < segments; index += 1) {
+        if (Number.isNaN(heading[index])) heading[index] = carried;
+        else carried = heading[index];
+      }
+      carried = NaN;
+      for (let index = segments - 1; index >= 0; index -= 1) {
+        if (Number.isNaN(heading[index])) heading[index] = carried;
+        else carried = heading[index];
+      }
+      // A vehicle that never moved at all has no direction to infer.
+      for (let index = 0; index < segments; index += 1) {
+        if (Number.isNaN(heading[index])) heading[index] = 0;
+      }
+      tracks.push({ t0: track.t0, type: track.type || 'car', x: track.x, z: track.z, heading, travelled });
+    }
+    return tracks;
+  }
+
+  // A recognisable car at city scale: a low body with a shorter, narrower
+  // cabin sitting on top, built once and reused by every instance.
+  // Cars are drawn larger than life, because a true 4.3 m car is barely a
+  // pixel with the CBD in frame -- but not uniformly so, and length is the
+  // tightest of the three. SUMO queues stopped cars 4.4 m of body plus a
+  // 2.0 m minimum gap apart, so anything drawn longer than ~6.4 m makes a
+  // stationary queue render as one interpenetrating heap. Width is capped by
+  // the ~3.2 m lane so neighbouring lanes stay distinct; height is free to
+  // carry most of the visibility, since nothing is stacked vertically.
+  const carLengthScale = 1.3;  // 5.6 m drawn, inside the 6.4 m queue pitch
+  const carWidthScale = 1.5;   // 2.8 m drawn, inside the 3.2 m lane
+  const carHeightScale = 1.9;
+  function makeCarGeometry() {
+    const body = new THREE.BoxGeometry(1.85, 0.66, 4.3);
+    body.translate(0, 0.45, 0);
+    const cabin = new THREE.BoxGeometry(1.6, 0.6, 2.1);
+    cabin.translate(0, 1.05, -0.15);
+    const merged = new THREE.BufferGeometry();
+    const bodyPositions = body.getAttribute('position').array;
+    const cabinPositions = cabin.getAttribute('position').array;
+    const bodyNormals = body.getAttribute('normal').array;
+    const cabinNormals = cabin.getAttribute('normal').array;
+    const bodyIndex = [...body.getIndex().array];
+    const cabinIndex = [...cabin.getIndex().array].map(i => i + bodyPositions.length / 3);
+    merged.setAttribute('position', new THREE.Float32BufferAttribute(
+      [...bodyPositions, ...cabinPositions], 3));
+    merged.setAttribute('normal', new THREE.Float32BufferAttribute(
+      [...bodyNormals, ...cabinNormals], 3));
+    merged.setIndex([...bodyIndex, ...cabinIndex]);
+    // BoxGeometry axes are (width=x, height=y, depth=z); depth is the car's
+    // travel direction, which the instance matrix then rotates by heading.
+    merged.scale(carWidthScale, carHeightScale, carLengthScale);
+    body.dispose();
+    cabin.dispose();
+    return merged;
+  }
+
+  function resetTrafficCars() {
+    if (trafficCars) {
+      trafficGroup.remove(trafficCars);
+      disposeObject(trafficCars);
+    }
+    // No `vertexColors` here: the per-car colour comes from setColorAt, which
+    // three.js applies via instanceColor. Turning vertexColors on would make
+    // the shader look for a per-vertex `color` attribute this geometry lacks.
+    trafficCars = new THREE.InstancedMesh(
+      makeCarGeometry(),
+      new THREE.MeshLambertMaterial({ emissiveIntensity: 0.4 }),
+      trafficMaxCars,
+    );
+    trafficCars.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    trafficCars.frustumCulled = false;
+    trafficCars.count = 0;
+    trafficCars.name = 'traffic-cars';
+    trafficGroup.add(trafficCars);
+  }
+
+  function applyTrafficCompareSelection() {
+    const payload = trafficState.result;
+    if (!payload) {
+      trafficState.tracks = [];
+      return;
+    }
+    const key = trafficCompare?.value === 'closure' ? 'closure' : 'baseline';
+    trafficState.tracks = tracksFromTrajectories(payload.trajectories?.[key]);
+    trafficState.simClock = trafficState.durationS * trafficWarmStartFraction;
+    trafficState.lastTime = performance.now();
+    if (!trafficCars) resetTrafficCars();
+  }
+
+  // Position, heading and speed of one vehicle at simulated time `t`, or null
+  // when that vehicle is not on the network then.
+  function trafficStateAt(track, t, sampleIntervalS) {
+    const span = (track.x.length - 1) * sampleIntervalS;
+    const local = t - track.t0;
+    if (local < 0 || local > span) return null;
+    const exact = local / sampleIntervalS;
+    const index = Math.min(track.x.length - 2, Math.floor(exact));
+    const ratio = exact - index;
+    const x0 = track.x[index];
+    const z0 = track.z[index];
+    return {
+      x: x0 + (track.x[index + 1] - x0) * ratio,
+      z: z0 + (track.z[index + 1] - z0) * ratio,
+      heading: track.heading[index],
+      speed: track.travelled[index] / sampleIntervalS,
+    };
+  }
+
+  function updateTrafficCars(now) {
+    if (!trafficGroup.visible || !trafficCars || !trafficState.tracks.length) return;
+    const elapsed = Math.min(0.25, (now - trafficState.lastTime) / 1000);
+    trafficState.lastTime = now;
+    const durationS = Math.max(trafficState.durationS || 1, 1);
+    trafficState.simClock = (trafficState.simClock + elapsed * trafficPlaybackSpeed) % durationS;
+    const sampleIntervalS = trafficState.sampleIntervalS || 2;
+
+    let count = 0;
+    for (const track of trafficState.tracks) {
+      if (count >= trafficMaxCars) break;
+      const state = trafficStateAt(track, trafficState.simClock, sampleIntervalS);
+      if (!state) continue;
+      // Routes can leave the rendered terrain even though every trip starts
+      // and ends inside it. Drawing those gives cars hovering over the void,
+      // so drop them until they come back onto ground that exists.
+      if (!terrainValidAt(state.x, state.z)) continue;
+      carPosition.set(state.x, terrainHeightAt(state.x, state.z) + 0.35, state.z);
+      carQuaternion.setFromAxisAngle(carUp, state.heading);
+      if (track.type === 'city_shuttle') carScale.set(1.08, 1.18, 1.75);
+      else if (track.type === 'delivery_van') carScale.set(1.04, 1.12, 1.22);
+      else if (track.type === 'minibus_taxi') carScale.set(1.02, 1.08, 1.12);
+      else carScale.set(1, 1, 1);
+      carMatrix.compose(carPosition, carQuaternion, carScale);
+      trafficCars.setMatrixAt(count, carMatrix);
+      // Red when stopped through amber to green at the 50 km/h limit, so
+      // congestion behind a closed lane is readable at a glance.
+      const flow = clamp(state.speed / trafficFreeFlowMps, 0, 1);
+      carColor.setHSL(flow * 0.33, 0.85, 0.52);
+      trafficCars.setColorAt(count, carColor);
+      count += 1;
+    }
+    trafficCars.count = count;
+    trafficCars.instanceMatrix.needsUpdate = true;
+    if (trafficCars.instanceColor) trafficCars.instanceColor.needsUpdate = true;
+    // Throttled: this is a DOM write inside the render loop.
+    if (trafficOnScreen && now - trafficOnScreenShownAt > 400) {
+      trafficOnScreenShownAt = now;
+      const minute = Math.floor(trafficState.simClock / 60);
+      const second = String(Math.floor(trafficState.simClock % 60)).padStart(2, '0');
+      trafficOnScreen.textContent = `${count} cars · ${minute}:${second}`;
+    }
+  }
+
+  function buildTrafficResult(payload) {
+    trafficState.result = payload;
+    trafficState.durationS = Math.round((payload.duration_min || 15) * 60);
+    trafficState.sampleIntervalS = payload.playback?.sample_interval_s || 2;
+    resetTrafficCars();
+    if (trafficCompare) trafficCompare.value = 'closure';
+    applyTrafficCompareSelection();
+    clearStatusGroup(trafficDrawingGroup);
+    buildScenarioRoadStatuses(payload);
+    const impact = payload.impact || {};
+    const formatPercent = value => (value === null || value === undefined)
+      ? '—'
+      : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+    if (trafficResults) {
+      trafficResults.hidden = false;
+      trafficResults.innerHTML = `
+        <span><b>${formatPercent(impact.mean_duration_change_pct)}</b>Mean trip duration</span>
+        <span><b>${(impact.mean_time_loss_change_s ?? 0) >= 0 ? '+' : ''}${(impact.mean_time_loss_change_s ?? 0).toFixed(0)} s</b>Mean time lost</span>
+        <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Mean speed</span>
+        <span><b>${(impact.mean_route_length_change_m ?? 0) >= 0 ? '+' : ''}${(impact.mean_route_length_change_m ?? 0).toFixed(0)} m</b>Mean diversion distance</span>
+        <span><b>${(impact.mean_queued_vehicle_change ?? 0) >= 0 ? '+' : ''}${(impact.mean_queued_vehicle_change ?? 0).toFixed(1)}</b>Queued vehicles</span>
+        <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>
+        <span><b>${Math.round((impact.completed_trip_ratio_baseline ?? 0) * 100)}% → ${Math.round((impact.completed_trip_ratio_closure ?? 0) * 100)}%</b>Trips completing in the window</span>`;
+    }
+    if (trafficStatus) {
+      trafficStatus.textContent = `${payload.road_name} · ${payload.scenario?.label || ''} · `
+        + `${payload.closure?.description || ''} · ${payload.baseline.trip_count} trips vs `
+        + `${payload.closure_metrics.trip_count} with closure · ${payload.flow_comparison?.length || 0} changed road segments shown · estimate, not engineering-grade.`;
+    }
+    if (trafficToggle) trafficToggle.checked = true;
+    trafficState.enabled = true;
+    syncTrafficSceneVisibility();
+    frameBounds(payload.corridor?.road_bounds_local);
+    requestRender();
+  }
+
+  async function runTrafficClosurePreview() {
+    if (!trafficState.selectedEdgeIds.length) return;
+    trafficRun.disabled = true;
+    trafficRun.textContent = 'Simulating…';
+    trafficStatus.textContent = 'Running paired SUMO simulations (road open vs closed)… this can take up to a minute.';
+    try {
+      const response = await fetch(`${windApi}/traffic/closure-preview`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          road_name: trafficSelectionLabel(),
+          edge_ids: trafficState.selectedEdgeIds,
+          duration_min: Number(trafficDuration?.value) || 10,
+          scenario: trafficScenario?.value || 'am_peak',
+          closure_mode: trafficState.closureMode,
+          traffic_control: trafficControlModel?.value || 'signalized',
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      buildTrafficResult(payload);
+    } catch (error) {
+      trafficStatus.textContent = `Closure preview unavailable (${error.message})`;
+    } finally {
+      trafficRun.disabled = !trafficState.selectedEdgeIds.length;
+      trafficRun.textContent = 'Simulate selection';
     }
   }
 
@@ -1848,16 +2745,19 @@ export async function startWebGLScene(canvas, status) {
       hideRoadsForFlood();
       playFloodAnimation();
       const summary = payload.summary;
+      const openSides = payload.model?.boundary_open_sides || [];
       floodLegendMax.textContent = `${summary.max_depth_m.toFixed(2)} m`;
       floodResults.innerHTML = `
         <span><b>${summary.max_depth_m.toFixed(2)} m</b>Maximum depth</span>
         <span><b>${summary.max_speed_mps.toFixed(2)} m/s</b>Maximum velocity</span>
         <span><b>${Math.round(summary.wet_area_m2).toLocaleString()} m²</b>Area ≥ 1 cm</span>
         <span><b>${summary.retained_water_m3.toFixed(1)} m³</b>Water retained</span>
+        ${summary.drained_water_m3 > 0.05 ? `<span><b>${summary.drained_water_m3.toFixed(1)} m³</b>Drained off-domain</span>` : ''}
       `;
       floodResults.hidden = false;
       const control = payload.model?.dem_control;
-      floodStatus.textContent = `${payload.width} × ${payload.height} closed cells · ${summary.coarse_terrain_pct.toFixed(0)}% coarse terrain · ${control?.usable_marks || 0} survey marks checked`;
+      const boundaryNote = openSides.length ? ` · open to outflow: ${openSides.join(', ')}` : ' · closed box';
+      floodStatus.textContent = `${payload.width} × ${payload.height} cells${boundaryNote} · ${summary.coarse_terrain_pct.toFixed(0)}% coarse terrain · ${control?.usable_marks || 0} survey marks checked`;
     } catch (error) {
       floodStatus.textContent = `Flood simulation unavailable (${error.message})`;
     } finally {
@@ -2147,6 +3047,42 @@ export async function startWebGLScene(canvas, status) {
     return true;
   }
 
+  function appendTrafficClosurePoint(event, force = false) {
+    const point = pointerGround(event);
+    if (!point) return false;
+    const screen = [event.clientX, event.clientY];
+    if (!force && trafficState.lastScreen
+      && Math.hypot(screen[0] - trafficState.lastScreen[0], screen[1] - trafficState.lastScreen[1]) < 4) return false;
+
+    const previous = trafficState.snappedPoints.at(-1);
+    const distance = previous ? Math.hypot(point.x - previous[0], point.z - previous[1]) : 0;
+    const sampleCount = Math.max(1, Math.ceil(distance / 8));
+    let changed = false;
+    let latest = null;
+    for (let sample = 1; sample <= sampleCount; sample += 1) {
+      const ratio = sample / sampleCount;
+      const sampleX = previous ? previous[0] + (point.x - previous[0]) * ratio : point.x;
+      const sampleZ = previous ? previous[1] + (point.z - previous[1]) * ratio : point.z;
+      const snapped = snapToTrafficRoad(sampleX, sampleZ);
+      if (!snapped) continue;
+      latest = [snapped.x, snapped.z];
+      if (!trafficState.selectedEdgeIds.includes(snapped.edge.id)) {
+        trafficState.selectedEdgeIds.push(snapped.edge.id);
+        changed = true;
+      }
+    }
+    if (latest) trafficState.snappedPoints.push(latest);
+    trafficState.lastScreen = screen;
+    if (changed) updateTrafficDrawing();
+    if (trafficSelectionStatus) {
+      const count = trafficState.selectedEdgeIds.length;
+      trafficSelectionStatus.textContent = count
+        ? `Snapped to ${count} road ${count === 1 ? 'section' : 'sections'} · release to finish.`
+        : 'No road under the pen yet · move closer to a road.';
+    }
+    return Boolean(latest);
+  }
+
   function handleScreenPoint(handle) {
     if (!handle?.visible) return null;
     const projected = handle.position.clone().project(camera);
@@ -2179,6 +3115,16 @@ export async function startWebGLScene(canvas, status) {
         }));
         requestRender();
       }
+      return;
+    }
+    if (trafficState.drawing && event.button === 0) {
+      trafficState.selectedEdgeIds = [];
+      trafficState.snappedPoints = [];
+      trafficState.stroking = true;
+      trafficState.pointerId = event.pointerId;
+      trafficState.lastScreen = null;
+      appendTrafficClosurePoint(event, true);
+      capturePointer(event);
       return;
     }
     if (mitigationState.drawing && event.button === 0) {
@@ -2247,6 +3193,10 @@ export async function startWebGLScene(canvas, status) {
     capturePointer(event);
   });
   canvas.addEventListener('pointermove', event => {
+    if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
+      appendTrafficClosurePoint(event);
+      return;
+    }
     if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
       appendMitigationPoint(event);
       return;
@@ -2316,6 +3266,11 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   });
   canvas.addEventListener('pointerup', event => {
+    if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
+      appendTrafficClosurePoint(event, true);
+      finishTrafficDrawing();
+      return;
+    }
     if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
       appendMitigationPoint(event, true);
       mitigationState.stroking = false;
@@ -2346,6 +3301,11 @@ export async function startWebGLScene(canvas, status) {
     windDrag = null;
   });
   canvas.addEventListener('pointercancel', event => {
+    if (event.pointerId === trafficState.pointerId) {
+      trafficState.stroking = false;
+      trafficState.pointerId = null;
+      finishTrafficDrawing();
+    }
     if (event.pointerId === mitigationState.pointerId) {
       mitigationState.stroking = false;
       mitigationState.pointerId = null;
@@ -2362,7 +3322,7 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   }, { passive: false });
   canvas.addEventListener('dblclick', event => {
-    if (mitigationState.drawing || floodState.moveMode) {
+    if (trafficState.drawing || mitigationState.drawing || floodState.moveMode) {
       event.preventDefault();
     } else {
       fitScene();
@@ -2555,6 +3515,44 @@ export async function startWebGLScene(canvas, status) {
     }
     if (heatToggle?.checked) setHeatMode(true);
   });
+  trafficDuration?.addEventListener('input', () => {
+    if (trafficDurationValue) trafficDurationValue.textContent = `${trafficDuration.value} min`;
+  });
+  trafficDrawLane?.addEventListener('click', () => beginTrafficDrawing('lane'));
+  trafficDrawRoad?.addEventListener('click', () => beginTrafficDrawing('full'));
+  trafficRun?.addEventListener('click', runTrafficClosurePreview);
+  trafficClear?.addEventListener('click', clearTrafficSelection);
+  trafficCompare?.addEventListener('change', () => {
+    applyTrafficCompareSelection();
+    requestRender();
+  });
+  trafficToggle?.addEventListener('change', () => {
+    trafficState.enabled = Boolean(trafficToggle.checked);
+    syncTrafficSceneVisibility();
+    if (trafficState.enabled) {
+      trafficState.lastTime = performance.now();
+      requestRender();
+    }
+  });
+  trafficRestrictionsToggle?.addEventListener('change', () => {
+    syncTrafficSceneVisibility();
+    requestRender();
+  });
+  addEventListener('climate-menu-change', event => {
+    trafficState.sceneActive = event.detail?.name === 'traffic';
+    if (!trafficState.sceneActive && trafficState.drawing) {
+      trafficState.drawing = false;
+      trafficState.stroking = false;
+      trafficState.pointerId = null;
+      trafficDrawLane?.classList.remove('active');
+      trafficDrawRoad?.classList.remove('active');
+      if (trafficDrawLane) trafficDrawLane.textContent = 'Draw lane closure';
+      if (trafficDrawRoad) trafficDrawRoad.textContent = 'Draw street closure';
+      canvas.style.cursor = '';
+    }
+    syncTrafficSceneVisibility();
+    requestRender();
+  });
   addEventListener('climate-streetview-mode', event => {
     streetViewState.placing = Boolean(event.detail?.enabled);
     if (streetViewState.placing && mitigationState.drawing) {
@@ -2616,9 +3614,31 @@ export async function startWebGLScene(canvas, status) {
     animationFrame = 0;
     resize();
     updateWindParticles(now);
+    updateTrafficCars(now);
+    if (trafficStatusGroup.visible && scenarioStatusGroup.children.length) {
+      const pulse = 0.82 + Math.sin(now * 0.004) * 0.18;
+      for (const child of scenarioStatusGroup.children) {
+        if (child.userData.flowPulse && child.material) {
+          child.material.opacity = child.userData.baseOpacity * pulse;
+        }
+        if (child.userData.closurePulse && child.material) {
+          const labelPulse = 1 + Math.sin(now * 0.005) * 0.035;
+          child.scale.set(
+            child.userData.baseWidth * labelPulse,
+            child.userData.baseHeight * labelPulse,
+            1,
+          );
+          child.material.opacity = 0.9 + Math.sin(now * 0.005) * 0.1;
+        }
+      }
+    }
     renderer.render(scene, camera);
     renderRequested = false;
-    if (windState.enabled && windState.field) animationFrame = requestAnimationFrame(render);
+    if ((windState.enabled && windState.field)
+      || (trafficGroup.visible && trafficState.tracks.length)
+      || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)) {
+      animationFrame = requestAnimationFrame(render);
+    }
   }
 
   addEventListener('resize', requestRender);
@@ -2628,11 +3648,14 @@ export async function startWebGLScene(canvas, status) {
   floodGroup.visible = floodState.enabled;
   floodState.validBox = boxInLidarFootprint(floodState.bounds);
   updateFloodBox();
+  syncTrafficSceneVisibility();
   const roofTriangles = manifest.layers?.roof_surface?.triangles;
   status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
   updateSunStatus();
   loadHeat();
   setHeatMode(Boolean(heatToggle?.checked));
+  loadTrafficRoads();
+  loadTrafficLive(false);
   requestRender();
 
   return { renderer, scene, camera };

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -29,6 +30,8 @@ from .flood import dem_control_summary, flood_preview
 from .mitigation import mitigation_preview
 from .location import streetview_location
 from .weather import current_weather
+from .traffic import SCENARIOS as TRAFFIC_SCENARIOS
+from .traffic import closure_preview, current_traffic, drawable_road_edges, named_roads, permanent_road_statuses
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(title="Cape Town Wind Explorer API", version="0.1.0")
@@ -38,6 +41,10 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+# The traffic and flood previews return long arrays of rounded numbers, which
+# compress by roughly 5x. Worth it even on localhost for the multi-megabyte
+# vehicle-trajectory responses.
+app.add_middleware(GZipMiddleware, minimum_size=8192)
 
 
 class PreviewPayload(BaseModel):
@@ -57,6 +64,16 @@ class MitigationPayload(BaseModel):
     sun_date: str = "2026-01-15"
     sun_minutes: int = Field(default=720, ge=0, lt=1440)
     baseline_metric: str = "heat_model_lst_c"
+
+
+class TrafficClosurePayload(BaseModel):
+    road_name: str | None = None
+    edge_ids: list[str] = Field(default_factory=list, max_length=120)
+    duration_min: float = Field(default=10.0, ge=5.0, le=20.0)
+    scenario: Literal["am_peak", "midday", "pm_peak", "evening", "live"] = "am_peak"
+    closure_mode: Literal["lane", "full"] = "lane"
+    closure_scope: Literal["block", "road"] = "block"
+    traffic_control: Literal["signalized", "priority"] = "signalized"
 
 
 class FloodPayload(BaseModel):
@@ -148,6 +165,37 @@ def mitigations_preview(payload: MitigationPayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"mitigation preview unavailable: {error}") from error
+
+
+@app.get("/api/traffic/live")
+def traffic_live(refresh: bool = False) -> dict[str, Any]:
+    try:
+        return current_traffic(force=refresh)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/traffic/roads")
+def traffic_roads() -> dict[str, Any]:
+    return {
+        "roads": list(named_roads()),
+        "network_edges": list(drawable_road_edges()),
+        "road_statuses": list(permanent_road_statuses()),
+        "scenarios": [
+            {"key": key, "label": profile["label"]}
+            for key, profile in TRAFFIC_SCENARIOS.items()
+        ],
+    }
+
+
+@app.post("/api/traffic/closure-preview")
+def traffic_closure_preview(payload: TrafficClosurePayload) -> dict[str, Any]:
+    try:
+        return closure_preview(payload.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"traffic closure preview unavailable: {error}") from error
 
 
 @app.get("/api/flood/dem-quality")
