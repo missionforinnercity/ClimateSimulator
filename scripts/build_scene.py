@@ -22,6 +22,8 @@ from scipy.spatial import Delaunay, QhullError
 from shapely.geometry import LineString, Point, Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 
+from city_model import build_city_model, write_city_model
+
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 ROAD_WIDTHS = {"motorway": 15.0, "trunk": 13.0, "primary": 11.0, "secondary": 9.0, "tertiary": 7.0, "residential": 5.5, "unclassified": 5.5, "living_street": 5.0, "service": 4.0, "pedestrian": 4.0, "cycleway": 2.5, "footway": 2.0, "path": 1.5}
 
@@ -403,6 +405,7 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, roads_path,
                 round(profile["wall_height"], 1), profile["detailed"],
                 round(profile["coverage"], 3), profile["roof_model"],
                 [round(value, 1) for value in (profile.get("wall_profile") or [])] or None,
+                metadata.get("acquisition_method"), metadata.get("acquisition_period"),
             ])
 
     trees = [[round(float(value), 1) for value in row[:6]] for row in instances]
@@ -881,6 +884,7 @@ def main():
     parser.add_argument("--roads", type=Path, default=Path("data/osm_cbd_roads.geojson"))
     parser.add_argument("--railways", type=Path, default=Path("data/osm_cbd_railways.geojson"))
     parser.add_argument("--green", type=Path, default=Path("data/osm_cbd_green_areas.geojson"))
+    parser.add_argument("--street-data", type=Path, default=Path("data/street_data"))
     parser.add_argument("--scene-footprint", type=Path, default=Path("data/scene_footprint.geojson"))
     parser.add_argument("--out", type=Path, default=Path("public/assets"))
     args = parser.parse_args()
@@ -901,14 +905,15 @@ def main():
             "coarse_source": "calibrated_30m_srtm_company_gardens" if provenance is not None else None,
         }
     manifest = {
-        "version": 2,
+        "version": 3,
         "crs": "custom Hartbeesthoek94 Lo19 east/north grid",
         "origin": [origin_x, origin_y],
         "bounds": [bounds.left - origin_x, bounds.bottom - origin_y, bounds.right - origin_x, bounds.top - origin_y],
-        "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile]",
+        "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,acquisition_method,acquisition_period]",
         "layers": {"terrain": terrain_metadata},
         "assets": {
             "fallback": "fallback.json",
+            "city_model": "city_model.json",
             "canopy": "canopy.json",
             "roof_surface": "roof_surface.bin",
         },
@@ -938,6 +943,23 @@ def main():
         origin_y,
     )
     manifest["layers"]["canopy"] = write_canopy_asset(canopies, args.out / "canopy.json")
+    compact_scene = json.loads((args.out / "fallback.json").read_text(encoding="utf-8"))
+    city_model = build_city_model(
+        compact_scene,
+        canopies,
+        manifest,
+        {
+            "terrain": args.dtm,
+            "height": args.height,
+            "buildings": args.footprints,
+            "canopy": args.trees,
+            "roads": args.roads,
+            "railways": args.railways,
+            "green": args.green,
+            "street_data": args.street_data,
+        },
+    )
+    manifest["layers"]["city_model"] = write_city_model(city_model, args.out / "city_model.json")
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
 

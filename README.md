@@ -16,8 +16,9 @@ boundary, and records provenance per 2 m output cell (`1=LiDAR`, `2=SRTM`).
 The current product adds about 110,080 m² of lower-accuracy terrain and applies
 a documented −7.923 m SRTM-to-local offset plus seam blending.
 
-This writes `public/assets/fallback.json` (the footprint/tree/road/rail/grass
-scene data), `public/assets/canopy.json` (the footprint-preserving LiDAR canopy),
+This writes `public/assets/city_model.json` (the canonical CityGML 3.0-aligned
+semantic application model), `public/assets/fallback.json` (a legacy compact
+renderer asset), `public/assets/canopy.json` (the footprint-preserving LiDAR canopy),
 `public/assets/roof_surface.bin` (the footprint-clipped 1 m height-map roof
 surface sampled at 2 m), and `public/assets/manifest.json`. Roof processing
 tests raster coverage per building, anchors samples to surveyed height, rejects
@@ -38,6 +39,51 @@ Three.js WebGL renderer for the city, terrain-following wind heatmaps, white
 GPU gusts, heat geometry, and directional-light shadow maps. The existing
 Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
 is unavailable.
+
+The semantic model gives each object a stable `identifier` and version-specific
+`featureId`, named geometry, source records, lifecycle fields, geometry quality,
+and an LoD. It separates buildings from their roof surfaces and represents
+roads, pedestrian routes, railways, terrain, plant cover, and individual tree
+instances as typed objects. Empty WaterBody and CityFurniture modules document
+known coverage gaps. The JSON is intentionally described as a CityGML-aligned
+application encoding rather than a conformant CityGML GML/XML exchange file.
+
+When `data/street_data` is present, the build clips its City of Cape Town road
+centrelines, public lights, monuments, public toilets, pedestrian crossings,
+on-street parking, survey marks, and festoon lighting to the actual terrain
+footprint. Municipal road keys and attributes become the authoritative semantic
+carriageway records; OSM footways and pedestrian paths are retained as a
+complementary source because they are not represented in the municipal road
+product. Point-only street assets render as lightweight instanced context and
+remain explicitly LoD0 until surveyed dimensions or 3D templates are available.
+The street-data building-footprint file is byte-for-byte identical to the
+existing raw footprint source, so it is intentionally referenced once rather
+than duplicating all buildings in the city model.
+
+Festoon-lighting alignments render as building-mounted installations rather
+than flat map lines. Open corridors are resampled into short zig-zag spans with
+anchors snapped to alternating nearby façades at a height allowed by each
+building. Closed gallery alignments follow their nearest façade. Every span has
+a sagging cable, wall anchors, sockets, warm emissive bulbs, additive glow, and
+a limited set of façade-filling lights for performance.
+
+Municipal public lights use their actual support class, wattage, lamp count,
+and nearest-road direction to select a South African-style post-top, whip,
+side-entry, bracket, double-arm, floodlight, or high-mast assembly. Since the
+inventory has no measured pole height, the semantic object explicitly records
+a low-confidence 6/8/10/12/18 m support-and-wattage inference. Parking points
+render as oriented 5.2 x 2.4 m marked bays. Crossings use the municipal road
+direction and inferred full carriageway width to render zebra markings. The
+St George's Mall / Strand Street installation uniquely renders the supplied
+African-daisy field between two zebra bands; nearby duplicate crossing points
+are suppressed. Public toilets use a recognizable generic WC facility model,
+while monuments remain semantic-only until object-specific models are supplied.
+Crossing records are additionally consolidated by road, position, and bearing
+before rendering, and all markings sit above the highest road ribbon. Parking
+points form straight curbside runs with shared edges and dividers instead of
+overlapping boxes; their paint is deliberately muted and semi-transparent.
+Parking, crossings, and fine street furniture are distance-culled at district
+scale and return automatically when zooming toward street level.
 
 Active rail and tram centre-lines come from `data/osm_cbd_railways.geojson`.
 The renderer places tracks below road ribbons so roads cover rails at

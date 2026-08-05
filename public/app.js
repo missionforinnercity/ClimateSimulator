@@ -51,14 +51,14 @@ async function loadScene() {
   const guide = document.querySelector('#wind-box-guide');
   if (guide) guide.hidden = false;
   try {
-    const module = await import('./webglRenderer.js?v=30');
+    const module = await import('./webglRenderer.js?v=36');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
     console.warn('WebGL renderer unavailable; loading Canvas fallback:', webglError);
     status.textContent = 'GPU renderer unavailable · loading compatibility view…';
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=56');
+      const module = await import('./sceneRenderer.js?v=58');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);

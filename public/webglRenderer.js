@@ -1,4 +1,5 @@
 import * as THREE from './vendor/three.module.min.js';
+import { sceneFromCityModel } from './semanticCityModel.js?v=2';
 
 const COLORS = {
   background: 0x1b2125,
@@ -14,7 +15,9 @@ const COLORS = {
   road: 0x465257,
   roadMajor: 0xb08b4f,
   roadSecondary: 0x557d89,
-  pedestrian: 0x28a98d,
+  // Permanent pedestrian streets should read as context, while the brighter
+  // red/orange simulation ribbons remain the attention-grabbing states.
+  pedestrian: 0x657d7b,
   path: 0x858f90,
   rail: 0x929b9c,
   sleeper: 0x3f4545,
@@ -40,10 +43,10 @@ export async function startWebGLScene(canvas, status) {
 
   const manifest = await fetch('assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
   const [data, canopyAsset, roofSurfaceBuffer] = await Promise.all([
-    fetch(`assets/fallback.json?v=${manifest.layers?.fallback?.bytes || 0}`).then(response => {
-      if (!response.ok) throw new Error('fallback scene asset is missing');
-      return response.json();
-    }),
+    fetch(`assets/${manifest.assets?.city_model || 'city_model.json'}?v=${manifest.layers?.city_model?.bytes || 0}`)
+      .then(async response => response.ok
+        ? sceneFromCityModel(await response.json())
+        : fetch(`assets/fallback.json?v=${manifest.layers?.fallback?.bytes || 0}`).then(fallback => fallback.json())),
     fetch(`assets/canopy.json?v=${manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
     fetch(`assets/${manifest.assets?.roof_surface || 'roof_surface.bin'}?v=${manifest.layers?.roof_surface?.cache_key || manifest.layers?.roof_surface?.bytes || 0}`)
       .then(response => response.ok ? response.arrayBuffer() : null)
@@ -67,6 +70,7 @@ export async function startWebGLScene(canvas, status) {
     railways: new THREE.Group(),
     paths: new THREE.Group(),
     roads: new THREE.Group(),
+    cityFurniture: new THREE.Group(),
     buildings: new THREE.Group(),
     trees: new THREE.Group(),
   };
@@ -683,6 +687,474 @@ export async function startWebGLScene(canvas, status) {
     return canopies.length;
   }
 
+  function makeStreetFurniture() {
+    const group = layerGroups.cityFurniture;
+    const matrix = new THREE.Matrix4();
+    const makeInstances = (geometry, material, matrices, semanticClass) => {
+      if (!matrices.length) return null;
+      const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+      matrices.forEach((instanceMatrix, index) => mesh.setMatrixAt(index, instanceMatrix));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = !['parkingSpace', 'pedestrianCrossing'].includes(semanticClass);
+      mesh.receiveShadow = true;
+      mesh.userData.semanticClass = semanticClass;
+      mesh.userData.maxDistance = ['parkingSpace', 'pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)
+        ? 720
+        : semanticClass.startsWith('publicLight') ? 1000 : null;
+      if (semanticClass === 'parkingSpace') mesh.renderOrder = 6;
+      if (['pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)) mesh.renderOrder = 8;
+      group.add(mesh);
+      return mesh;
+    };
+    const composeMatrix = (position, quaternion = new THREE.Quaternion(), scale = new THREE.Vector3(1, 1, 1)) => (
+      new THREE.Matrix4().compose(position, quaternion, scale)
+    );
+    const segmentMatrix = (start, end) => {
+      const direction = end.clone().sub(start);
+      const midpoint = start.clone().add(end).multiplyScalar(0.5);
+      const quaternion = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
+      return composeMatrix(midpoint, quaternion, new THREE.Vector3(1, direction.length(), 1));
+    };
+
+    // South African municipal lighting inventories commonly describe the
+    // support rather than pole height. These conservative values are inferred
+    // from support type and wattage and remain tagged as inferred, not survey.
+    const publicLights = (data.cityFurniture || []).filter(item => item.class === 'publicLight' && item.coordinates);
+    const poleMatrices = [], armMatrices = [], headMatrices = [], lampMatrices = [];
+    for (const item of publicLights) {
+      const [x, z] = item.coordinates;
+      const baseY = terrainHeightAt(x, z) + 0.18;
+      const support = String(item.attributes?.FixtureSupport || '').toLowerCase();
+      const rawWattage = Number(item.attributes?.Wattage);
+      const wattage = rawWattage > 0 ? rawWattage : 150;
+      const highMast = support.includes('high mast');
+      const postTop = support.includes('post top') || support.includes('top entry');
+      const flood = support.includes('flood');
+      const doubleFixture = support.includes('double') || Number(item.attributes?.LightCount) > 1;
+      let height = Number(item.attributes?.inferredHeightM) || (highMast ? 18 : wattage <= 80 ? 6 : wattage <= 150 ? 8 : wattage <= 250 ? 10 : 12);
+      if (postTop) height = Math.min(height, 8);
+      const yaw = THREE.MathUtils.degToRad(Number(item.attributes?.roadFacingDeg) || 0);
+      const directions = doubleFixture ? [yaw, yaw + Math.PI] : [yaw];
+      poleMatrices.push(composeMatrix(
+        new THREE.Vector3(x, baseY + height * 0.5, z),
+        new THREE.Quaternion(),
+        new THREE.Vector3(highMast ? 1.55 : 1, height, highMast ? 1.55 : 1),
+      ));
+      for (const direction of directions) {
+        const outward = new THREE.Vector3(Math.cos(direction), 0, Math.sin(direction));
+        const top = new THREE.Vector3(x, baseY + height, z);
+        let lampPosition;
+        if (postTop) {
+          lampPosition = top.clone().add(new THREE.Vector3(0, 0.22, 0));
+        } else {
+          const outreach = highMast ? 2.3 : support.includes('whip') ? 1.8 : 1.25;
+          const shoulder = top.clone().add(outward.clone().multiplyScalar(outreach * 0.45)).add(new THREE.Vector3(0, support.includes('whip') ? 0.55 : 0.12, 0));
+          lampPosition = top.clone().add(outward.clone().multiplyScalar(outreach)).add(new THREE.Vector3(0, support.includes('whip') ? 0.38 : 0.04, 0));
+          armMatrices.push(segmentMatrix(top, shoulder), segmentMatrix(shoulder, lampPosition));
+        }
+        const headQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -direction);
+        headMatrices.push(composeMatrix(
+          lampPosition.clone().add(new THREE.Vector3(0, -0.05, 0)),
+          headQuaternion,
+          postTop ? new THREE.Vector3(0.34, 0.5, 0.34) : flood ? new THREE.Vector3(0.48, 0.22, 0.62) : new THREE.Vector3(0.62, 0.17, 0.28),
+        ));
+        lampMatrices.push(composeMatrix(lampPosition.clone().add(new THREE.Vector3(0, -0.16, 0)), headQuaternion));
+      }
+    }
+    const galvanized = new THREE.MeshLambertMaterial({ color: 0x8c9698 });
+    makeInstances(new THREE.CylinderGeometry(0.065, 0.14, 1, 8), galvanized, poleMatrices, 'publicLightPole');
+    makeInstances(new THREE.CylinderGeometry(0.045, 0.055, 1, 7), galvanized, armMatrices, 'publicLightArm');
+    makeInstances(new THREE.SphereGeometry(0.5, 10, 6), new THREE.MeshLambertMaterial({ color: 0x596164 }), headMatrices, 'publicLightFixture');
+    makeInstances(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe0a0 }), lampMatrices, 'publicLightLamp');
+
+    const yawQuaternion = degrees => new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0), -THREE.MathUtils.degToRad(Number(degrees) || 0),
+    );
+    const offsetOnRoad = (centre, bearing, along, across) => {
+      const angle = THREE.MathUtils.degToRad(Number(bearing) || 0);
+      return [
+        centre[0] + Math.cos(angle) * along - Math.sin(angle) * across,
+        centre[1] + Math.sin(angle) * along + Math.cos(angle) * across,
+      ];
+    };
+
+    // Assemble point bays into straight curbside runs. Each run shares its two
+    // long edges and dividers, eliminating stacked boxes and slight rotations
+    // between records that belong to the same row.
+    const parkingMatrices = [];
+    const parkingGroups = new Map();
+    for (const item of data.parking || []) {
+      if (!item.coordinates) continue;
+      const rawBearing = Number(item.attributes?.roadBearingDeg) || 0;
+      const normalizedBearing = ((rawBearing + 90) % 180 + 180) % 180 - 90;
+      const bearing = Math.round(normalizedBearing / 10) * 10;
+      const angle = THREE.MathUtils.degToRad(bearing);
+      const tangent = [Math.cos(angle), Math.sin(angle)];
+      const normal = [-tangent[1], tangent[0]];
+      const roadCentre = item.attributes?.roadCentre || item.coordinates;
+      const sideAmount = (item.coordinates[0] - roadCentre[0]) * normal[0] + (item.coordinates[1] - roadCentre[1]) * normal[1];
+      const side = sideAmount < 0 ? -1 : 1;
+      const roadKey = item.attributes?.roadName || item.attributes?.roadFeatureId || 'unknown-road';
+      const key = `${roadKey}:${bearing}:${side}`;
+      if (!parkingGroups.has(key)) parkingGroups.set(key, { bearing, tangent, normal, items: [] });
+      parkingGroups.get(key).items.push({
+        along: item.coordinates[0] * tangent[0] + item.coordinates[1] * tangent[1],
+        across: item.coordinates[0] * normal[0] + item.coordinates[1] * normal[1],
+      });
+    }
+    for (const parkingGroup of parkingGroups.values()) {
+      const sorted = parkingGroup.items.sort((a, b) => a.along - b.along);
+      const runs = [];
+      for (const item of sorted) {
+        const run = runs.at(-1);
+        if (!run || item.along - run.at(-1).along > 8.2) runs.push([item]);
+        else run.push(item);
+      }
+      for (const sourceRun of runs) {
+        const run = [];
+        for (const item of sourceRun) {
+          if (!run.length || item.along - run.at(-1).along >= 3.4) run.push(item);
+        }
+        if (!run.length) continue;
+        const count = run.length;
+        const alongCentre = run.reduce((sum, item) => sum + item.along, 0) / count;
+        const acrossValues = run.map(item => item.across).sort((a, b) => a - b);
+        const acrossCentre = acrossValues[Math.floor(acrossValues.length / 2)];
+        const centre = [
+          parkingGroup.tangent[0] * alongCentre + parkingGroup.normal[0] * acrossCentre,
+          parkingGroup.tangent[1] * alongCentre + parkingGroup.normal[1] * acrossCentre,
+        ];
+        const bearing = parkingGroup.bearing;
+        const quaternion = yawQuaternion(bearing);
+        const runLength = count * 5.2;
+        for (const across of [-1.2, 1.2]) {
+          const [x, z] = offsetOnRoad(centre, bearing, 0, across);
+          parkingMatrices.push(composeMatrix(
+            new THREE.Vector3(x, terrainHeightAt(x, z) + 0.61, z), quaternion,
+            new THREE.Vector3(runLength, 1, 0.085),
+          ));
+        }
+        for (let divider = 0; divider <= count; divider += 1) {
+          const along = -runLength * 0.5 + divider * 5.2;
+          const [x, z] = offsetOnRoad(centre, bearing, along, 0);
+          parkingMatrices.push(composeMatrix(
+            new THREE.Vector3(x, terrainHeightAt(x, z) + 0.61, z), quaternion,
+            new THREE.Vector3(0.085, 1, 2.4),
+          ));
+        }
+      }
+    }
+    makeInstances(
+      new THREE.BoxGeometry(1, 0.035, 1),
+      new THREE.MeshBasicMaterial({
+        color: 0x879294, transparent: true, opacity: 0.42, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -6,
+      }),
+      parkingMatrices,
+      'parkingSpace',
+    );
+
+    const crossingItems = [];
+    for (const item of (data.crossings || []).filter(entry => entry.attributes?.crossingDesign !== 'coveredByDaisyInstallation')) {
+      if (item.attributes?.crossingDesign === 'daisy') {
+        crossingItems.push(item);
+        continue;
+      }
+      const attributes = item.attributes || {};
+      const centre = attributes.roadCentre || item.coordinates;
+      const bearing = ((Number(attributes.roadBearingDeg) || 0) % 180 + 180) % 180;
+      const roadKey = attributes.roadName || attributes.roadFeatureId;
+      const duplicate = crossingItems.some(existing => {
+        if (existing.attributes?.crossingDesign === 'daisy') return false;
+        const existingAttributes = existing.attributes || {};
+        if ((existingAttributes.roadName || existingAttributes.roadFeatureId) !== roadKey) return false;
+        const existingCentre = existingAttributes.roadCentre || existing.coordinates;
+        const existingBearing = ((Number(existingAttributes.roadBearingDeg) || 0) % 180 + 180) % 180;
+        const bearingDifference = Math.min(Math.abs(bearing - existingBearing), 180 - Math.abs(bearing - existingBearing));
+        return Math.hypot(centre[0] - existingCentre[0], centre[1] - existingCentre[1]) <= 10 && bearingDifference <= 18;
+      });
+      if (!duplicate) crossingItems.push(item);
+    }
+    const zebraMatrices = [];
+    const addZebraBand = (centre, bearing, roadWidth, alongOffset = 0) => {
+      const stripeCount = Math.max(5, Math.floor(roadWidth / 1.05));
+      const spacing = roadWidth / stripeCount;
+      const quaternion = yawQuaternion(bearing);
+      for (let stripe = 0; stripe < stripeCount; stripe += 1) {
+        const across = -roadWidth * 0.5 + spacing * (stripe + 0.5);
+        const [x, z] = offsetOnRoad(centre, bearing, alongOffset, across);
+        zebraMatrices.push(composeMatrix(
+          new THREE.Vector3(x, terrainHeightAt(x, z) + 0.66, z),
+          quaternion,
+          new THREE.Vector3(3.2, 1, spacing * 0.58),
+        ));
+      }
+    };
+    const daisyItems = [];
+    for (const item of crossingItems) {
+      const attributes = item.attributes || {};
+      const centre = attributes.roadCentre || item.coordinates;
+      const width = clamp(Number(attributes.roadWidthM) || 8, 5, 20);
+      if (attributes.crossingDesign === 'daisy') {
+        daisyItems.push({ item, centre, width, bearing: attributes.roadBearingDeg || 0 });
+      } else {
+        addZebraBand(centre, attributes.roadBearingDeg || 0, width);
+      }
+    }
+    makeInstances(
+      new THREE.BoxGeometry(1, 0.035, 1),
+      new THREE.MeshBasicMaterial({ color: 0xf2f1e9, polygonOffset: true, polygonOffsetFactor: -7 }),
+      zebraMatrices,
+      'pedestrianCrossing',
+    );
+
+    // The St George's Mall / Strand Street installation has two zebra bands
+    // framing a field of variable African daisies, following the supplied photo.
+    for (const { centre, width, bearing } of daisyItems) {
+      addZebraBand(centre, bearing, width, -7.1);
+      addZebraBand(centre, bearing, width, 7.1);
+      const petalMatrices = [], centreMatrices = [];
+      const motifs = [
+        [-4.4, -0.34, 0.95], [-4.2, 0.02, 0.48], [-4.0, 0.35, 0.78],
+        [-2.0, -0.12, 0.58], [-1.8, 0.27, 1.02], [-0.5, -0.38, 0.72],
+        [0.1, 0.02, 1.08], [0.5, 0.38, 0.52], [2.1, -0.27, 0.98],
+        [2.3, 0.15, 0.62], [4.2, -0.02, 0.55], [4.4, 0.34, 0.9],
+      ];
+      for (const [along, acrossFactor, radius] of motifs) {
+        const [cx, cz] = offsetOnRoad(centre, bearing, along, acrossFactor * width);
+        const cy = terrainHeightAt(cx, cz) + 0.68;
+        centreMatrices.push(composeMatrix(new THREE.Vector3(cx, cy + 0.008, cz), new THREE.Quaternion(), new THREE.Vector3(radius * 0.27, 1, radius * 0.27)));
+        for (let petal = 0; petal < 12; petal += 1) {
+          const angle = petal / 12 * Math.PI * 2 + THREE.MathUtils.degToRad(bearing);
+          const px = cx + Math.cos(angle) * radius * 0.56;
+          const pz = cz + Math.sin(angle) * radius * 0.56;
+          const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2);
+          petalMatrices.push(composeMatrix(
+            new THREE.Vector3(px, cy, pz), quaternion,
+            new THREE.Vector3(radius * 0.31, 1, radius * 0.68),
+          ));
+        }
+      }
+      const petalGeometry = new THREE.CircleGeometry(1, 10);
+      petalGeometry.rotateX(-Math.PI / 2);
+      makeInstances(petalGeometry, new THREE.MeshBasicMaterial({ color: 0xf8f7ef, side: THREE.DoubleSide }), petalMatrices, 'daisyPetals');
+      makeInstances(new THREE.CylinderGeometry(1, 1, 0.025, 16), new THREE.MeshBasicMaterial({ color: 0xf4ae24 }), centreMatrices, 'daisyCentres');
+    }
+    // Daisy zebra bands are added after the first zebra mesh was built.
+    if (daisyItems.length) {
+      const conventionalCount = zebraMatrices.length - daisyItems.reduce((sum, { width }) => sum + 2 * Math.max(5, Math.floor(width / 1.05)), 0);
+      const daisyZebraMatrices = zebraMatrices.slice(conventionalCount);
+      makeInstances(new THREE.BoxGeometry(1, 0.035, 1), new THREE.MeshBasicMaterial({ color: 0xf2f1e9 }), daisyZebraMatrices, 'daisyZebraBands');
+    }
+
+    // Public toilets are point inventories, so use a recognizable compact
+    // facility model while retaining LoD0 semantics and avoiding false detail.
+    const toilets = (data.cityFurniture || []).filter(item => item.class === 'publicToilet' && item.coordinates);
+    const toiletBodyMaterial = new THREE.MeshLambertMaterial({ color: 0x6f858b });
+    const toiletRoofMaterial = new THREE.MeshLambertMaterial({ color: 0x39484d });
+    const toiletDoorMaterial = new THREE.MeshLambertMaterial({ color: 0x243338 });
+    const signCanvas = document.createElement('canvas');
+    signCanvas.width = 256; signCanvas.height = 128;
+    const signContext = signCanvas.getContext('2d');
+    signContext.fillStyle = '#176ca4'; signContext.fillRect(0, 0, 256, 128);
+    signContext.fillStyle = '#ffffff'; signContext.font = 'bold 72px sans-serif'; signContext.textAlign = 'center'; signContext.textBaseline = 'middle';
+    signContext.fillText('WC', 128, 66);
+    const toiletSignMaterial = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(signCanvas), side: THREE.DoubleSide });
+    for (const item of toilets) {
+      const [x, z] = item.coordinates;
+      const ground = terrainHeightAt(x, z) + 0.2;
+      const yaw = -THREE.MathUtils.degToRad(Number(item.attributes?.roadFacingDeg) || 0) + Math.PI / 2;
+      const facility = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.7, 2.5, 3.5), toiletBodyMaterial);
+      body.position.y = 1.25;
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.18, 3.8), toiletRoofMaterial);
+      roof.position.y = 2.58;
+      const door = new THREE.Mesh(new THREE.BoxGeometry(1.0, 2.05, 0.08), toiletDoorMaterial);
+      door.position.set(0, 1.03, 1.79);
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.36), toiletSignMaterial);
+      sign.position.set(0, 2.18, 1.84);
+      facility.add(body, roof, door, sign);
+      facility.position.set(x, ground, z);
+      facility.rotation.y = yaw;
+      facility.userData = { semanticClass: 'publicToilet', identifier: item.identifier, name: item.attributes?.FCLT_NAME };
+      facility.userData.maxDistance = 900;
+      group.add(facility);
+    }
+
+    // Monuments deliberately remain semantic-only until object-specific 3D
+    // models are supplied; no generic placeholder is rendered.
+    const pointObjects = [...publicLights, ...(data.crossings || []), ...(data.parking || []), ...toilets];
+    const festoonItems = (data.cityFurniture || []).filter(entry => entry.class === 'festoonLighting' && entry.centerline);
+    const festoonChildStart = group.children.length;
+    if (festoonItems.length) {
+      const buildingFacades = (data.buildings || []).map(record => ({
+        ground: Number(record[0]) || 0,
+        height: Number(record[1]) || 6,
+        ring: record[2] || [],
+        identifier: record[3],
+      })).filter(building => building.ring.length >= 3);
+      const nearestPointOnSegment = (point, a, b) => {
+        const dx = b[0] - a[0], dz = b[1] - a[1];
+        const amount = clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / (dx * dx + dz * dz || 1), 0, 1);
+        return [a[0] + dx * amount, a[1] + dz * amount];
+      };
+      const facadeCandidates = (point, tangent) => {
+        const candidates = [];
+        for (const building of buildingFacades) {
+          let closest = null;
+          let distanceSquared = Infinity;
+          for (let index = 0; index < building.ring.length; index += 1) {
+            const wallPoint = nearestPointOnSegment(point, building.ring[index], building.ring[(index + 1) % building.ring.length]);
+            const candidateDistance = (wallPoint[0] - point[0]) ** 2 + (wallPoint[1] - point[1]) ** 2;
+            if (candidateDistance < distanceSquared) {
+              distanceSquared = candidateDistance;
+              closest = wallPoint;
+            }
+          }
+          if (!closest || distanceSquared > 30 ** 2) continue;
+          const side = Math.sign(tangent[0] * (closest[1] - point[1]) - tangent[1] * (closest[0] - point[0]));
+          const attachmentAboveGround = Math.min(8.0, Math.max(3.8, building.height - 1.0));
+          candidates.push({
+            point: new THREE.Vector3(closest[0], building.ground + attachmentAboveGround, closest[1]),
+            building: building.identifier,
+            side,
+            distance: Math.sqrt(distanceSquared),
+          });
+        }
+        return candidates.sort((a, b) => a.distance - b.distance);
+      };
+      const sampleAlignment = (points, spacing = 14) => {
+        const source = points.map(([x, z]) => new THREE.Vector2(x, z));
+        const lengths = [0];
+        for (let index = 1; index < source.length; index += 1) {
+          lengths.push(lengths.at(-1) + source[index].distanceTo(source[index - 1]));
+        }
+        const total = lengths.at(-1);
+        const count = Math.max(2, Math.ceil(total / spacing) + 1);
+        const samples = [];
+        for (let sampleIndex = 0; sampleIndex < count; sampleIndex += 1) {
+          const distance = total * sampleIndex / (count - 1);
+          let segment = 0;
+          while (segment < lengths.length - 2 && lengths[segment + 1] < distance) segment += 1;
+          const segmentLength = lengths[segment + 1] - lengths[segment] || 1;
+          const amount = (distance - lengths[segment]) / segmentLength;
+          const point = source[segment].clone().lerp(source[segment + 1], amount);
+          const tangent = source[segment + 1].clone().sub(source[segment]).normalize();
+          samples.push({ point: [point.x, point.y], tangent: [tangent.x, tangent.y] });
+        }
+        return samples;
+      };
+      const anchors = [];
+      const spans = [];
+      for (const item of festoonItems) {
+        let previousBuilding = null;
+        const firstAlignmentPoint = item.centerline[0];
+        const lastAlignmentPoint = item.centerline.at(-1);
+        const closedAlignment = Math.hypot(
+          firstAlignmentPoint[0] - lastAlignmentPoint[0],
+          firstAlignmentPoint[1] - lastAlignmentPoint[1],
+        ) < 1;
+        const itemAnchors = sampleAlignment(item.centerline).map((sample, index) => {
+          const candidates = facadeCandidates(sample.point, sample.tangent);
+          const desiredSide = index % 2 ? -1 : 1;
+          const preferred = closedAlignment
+            ? candidates[0]
+            : candidates.find(candidate => candidate.side === desiredSide && candidate.building !== previousBuilding)
+              || candidates.find(candidate => candidate.building !== previousBuilding)
+              || candidates[0];
+          if (preferred) {
+            previousBuilding = preferred.building;
+            anchors.push(preferred.point);
+            return preferred.point;
+          }
+          const [x, z] = sample.point;
+          const fallback = new THREE.Vector3(x, terrainHeightAt(x, z) + 5.2, z);
+          anchors.push(fallback);
+          return fallback;
+        });
+        for (let index = 0; index < itemAnchors.length - 1; index += 1) {
+          if (itemAnchors[index].distanceTo(itemAnchors[index + 1]) <= 36) spans.push([itemAnchors[index], itemAnchors[index + 1]]);
+        }
+      }
+
+      const cableMaterial = new THREE.MeshBasicMaterial({ color: 0x202326 });
+      const bulbPositions = [];
+      const socketPositions = [];
+      for (const [start, end] of spans) {
+        const distance = start.distanceTo(end);
+        const sag = clamp(distance * 0.045, 0.35, 1.35);
+        const curvePoints = [];
+        for (let index = 0; index <= 16; index += 1) {
+          const amount = index / 16;
+          const point = start.clone().lerp(end, amount);
+          point.y -= 4 * sag * amount * (1 - amount);
+          curvePoints.push(point);
+        }
+        const curve = new THREE.CatmullRomCurve3(curvePoints);
+        const cable = new THREE.Mesh(new THREE.TubeGeometry(curve, 32, 0.035, 5, false), cableMaterial);
+        cable.castShadow = true;
+        group.add(cable);
+        const bulbCount = Math.max(2, Math.floor(distance / 1.35));
+        for (let bulb = 1; bulb < bulbCount; bulb += 1) {
+          const point = curve.getPointAt(bulb / bulbCount);
+          socketPositions.push(point.clone());
+          bulbPositions.push(point.clone().add(new THREE.Vector3(0, -0.17, 0)));
+        }
+      }
+
+      const setInstances = (positions, geometry, material) => {
+        if (!positions.length) return null;
+        const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
+        positions.forEach((point, index) => {
+          matrix.makeTranslation(point.x, point.y, point.z);
+          mesh.setMatrixAt(index, matrix);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        group.add(mesh);
+        return mesh;
+      };
+      setInstances(anchors, new THREE.SphereGeometry(0.11, 7, 5), new THREE.MeshBasicMaterial({ color: 0x35383a }));
+      setInstances(socketPositions, new THREE.CylinderGeometry(0.055, 0.075, 0.18, 6), new THREE.MeshBasicMaterial({ color: 0x292a27 }));
+      const bulbs = setInstances(
+        bulbPositions,
+        new THREE.SphereGeometry(0.09, 8, 6),
+        new THREE.MeshBasicMaterial({ color: 0xffd47a }),
+      );
+      if (bulbs) bulbs.userData.semanticClass = 'festoonBulbs';
+
+      const glowCanvas = document.createElement('canvas');
+      glowCanvas.width = glowCanvas.height = 64;
+      const glowContext = glowCanvas.getContext('2d');
+      const gradient = glowContext.createRadialGradient(32, 32, 2, 32, 32, 32);
+      gradient.addColorStop(0, 'rgba(255,245,190,1)');
+      gradient.addColorStop(0.18, 'rgba(255,196,85,0.85)');
+      gradient.addColorStop(1, 'rgba(255,160,40,0)');
+      glowContext.fillStyle = gradient;
+      glowContext.fillRect(0, 0, 64, 64);
+      const glowGeometry = new THREE.BufferGeometry().setFromPoints(bulbPositions);
+      const glowMaterial = new THREE.PointsMaterial({
+        map: new THREE.CanvasTexture(glowCanvas), color: 0xffc45c, size: 1.35,
+        transparent: true, opacity: 0.82, depthWrite: false,
+        blending: THREE.AdditiveBlending, sizeAttenuation: true,
+      });
+      const glow = new THREE.Points(glowGeometry, glowMaterial);
+      glow.renderOrder = 9;
+      group.add(glow);
+
+      // A small number of actual lights lets the warm festoon glow reach the
+      // nearby façades without the cost of one PointLight per bulb.
+      const lightStride = Math.max(1, Math.ceil(bulbPositions.length / 10));
+      for (let index = 0; index < bulbPositions.length; index += lightStride) {
+        const light = new THREE.PointLight(0xffb95d, 1.15, 11, 2);
+        light.position.copy(bulbPositions[index]);
+        group.add(light);
+      }
+      group.userData.festoon = { spans: spans.length, bulbs: bulbPositions.length, facadeAnchors: anchors.length };
+      for (const child of group.children.slice(festoonChildStart)) child.userData.maxDistance = 1000;
+    }
+    return pointObjects.length;
+  }
+
   status.textContent = 'Building GPU scene…';
   const { mesh: terrainMesh, shadowCatcher } = makeTerrain();
   const buildingMeshes = makeBuildings();
@@ -703,6 +1175,7 @@ export async function startWebGLScene(canvas, status) {
   const railwayCount = makeRailways();
   makeRoads();
   const canopyCount = makeCanopies();
+  makeStreetFurniture();
 
   const heatGroup = new THREE.Group();
   const windGroup = new THREE.Group();
@@ -1076,6 +1549,13 @@ export async function startWebGLScene(canvas, status) {
       cameraState.target.z + Math.sin(cameraState.azimuth) * horizontal,
     );
     camera.lookAt(cameraState.target);
+    // Fine street markings and furniture disappear at district scale. Apart
+    // from reducing clutter this avoids spending GPU time on details smaller
+    // than a pixel; they return automatically as the camera approaches.
+    for (const object of layerGroups.cityFurniture.children) {
+      const maxDistance = Number(object.userData?.maxDistance);
+      if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance;
+    }
     requestRender();
   }
 
@@ -1528,6 +2008,23 @@ export async function startWebGLScene(canvas, status) {
     return mitigationMethods[method]?.label || method;
   }
 
+  function newInterventionIdentity() {
+    const uuid = globalThis.crypto?.randomUUID?.()
+      || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const identifier = `urn:za.capetown.climate-explorer:proposed-intervention:${uuid}`;
+    return {
+      id: identifier,
+      identifier,
+      featureId: `${identifier}:draft`,
+      objectType: 'ProposedIntervention',
+      lifecycleStatus: 'proposed',
+      lod: '0',
+      createdAt: new Date().toISOString(),
+      source: { role: 'user-authored', application: 'Climate Explorer' },
+      geometryQuality: { topologyValidated: false, horizontalAccuracyM: null },
+    };
+  }
+
   function invalidateMitigationResult() {
     mitigationState.result = null;
     mitigationGroup.clear();
@@ -1561,7 +2058,7 @@ export async function startWebGLScene(canvas, status) {
         if (event.target.dataset.action === 'remove') mitigationState.interventions.splice(index, 1);
         if (event.target.dataset.action === 'duplicate') {
           mitigationState.interventions.splice(index + 1, 0, {
-            ...item, id: `intervention-${Date.now()}`, geometry: JSON.parse(JSON.stringify(item.geometry)),
+            ...item, ...newInterventionIdentity(), geometry: JSON.parse(JSON.stringify(item.geometry)),
           });
         }
         invalidateMitigationResult();
@@ -1582,7 +2079,7 @@ export async function startWebGLScene(canvas, status) {
     const method = mitigationMethod.value;
     const config = mitigationMethods[method] || mitigationMethods.cool_pavement;
     mitigationState.interventions.push({
-      id: `intervention-${Date.now()}`,
+      ...newInterventionIdentity(),
       method,
       [config.parameter]: config.defaultValue,
       height_m: method === 'added_canopy' ? 8 : method === 'constructed_shade' ? config.defaultValue : 0,
@@ -1826,8 +2323,8 @@ export async function startWebGLScene(canvas, status) {
   function buildPermanentRoadStatuses(statuses) {
     clearStatusGroup(permanentStatusGroup);
     for (const statusItem of statuses || []) {
-      const halo = statusRibbon(statusItem.points, 5.2, 0x1ce8b5, 0.18, 0.59);
-      const core = statusRibbon(statusItem.points, 2.2, 0x52f4ca, 0.82, 0.64);
+      const halo = statusRibbon(statusItem.points, 4.2, 0x568b87, 0.08, 0.59);
+      const core = statusRibbon(statusItem.points, 1.6, 0x82aaa5, 0.34, 0.64);
       if (halo) permanentStatusGroup.add(halo);
       if (core) permanentStatusGroup.add(core);
     }

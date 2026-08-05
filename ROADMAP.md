@@ -1,340 +1,225 @@
-# Cape Town Climate Digital Twin Roadmap
-
-## 1. Target state
-
-The target is a Cape Town simulation and scenario-analysis twin focused first
-on climate resilience. It should represent the physical environment, allow
-proposed changes to be placed into that context, run defensible impact models,
-and publish the result as an interactive 3D experience.
+# Climate Explorer — Product Assessment
 
-This system is deliberately separate from the existing business and property
-dashboard. It is not a property-management, valuation, sales, leasing,
-ownership, tenant, or commercial intelligence product.
-
-The important distinction is:
-
-- **3D city model:** what exists and what it looks like.
-- **Planning twin:** what is allowed or proposed, with measurable development
-  metrics.
-- **Operational climate twin:** what is happening now and how the city may
-  respond under weather, heat, wind, flood, or other scenarios.
-
-The current project is a strong prototype for the third category's climate
-visualisation layer, but it needs stronger validation and scenario tooling
-before it can be used for real planning decisions.
-
-## 2. Product boundary
-
-### In scope
+## Where It Compares Well
 
-- Physical city representation: terrain, buildings, roads, trees, land cover,
-  water, and infrastructure relevant to simulation.
-- Environmental simulation: heat, wind, shade, solar, runoff/flooding, and
-  related climate-resilience analysis.
-- Planning scenarios: proposed buildings, public-realm interventions, zoning
-  envelopes, and before/after model comparisons.
-- Scientific and planning metadata: source, date, resolution, uncertainty,
-  model version, and validation status.
-- Spatial references needed to connect a simulation result to a place.
-
-### Explicitly out of scope
-
-- Property listings, sales, leasing, tenants, owners, valuations, rent,
-  financial performance, or market analytics.
-- Business profiles, customer data, company intelligence, footfall/commercial
-  analytics, or property-dashboard visualisations.
-- Rebuilding dashboard features that already exist elsewhere.
-- Exposing confidential property or business data to simulation users.
-
-### Boundary between systems
-
-The simulation twin may consume a minimal, approved spatial reference such as a
-parcel/building ID or geometry. It may return simulation outputs such as heat
-exposure, wind comfort, shade coverage, runoff, or scenario impacts. It should
-not copy or store business/property attributes.
-
-Keep the systems separated at the database, API, permissions, and UI layers.
-If a future workflow needs property context, resolve it in the separate
-dashboard rather than adding that data to this project.
-
-## 3. Current baseline
-
-Already present in this repository:
-
-- LiDAR-derived 2 m terrain and a detailed local terrain mesh.
-- 2,322 building footprints, with approximate building heights.
-- 4,591 canopy components and 4,903 tree instances.
-- 3,048 roads and green areas.
-- Three.js WebGL viewer with Canvas compatibility fallback.
-- Terrain-resolved and building-resolved exploratory wind fields.
-- Heat zones, current modelled weather, sun/shadow analysis, and mitigation
-  previews.
-- FastAPI endpoints, reproducible asset-building scripts, migrations, and
-  automated tests.
-
-Current limitations explicitly acknowledged by the code and README:
-
-- Wind and mitigation outputs are exploratory/planning estimates, not
-  engineering-grade CFD, observations, or drainage models.
-- Weather is modelled current conditions, not station observations.
-- Heat is a labelled baseline product rather than a live, calibrated urban
-  climate model.
-- The viewer is a single local CBD scene rather than a tiled, city-scale,
-  multi-resolution platform.
-- Building geometry is mostly extruded footprint data rather than authoritative
-  roof forms, façades, interiors, or BIM.
-- There is no formal data catalogue, provenance system, scenario/version
-  workflow, planning-rule engine, or approval/audit workflow.
-
-## 4. Recommended product boundary
-
-Start with one high-value planning question:
-
-> Where should Cape Town prioritise heat, shade, canopy, cool-surface, and
-> public-realm interventions, and what is the likely effect under defined
-> weather scenarios?
-
-Keep the first production area bounded to the CBD and a small set of adjacent
-neighbourhoods. Expand only after the data pipeline, model validation, and
-performance budgets work at that scale.
-
-## 5. Roadmap
-
-### Phase 0 — Define the twin and its evidence (1–2 weeks)
-
-**Deliverables**
-
-- Product brief: users, decisions, spatial extent, update frequency, and
-  required outputs.
-- Data dictionary and source register for every layer and model.
-- Model risk labels: visualisation, planning estimate, calibrated prediction,
-  or engineering/operational result.
-- Coordinate-system, vertical-datum, time-zone, and unit conventions.
-- Baseline performance targets: initial load, frame rate, API latency, and
-  maximum asset size.
-- Ground-truth plan: weather stations, mobile transects, tree surveys, building
-  checks, and heat observations.
-
-**Exit criteria**
-
-- Every displayed metric has an owner, timestamp, source, unit, uncertainty,
-  and refresh policy.
-- A planner can describe exactly what decision the first release supports.
-
-### Phase 1 — Make the current 3D city authoritative (3–6 weeks)
-
-**Data and city objects**
-
-- Replace approximate building heights with a versioned building dataset whose
-  attributes include height, roof type, use, floors, year, source, and
-  confidence.
-- Separate `Building`, `BuildingPart`, `RoofSurface`, `Road`, `LandCover`,
-  `Tree`, `Water`, and `Terrain` as stable feature types with persistent IDs.
-- Add authoritative planning geometry such as land parcels, zoning, public
-  land, land use, transport, drainage, and utility references where licensing
-  permits. Do not import ownership or commercial attributes.
-- Add stable spatial building/parcel references and a change-detection report
-  between data releases.
-
-**Mesh and geometry**
-
-- Keep the LiDAR DTM as the analysis terrain; create a separate visual terrain
-  mesh with a documented simplification tolerance.
-- Produce building LoD1/LoD2 geometry from footprints, roof attributes, and
-  LiDAR/photogrammetry. Preserve the source feature ID on every rendered
-  object.
-- Add a reality mesh for the selected area from aerial/drone imagery and
-  photogrammetry. Use it for visual realism, not as the sole analysis source.
-- Generate tiled assets rather than one JSON blob: terrain tiles, building
-  tiles, tree tiles, and reality-mesh tiles with level-of-detail metadata.
-
-**Exit criteria**
-
-- A user can click any building or parcel and see its source, date, geometry
-  level, height confidence, and linked planning attributes.
-- Visual mesh and analytical surfaces agree within a documented vertical and
-  horizontal tolerance.
-
-### Phase 2 — Build a real 3D/mesh delivery stack (4–8 weeks)
-
-Recommended initial stack: retain the current Three.js viewer while adding a
-standard tiled interchange layer. Use 3D Tiles for streamed terrain, buildings,
-trees, and reality mesh; use glTF/GLB for individual assets and CityGML or
-GeoJSON/PostGIS as authoritative interchange/storage where appropriate.
-
-**Pipeline**
-
-1. Normalise source CRS and vertical datum.
-2. Validate geometry, repair invalid polygons, and assign persistent IDs.
-3. Generate LoD0/LoD1/LoD2 building products.
-4. Generate terrain TIN/quantised-mesh or equivalent tiled heightfield.
-5. Generate textured reality mesh from aligned imagery and point clouds.
-6. Convert to GLB/3D Tiles with batch metadata and bounding volumes.
-7. Build a tile index and CDN/object-storage deployment.
-8. Add automated visual and geometric QA for every build.
-
-**Mesh quality gates**
-
-- No holes, inverted normals, self-intersections, or unbounded triangles.
-- Maximum geometric error recorded per LOD and tile.
-- Texture resolution, colour balance, and seasonal imagery date recorded.
-- Occlusion/culling and tile memory budgets tested on a mid-range laptop and
-  phone.
-- Reality mesh and analytical terrain can be toggled independently.
-
-**Exit criteria**
-
-- CBD loads progressively from overview to street scale without shipping the
-  entire scene at once.
-- Tile builds are reproducible from source version + pipeline version.
-- The mesh is visually convincing while calculations continue to use clean,
-  attributable analytical surfaces.
-
-### Phase 3 — Upgrade models from proxies to calibrated models (6–12 weeks)
-
-Prioritise models that answer the product question, not every possible urban
-process.
-
-**Urban heat**
-
-- Fuse land-surface temperature, air temperature, shade, imperviousness,
-  vegetation, building materials, wind, and topography.
-- Add a calibrated pedestrian-level heat/exposure model with time-of-day and
-  seasonal scenarios.
-- Quantify uncertainty and validate against fixed sensors and transects.
-
-**Wind**
-
-- Preserve the current regional and building-resolved fields as a fast preview.
-- Generate a validated reference library with CFD or WindNinja/OpenFOAM-class
-  workflows for representative wind directions, seasons, and stability cases.
-- Compare preview fields against reference simulations and observations;
-  publish error metrics, not just a `model_kind` label.
-- Add pollutant/ventilation only after wind speed and direction are validated.
-
-**Water and flooding**
-
-- Add catchments, stormwater assets, imperviousness, drainage capacity, and
-  rainfall design events.
-- Introduce a 2D surface-runoff model for priority areas.
-- Treat drainage results as a separate model with its own calibration and
-  uncertainty; do not infer drainage performance from the current mitigation
-  buffers.
-
-**Energy and buildings — later**
-
-- Add solar potential, shading, roof suitability, and building-energy proxies.
-- Connect detailed BIM/IFC only for selected projects; do not make BIM a
-  prerequisite for the citywide twin.
-
-**Exit criteria**
-
-- Each model has a benchmark dataset, calibration report, version, input
-  assumptions, uncertainty range, and known failure modes.
-- The UI distinguishes measured, modelled, forecast, and scenario values.
-
-### Phase 4 — Add planning scenarios and a rules engine (4–8 weeks)
-
-- Introduce scenario objects: baseline, proposal, alternatives, and approved
-  state.
-- Support edit/compare/duplicate/restore, with immutable scenario versions.
-- Add zoning envelopes, maximum height, floor-area ratio, coverage, setbacks,
-  land use, heritage, and public-realm constraints.
-- Add development metrics: floors, floor area, dwelling count, population,
-  jobs, tree canopy, shade coverage, runoff, solar potential, and cost bands.
-- Allow a proposed building or intervention to be imported as GLB/IFC and
-  linked to its parcel/project.
-- Add before/after split view, swipe, timeline, and scenario comparison.
-
-**Exit criteria**
-
-- A planner can create a proposal, run the agreed metrics, compare it with the
-  baseline, and export a review package.
-- Every result can be reproduced from the scenario version and model version.
-
-### Phase 5 — Operational data, governance, and collaboration (6–10 weeks)
-
-- Add ingestion jobs for stations, IoT, weather forecasts, satellite/LST,
-  construction updates, and new surveys.
-- Store observations separately from forecasts and simulations.
-- Add data freshness, lineage, quality flags, and model health dashboards.
-- Add role-based access, project permissions, moderation, and audit history.
-- Provide exports: GeoPackage, GeoJSON, CSV, glTF/GLB, 3D Tiles, report PDF,
-  and machine-readable scenario JSON.
-- Add public views with deliberately reduced precision where privacy or safety
-  requires it.
-
-### Phase 6 — Scale beyond the CBD (ongoing)
-
-- Expand by tile and neighbourhood, not by copying a monolithic scene.
-- Add regional terrain and citywide land-cover products first.
-- Add detailed mesh and high-resolution models only where a planning question
-  needs them.
-- Introduce a spatial data catalogue, object storage, PostGIS, tile cache/CDN,
-  job queue, and model registry.
-
-## 5. Highest-value next 10 tickets
-
-1. Add `ROADMAP.md`-backed product/data dictionary and model confidence labels
-   to API responses and the UI.
-2. Define persistent IDs and metadata for buildings, parcels, roads, trees,
-   terrain tiles, and heat/wind products.
-3. Replace the single-scene JSON delivery with a first tiled terrain/building
-   prototype.
-4. Create an authoritative building-height/roof-data ingestion path and QA
-   report.
-5. Add scenario persistence: baseline, draft, saved version, author, date,
-   and model versions.
-6. Add planning geometry/zoning layers and a first height/FAR/setback rule
-   check, without property/business attributes.
-7. Add a validation dashboard for heat and wind against observations/reference
-   simulations.
-8. Replace mitigation point estimates with explicit assumptions, uncertainty
-   ranges, and sensitivity tests in the UI.
-9. Add GLB/3D Tiles import for a proposed building and compare it with the
-   current city model.
-10. Add automated asset QA, tile-size budgets, and a reproducible data-build
-    manifest.
-
-## 7. Suggested architecture
-
-```text
-Sources: LiDAR | imagery | planning geometry | OSM | weather | sensors
-                                  |
-                    ingestion + CRS/vertical-datum QA
-                                  |
-           PostGIS feature store + object storage + data catalogue
-                 /                 |                 \
-        3D tile builder       model registry       scenario store
-        terrain/buildings     heat/wind/flood       baseline/proposals
-                 \                 |                 /
-                   API + tile service + auth/audit
-                                  |
-                    Three.js/Cesium-style web client
-```
-
-The current FastAPI service can remain the first API boundary. The main change
-is to make assets, scenarios, and models versioned products rather than files
-that are implicitly tied to one local build. Any integration with the separate
-business/property dashboard should use only an approved spatial-ID/result
-contract.
-
-## 8. Definition of “ready for planning use”
-
-Do not call the system a planning-grade twin until it has:
-
-- authoritative geometry and persistent feature IDs;
-- documented source dates, lineage, CRS, vertical datum, and update cadence;
-- tiled multi-resolution 3D delivery;
-- saved and reproducible scenarios;
-- planning constraints and measurable before/after metrics;
-- calibrated model outputs with uncertainty and validation evidence;
-- clear labels separating observation, forecast, model, and assumption;
-- access control, audit history, and exportable review packages.
-
-## 9. Strategic choice
-
-Build the next milestone as a **climate-resilience planning twin for the CBD**,
-not as a generic replica of the whole city. It is the shortest route from the
-current working prototype to a useful Zurich-like experience: authoritative 3D
-context, scenario editing, planning metrics, and defensible climate analysis.
+### 1. It has the right spatial foundation
+
+The combination of LiDAR-derived terrain, building footprints, canopy, roads, rail, and terrain-following visualisation is appropriate for urban design and climate-resilience work.
+
+The application is particularly useful for:
+
+- Understanding massing and topography
+- Visualising shade and solar exposure
+- Exploring pedestrian-level wind patterns
+- Testing heat and flood interventions
+- Visualising street closures and public-realm changes
+- Explaining climate impacts to non-technical stakeholders
+
+This is a better foundation than a purely decorative 3D city model because it already connects geometry to simulation.
+
+### 2. The product boundary is sensible
+
+You should not duplicate the other dashboard's business, property, or zoning information.
+
+The simulation twin should exchange only:
+
+- Approved spatial IDs
+- Building or parcel geometry where necessary
+- Proposed intervention geometry
+- Simulation outputs such as shade, heat exposure, flood depth, wind comfort, runoff, or visibility
+
+That separation is architecturally correct and should remain explicit.
+
+### 3. The current visual simulation approach is honest
+
+The interface labels heat as a baseline, mitigation as an estimate, and traffic as synthetic. That is good practice. Many digital-twin products overstate the accuracy of their simulations.
+
+---
+
+## Main Gap Versus State of the Art
+
+### 1. The 3D city is not yet an authoritative semantic city model
+
+State-of-the-art systems separate objects such as:
+
+- Buildings and building parts
+- Roof surfaces
+- Roads and pedestrian paths
+- Trees and vegetation
+- Terrain
+- Water
+- Street furniture
+- Proposed interventions
+
+They also attach persistent IDs, geometry quality, timestamps, source information, and levels of detail to each object.
+
+CityGML 3.0 formalises this type of semantic 3D city model, including buildings, roads, railways, vegetation, terrain, multiple levels of detail, versioning, and time-varying simulation properties through Dynamizers (OGC CityGML 3.0 guide).
+
+**Recommended improvement:**
+
+- Create stable IDs for every building, road, tree, terrain tile, and intervention
+- Expose source date, vertical datum, horizontal accuracy, geometry LOD, and confidence
+- Distinguish analytical terrain from visual terrain
+- Track changes between data releases
+- Preserve feature IDs through simulation outputs
+
+### 2. The asset delivery is not scalable
+
+The current scene is a lightweight local CBD viewer using JSON/bin assets. That is fine for a prototype, but state-of-the-art web twins use hierarchical streaming and multiple levels of detail.
+
+OGC 3D Tiles is designed for streaming massive 3D buildings, terrain, BIM, point clouds, photogrammetry, and instanced objects. Version 1.1 adds semantic metadata, implicit tiling, multiple contents per tile, and better integration with glTF (OGC 3D Tiles, OGC 3D Tiles 1.1 announcement).
+
+**Recommended improvement:**
+
+- Retain Three.js for now
+- Introduce tiled terrain and building delivery
+- Use GLB for proposed objects
+- Use 3D Tiles for city-scale streaming
+- Support overview, neighbourhood, street, and detailed building LODs
+- Measure tile size, memory use, loading time, and frame rate
+
+### 3. The simulations are broad but mostly proxy models
+
+The application currently has more simulation categories than many early prototypes, but the models are not yet calibrated against measurements or reference simulations.
+
+The most important upgrades are below.
+
+#### Wind
+
+Current wind is suitable for visual exploration, but it should be benchmarked against:
+
+- CFD or WindNinja/OpenFOAM reference cases
+- Anemometers
+- Pedestrian-level field measurements
+- Representative Cape Town wind directions and stability conditions
+
+**Add:**
+
+- Wind-comfort categories
+- Exceedance frequency
+- Pedestrian-height results
+- Uncertainty bands
+- Validation error maps
+- Clear distinction between preview and validated modes
+
+#### Heat
+
+The current heat layer is primarily a static surface-temperature baseline. For placemaking, the more useful output is pedestrian thermal exposure.
+
+**Add:**
+
+- Shade by time of day
+- Mean radiant temperature
+- Air temperature
+- Wind
+- Surface temperature
+- UTCI or PET comfort indicators
+- Seasonal and extreme-heat scenarios
+- Validation against fixed sensors and mobile transects
+
+#### Flooding
+
+The surface-flood model is a useful exploratory tool, but it should not imply drainage performance. The next meaningful layer is:
+
+- Catchments
+- Stormwater assets
+- Inlets and culverts
+- Imperviousness
+- Design storms
+- Calibrated runoff
+- Surface-drainage coupling
+
+Keep drainage engineering as a separately labelled model.
+
+#### Traffic
+
+The SUMO closure simulation is useful, but it is currently corridor-scoped and synthetic. For your stated purpose, pedestrian and public-realm simulation may provide greater value than expanding vehicle realism.
+
+**Prioritise:**
+
+- Pedestrian flows
+- Walking accessibility
+- Crossing delay
+- Sidewalk capacity
+- Universal-access routes
+- Cycle movement
+- Emergency access
+- Street closure effects on public-space use
+
+### 4. There is no real scenario system yet
+
+This is the biggest product gap.
+
+A user should be able to create:
+
+- Baseline
+- Proposal A
+- Proposal B
+- Approved scenario
+- Temporary event scenario
+- Climate adaptation scenario
+
+Each scenario should store:
+
+- Intervention geometry
+- Model parameters
+- Weather assumptions
+- Model version
+- Source-data version
+- Author
+- Creation date
+- Result status
+- Uncertainty
+- Comparison metrics
+
+Mature planning tools support scenario branching, comparison, metrics, and proposal analysis. ArcGIS Urban, for example, explicitly supports scenario switching and comparing impacts across proposals (ArcGIS Urban scenarios).
+
+You do not need to copy its zoning or property workflows. You only need the scenario/version mechanism for spatial proposals and simulations.
+
+### 5. The application needs stronger placemaking metrics
+
+The current visualisations show effects, but planners need concise decision metrics.
+
+**Add metrics such as:**
+
+- Percentage of public space shaded at 09:00, 12:00, and 15:00
+- Pedestrian thermal-comfort hours
+- Wind-comfort compliance
+- Number of uncomfortable pedestrian locations
+- Flood depth at entrances and crossings
+- Accessible route continuity
+- Tree-canopy coverage
+- Cool-surface coverage
+- Visibility of landmarks
+- Duration of solar access
+- Public-space usability score
+- Before/after affected area
+
+ArcGIS Urban's broader benchmark is useful here: its planning tools quantify effects such as sunlight access, green-space ratio, suitability, viewshed, and drainage-related indicators (ArcGIS Urban analysis).
+
+---
+
+## Highest-Value Improvement Order
+
+1. Add scenario persistence and before/after comparison.
+2. Add persistent spatial IDs and simulation-result metadata.
+3. Add uncertainty, assumptions, provenance, and confidence to every result.
+4. Build pedestrian heat-comfort metrics.
+5. Validate wind against reference CFD and local measurements.
+6. Add shade, viewshed, solar access, and visibility analysis.
+7. Add pedestrian accessibility and movement simulation.
+8. Replace monolithic scene assets with tiled, multi-resolution delivery.
+9. Add proposed-building and public-realm GLB import.
+10. Add reproducible scenario export as JSON, GeoJSON, GLB, and report PDF.
+
+---
+
+## Recommended Target Position
+
+The strongest product identity is:
+
+> A climate-resilience and public-realm simulation twin for testing how spatial interventions affect pedestrian comfort, shade, wind, heat, flooding, movement, and visual experience.
+
+That is narrower and more defensible than trying to become a complete city-management platform.
+
+The project is already beyond a basic 3D viewer. Its next leap is not adding more simulation types; it is making existing simulations reproducible, validated, scenario-based, spatially attributable, and useful for clear placemaking decisions.

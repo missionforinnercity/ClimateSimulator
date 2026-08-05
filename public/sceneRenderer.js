@@ -1,3 +1,5 @@
+import { sceneFromCityModel } from './semanticCityModel.js?v=2';
+
 const COLORS = {
   background: '#1b2125',
   terrain: '#424a4d',
@@ -88,10 +90,10 @@ export async function startScene(canvas, status) {
 
   const [manifest, scene, canopyAsset] = await Promise.all([
     fetch('assets/manifest.json').then(response => response.json()),
-    fetch('assets/fallback.json').then(response => {
-      if (!response.ok) throw new Error('fallback scene asset is missing');
-      return response.json();
-    }),
+    fetch('assets/city_model.json')
+      .then(async response => response.ok
+        ? sceneFromCityModel(await response.json())
+        : fetch('assets/fallback.json').then(fallback => fallback.json())),
     fetch('assets/canopy.json').then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };

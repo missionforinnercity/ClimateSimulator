@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "crs": "custom Hartbeesthoek94 Lo19 east/north grid",
   "origin": [
     -53344.592859971526,
@@ -11,7 +11,7 @@
     1040.0,
     902.0
   ],
-  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile]",
+  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,acquisition_method,acquisition_period]",
   "layers": {
     "terrain": {
       "source": "data/derived/company_gardens_hybrid_dem_2m.tif",
@@ -47,16 +47,34 @@
       "roads": 2191,
       "railways": 100,
       "grass": 82,
-      "bytes": 807716
+      "bytes": 834476
     },
     "canopy": {
       "components": 2659,
       "area_drift_pct": 1.5351,
       "bytes": 641734
+    },
+    "city_model": {
+      "objects": 14509,
+      "types": {
+        "ReliefFeature": 1,
+        "Building": 1028,
+        "RoofSurface": 1028,
+        "Road": 762,
+        "CityFurniture": 3732,
+        "TrafficSpace": 1460,
+        "AuxiliaryTrafficSpace": 3328,
+        "GeodeticControlPoint": 85,
+        "Railway": 100,
+        "PlantCover": 82,
+        "SolitaryVegetationObject": 2903
+      },
+      "bytes": 14534285
     }
   },
   "assets": {
     "fallback": "fallback.json",
+    "city_model": "city_model.json",
     "canopy": "canopy.json",
     "roof_surface": "roof_surface.bin"
   }

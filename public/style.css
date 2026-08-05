@@ -241,7 +241,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .road-status-legend span { display: flex; align-items: center; gap: 6px; }
 .status-swatch { width: 18px; height: 4px; border-radius: 4px; box-shadow: 0 0 7px currentColor; }
-.status-swatch.pedestrian { color: #36e0b5; background: #36e0b5; }
+.status-swatch.pedestrian { color: #82aaa5; background: #82aaa5; box-shadow: 0 0 4px currentColor; }
 .status-swatch.closure { color: #ff4b45; background: repeating-linear-gradient(90deg, #ff4b45 0 5px, #fff2d0 5px 8px); }
 .status-swatch.diverted { color: #ff9c3a; background: #ff9c3a; }
 .status-swatch.relieved { color: #4cc7ff; background: #4cc7ff; }

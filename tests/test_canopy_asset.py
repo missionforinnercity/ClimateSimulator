@@ -23,5 +23,6 @@ def test_generated_canopy_heights_are_plausible_and_manifested():
     heights = [record[3] - record[1] for record in asset["canopies"]]
     assert min(heights) >= 3.9
     assert max(heights) <= 18.1
-    assert manifest["version"] == 2
+    assert manifest["version"] == 3
+    assert manifest["assets"]["city_model"] == "city_model.json"
     assert manifest["assets"]["canopy"] == "canopy.json"
