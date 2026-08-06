@@ -5,13 +5,30 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23252525'/%3E%3Cpath d='M12 46 26 18l8 16 7-11 11 23Z' fill='%23b84e92'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
   <main id="app">
     <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
+    <div id="traffic-draw-popup" class="traffic-draw-popup" role="dialog" aria-labelledby="traffic-draw-popup-title" hidden>
+      <div class="traffic-draw-popup-heading">
+        <span id="traffic-draw-popup-title">Edit road closure</span>
+        <kbd>Esc</kbd>
+      </div>
+      <p id="traffic-draw-popup-status">Draw one or more freehand strokes over the roads you want to select.</p>
+      <div class="traffic-draw-popup-steps">
+        <span><b>1</b> Left-drag to add</span>
+        <span><b>2</b> Lift and draw again</span>
+        <span><b>3</b> Right-click to remove</span>
+      </div>
+      <div class="traffic-draw-popup-count"><strong id="traffic-draw-popup-count">0</strong><span>road sections selected</span></div>
+      <div class="traffic-draw-popup-actions">
+        <button id="traffic-draw-confirm" type="button" disabled>Confirm selection</button>
+        <button id="traffic-draw-cancel" class="secondary" type="button">Cancel</button>
+      </div>
+    </div>
     <aside class="panel" aria-label="Climate explorer tools">
       <header class="panel-header">
         <div class="panel-brand">
@@ -115,7 +132,7 @@
         <p class="sun-note">GPU shadow map · exact building geometry · LiDAR terrain</p>
       </section>
       <section id="menu-wind" class="wind-panel menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
-        <div class="wind-heading"><span>Wind explorer</span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
+        <div class="wind-heading"><span>Wind explorer <b class="wind-mode-badge">PREVIEW</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
         <label>Direction
           <select id="wind-direction">
             <option value="135">SE · 135°</option>
@@ -138,7 +155,35 @@
             <option value="spring">Spring</option>
           </select>
         </label>
-        <label>Speed <span id="wind-speed-value">36 km/h</span>
+        <label>Atmospheric stability
+          <select id="wind-stability">
+            <option value="unstable">Unstable / convective</option>
+            <option value="neutral" selected>Neutral urban</option>
+            <option value="stable">Stable</option>
+          </select>
+        </label>
+        <label>Result height
+          <select id="wind-height">
+            <option value="1.5">1.5 m · seated/head</option>
+            <option value="2" selected>2.0 m · pedestrian</option>
+            <option value="4">4.0 m · elevated</option>
+          </select>
+        </label>
+        <label>Exceedance threshold
+          <select id="wind-exceedance-threshold">
+            <option value="4">4 m/s · sitting</option>
+            <option value="6" selected>6 m/s · standing</option>
+            <option value="8">8 m/s · strolling</option>
+            <option value="10">10 m/s · walking</option>
+          </select>
+        </label>
+        <label>Forcing source
+          <select id="wind-forcing-mode">
+            <option value="era5_climatology" selected>ERA5 Cape Town profile</option>
+            <option value="manual">Manual mean speed</option>
+          </select>
+        </label>
+        <label>Mean forcing speed <span id="wind-speed-value">36 km/h</span>
           <input id="wind-speed" type="range" min="0" max="180" step="1" value="36">
         </label>
         <label>Domain <span id="wind-size-value">250</span> m
@@ -149,10 +194,13 @@
           <button id="wind-simulate" type="button">Simulate wind</button>
         </div>
         <p id="wind-status" class="wind-status">Choose Move / resize domain to reposition the orange box.</p>
+        <div id="wind-results" class="wind-results" hidden></div>
+        <button id="wind-report" class="wind-report-button secondary" type="button" disabled>Generate detailed wind report</button>
         <div class="wind-legend-scale" aria-label="Wind speed colour scale">
           <div class="wind-gradient"></div>
           <div class="wind-legend-labels"><span><b id="wind-legend-min">0.0</b> m/s · low</span><span><b id="wind-legend-max">—</b> m/s · high</span></div>
         </div>
+        <p class="panel-note">ERA5 frequencies are provisional: the attached archive covers 35.4% of possible hours. Validated mode remains locked until independent CFD and measurement benchmarks are installed.</p>
       </section>
       <section id="menu-flood" class="flood-panel menu-section" data-menu-panel="flood" role="tabpanel" aria-label="Surface flood simulation controls" hidden>
         <div class="flood-heading"><span>Surface flooding</span><label class="flood-switch"><input id="flood-toggle" type="checkbox"> Show</label></div>
@@ -225,50 +273,91 @@
         <p class="panel-note">Planning estimate—not measured or engineering-grade.</p>
       </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
-        <div class="traffic-heading"><span>Traffic</span><label class="traffic-switch"><input id="traffic-toggle" type="checkbox"> Show cars</label></div>
-        <label class="traffic-restrictions-switch"><input id="traffic-restrictions-toggle" type="checkbox" checked> Show closures &amp; pedestrian streets</label>
-        <div class="current-heading"><span>Live conditions</span><span id="traffic-freshness" class="freshness">Not loaded</span></div>
-        <p id="traffic-live-status" class="traffic-status">Loading live traffic…</p>
-        <div id="traffic-live-metrics" class="current-metrics" hidden></div>
-        <label>Time of day
-          <select id="traffic-scenario"><option value="am_peak">Morning peak · 07:00–09:00</option></select>
-        </label>
-        <div class="traffic-closure-choice" role="group" aria-label="Choose closure drawing tool">
-          <button id="traffic-draw-lane" class="secondary" type="button" disabled>Draw lane closure</button>
-          <button id="traffic-draw-road" class="secondary" type="button" disabled>Draw street closure</button>
+        <div class="traffic-heading">
+          <span>Traffic simulation</span>
+          <span class="estimate-badge">Exploratory</span>
         </div>
-        <p id="traffic-selection-status" class="traffic-selection-status">Choose a closure tool, then drag along a road. The pen will snap to the road network.</p>
-        <label>Junction behaviour
-          <select id="traffic-control-model">
-            <option value="signalized" selected>Mapped traffic signals</option>
-            <option value="priority">Priority right-of-way</option>
-          </select>
-        </label>
-        <label>Simulated duration <span id="traffic-duration-value">10 min</span>
-          <input id="traffic-duration" type="range" min="5" max="20" step="5" value="10">
-        </label>
-        <div class="traffic-actions">
-          <button id="traffic-run" type="button" disabled>Simulate selection</button>
-          <button id="traffic-clear" class="secondary" type="button">Clear selection</button>
+        <div class="traffic-view-toggles">
+          <label class="traffic-switch"><input id="traffic-toggle" type="checkbox"> Animated vehicles</label>
+          <label class="traffic-restrictions-switch"><input id="traffic-restrictions-toggle" type="checkbox" checked> Closures and street status</label>
         </div>
-        <p id="traffic-status" class="traffic-status">Draw a closure to begin.</p>
-        <label>Show cars from
-          <select id="traffic-compare">
-            <option value="baseline">Before · road as it is</option>
-            <option value="closure">After · blocked section active</option>
-          </select>
-        </label>
-        <div class="traffic-gradient"></div>
-        <div class="traffic-legend-labels"><span>Stopped</span><span id="traffic-onscreen">— cars</span><span>50 km/h</span></div>
-        <div class="road-status-legend" aria-label="Road status legend">
-          <span><i class="status-swatch pedestrian"></i>Pedestrian</span>
-          <span><i class="status-swatch closure"></i>Closed</span>
-          <span><i class="status-swatch diverted"></i>More traffic</span>
-          <span><i class="status-swatch relieved"></i>Less traffic</span>
-          <span><i class="status-swatch direction">➜</i>Travel direction</span>
+
+        <div class="traffic-card traffic-live-card">
+          <div class="traffic-card-heading">
+            <span><b>1</b> Live context</span>
+            <div class="traffic-live-actions">
+              <span id="traffic-freshness" class="freshness">Not loaded</span>
+              <button id="traffic-refresh" class="icon-button" type="button" aria-label="Refresh live traffic" title="Refresh live traffic">↻</button>
+            </div>
+          </div>
+          <p id="traffic-live-status" class="traffic-status">Loading live traffic…</p>
+          <div id="traffic-live-metrics" class="current-metrics" hidden></div>
         </div>
-        <div id="traffic-results" class="traffic-results" hidden></div>
-        <p class="panel-note">Corridor-scoped synthetic demand (weighted by road class and time of day, scaled by live TomTom congestion) replayed through paired SUMO microsimulations. Mapped signal programs are used by default. This is an exploratory estimate, not a calibrated traffic model.</p>
+
+        <div class="traffic-card">
+          <div class="traffic-card-heading"><span><b>2</b> Scenario assumptions</span></div>
+          <div class="traffic-control-grid">
+            <label>Time of day
+              <select id="traffic-scenario"><option value="am_peak">Morning peak · 07:00–09:00</option></select>
+            </label>
+            <label>Demand
+              <select id="traffic-demand">
+                <option value="0.75">Lower · 75%</option>
+                <option value="1" selected>Reference · 100%</option>
+                <option value="1.25">Higher · 125%</option>
+              </select>
+            </label>
+          </div>
+          <label>Junction behaviour
+            <select id="traffic-control-model">
+              <option value="signalized" selected>Mapped traffic signals</option>
+              <option value="priority">Priority right-of-way</option>
+            </select>
+          </label>
+          <label class="traffic-duration-label">Duration <output id="traffic-duration-value" for="traffic-duration">10 min</output>
+            <input id="traffic-duration" type="range" min="5" max="20" step="5" value="10">
+          </label>
+        </div>
+
+        <div class="traffic-card">
+          <div class="traffic-card-heading"><span><b>3</b> Draw the intervention</span></div>
+          <div class="traffic-closure-choice" role="group" aria-label="Choose closure drawing tool">
+            <button id="traffic-draw-lane" class="secondary" type="button" disabled><span>▥</span> Lane closure</button>
+            <button id="traffic-draw-road" class="secondary" type="button" disabled><span>⛔</span> Street closure</button>
+          </div>
+          <p id="traffic-selection-status" class="traffic-selection-status">Choose a closure tool. Add one or more freehand strokes, right-click sections to remove them, then confirm the selection in the popup.</p>
+          <div class="traffic-actions">
+            <button id="traffic-run" type="button" disabled>Run comparison</button>
+            <button id="traffic-clear" class="secondary" type="button">Clear</button>
+          </div>
+          <p id="traffic-status" class="traffic-status">Draw a closure to begin.</p>
+        </div>
+
+        <div class="traffic-card traffic-output-card">
+          <div class="traffic-card-heading"><span><b>4</b> Compare results</span></div>
+          <label>Animated case
+            <select id="traffic-compare" disabled>
+              <option value="baseline">Before · road as it is</option>
+              <option value="closure">After · closure active</option>
+            </select>
+          </label>
+          <div id="traffic-impact-summary" class="traffic-impact-summary" hidden></div>
+          <div id="traffic-results" class="traffic-results" hidden></div>
+          <button id="traffic-report" class="traffic-report-button secondary" type="button" disabled>Generate polished report</button>
+          <div class="traffic-gradient"></div>
+          <div class="traffic-legend-labels"><span>Stopped</span><span id="traffic-onscreen">— vehicles</span><span>50 km/h</span></div>
+          <details class="traffic-map-key">
+            <summary>Map key</summary>
+            <div class="road-status-legend" aria-label="Road status legend">
+              <span><i class="status-swatch pedestrian"></i>Pedestrian</span>
+              <span><i class="status-swatch closure"></i>Closed</span>
+              <span><i class="status-swatch diverted"></i>More traffic</span>
+              <span><i class="status-swatch relieved"></i>Less traffic</span>
+              <span><i class="status-swatch direction">➜</i>Travel direction</span>
+            </div>
+          </details>
+        </div>
+        <p class="panel-note">City of Cape Town road-centre geometry, lanes and confirmed speed limits enrich an OSM-routable SUMO network. Corridor demand is synthetic and can be sensitivity-tested above. This is an exploratory estimate, not a calibrated traffic model.</p>
       </section>
       </div>
       <footer class="panel-footer">
@@ -282,6 +371,26 @@
       </footer>
     </aside>
   </main>
-  <script type="module" src="app.js?v=webgl-36"></script>
+  <dialog id="traffic-report-dialog" class="traffic-report-dialog" aria-labelledby="traffic-report-title">
+    <div class="traffic-report-toolbar">
+      <span>Simulation report preview</span>
+      <div>
+        <button id="traffic-report-close" class="secondary" type="button">Close</button>
+        <button id="traffic-report-print" type="button">Print / Save PDF</button>
+      </div>
+    </div>
+    <article id="traffic-report-document" class="traffic-report-document"></article>
+  </dialog>
+  <dialog id="wind-report-dialog" class="traffic-report-dialog wind-report-dialog" aria-labelledby="wind-report-title">
+    <div class="traffic-report-toolbar">
+      <span>Wind analysis report preview</span>
+      <div>
+        <button id="wind-report-close" class="secondary" type="button">Close</button>
+        <button id="wind-report-print" type="button">Print / Save PDF</button>
+      </div>
+    </div>
+    <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
+  </dialog>
+  <script type="module" src="app.js?v=webgl-42"></script>
 </body>
 </html>

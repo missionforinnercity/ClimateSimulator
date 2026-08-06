@@ -24,10 +24,12 @@ from shapely.ops import transform as transform_geometry
 from shapely.strtree import STRtree
 
 from server.terrain_wind import sample_bilinear
+from server.wind_metrics import STABILITY_PROFILES, add_screening_metrics
+from server.era5_wind import forcing_profile
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 WEB_CRS = "EPSG:4326"
-FIELD_VERSION = "terrain-buildings-2026-07-23"
+FIELD_VERSION = "terrain-buildings-era5-comfort-2026-08-06"
 REGIONAL_FIELD_DIR = Path(__file__).resolve().parents[1] / "data" / "wind_fields" / "regional"
 CBD_FIELD_DIR = Path(__file__).resolve().parents[1] / "data" / "wind_fields" / "cbd"
 VALID_DIRECTIONS = {
@@ -72,6 +74,9 @@ class PreviewRequest:
     reference_height_m: float
     height_m: float
     resolution_m: float
+    stability: str
+    exceedance_threshold_mps: float
+    forcing_mode: str
 
 
 def database_url() -> str | None:
@@ -229,6 +234,13 @@ def request_from_payload(payload: dict[str, Any], config: dict[str, Any]) -> Pre
     height_m = min(10.0, max(1.0, float(payload.get("height_m", 2.0))))
     reference_height_value = payload.get("reference_height_m")
     reference_height_m = min(100.0, max(1.0, float(reference_height_value if reference_height_value is not None else height_m)))
+    stability = str(payload.get("stability", "neutral")).lower()
+    if stability not in STABILITY_PROFILES:
+        raise ValueError("stability must be unstable, neutral, or stable")
+    exceedance_threshold_mps = min(30.0, max(1.0, float(payload.get("exceedance_threshold_mps", 6.0))))
+    forcing_mode = str(payload.get("forcing_mode", "manual")).lower()
+    if forcing_mode not in {"manual", "era5_climatology"}:
+        raise ValueError("forcing_mode must be manual or era5_climatology")
     if bbox is None and center_local is None:
         center_local = (0.0, 0.0)
     return PreviewRequest(
@@ -241,6 +253,9 @@ def request_from_payload(payload: dict[str, Any], config: dict[str, Any]) -> Pre
         reference_height_m=reference_height_m,
         height_m=height_m,
         resolution_m=resolution_m,
+        stability=stability,
+        exceedance_threshold_mps=exceedance_threshold_mps,
+        forcing_mode=forcing_mode,
     )
 
 
@@ -364,11 +379,17 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
     regional_field = load_regional_field(request.direction_deg)
     cbd_field = load_cbd_field(request.direction_deg)
     tree = STRtree([feature["local_geometry"] for feature in polygons]) if polygons else None
-    # A neutral urban power-law profile converts a 10 m weather forcing to the
-    # requested pedestrian level. Manual requests remain unchanged because
-    # reference_height_m defaults to height_m.
-    height_factor = (request.height_m / request.reference_height_m) ** 0.33
-    output_reference_speed = request.reference_speed_mps * height_factor
+    # A stability-dependent urban power-law profile converts weather forcing
+    # to the requested pedestrian level. Manual requests remain unchanged
+    # because reference_height_m defaults to height_m.
+    era5_profile = forcing_profile(request.season, request.direction_deg, request.stability) if request.forcing_mode == "era5_climatology" else None
+    if request.forcing_mode == "era5_climatology" and era5_profile is None:
+        raise ValueError("ERA5 forcing profile is unavailable for this scenario")
+    effective_reference_height = 10.0 if era5_profile else request.reference_height_m
+    effective_reference_speed = era5_profile["mean_speed_mps"] if era5_profile else request.reference_speed_mps
+    shear_exponent = era5_profile["median_shear_exponent_10_100m"] if era5_profile else STABILITY_PROFILES[request.stability]["power_law_exponent"]
+    height_factor = (request.height_m / effective_reference_height) ** shear_exponent
+    output_reference_speed = effective_reference_speed * height_factor
     u, v, speed = [], [], []
     for row in range(height):
         z = min_z + (row + 0.5) * dz
@@ -396,7 +417,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         model_kind = "mass_conserving_terrain"
     else:
         model_kind = "directional_speed_proxy"
-    return {
+    result = {
         "version": FIELD_VERSION,
         "model_kind": model_kind,
         "validation_status": "exploratory_not_engineering_grade",
@@ -409,9 +430,13 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         "direction_deg": request.direction_deg,
         "season": request.season,
         "height_m": request.height_m,
-        "reference_height_m": request.reference_height_m,
-        "reference_speed_mps": request.reference_speed_mps,
+        "reference_height_m": effective_reference_height,
+        "reference_speed_mps": effective_reference_speed,
+        "requested_reference_speed_mps": request.reference_speed_mps,
         "height_adjusted_reference_speed_mps": output_reference_speed,
+        "height_profile_exponent": shear_exponent,
+        "forcing_source": "ERA5_conditional_climatology" if era5_profile else "manual_mean_speed",
+        "era5_profile": era5_profile,
         "u": u,
         "v": v,
         "speed": speed,
@@ -421,3 +446,10 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         ],
         "source_layer": polygon_table(request.direction_deg),
     }
+    return add_screening_metrics(
+        result,
+        stability=request.stability,
+        exceedance_threshold_mps=request.exceedance_threshold_mps,
+        weibull_shape=era5_profile["weibull_shape"] if era5_profile else None,
+        sector_frequency_fraction=era5_profile["frequency_fraction"] if era5_profile else None,
+    )

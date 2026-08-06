@@ -36,6 +36,26 @@ def test_current_weather_reference_height_scales_to_pedestrian_level(monkeypatch
     assert result["height_adjusted_reference_speed_mps"] < 10
 
 
+def test_era5_forcing_replaces_manual_speed_and_supplies_sector_frequency(monkeypatch):
+    monkeypatch.setattr(field_module, "load_regional_field", lambda direction_deg: None)
+    monkeypatch.setattr(field_module, "load_cbd_field", lambda direction_deg: None)
+    monkeypatch.setattr(field_module, "forcing_profile", lambda season, direction, stability: {
+        "mean_speed_mps": 8.0, "median_shear_exponent_10_100m": 0.2,
+        "weibull_shape": 3.0, "frequency_fraction": 0.3,
+        "coverage": {"complete_hourly_climatology": False},
+    })
+    request = request_from_payload({
+        "center_local": [0, 0], "size_m": 100, "reference_speed_mps": 40,
+        "reference_height_m": 10, "height_m": 2, "resolution_m": 20,
+        "forcing_mode": "era5_climatology",
+    }, {"origin": [0, 0]})
+    result = build_field(request, (-50, -50, 50, 50), [])
+    assert result["reference_speed_mps"] == 8.0
+    assert result["height_profile_exponent"] == 0.2
+    assert result["forcing_source"] == "ERA5_conditional_climatology"
+    assert result["exceedance"]["sector_frequency_fraction"] == 0.3
+
+
 def test_field_rotates_direction_and_scales_speed_without_regional_data(monkeypatch):
     # Forces the pre-terrain-model fallback path: no precomputed regional or
     # CBD field available (e.g. a bare checkout that hasn't run

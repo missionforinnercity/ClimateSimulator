@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,17 @@ from shapely.strtree import STRtree
 MODEL_VERSION = "1.0"
 ID_NAMESPACE = "za.capetown.climate-explorer"
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
+
+
+def _road_lane_count(value: Any) -> int:
+    """Return a usable lane count from municipal values such as ``2-3``.
+
+    The source field is not consistently scalar: transition segments can be
+    encoded as ``1,2-3``.  Using the largest stated count is a better width and
+    capacity proxy than silently collapsing every non-integer value to one.
+    """
+    counts = [int(match) for match in re.findall(r"\d+", str(value or ""))]
+    return max(1, min(8, max(counts, default=1)))
 
 
 def _digest(value: Any) -> str:
@@ -149,13 +161,24 @@ def _add_street_objects(
         for part_index, part in enumerate(parts):
             if part.is_empty or part.geom_type != "LineString" or len(part.coords) < 2:
                 continue
+            # Remove survey-scale vertex noise before the line becomes a GPU
+            # ribbon. This also prevents sharp micro-turns from producing
+            # miter spikes at road/path junctions.
+            part = part.simplify(0.35, preserve_topology=False)
+            if part.is_empty or len(part.coords) < 2:
+                continue
             points = [[round(x, 1), round(z, 1)] for x, z in part.coords]
             identifier, feature_id = _identity("municipal-road", source_id, points, part_index)
+            lanes = _road_lane_count(properties.get("NR_LANES"))
             try:
-                lanes = max(1, int(properties.get("NR_LANES") or 1))
+                source_width = float(properties.get("RD_WIDTH"))
             except (TypeError, ValueError):
-                lanes = 1
-            width = properties.get("RD_WIDTH") or lanes * 3.2
+                source_width = float("nan")
+            # A handful of portal records contain route-length or otherwise
+            # implausible widths. Keep a plausible carriageway width rather
+            # than allowing one bad attribute to create a city-scale ribbon.
+            width = source_width if math.isfinite(source_width) and 2.0 <= source_width <= 18.0 else lanes * 3.2
+            width = max(2.5, min(18.0, width))
             pedestrian = str(properties.get("PED") or "").upper() in {"Y", "YES", "1", "TRUE"}
             objects[feature_id] = _feature(
                 "TrafficSpace" if pedestrian else "Road",
@@ -166,6 +189,7 @@ def _add_street_objects(
                     "name": properties.get("ROAD_NAME"), "class": properties.get("ROAD_TYPE"),
                     "renderClass": "pedestrian" if pedestrian else "residential",
                     "routeKey": properties.get("SL_RTE_KEY"), "speedLimitKph": properties.get("SPD_LMT"),
+                    "routeNumber": properties.get("RTE_NR"), "rightOfWayClass": properties.get("PROW_CLSF_CODE"),
                     "speedLimitSource": properties.get("SPD_LMT_SRC"), "surface": properties.get("SURF_TYPE"),
                     "lanes": lanes, "oneWay": properties.get("ONE_WAY"), "bus": properties.get("BUS"),
                     "bicycle": properties.get("BICYCLE"), "owner": properties.get("OWNRSHP"),
@@ -204,16 +228,35 @@ def _add_street_objects(
         edges = []
         for candidate_index in candidate_indices:
             candidate = road_context[int(candidate_index)]
-            if candidate["name"] != road_name or candidate["line"].distance(point) > 30.0:
+            # Only merge genuinely parallel halves of the same named road.
+            # Previously every nearby unnamed centreline matched every other
+            # unnamed centreline, while same-name lines crossing at a junction
+            # could be combined into a huge, skewed carriageway. Crossing and
+            # parking paint then appeared far away from the actual asphalt.
+            same_road = (
+                candidate["name"] == road_name
+                if road_name
+                else candidate["featureId"] == nearest["featureId"]
+            )
+            if not same_road or candidate["line"].distance(point) > 30.0:
                 continue
             candidate_line = candidate["line"]
-            candidate_centre = candidate_line.interpolate(candidate_line.project(point))
+            candidate_along = candidate_line.project(point)
+            candidate_before = candidate_line.interpolate(max(0.0, candidate_along - 0.75))
+            candidate_after = candidate_line.interpolate(min(candidate_line.length, candidate_along + 0.75))
+            candidate_dx = candidate_after.x - candidate_before.x
+            candidate_dz = candidate_after.y - candidate_before.y
+            candidate_length = math.hypot(candidate_dx, candidate_dz) or 1.0
+            alignment = abs((candidate_dx / candidate_length) * tx + (candidate_dz / candidate_length) * tz)
+            if alignment < math.cos(math.radians(25.0)):
+                continue
+            candidate_centre = candidate_line.interpolate(candidate_along)
             offset = (candidate_centre.x - centre.x) * nx + (candidate_centre.y - centre.y) * nz
             half_width = max(1.6, float(candidate["width"]) * 0.5)
             edges.extend((offset - half_width, offset + half_width))
         centre_offset = (max(edges) + min(edges)) * 0.5 if edges else 0.0
         inferred_width = max(edges) - min(edges) if edges else float(nearest["width"])
-        inferred_width = round(max(5.0, min(24.0, inferred_width)), 2)
+        inferred_width = round(max(5.0, min(18.0, inferred_width)), 2)
         facing = math.degrees(math.atan2(centre.y - point.y, centre.x - point.x))
         aggregate_centre = Point(centre.x + nx * centre_offset, centre.y + nz * centre_offset)
         return {
@@ -402,24 +445,25 @@ def build_city_model(
         )
 
     street_dir = source_paths.get("street_data")
-    has_municipal_roads = _add_street_objects(objects, scene, manifest, street_dir) if street_dir else False
-    path_classes = {"footway", "path", "cycleway", "steps", "corridor", "elevator", "pedestrian"}
-    # The municipal network supersedes OSM carriageways, but its centreline
-    # product does not contain the detailed OSM pedestrian/path network.
-    # Retain only those complementary path classes when municipal roads exist.
+    if street_dir:
+        _add_street_objects(objects, scene, manifest, street_dir)
+    # Keep the complete OSM network as the visible representation: its ways
+    # are continuous through junctions and its highway classes drive the road
+    # hierarchy colours. Municipal centrelines remain authoritative semantic
+    # records for street furniture, widths, crossings and traffic enrichment,
+    # but rendering both products would double the asphalt and cause z-fights.
     for index, (width, highway, points) in enumerate(scene.get("roads", [])):
-        if not has_municipal_roads or highway in path_classes:
-            identifier, feature_id = _identity("transport", None, [highway, points], index)
-            pedestrian = highway == "pedestrian" or highway in path_classes
-            objects[feature_id] = _feature(
-                "TrafficSpace" if pedestrian else "Road",
-                identifier,
-                feature_id,
-                {"lod": "0", "type": "MultiCurve", "centerline": points, "nominalWidthM": width},
-                attributes={"class": highway, "renderClass": highway, "usage": "pedestrian" if pedestrian else "vehicular"},
-                sources=["roads"],
-                quality=_quality("OSM centreline with class-derived width", "0", confidence="medium"),
-            )
+        identifier, feature_id = _identity("transport", None, [highway, points], index)
+        pedestrian = highway == "pedestrian" or highway in {"footway", "path", "cycleway", "steps", "corridor", "elevator"}
+        objects[feature_id] = _feature(
+            "TrafficSpace" if pedestrian else "Road",
+            identifier,
+            feature_id,
+            {"lod": "0", "type": "MultiCurve", "centerline": points, "nominalWidthM": width},
+            attributes={"class": highway, "renderClass": highway, "usage": "pedestrian" if pedestrian else "vehicular"},
+            sources=["roads"],
+            quality=_quality("OSM centreline with class-derived width", "0", confidence="medium"),
+        )
 
     for index, (railway, points) in enumerate(scene.get("railways", [])):
         identifier, feature_id = _identity("railway", None, [railway, points], index)

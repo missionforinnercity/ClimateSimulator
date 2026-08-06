@@ -20,8 +20,15 @@ export function sceneFromCityModel(model) {
         roof.attributes?.roofModel || 'height_fallback', roofGeometry.boundaryHeightProfileM || null,
       ]);
     }
-    if ((object.type === 'Road' || object.type === 'TrafficSpace') && geometry.centerline) {
-      scene.roads.push([geometry.nominalWidthM, object.attributes?.renderClass || object.attributes?.class, geometry.centerline]);
+    if ((object.type === 'Road' || object.type === 'TrafficSpace')
+      && geometry.centerline
+      && !object.sources?.includes('municipalRoads')) {
+      scene.roads.push([
+        geometry.nominalWidthM,
+        object.attributes?.renderClass || object.attributes?.class,
+        geometry.centerline,
+        'osm',
+      ]);
     }
     if (object.type === 'Railway') scene.railways.push([object.attributes?.class, geometry.centerline]);
     if (object.type === 'PlantCover') scene.grass.push(geometry.rings?.[0]);

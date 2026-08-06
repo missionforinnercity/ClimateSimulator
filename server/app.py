@@ -32,6 +32,8 @@ from .location import streetview_location
 from .weather import current_weather
 from .traffic import SCENARIOS as TRAFFIC_SCENARIOS
 from .traffic import closure_preview, current_traffic, drawable_road_edges, named_roads, permanent_road_statuses
+from .wind_metrics import COMFORT_CATEGORIES, STABILITY_PROFILES, validate_against_observations
+from .era5_wind import climatology_summary
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(title="Cape Town Wind Explorer API", version="0.1.0")
@@ -57,6 +59,23 @@ class PreviewPayload(BaseModel):
     reference_height_m: float | None = Field(default=None, ge=1.0, le=100.0)
     height_m: float = Field(default=2.0, ge=1.0, le=10.0)
     resolution_m: float = Field(default=5.0, ge=2.0, le=20.0)
+    stability: Literal["unstable", "neutral", "stable"] = "neutral"
+    exceedance_threshold_mps: float = Field(default=6.0, ge=1.0, le=30.0)
+    forcing_mode: Literal["manual", "era5_climatology"] = "manual"
+
+
+class WindObservation(BaseModel):
+    id: str | None = None
+    x: float
+    z: float
+    speed_mps: float = Field(ge=0.0, le=80.0)
+    height_m: float = Field(default=2.0, ge=0.5, le=20.0)
+    observed_at: str | None = None
+
+
+class WindValidationPayload(BaseModel):
+    scenario: PreviewPayload
+    observations: list[WindObservation] = Field(min_length=3, max_length=500)
 
 
 class MitigationPayload(BaseModel):
@@ -74,6 +93,7 @@ class TrafficClosurePayload(BaseModel):
     closure_mode: Literal["lane", "full"] = "lane"
     closure_scope: Literal["block", "road"] = "block"
     traffic_control: Literal["signalized", "priority"] = "signalized"
+    demand_multiplier: float = Field(default=1.0, ge=0.5, le=1.5)
 
 
 class FloodPayload(BaseModel):
@@ -126,12 +146,19 @@ def heat_preview(metric: str = "heat_model_lst_c") -> dict[str, Any]:
 @app.get("/api/wind/scenarios")
 def scenarios() -> dict[str, Any]:
     config = load_viewer_config()
+    era5 = climatology_summary()
     return {
         "field_version": FIELD_VERSION,
         "model_kind": current_model_kind(),
         "validation_status": "exploratory_not_engineering_grade",
         "directions": [{"name": name, "azimuth_deg": azimuth} for name, azimuth in VALID_DIRECTIONS.items()],
         "seasons": ["annual", "summer", "autumn", "winter", "spring"],
+        "stability_profiles": STABILITY_PROFILES,
+        "comfort_categories": COMFORT_CATEGORIES,
+        "available_modes": ["preview"],
+        "validated_mode_reason": "No versioned CFD/measurement validation dataset is installed",
+        "frequency_status": "provisional_incomplete_era5_archive" if era5 else "conditional_only_no_climatology",
+        "era5_climatology": era5,
         "viewer": config,
     }
 
@@ -157,6 +184,30 @@ def preview(payload: PreviewPayload) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"wind data unavailable: {error}") from error
 
 
+@app.post("/api/wind/validate")
+def validate_wind(payload: WindValidationPayload) -> dict[str, Any]:
+    """Benchmark one scenario against co-located pedestrian observations.
+
+    This intentionally returns benchmark_only status. Promotion to validated
+    mode requires versioned independent datasets and project-specific gates.
+    """
+    config = load_viewer_config()
+    try:
+        request = request_from_payload(payload.scenario.model_dump(), config)
+        bounds = local_bounds(request, config)
+        observations = [item.model_dump() for item in payload.observations]
+        for item in observations:
+            if not (bounds[0] <= item["x"] <= bounds[2] and bounds[1] <= item["z"] <= bounds[3]):
+                raise ValueError(f"observation {item.get('id') or ''} is outside the analysis domain")
+        projected = project_polygons(query_polygons(request, bounds, config), config)
+        field = build_field(request, bounds, projected)
+        return {"field_version": FIELD_VERSION, "field": field, "validation": validate_against_observations(field, observations)}
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"wind validation unavailable: {error}") from error
+
+
 @app.post("/api/mitigations/preview")
 def mitigations_preview(payload: MitigationPayload) -> dict[str, Any]:
     try:
@@ -177,10 +228,17 @@ def traffic_live(refresh: bool = False) -> dict[str, Any]:
 
 @app.get("/api/traffic/roads")
 def traffic_roads() -> dict[str, Any]:
+    network_edges = list(drawable_road_edges())
     return {
         "roads": list(named_roads()),
-        "network_edges": list(drawable_road_edges()),
+        "network_edges": network_edges,
         "road_statuses": list(permanent_road_statuses()),
+        "road_data": {
+            "routing_topology": "OpenStreetMap via SUMO",
+            "centreline_source": "City of Cape Town TCT Road Centerline",
+            "municipal_matched_edges": sum(1 for edge in network_edges if edge.get("official")),
+            "total_edges": len(network_edges),
+        },
         "scenarios": [
             {"key": key, "label": profile["label"]}
             for key, profile in TRAFFIC_SCENARIOS.items()

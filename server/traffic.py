@@ -32,6 +32,7 @@ import json
 import math
 import os
 import random
+import re
 import tempfile
 import threading
 import time
@@ -47,6 +48,7 @@ from urllib.request import urlopen
 from pyproj import Transformer
 from shapely.geometry import LineString, Point, shape
 from shapely.ops import transform as transform_geometry, unary_union
+from shapely.strtree import STRtree
 
 from .field import LOCAL_CRS, WEB_CRS, load_viewer_config
 
@@ -54,6 +56,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ROADS_PATH = PROJECT_ROOT / "data" / "osm_cbd_roads.geojson"
 SUMO_NET_PATH = PROJECT_ROOT / "data" / "sumo" / "cbd.net.xml"
 SCENE_FOOTPRINT_PATH = PROJECT_ROOT / "data" / "scene_footprint.geojson"
+CITY_MODEL_PATH = PROJECT_ROOT / "public" / "assets" / "city_model.json"
 
 TOMTOM_PROVIDER = "TomTom Traffic Flow"
 TOMTOM_BASE_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
@@ -173,6 +176,8 @@ CLOSURE_SCOPES = ("block", "road")
 DEFAULT_CLOSURE_SCOPE = "block"
 TRAFFIC_CONTROLS = ("signalized", "priority")
 DEFAULT_TRAFFIC_CONTROL = "signalized"
+MIN_DEMAND_MULTIPLIER = 0.5
+MAX_DEMAND_MULTIPLIER = 1.5
 
 _lock = threading.Lock()
 _cache: dict[str, Any] | None = None
@@ -485,6 +490,175 @@ def _scene_footprint_local() -> Any:
     return unary_union(polygons)
 
 
+def _normalise_road_name(value: Any) -> str:
+    """Normalise OSM and municipal naming conventions for spatial matching."""
+    words = re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).split()
+    suffixes = {
+        "ST", "STREET", "RD", "ROAD", "AVE", "AVENUE", "BLVD", "BOULEVARD",
+        "DR", "DRIVE", "LN", "LANE", "WAY", "SQ", "SQUARE", "CRESCENT",
+        "CIRCLE", "TERRACE", "QUAY", "PLEIN", "RAMP", "PASS",
+    }
+    while words and words[-1] in suffixes:
+        words.pop()
+    return " ".join(words)
+
+
+@lru_cache(maxsize=1)
+def _city_objects() -> tuple[dict[str, Any], ...]:
+    if not CITY_MODEL_PATH.exists():
+        return ()
+    model = json.loads(CITY_MODEL_PATH.read_text(encoding="utf-8"))
+    return tuple(model.get("cityObjects", {}).values())
+
+
+@lru_cache(maxsize=1)
+def _municipal_road_records() -> tuple[dict[str, Any], ...]:
+    """Clipped City road-centre records already embedded in the scene asset."""
+    records = []
+    for item in _city_objects():
+        if "municipalRoads" not in item.get("sources", []):
+            continue
+        points = (item.get("geometry") or {}).get("centerline") or []
+        if len(points) < 2:
+            continue
+        attributes = item.get("attributes") or {}
+        try:
+            lanes = max(1, int(attributes.get("lanes") or 1))
+        except (TypeError, ValueError):
+            lanes = 1
+        try:
+            speed_limit_kph = float(attributes.get("speedLimitKph"))
+        except (TypeError, ValueError):
+            speed_limit_kph = None
+        records.append({
+            "id": item.get("identifier"),
+            "line": LineString(points),
+            "name": attributes.get("name"),
+            "normalised_name": _normalise_road_name(attributes.get("name")),
+            "road_class": attributes.get("class"),
+            "right_of_way_class": attributes.get("rightOfWayClass"),
+            "route_number": attributes.get("routeNumber"),
+            "lane_count": lanes,
+            "speed_limit_kph": speed_limit_kph,
+            "speed_limit_source": attributes.get("speedLimitSource"),
+            "surface": attributes.get("surface"),
+            "one_way": attributes.get("oneWay"),
+            "bus": attributes.get("bus"),
+            "owner": attributes.get("owner"),
+        })
+    return tuple(records)
+
+
+@lru_cache(maxsize=1)
+def _street_activity_records() -> tuple[dict[str, Any], ...]:
+    """Mapped kerbside and crossing inventory clipped into viewer coordinates."""
+    records = []
+    for item in _city_objects():
+        attributes = item.get("attributes") or {}
+        activity_type = attributes.get("class")
+        if activity_type not in {"parkingSpace", "pedestrianCrossing"}:
+            continue
+        coordinates = (item.get("geometry") or {}).get("coordinates")
+        if not coordinates or len(coordinates) < 2:
+            continue
+        records.append({
+            "id": item.get("identifier"),
+            "type": activity_type,
+            "point": Point(float(coordinates[0]), float(coordinates[1])),
+            "raised": bool(attributes.get("RAISED")),
+        })
+    return tuple(records)
+
+
+def _street_activity_summary(corridor: list[dict[str, Any]]) -> dict[str, Any]:
+    """Count mapped street activity near simulated roads without inventing demand."""
+    if not corridor:
+        return {"parking_spaces": 0, "pedestrian_crossings": 0, "raised_crossings": 0}
+    road_area = unary_union([record["line"] for record in corridor]).buffer(18.0)
+    nearby = [record for record in _street_activity_records() if road_area.covers(record["point"])]
+    return {
+        "parking_spaces": sum(record["type"] == "parkingSpace" for record in nearby),
+        "pedestrian_crossings": sum(record["type"] == "pedestrianCrossing" for record in nearby),
+        "raised_crossings": sum(
+            record["type"] == "pedestrianCrossing" and record["raised"] for record in nearby
+        ),
+        "simulation_effect": "context_only_not_modelled_as_demand_or_delay",
+        "note": "Mapped inventory near corridor roads; no occupancy or pedestrian counts are available.",
+    }
+
+
+def _speed_limit_overrides(corridor: list[dict[str, Any]]) -> tuple[dict[str, float], dict[str, int]]:
+    """Return municipal speed overrides, retaining confidence counts.
+
+    Confirmed and inferred City records are both useful for an exploratory
+    comparison. Records without a declared source remain excluded so an empty
+    or ambiguous value cannot silently alter the network.
+    """
+    overrides: dict[str, float] = {}
+    counts = {"confirmed": 0, "inferred": 0}
+    for record in corridor:
+        municipal = record.get("municipal") or {}
+        source = str(municipal.get("speed_limit_source") or "").lower()
+        speed_kph = municipal.get("speed_limit_kph")
+        if source not in counts or not speed_kph:
+            continue
+        speed_mps = float(speed_kph) / 3.6
+        if not 5.0 <= speed_mps <= 40.0:
+            continue
+        overrides[record["id"]] = speed_mps
+        counts[source] += 1
+    return overrides, counts
+
+
+@lru_cache(maxsize=1)
+def _municipal_road_tree() -> STRtree | None:
+    records = _municipal_road_records()
+    return STRtree([record["line"] for record in records]) if records else None
+
+
+def _line_alignment(first: LineString, second: LineString) -> float:
+    def direction(line: LineString) -> tuple[float, float]:
+        start, end = line.coords[0], line.coords[-1]
+        dx, dz = end[0] - start[0], end[1] - start[1]
+        length = math.hypot(dx, dz) or 1.0
+        return dx / length, dz / length
+
+    ax, az = direction(first)
+    bx, bz = direction(second)
+    return abs(ax * bx + az * bz)
+
+
+def _municipal_match(line: LineString, road_name: Any) -> dict[str, Any] | None:
+    """Find the best nearby, parallel City centreline for one SUMO edge."""
+    records = _municipal_road_records()
+    tree = _municipal_road_tree()
+    if tree is None:
+        return None
+    candidate_indices = tree.query(line.buffer(24.0))
+    wanted_name = _normalise_road_name(road_name)
+    best: tuple[float, dict[str, Any]] | None = None
+    for raw_index in candidate_indices:
+        candidate = records[int(raw_index)]
+        distance = line.distance(candidate["line"])
+        if distance > 24.0:
+            continue
+        alignment = _line_alignment(line, candidate["line"])
+        names_match = bool(wanted_name and candidate["normalised_name"] == wanted_name)
+        # At junctions several centre-lines can be equally close. Parallelism
+        # and a normalised name match prevent snapping to the crossing street.
+        score = distance + (1.0 - alignment) * 18.0 + (0.0 if names_match else 12.0)
+        if best is None or score < best[0]:
+            best = (score, candidate)
+    return best[1] if best else None
+
+
+def _longest_line(geometry: Any) -> LineString | None:
+    if geometry.geom_type == "LineString":
+        return geometry if len(geometry.coords) >= 2 else None
+    parts = [part for part in getattr(geometry, "geoms", ()) if part.geom_type == "LineString"]
+    return max(parts, key=lambda part: part.length) if parts else None
+
+
 @lru_cache(maxsize=1)
 def _edge_index() -> dict[str, dict[str, Any]]:
     """Every passenger-carrying edge, pre-projected into viewer-local metres.
@@ -519,6 +693,12 @@ def _edge_index() -> dict[str, dict[str, Any]]:
         else:
             continue
         midpoint = line.interpolate(0.5, normalized=True)
+        municipal = _municipal_match(line, edge.getName())
+        snap_line = line
+        if municipal:
+            official_near_edge = _longest_line(municipal["line"].intersection(line.buffer(18.0)))
+            if official_near_edge is not None and official_near_edge.length >= 3.0:
+                snap_line = official_near_edge
         records[edge.getID()] = {
             "id": edge.getID(),
             "name": edge.getName(),
@@ -528,6 +708,8 @@ def _edge_index() -> dict[str, dict[str, Any]]:
             "length_m": edge.getLength(),
             "speed_mps": edge.getSpeed(),
             "visible": footprint.covers(midpoint),
+            "snap_line": snap_line,
+            "municipal": municipal,
         }
     return records
 
@@ -578,6 +760,18 @@ def drawable_road_edges() -> tuple[dict[str, Any], ...]:
             "name": record.get("name") or "Unnamed road",
             "lane_count": record["lane_count"],
             "points": [[round(x, 1), round(z, 1)] for x, z in record["line"].coords],
+            "snap_points": [[round(x, 1), round(z, 1)] for x, z in record["snap_line"].coords],
+            "official": ({
+                "source": "City of Cape Town road centreline",
+                "name": record["municipal"].get("name"),
+                "road_class": record["municipal"].get("road_class"),
+                "route_number": record["municipal"].get("route_number"),
+                "lanes": record["municipal"].get("lane_count"),
+                "speed_limit_kph": record["municipal"].get("speed_limit_kph"),
+                "speed_limit_source": record["municipal"].get("speed_limit_source"),
+                "surface": record["municipal"].get("surface"),
+                "bus_route": str(record["municipal"].get("bus") or "").upper() in {"Y", "YES"},
+            } if record.get("municipal") else None),
         }
         for record in _edge_index().values()
         if record["visible"] and len(record["line"].coords) >= 2
@@ -604,6 +798,60 @@ def _lines_payload(records: list[dict[str, Any]]) -> list[list[list[float]]]:
         for record in records
         if len(record["line"].coords) >= 2
     ]
+
+
+def _lines_payload_with_junction_bridges(
+    records: list[dict[str, Any]],
+    maximum_gap_m: float = 48.0,
+) -> list[list[list[float]]]:
+    """Return edge lines plus same-road bridges across SUMO junction gaps."""
+    lines = _lines_payload(records)
+    bridges: list[list[list[float]]] = []
+    for first_index, first in enumerate(records):
+        first_line = first.get("line")
+        if first_line is None or first_line.is_empty or len(first_line.coords) < 2:
+            continue
+        first_name = _normalise_road_name(first.get("name"))
+        if not first_name:
+            continue
+        for second in records[first_index + 1:]:
+            second_line = second.get("line")
+            if (
+                second_line is None or second_line.is_empty or len(second_line.coords) < 2
+                or _normalise_road_name(second.get("name")) != first_name
+            ):
+                continue
+            best: tuple[float, tuple[float, float], tuple[float, float]] | None = None
+            first_points = list(first_line.coords)
+            second_points = list(second_line.coords)
+            for first_start in (True, False):
+                a = first_points[0] if first_start else first_points[-1]
+                a_neighbour = first_points[1] if first_start else first_points[-2]
+                for second_start in (True, False):
+                    b = second_points[0] if second_start else second_points[-1]
+                    b_neighbour = second_points[1] if second_start else second_points[-2]
+                    gap_x, gap_z = b[0] - a[0], b[1] - a[1]
+                    gap = math.hypot(gap_x, gap_z)
+                    if not 0.75 <= gap <= maximum_gap_m:
+                        continue
+                    ax, az = a[0] - a_neighbour[0], a[1] - a_neighbour[1]
+                    bx, bz = b_neighbour[0] - b[0], b_neighbour[1] - b[1]
+                    a_length, b_length = math.hypot(ax, az), math.hypot(bx, bz)
+                    if not a_length or not b_length:
+                        continue
+                    continuation = (ax * bx + az * bz) / (a_length * b_length)
+                    gap_alignment = (gap_x * ax + gap_z * az) / (gap * a_length)
+                    if continuation < 0.45 or gap_alignment < 0.55:
+                        continue
+                    score = gap + (1.0 - continuation) * 18.0
+                    if best is None or score < best[0]:
+                        best = (score, a, b)
+            if best:
+                bridges.append([
+                    [round(best[1][0], 1), round(best[1][1], 1)],
+                    [round(best[2][0], 1), round(best[2][1], 1)],
+                ])
+    return lines + bridges
 
 
 def _records_bounds(records: list[dict[str, Any]]) -> list[float] | None:
@@ -839,7 +1087,12 @@ def _trip_weights(corridor: list[dict[str, Any]], inbound_bias: float) -> tuple[
     furthest = max(distances) or 1.0
     origin_weights, destination_weights = [], []
     for record, distance in zip(corridor, distances):
-        base = record["lane_count"] * math.sqrt(max(record["length_m"], 1.0))
+        municipal = record.get("municipal") or {}
+        capacity_lanes = municipal.get("lane_count") or record["lane_count"]
+        priority_factor = {
+            "1": 1.45, "2": 1.3, "3": 1.15, "4": 1.0, "5": 0.8,
+        }.get(str(municipal.get("right_of_way_class") or ""), 1.0)
+        base = capacity_lanes * priority_factor * math.sqrt(max(record["length_m"], 1.0))
         radial = distance / furthest  # 0 at the CBD core, 1 at the corridor rim
         outward = 0.5 + inbound_bias * (radial - 0.5)
         inward = 0.5 - inbound_bias * (radial - 0.5)
@@ -884,13 +1137,13 @@ def _generate_trips(
     parts = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         "<routes>",
-        '  <vType id="car" vClass="passenger" length="4.4" minGap="2.0" accel="2.6"'
+        '  <vType id="car" vClass="passenger" emissionClass="HBEFA3/PC_G_EU4" length="4.4" minGap="2.0" accel="2.6"'
         ' decel="4.5" sigma="0.5" speedFactor="normc(1.0,0.12,0.7,1.4)"/>',
-        '  <vType id="minibus_taxi" vClass="passenger" length="5.6" minGap="1.4" accel="2.2"'
+        '  <vType id="minibus_taxi" vClass="passenger" emissionClass="HBEFA3/PC_D_EU4" length="5.6" minGap="1.4" accel="2.2"'
         ' decel="4.5" sigma="0.72" speedFactor="normc(0.96,0.15,0.65,1.35)"/>',
-        '  <vType id="delivery_van" vClass="passenger" length="6.4" minGap="2.2" accel="1.8"'
+        '  <vType id="delivery_van" vClass="passenger" emissionClass="HBEFA3/LDV_D_EU4" length="6.4" minGap="2.2" accel="1.8"'
         ' decel="4.0" sigma="0.45" speedFactor="normc(0.90,0.08,0.65,1.15)"/>',
-        '  <vType id="city_shuttle" vClass="passenger" length="10.5" minGap="2.5" accel="1.3"'
+        '  <vType id="city_shuttle" vClass="passenger" emissionClass="HBEFA3/HDV_D_EU4" length="10.5" minGap="2.5" accel="1.3"'
         ' decel="3.5" sigma="0.35" speedFactor="normc(0.82,0.06,0.60,1.0)"/>',
     ]
     for index, (depart, origin_id, destination_id, vehicle_type) in enumerate(trips):
@@ -945,6 +1198,7 @@ def _run_simulation(
     workdir: Path,
     monitored_edges: list[str] | None = None,
     traffic_control: str = DEFAULT_TRAFFIC_CONTROL,
+    edge_speed_limits: dict[str, float] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     import traci
 
@@ -984,10 +1238,16 @@ def _run_simulation(
         for edge_id in (monitored_edges or [])
     }
     network_queue_samples: list[int] = []
+    environment = {
+        "co2_mg": 0.0, "nox_mg": 0.0, "pmx_mg": 0.0, "fuel_mg": 0.0,
+        "noise_energy": 0.0, "noise_samples": 0,
+    }
     try:
         if traffic_control == "priority":
             for tls_id in traci.trafficlight.getIDList():
                 traci.trafficlight.setProgram(tls_id, "off")
+        for edge_id, speed_mps in (edge_speed_limits or {}).items():
+            traci.edge.setMaxSpeed(edge_id, speed_mps)
         for lane_id in closed_lanes:
             traci.lane.setDisallowed(lane_id, ["passenger"])
         for edge_id in closed_edges:
@@ -998,6 +1258,11 @@ def _run_simulation(
                     traci.constants.LAST_STEP_VEHICLE_NUMBER,
                     traci.constants.LAST_STEP_MEAN_SPEED,
                     traci.constants.LAST_STEP_VEHICLE_HALTING_NUMBER,
+                    traci.constants.VAR_CO2EMISSION,
+                    traci.constants.VAR_NOXEMISSION,
+                    traci.constants.VAR_PMXEMISSION,
+                    traci.constants.VAR_FUELCONSUMPTION,
+                    traci.constants.VAR_NOISEEMISSION,
                 ))
 
         step = 0
@@ -1018,6 +1283,17 @@ def _run_simulation(
                     halted = result.get(traci.constants.LAST_STEP_VEHICLE_HALTING_NUMBER, 0)
                     totals["halted"] += halted
                     queued_now += halted
+                    # Edge emission variables are instantaneous mg/s. Sampling
+                    # every three seconds and multiplying by that interval is
+                    # a compact integral over the animated simulation window.
+                    environment["co2_mg"] += max(0.0, result.get(traci.constants.VAR_CO2EMISSION, 0.0)) * TRAJECTORY_SAMPLE_INTERVAL_S
+                    environment["nox_mg"] += max(0.0, result.get(traci.constants.VAR_NOXEMISSION, 0.0)) * TRAJECTORY_SAMPLE_INTERVAL_S
+                    environment["pmx_mg"] += max(0.0, result.get(traci.constants.VAR_PMXEMISSION, 0.0)) * TRAJECTORY_SAMPLE_INTERVAL_S
+                    environment["fuel_mg"] += max(0.0, result.get(traci.constants.VAR_FUELCONSUMPTION, 0.0)) * TRAJECTORY_SAMPLE_INTERVAL_S
+                    noise_db = float(result.get(traci.constants.VAR_NOISEEMISSION, 0.0) or 0.0)
+                    if noise_db > 0.0 and vehicle_count > 0:
+                        environment["noise_energy"] += 10.0 ** (noise_db / 10.0)
+                        environment["noise_samples"] += 1
                 network_queue_samples.append(queued_now)
                 present = set(traci.vehicle.getIDList())
                 for vehicle_id in present:
@@ -1065,6 +1341,18 @@ def _run_simulation(
             "mean_halted": totals["halted"] / totals["samples"] if totals["samples"] else 0.0,
         }
         for edge_id, totals in edge_totals.items()
+    }
+    metrics["environment"] = {
+        "co2_kg": environment["co2_mg"] / 1_000_000.0,
+        "nox_g": environment["nox_mg"] / 1_000.0,
+        "pmx_g": environment["pmx_mg"] / 1_000.0,
+        "fuel_kg": environment["fuel_mg"] / 1_000_000.0,
+        "mean_active_edge_noise_db": (
+            10.0 * math.log10(environment["noise_energy"] / environment["noise_samples"])
+            if environment["noise_samples"] else 0.0
+        ),
+        "scope": "simulated_corridor_during_animation_window",
+        "model": "SUMO HBEFA3 fleet-class estimate",
     }
     return {"tracks": finished_tracks}, metrics
 
@@ -1134,6 +1422,8 @@ def _diff_metrics(baseline: dict[str, Any], closure: dict[str, Any], planned_cou
         after_distance = closure.get("total_distance_m", 0.0) / max(closure.get("trip_count", 0), 1)
         comparison = "all_completed_trips"
 
+    before_environment = baseline.get("environment") or {}
+    after_environment = closure.get("environment") or {}
     return {
         "comparison": comparison,
         "compared_trip_count": len(shared),
@@ -1150,6 +1440,17 @@ def _diff_metrics(baseline: dict[str, Any], closure: dict[str, Any], planned_cou
         "max_queue_closure": closure.get("max_queued_vehicles", 0),
         "completed_trip_ratio_baseline": baseline["trip_count"] / planned_count if planned_count else None,
         "completed_trip_ratio_closure": closure["trip_count"] / planned_count if planned_count else None,
+        "environment": {
+            key: {
+                "baseline": before_environment.get(key, 0.0),
+                "closure": after_environment.get(key, 0.0),
+                "change": after_environment.get(key, 0.0) - before_environment.get(key, 0.0),
+                "change_pct": pct_change(
+                    before_environment.get(key, 0.0), after_environment.get(key, 0.0)
+                ),
+            }
+            for key in ("co2_kg", "nox_g", "pmx_g", "fuel_kg", "mean_active_edge_noise_db")
+        },
     }
 
 
@@ -1184,6 +1485,46 @@ def _flow_comparison(
     return sorted(segments, key=lambda item: abs(item["vehicle_delta"]), reverse=True)[:160]
 
 
+def _aggregate_flow_by_street(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse edge-level flow changes into one length-weighted row per street."""
+    grouped: dict[str, dict[str, Any]] = {}
+    for segment in segments:
+        name = str(segment.get("name") or "Unnamed road").strip() or "Unnamed road"
+        key = _normalise_road_name(name) or name.upper()
+        points = segment.get("points") or []
+        length = sum(
+            math.hypot(float(b[0]) - float(a[0]), float(b[1]) - float(a[1]))
+            for a, b in zip(points, points[1:])
+        ) or 1.0
+        item = grouped.setdefault(key, {
+            "name": name,
+            "section_count": 0,
+            "length_m": 0.0,
+            "vehicle_delta_weighted": 0.0,
+            "closure_speed_weighted": 0.0,
+            "closure_halted_weighted": 0.0,
+        })
+        item["section_count"] += 1
+        item["length_m"] += length
+        item["vehicle_delta_weighted"] += float(segment.get("vehicle_delta") or 0.0) * length
+        item["closure_speed_weighted"] += float(segment.get("closure_speed_mps") or 0.0) * length
+        item["closure_halted_weighted"] += float(segment.get("closure_halted") or 0.0) * length
+
+    summary = []
+    for item in grouped.values():
+        length = max(item["length_m"], 1.0)
+        summary.append({
+            "name": item["name"],
+            "section_count": item["section_count"],
+            "modelled_length_m": round(item["length_m"], 1),
+            "vehicle_delta": round(item["vehicle_delta_weighted"] / length, 2),
+            "closure_speed_mps": round(item["closure_speed_weighted"] / length, 2),
+            "closure_halted": round(item["closure_halted_weighted"] / length, 2),
+            "aggregation": "length_weighted_mean_across_changed_sections",
+        })
+    return sorted(summary, key=lambda item: abs(item["vehicle_delta"]), reverse=True)
+
+
 def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     requested_edge_ids = payload.get("edge_ids") or []
     if not isinstance(requested_edge_ids, list):
@@ -1204,12 +1545,17 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     closure_mode = str(payload.get("closure_mode", DEFAULT_CLOSURE_MODE))
     closure_scope = str(payload.get("closure_scope", DEFAULT_CLOSURE_SCOPE))
     traffic_control = str(payload.get("traffic_control", DEFAULT_TRAFFIC_CONTROL))
+    demand_multiplier = float(payload.get("demand_multiplier", 1.0))
     if closure_mode not in CLOSURE_MODES:
         raise ValueError(f"closure_mode must be one of {list(CLOSURE_MODES)}")
     if closure_scope not in CLOSURE_SCOPES:
         raise ValueError(f"closure_scope must be one of {list(CLOSURE_SCOPES)}")
     if traffic_control not in TRAFFIC_CONTROLS:
         raise ValueError(f"traffic_control must be one of {list(TRAFFIC_CONTROLS)}")
+    if not (MIN_DEMAND_MULTIPLIER <= demand_multiplier <= MAX_DEMAND_MULTIPLIER):
+        raise ValueError(
+            f"demand_multiplier must be between {MIN_DEMAND_MULTIPLIER} and {MAX_DEMAND_MULTIPLIER}"
+        )
 
     live_ratio: float | None = None
     if scenario_key == "live":
@@ -1231,13 +1577,27 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     monitored_edge_ids = [record["id"] for record in corridor]
 
     duration_s = int(duration_min * 60)
-    vehicle_target = int(BASE_VEHICLES_PER_MIN * duration_min * scenario["demand_scale"])
+    vehicle_target = int(
+        BASE_VEHICLES_PER_MIN * duration_min * scenario["demand_scale"] * demand_multiplier
+    )
     # A stable hash (not the builtin `hash()`, which is salted per-process)
     # so the same request always gets the same synthetic demand -- otherwise
     # repeat previews would be silently non-reproducible and the "seed"
     # reported in demand_model would be meaningless.
     selection_seed = ",".join(requested_edge_ids) if requested_edge_ids else road_name
-    seed = zlib.crc32(f"{selection_seed}|{duration_min}|{scenario_key}".encode("utf-8"))
+    seed = zlib.crc32(
+        f"{selection_seed}|{duration_min}|{scenario_key}|{demand_multiplier}".encode("utf-8")
+    )
+    municipal_speed_limits, speed_limit_counts = _speed_limit_overrides(corridor)
+    speed_limit_records = [
+        record for record in corridor
+        if record.get("municipal") and record["municipal"].get("speed_limit_kph")
+    ]
+    inferred_speed_limits = [
+        record for record in speed_limit_records
+        if str(record["municipal"].get("speed_limit_source") or "").lower() != "confirmed"
+    ]
+    municipal_edge_count = sum(1 for record in corridor if record.get("municipal"))
 
     with tempfile.TemporaryDirectory(prefix="traffic_sim_") as tmp:
         workdir = Path(tmp)
@@ -1254,11 +1614,13 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             trip_file, duration_s, [], [], workdir / "baseline",
             monitored_edges=monitored_edge_ids,
             traffic_control=traffic_control,
+            edge_speed_limits=municipal_speed_limits,
         )
         closure_raw, closure_metrics = _run_simulation(
             trip_file, duration_s, closure["lane_ids"], closure["edge_ids"], workdir / "closure",
             monitored_edges=monitored_edge_ids,
             traffic_control=traffic_control,
+            edge_speed_limits=municipal_speed_limits,
         )
 
         config = load_viewer_config()
@@ -1271,6 +1633,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         baseline_metrics.get("edge_stats", {}),
         closure_metrics.get("edge_stats", {}),
     )
+    street_flow_summary = _aggregate_flow_by_street(flow_comparison)
     index = _edge_index()
     affected_records = [
         index[edge_id] for edge_id in closure["affected_edge_ids"] if edge_id in index
@@ -1295,7 +1658,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "edges_narrowed": closure["edges_narrowed"],
             "edges_skipped_single_lane": closure["edges_skipped_single_lane"],
             "scope": closure_scope,
-            "geometry_local": _lines_payload(affected_records),
+            "geometry_local": _lines_payload_with_junction_bridges(affected_records),
             "description": (
                 f"kerbside lane closed on {closure['edges_narrowed']} of "
                 f"{closure['edges_total']} "
@@ -1318,12 +1681,27 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "generator": "corridor-scoped synthetic trips, lane/length weighted, time-of-day biased",
             "scenario": scenario["key"],
             "demand_scale": scenario["demand_scale"],
+            "user_demand_multiplier": demand_multiplier,
             "inbound_bias": scenario["inbound_bias"],
             "live_average_speed_ratio": live_ratio,
             "planned_vehicle_count": planned_count,
             "fleet_mix": FLEET_MIX,
             "seed": seed,
         },
+        "road_data": {
+            "routing_topology": "OpenStreetMap via SUMO",
+            "centreline_source": "City of Cape Town TCT Road Centerline",
+            "municipal_edges_matched": municipal_edge_count,
+            "corridor_edges": len(corridor),
+            "municipal_match_ratio": municipal_edge_count / len(corridor) if corridor else 0.0,
+            "confirmed_speed_limits_applied": speed_limit_counts["confirmed"],
+            "inferred_speed_limits_applied": speed_limit_counts["inferred"],
+            "speed_limits_applied": len(municipal_speed_limits),
+            "speed_limit_records_matched": len(speed_limit_records),
+            "inferred_speed_limits_not_applied": max(0, len(inferred_speed_limits) - speed_limit_counts["inferred"]),
+            "note": "Municipal geometry and attributes enrich the routable SUMO network; confirmed and inferred speed limits are applied to both comparison runs and reported separately.",
+        },
+        "street_activity": _street_activity_summary(corridor),
         "traffic_control": traffic_control,
         "signals": (
             "network_signal_programs_enabled"
@@ -1334,6 +1712,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         "closure_metrics": closure_metrics,
         "impact": impact,
         "flow_comparison": flow_comparison,
+        "street_flow_summary": street_flow_summary,
         "playback": {
             "sample_interval_s": TRAJECTORY_SAMPLE_INTERVAL_S,
             "duration_s": duration_s,

@@ -85,6 +85,18 @@ overlapping boxes; their paint is deliberately muted and semi-transparent.
 Parking, crossings, and fine street furniture are distance-culled at district
 scale and return automatically when zooming toward street level.
 
+Municipal road geometry is simplified before export and implausible source
+widths are replaced with lane-derived widths capped at 18 m. The renderer builds
+each centreline segment as an independent terrain-following quad, then closes
+the joins with bounded round patches. A duplicate point or sharp source
+reversal therefore cannot fold a triangle strip across a block. Crossing and
+parking extents only combine parallel halves of the same named street, keeping
+paint aligned to the carriageway at junctions and around unnamed service roads.
+The complete OSM network remains the visible carriageway layer so split City
+records cannot leave gaps and OSM primary, secondary, tertiary, and local-road
+classes retain their distinct hierarchy colours. Municipal centrelines remain
+available as non-rendered semantic and traffic-enrichment records.
+
 Active rail and tram centre-lines come from `data/osm_cbd_railways.geojson`.
 The renderer places tracks below road ribbons so roads cover rails at
 crossings. Road and path ribbons use their mapped class widths, render as
@@ -124,7 +136,14 @@ traffic after rerouting. The selected road carries directional arrows, while
 closure blocks use barricades, beacons, and a floating road-closure sign.
 The SUMO network is generated with left-hand traffic for South African lane
 placement and junction behaviour. Closure results include queue, route-length,
-completion, speed, delay, and road-level diversion metrics. Rebuild the SUMO
+completion, speed, delay, and road-level diversion metrics. The representative
+fleet carries HBEFA3 emission classes, allowing both runs to compare corridor
+CO₂, NOx, PMx, fuel use, and active-road noise estimates. Nearby mapped parking
+and pedestrian crossings are reported as context only; they do not create
+invented occupancy or pedestrian demand. Completed comparisons can generate a
+print-ready A4 report with an executive finding, scenario definition, impact
+diagram, before/after tables, environmental estimates, data provenance, and
+explicit limitations; the browser print dialog can save it as PDF. Rebuild the SUMO
 network after refreshing OSM data with:
 
 ```bash
@@ -155,6 +174,28 @@ the simplified vector `heat_model_lst_c` zones on the scene ground. Heat mode
 focuses the view on white buildings, green trees, and the heat surface; the
 database `climate.heat_zones` table remains a fallback when the local product
 is absent.
+
+Wind results include stability-dependent pedestrian-height conversion,
+Lawson-LDDC-style screening categories, conditional threshold exceedance,
+and model-form uncertainty bands. The interface and API label these outputs
+**Preview**. Seasonal labels do not yet change occurrence frequencies: an
+observed station or reanalysis wind rose must be installed before annual or
+seasonal exceedance can be claimed. See `docs/WIND_VALIDATION.md` for the
+benchmark workflow, observation schema, error maps, and promotion criteria
+for a future validated mode.
+
+When `data/wind_climatology/cape_town_era5.json` is present, the Wind panel
+defaults to ERA5 forcing. Direction, season and stability select the measured
+reanalysis subset; its conditional mean speed, Weibull distribution, gust
+factor and 10–100 m shear replace the generic forcing assumptions. Rebuild the
+compact profile with `python scripts/build_era5_wind_climatology.py` after
+updating the GRIB archive.
+
+After a wind simulation completes, **Generate detailed wind report** opens a
+print-ready assessment containing the scenario definition, captured 3D view,
+reproducible pedestrian-speed field map, comfort distribution, exceedance and
+uncertainty indicators, ERA5 evidence, data-quality notes, and model
+limitations. Use **Print / Save PDF** in the report toolbar for an A4 report.
 
 ## Current conditions and mitigation planning
 

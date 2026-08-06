@@ -4,6 +4,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from scripts import city_model
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -71,8 +73,45 @@ def test_street_assets_have_road_orientation_and_honest_model_dimensions():
     assert sum("roadBearingDeg" in item["attributes"] for item in parking) > 3300
     assert all(item["attributes"]["inferredBayLengthM"] == 5.2 for item in parking)
     assert sum("roadWidthM" in item["attributes"] for item in crossings) > 375
+    oriented_street_objects = [*lights, *parking, *crossings]
+    assert all(
+        item["attributes"].get("roadWidthM", 0) <= 18.0
+        for item in oriented_street_objects
+    )
     assert sum(item["attributes"].get("crossingDesign") == "daisy" for item in crossings) == 1
     assert sum(item["attributes"].get("crossingDesign") == "coveredByDaisyInstallation" for item in crossings) == 3
     daisy = next(item for item in crossings if item["attributes"].get("crossingDesign") == "daisy")
     assert daisy["attributes"]["roadName"] == "STRAND"
     assert daisy["attributes"]["implementedBy"] == "Mission for Inner City Cape Town"
+
+
+def test_municipal_road_ribbons_have_sanitized_widths_and_simplified_lines():
+    model = json.loads((ROOT / "public/assets/city_model.json").read_text(encoding="utf-8"))
+    roads = [
+        item for item in model["cityObjects"].values()
+        if "municipalRoads" in item["sources"] and item["type"] == "Road"
+    ]
+    assert roads
+    assert all(2.5 <= item["geometry"]["nominalWidthM"] <= 18.0 for item in roads)
+    assert all(len(item["geometry"]["centerline"]) >= 2 for item in roads)
+    assert max(len(item["geometry"]["centerline"]) for item in roads) < 180
+
+
+def test_osm_visible_network_retains_continuous_coloured_road_hierarchy():
+    model = json.loads((ROOT / "public/assets/city_model.json").read_text(encoding="utf-8"))
+    osm_roads = [
+        item for item in model["cityObjects"].values()
+        if "roads" in item["sources"] and item["geometry"].get("centerline")
+    ]
+    classes = Counter(item["attributes"].get("renderClass") for item in osm_roads)
+    assert classes["primary"] > 50
+    assert classes["secondary"] > 100
+    assert classes["tertiary"] > 50
+    assert classes["residential"] > 200
+
+
+def test_municipal_lane_count_handles_transition_values():
+    assert city_model._road_lane_count("2-3") == 3
+    assert city_model._road_lane_count("1,2-3,2") == 3
+    assert city_model._road_lane_count(None) == 1
+    assert city_model._road_lane_count("99") == 8

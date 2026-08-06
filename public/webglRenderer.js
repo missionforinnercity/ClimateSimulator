@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.min.js';
-import { sceneFromCityModel } from './semanticCityModel.js?v=2';
+import { sceneFromCityModel } from './semanticCityModel.js?v=3';
 
 const COLORS = {
   background: 0x1b2125,
@@ -464,52 +464,52 @@ export async function startWebGLScene(canvas, status) {
     const buildRibbon = (roads, styleIndex, outer = false) => {
       const vertices = [];
       const indices = [];
+      const pushVertex = (x, z, elevationOffset) => {
+        const index = vertices.length / 3;
+        vertices.push(x, terrainHeightAt(x, z) + elevationOffset, z);
+        return index;
+      };
+      const addDisc = (x, z, radius, elevationOffset) => {
+        const center = pushVertex(x, z, elevationOffset);
+        const segments = 12;
+        for (let segment = 0; segment < segments; segment += 1) {
+          const angle = segment / segments * Math.PI * 2;
+          pushVertex(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius, elevationOffset);
+        }
+        for (let segment = 0; segment < segments; segment += 1) {
+          indices.push(center, center + 1 + segment, center + 1 + ((segment + 1) % segments));
+        }
+      };
       for (const road of roads) {
         const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.24 : 0.48) : 0);
         const elevationOffset = classOffsets[styleIndex] + (outer ? -0.10 : 0);
-        const base = vertices.length / 3;
-        for (let index = 0; index < road.points.length; index += 1) {
-          const [x, z] = road.points[index];
-          const previous = road.points[Math.max(0, index - 1)];
-          const next = road.points[Math.min(road.points.length - 1, index + 1)];
-          const dx = next[0] - previous[0];
-          const dz = next[1] - previous[1];
-          const length = Math.hypot(dx, dz) || 1;
+        const cleanPoints = road.points.filter(([x, z], index, points) => (
+          Number.isFinite(x) && Number.isFinite(z)
+          && (!index || Math.hypot(x - points[index - 1][0], z - points[index - 1][1]) > 0.05)
+        ));
+        let segmentCount = 0;
+        for (let index = 0; index < cleanPoints.length - 1; index += 1) {
+          const [x1, z1] = cleanPoints[index];
+          const [x2, z2] = cleanPoints[index + 1];
+          const dx = x2 - x1;
+          const dz = z2 - z1;
+          const length = Math.hypot(dx, dz);
+          if (length <= 0.05) continue;
           const nx = -dz / length * halfWidth;
           const nz = dx / length * halfWidth;
-          const leftX = x + nx;
-          const leftZ = z + nz;
-          const rightX = x - nx;
-          const rightZ = z - nz;
-          // Sample both ribbon edges. A centreline-only elevation lets the
-          // downhill edge enter the terrain and produces the striped tearing
-          // visible on wide ramps.
-          const leftY = terrainHeightAt(leftX, leftZ) + elevationOffset;
-          const rightY = terrainHeightAt(rightX, rightZ) + elevationOffset;
-          vertices.push(leftX, leftY, leftZ, rightX, rightY, rightZ);
-          if (index > 0) {
-            const left = base + (index - 1) * 2;
-            const right = left + 1;
-            const nextLeft = base + index * 2;
-            const nextRight = nextLeft + 1;
-            indices.push(left, right, nextLeft, right, nextRight, nextLeft);
-          }
+          const a = pushVertex(x1 + nx, z1 + nz, elevationOffset);
+          const b = pushVertex(x1 - nx, z1 - nz, elevationOffset);
+          const c = pushVertex(x2 + nx, z2 + nz, elevationOffset);
+          const d = pushVertex(x2 - nx, z2 - nz, elevationOffset);
+          indices.push(a, b, c, b, d, c);
+          segmentCount += 1;
         }
-        // OSM ways commonly split at intersections. Round endpoint caps close
-        // the tiny holes between adjoining ways and remove pointed fragments.
-        for (const [x, z] of [road.points[0], road.points[road.points.length - 1]]) {
-          const center = vertices.length / 3;
-          vertices.push(x, terrainHeightAt(x, z) + elevationOffset, z);
-          const segments = 10;
-          for (let segment = 0; segment < segments; segment += 1) {
-            const angle = segment / segments * Math.PI * 2;
-            const edgeX = x + Math.cos(angle) * halfWidth;
-            const edgeZ = z + Math.sin(angle) * halfWidth;
-            vertices.push(edgeX, terrainHeightAt(edgeX, edgeZ) + elevationOffset, edgeZ);
-          }
-          for (let segment = 0; segment < segments; segment += 1) {
-            indices.push(center, center + 1 + segment, center + 1 + ((segment + 1) % segments));
-          }
+        if (segmentCount) {
+          // A strip based on averaged vertex normals can fold over itself at
+          // a hairpin or duplicate survey vertex, producing block-sized
+          // triangles. Independent quads plus bounded round joins cannot
+          // escape the road width and also close split-centreline junctions.
+          for (const [x, z] of cleanPoints) addDisc(x, z, halfWidth, elevationOffset);
         }
       }
       const geometry = new THREE.BufferGeometry();
@@ -1219,6 +1219,10 @@ export async function startWebGLScene(canvas, status) {
   const windToggle = document.querySelector('#wind-toggle');
   const windDirection = document.querySelector('#wind-direction');
   const windSeason = document.querySelector('#wind-season');
+  const windStability = document.querySelector('#wind-stability');
+  const windHeight = document.querySelector('#wind-height');
+  const windExceedanceThreshold = document.querySelector('#wind-exceedance-threshold');
+  const windForcingMode = document.querySelector('#wind-forcing-mode');
   const windSpeed = document.querySelector('#wind-speed');
   const windSize = document.querySelector('#wind-size');
   const windSpeedValue = document.querySelector('#wind-speed-value');
@@ -1257,13 +1261,21 @@ export async function startWebGLScene(canvas, status) {
   const trafficToggle = document.querySelector('#traffic-toggle');
   const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
   const trafficFreshness = document.querySelector('#traffic-freshness');
+  const trafficRefresh = document.querySelector('#traffic-refresh');
   const trafficLiveStatus = document.querySelector('#traffic-live-status');
   const trafficLiveMetrics = document.querySelector('#traffic-live-metrics');
   const trafficDuration = document.querySelector('#traffic-duration');
   const trafficDurationValue = document.querySelector('#traffic-duration-value');
   const trafficScenario = document.querySelector('#traffic-scenario');
+  const trafficDemand = document.querySelector('#traffic-demand');
   const trafficDrawLane = document.querySelector('#traffic-draw-lane');
   const trafficDrawRoad = document.querySelector('#traffic-draw-road');
+  const trafficDrawPopup = document.querySelector('#traffic-draw-popup');
+  const trafficDrawPopupTitle = document.querySelector('#traffic-draw-popup-title');
+  const trafficDrawPopupStatus = document.querySelector('#traffic-draw-popup-status');
+  const trafficDrawPopupCount = document.querySelector('#traffic-draw-popup-count');
+  const trafficDrawConfirm = document.querySelector('#traffic-draw-confirm');
+  const trafficDrawCancel = document.querySelector('#traffic-draw-cancel');
   const trafficSelectionStatus = document.querySelector('#traffic-selection-status');
   const trafficControlModel = document.querySelector('#traffic-control-model');
   const trafficRun = document.querySelector('#traffic-run');
@@ -1271,6 +1283,12 @@ export async function startWebGLScene(canvas, status) {
   const trafficStatus = document.querySelector('#traffic-status');
   const trafficCompare = document.querySelector('#traffic-compare');
   const trafficResults = document.querySelector('#traffic-results');
+  const trafficImpactSummary = document.querySelector('#traffic-impact-summary');
+  const trafficReport = document.querySelector('#traffic-report');
+  const trafficReportDialog = document.querySelector('#traffic-report-dialog');
+  const trafficReportDocument = document.querySelector('#traffic-report-document');
+  const trafficReportClose = document.querySelector('#traffic-report-close');
+  const trafficReportPrint = document.querySelector('#traffic-report-print');
   const trafficOnScreen = document.querySelector('#traffic-onscreen');
   let trafficOnScreenShownAt = 0;
   const query = new URLSearchParams(location.search);
@@ -1289,6 +1307,10 @@ export async function startWebGLScene(canvas, status) {
     size: Number(windSize?.value) || 250,
     direction: Number(windDirection?.value) || 135,
     season: windSeason?.value || 'annual',
+    stability: windStability?.value || 'neutral',
+    height: Number(windHeight?.value) || 2,
+    exceedanceThreshold: Number(windExceedanceThreshold?.value) || 6,
+    forcingMode: windForcingMode?.value || 'era5_climatology',
     speed: (Number(windSpeed?.value) || 36) / 3.6,
     referenceHeight: 2,
     field: null,
@@ -1340,7 +1362,7 @@ export async function startWebGLScene(canvas, status) {
     stroking: false,
     pointerId: null,
     lastScreen: null,
-    snappedPoints: [],
+    strokePoints: [],
     selectedEdgeIds: [],
   };
   const streetViewState = { placing: false, point: null };
@@ -2517,21 +2539,28 @@ export async function startWebGLScene(canvas, status) {
       trafficState.snapGrid.get(key).push(segment);
     };
     for (const edge of edges) {
-      for (let index = 0; index < (edge.points?.length || 0) - 1; index += 1) {
-        const a = edge.points[index], b = edge.points[index + 1];
-        const segment = { edge, a, b };
-        const minColumn = Math.floor((Math.min(a[0], b[0]) - radius) / cellSize);
-        const maxColumn = Math.floor((Math.max(a[0], b[0]) + radius) / cellSize);
-        const minRow = Math.floor((Math.min(a[1], b[1]) - radius) / cellSize);
-        const maxRow = Math.floor((Math.max(a[1], b[1]) + radius) / cellSize);
-        for (let column = minColumn; column <= maxColumn; column += 1) {
-          for (let row = minRow; row <= maxRow; row += 1) add(column, row, segment);
+      // The municipal centreline is the primary snap path. SUMO's routable
+      // edge is also indexed as a junction bridge because surveyed centreline
+      // segments can stop a few metres short of the intersection node.
+      const snapPaths = [edge.snap_points, edge.points]
+        .filter(points => points?.length >= 2);
+      for (const snapPoints of snapPaths) {
+        for (let index = 0; index < snapPoints.length - 1; index += 1) {
+          const a = snapPoints[index], b = snapPoints[index + 1];
+          const segment = { edge, a, b };
+          const minColumn = Math.floor((Math.min(a[0], b[0]) - radius) / cellSize);
+          const maxColumn = Math.floor((Math.max(a[0], b[0]) + radius) / cellSize);
+          const minRow = Math.floor((Math.min(a[1], b[1]) - radius) / cellSize);
+          const maxRow = Math.floor((Math.max(a[1], b[1]) + radius) / cellSize);
+          for (let column = minColumn; column <= maxColumn; column += 1) {
+            for (let row = minRow; row <= maxRow; row += 1) add(column, row, segment);
+          }
         }
       }
     }
   }
 
-  function snapToTrafficRoad(x, z) {
+  function snapToTrafficRoad(x, z, preferredName = null, previousEdgeId = null) {
     const cellSize = trafficState.snapCellSize;
     const column = Math.floor(x / cellSize), row = Math.floor(z / cellSize);
     const candidates = trafficState.snapGrid.get(`${column}:${row}`) || [];
@@ -2544,11 +2573,80 @@ export async function startWebGLScene(canvas, status) {
       const snappedX = candidate.a[0] + dx * ratio;
       const snappedZ = candidate.a[1] + dz * ratio;
       const distance = Math.hypot(x - snappedX, z - snappedZ);
-      if (!nearest || distance < nearest.distance) {
-        nearest = { x: snappedX, z: snappedZ, distance, edge: candidate.edge };
+      // Keep a freehand stroke on the road it is already following when it
+      // passes through a junction. At a corner, the perpendicular road is
+      // often fractionally closer than the intended carriageway; name and
+      // continuity penalties make that choice stable without disabling turns.
+      const sameName = preferredName && trafficEdgeName(candidate.edge) === preferredName;
+      const sameEdge = previousEdgeId && candidate.edge.id === previousEdgeId;
+      const score = distance + (preferredName && !sameName ? 7 : 0) - (sameEdge ? 2 : 0);
+      if (!nearest || score < nearest.score) {
+        nearest = { x: snappedX, z: snappedZ, distance, score, edge: candidate.edge };
       }
     }
     return nearest && nearest.distance <= trafficState.snapRadius ? nearest : null;
+  }
+
+  function snapToSelectedTrafficRoad(x, z) {
+    const selected = new Set(trafficState.selectedEdgeIds);
+    if (!selected.size) return null;
+    const cellSize = trafficState.snapCellSize;
+    const column = Math.floor(x / cellSize), row = Math.floor(z / cellSize);
+    let nearest = null;
+    // Search neighbouring cells as well as the pointer cell so a right-click
+    // near a grid boundary still removes the intended selected section.
+    for (let dxCell = -1; dxCell <= 1; dxCell += 1) {
+      for (let dzCell = -1; dzCell <= 1; dzCell += 1) {
+        const candidates = trafficState.snapGrid.get(`${column + dxCell}:${row + dzCell}`) || [];
+        for (const candidate of candidates) {
+          if (!selected.has(candidate.edge.id)) continue;
+          const dx = candidate.b[0] - candidate.a[0];
+          const dz = candidate.b[1] - candidate.a[1];
+          const denominator = dx * dx + dz * dz || 1;
+          const ratio = clamp(((x - candidate.a[0]) * dx + (z - candidate.a[1]) * dz) / denominator, 0, 1);
+          const snappedX = candidate.a[0] + dx * ratio;
+          const snappedZ = candidate.a[1] + dz * ratio;
+          const distance = Math.hypot(x - snappedX, z - snappedZ);
+          if (!nearest || distance < nearest.distance) {
+            nearest = { distance, edge: candidate.edge };
+          }
+        }
+      }
+    }
+    return nearest && nearest.distance <= trafficState.snapRadius ? nearest : null;
+  }
+
+  function removeTrafficSelectionAt(event) {
+    if (trafficState.stroking || !trafficState.selectedEdgeIds.length) return false;
+    const point = pointerGround(event);
+    if (!point) return false;
+    const nearest = snapToSelectedTrafficRoad(point.x, point.z);
+    if (!nearest) return false;
+    const removedId = nearest.edge.id;
+    trafficState.selectedEdgeIds = trafficState.selectedEdgeIds.filter(edgeId => edgeId !== removedId);
+    if (trafficState.result) invalidateTrafficResult('Selection changed · run the comparison again.');
+    updateTrafficDrawing();
+    const count = trafficState.selectedEdgeIds.length;
+    if (trafficSelectionStatus) {
+      trafficSelectionStatus.textContent = count
+        ? `Removed 1 road section · ${count} ${count === 1 ? 'section' : 'sections'} remain selected.`
+        : 'Selection cleared · draw a new closure to begin.';
+    }
+    if (trafficStatus) trafficStatus.textContent = trafficState.drawing
+      ? (count ? `Editing ${trafficSelectionLabel()} · confirm when finished.` : 'Draw at least one road section, then confirm.')
+      : (count ? `${trafficSelectionLabel()} selected · adjust the scenario or simulate the closure.` : 'Draw a closure to begin.');
+    if (trafficRun) trafficRun.disabled = !count;
+    updateTrafficDrawPopup(count
+      ? 'Section removed. Continue drawing or confirm the selection.'
+      : 'Selection is empty. Draw another freehand stroke to continue.');
+    if (trafficState.drawing && trafficRun) trafficRun.disabled = true;
+    return true;
+  }
+
+  function trafficEdgeName(edge) {
+    return edge?.name && edge.name !== 'Unnamed road'
+      ? edge.name
+      : edge?.official?.name || `edge:${edge?.id || 'unknown'}`;
   }
 
   function trafficSelectionLabel() {
@@ -2556,6 +2654,73 @@ export async function startWebGLScene(canvas, status) {
       .map(edgeId => trafficState.edgesById.get(edgeId)?.name)
       .filter(name => name && name !== 'Unnamed road'))];
     return names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '') || 'Selected road section';
+  }
+
+  function trafficSelectionDetails() {
+    const selected = trafficState.selectedEdgeIds
+      .map(edgeId => trafficState.edgesById.get(edgeId))
+      .filter(Boolean);
+    const official = selected.map(edge => edge.official).filter(Boolean);
+    if (!official.length) return 'SUMO/OSM road attributes';
+    const lanes = [...new Set(official.map(item => Number(item.lanes)).filter(Number.isFinite))];
+    const speeds = [...new Set(official.map(item => Number(item.speed_limit_kph)).filter(Number.isFinite))];
+    const classes = [...new Set(official.map(item => item.road_class).filter(Boolean))];
+    const details = [];
+    if (lanes.length === 1) details.push(`${lanes[0]} municipal ${lanes[0] === 1 ? 'lane' : 'lanes'}`);
+    else if (lanes.length > 1) details.push(`${Math.min(...lanes)}–${Math.max(...lanes)} municipal lanes`);
+    if (speeds.length === 1) details.push(`${speeds[0]} km/h ${official.some(item => item.speed_limit_source === 'Confirmed') ? 'confirmed' : 'mapped'} limit`);
+    if (classes.length === 1) details.push(classes[0]);
+    if (official.some(item => item.bus_route)) details.push('bus route');
+    details.push(`${official.length}/${selected.length} sections matched to City road-centre data`);
+    return details.join(' · ');
+  }
+
+  function trafficJunctionBridges(edges, maximumGap = 48) {
+    const bridges = [];
+    const seen = new Set();
+    const endpoint = (points, atStart) => {
+      const point = atStart ? points[0] : points.at(-1);
+      const neighbour = atStart ? points[1] : points.at(-2);
+      return { point, neighbour };
+    };
+    for (let firstIndex = 0; firstIndex < edges.length; firstIndex += 1) {
+      const first = edges[firstIndex];
+      if (!first?.points || first.points.length < 2) continue;
+      for (let secondIndex = firstIndex + 1; secondIndex < edges.length; secondIndex += 1) {
+        const second = edges[secondIndex];
+        if (!second?.points || second.points.length < 2) continue;
+        if (trafficEdgeName(first) !== trafficEdgeName(second)) continue;
+        let best = null;
+        for (const firstAtStart of [true, false]) {
+          for (const secondAtStart of [true, false]) {
+            const a = endpoint(first.points, firstAtStart);
+            const b = endpoint(second.points, secondAtStart);
+            const gap = Math.hypot(b.point[0] - a.point[0], b.point[1] - a.point[1]);
+            if (gap < 0.75 || gap > maximumGap) continue;
+            const ax = a.point[0] - a.neighbour[0], az = a.point[1] - a.neighbour[1];
+            const bx = b.neighbour[0] - b.point[0], bz = b.neighbour[1] - b.point[1];
+            const lengths = Math.hypot(ax, az) * Math.hypot(bx, bz) || 1;
+            const continuation = (ax * bx + az * bz) / lengths;
+            const gapAlignment = (
+              ((b.point[0] - a.point[0]) * ax + (b.point[1] - a.point[1]) * az)
+              / (gap * (Math.hypot(ax, az) || 1))
+            );
+            // Only bridge a reasonably straight continuation. This prevents
+            // the selected road from painting across the perpendicular road.
+            if (continuation < 0.45 || gapAlignment < 0.55) continue;
+            const score = gap + (1 - continuation) * 18;
+            if (!best || score < best.score) best = { a: a.point, b: b.point, score };
+          }
+        }
+        if (!best) continue;
+        const key = [first.id, second.id].sort().join('|');
+        if (!seen.has(key)) {
+          seen.add(key);
+          bridges.push([best.a, best.b]);
+        }
+      }
+    }
+    return bridges;
   }
 
   function updateTrafficDrawing() {
@@ -2569,12 +2734,26 @@ export async function startWebGLScene(canvas, status) {
       if (halo) trafficDrawingGroup.add(halo);
       if (core) trafficDrawingGroup.add(core);
     }
+    if (trafficState.drawing && trafficState.strokePoints.length >= 2) {
+      const preview = statusRibbon(trafficState.strokePoints, 2.2, 0x5be6c8, 0.82, 0.91, true);
+      if (preview) trafficDrawingGroup.add(preview);
+    }
     const selectedEdges = trafficState.selectedEdgeIds
       .map(edgeId => trafficState.edgesById.get(edgeId))
       .filter(Boolean);
+    const junctionBridges = trafficJunctionBridges(selectedEdges);
+    for (const points of junctionBridges) {
+      const bridgeHalo = statusRibbon(points, fullClosure ? 11 : 7, fullClosure ? 0xff352f : 0xff9825, 0.28, 0.82, true);
+      const bridgeCore = statusRibbon(points, fullClosure ? 6 : 3.2, fullClosure ? 0xff554d : 0xffc24a, 0.94, 0.87, true);
+      if (bridgeHalo) trafficDrawingGroup.add(bridgeHalo);
+      if (bridgeCore) trafficDrawingGroup.add(bridgeCore);
+    }
     buildSelectedRoadDirections({
       name: trafficSelectionLabel(),
-      direction_segments: selectedEdges.map(edge => ({ points: edge.points, direction: 'oneway' })),
+      direction_segments: [
+        ...selectedEdges.map(edge => ({ points: edge.points, direction: 'oneway' })),
+        ...junctionBridges.map(points => ({ points, direction: 'oneway' })),
+      ],
     });
     trafficDrawingGroup.visible = trafficState.sceneActive;
     requestRender();
@@ -2586,6 +2765,37 @@ export async function startWebGLScene(canvas, status) {
     clearStatusGroup(scenarioStatusGroup);
     if (trafficCars) trafficCars.count = 0;
     if (trafficResults) trafficResults.hidden = true;
+    if (trafficImpactSummary) trafficImpactSummary.hidden = true;
+    if (trafficReport) trafficReport.disabled = true;
+    if (trafficCompare) {
+      trafficCompare.value = 'baseline';
+      trafficCompare.disabled = true;
+    }
+  }
+
+  function invalidateTrafficResult(message) {
+    if (!trafficState.result) return;
+    resetTrafficResult();
+    updateTrafficDrawing();
+    if (trafficRun) trafficRun.disabled = !trafficState.selectedEdgeIds.length;
+    if (trafficStatus) trafficStatus.textContent = message;
+  }
+
+  function resetTrafficToolLabels() {
+    if (trafficDrawLane) trafficDrawLane.innerHTML = '<span>▥</span> Lane closure';
+    if (trafficDrawRoad) trafficDrawRoad.innerHTML = '<span>⛔</span> Street closure';
+  }
+
+  function updateTrafficDrawPopup(message = null) {
+    const count = trafficState.selectedEdgeIds.length;
+    if (trafficDrawPopupTitle) {
+      trafficDrawPopupTitle.textContent = trafficState.closureMode === 'full'
+        ? 'Edit street closure'
+        : 'Edit lane closure';
+    }
+    if (trafficDrawPopupCount) trafficDrawPopupCount.textContent = String(count);
+    if (trafficDrawConfirm) trafficDrawConfirm.disabled = count === 0 || trafficState.stroking;
+    if (trafficDrawPopupStatus && message) trafficDrawPopupStatus.textContent = message;
   }
 
   function clearTrafficSelection() {
@@ -2593,17 +2803,17 @@ export async function startWebGLScene(canvas, status) {
     trafficState.stroking = false;
     trafficState.pointerId = null;
     trafficState.lastScreen = null;
-    trafficState.snappedPoints = [];
+    trafficState.strokePoints = [];
     trafficState.selectedEdgeIds = [];
+    if (trafficDrawPopup) trafficDrawPopup.hidden = true;
     resetTrafficResult();
     clearStatusGroup(trafficDrawingGroup);
     clearStatusGroup(selectedRoadDirectionGroup);
     trafficDrawLane?.classList.remove('active');
     trafficDrawRoad?.classList.remove('active');
-    if (trafficDrawLane) trafficDrawLane.textContent = 'Draw lane closure';
-    if (trafficDrawRoad) trafficDrawRoad.textContent = 'Draw street closure';
+    resetTrafficToolLabels();
     if (trafficRun) trafficRun.disabled = true;
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'Choose a closure tool, then drag along a road. The pen will snap to the road network.';
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'Choose a closure tool. Add one or more freehand strokes, right-click sections to remove them, then confirm in the popup.';
     if (trafficStatus) trafficStatus.textContent = 'Draw a closure to begin.';
     canvas.style.cursor = '';
     requestRender();
@@ -2622,33 +2832,86 @@ export async function startWebGLScene(canvas, status) {
     windMoveDomain?.classList.remove('active');
     trafficState.closureMode = mode;
     trafficState.drawing = true;
+    if (trafficDrawPopup) trafficDrawPopup.hidden = false;
+    if (trafficDrawPopupStatus) {
+      trafficDrawPopupStatus.textContent = 'Draw a freehand stroke, lift your pointer, then draw again anywhere. Confirm when the selection is complete.';
+    }
+    updateTrafficDrawPopup();
     const button = mode === 'full' ? trafficDrawRoad : trafficDrawLane;
     button?.classList.add('active');
     if (button) button.textContent = mode === 'full' ? 'Drawing street…' : 'Drawing lane…';
     if (trafficSelectionStatus) {
-      trafficSelectionStatus.textContent = `Drawing ${mode === 'full' ? 'street closure' : 'lane closure'} · drag along the road and release to finish.`;
+      trafficSelectionStatus.textContent = `Freehand ${mode === 'full' ? 'street closure' : 'lane closure'} · draw over the road, then release to snap.`;
     }
     canvas.style.cursor = 'crosshair';
   }
 
-  function finishTrafficDrawing() {
-    trafficState.drawing = false;
+  function commitTrafficStroke() {
     trafficState.stroking = false;
     trafficState.pointerId = null;
-    trafficDrawLane?.classList.remove('active');
-    trafficDrawRoad?.classList.remove('active');
-    if (trafficDrawLane) trafficDrawLane.textContent = 'Draw lane closure';
-    if (trafficDrawRoad) trafficDrawRoad.textContent = 'Draw street closure';
-    canvas.style.cursor = '';
+    // Match only after release. This keeps the stroke responsive and avoids
+    // selecting a crossing edge merely because the pointer grazed a junction.
+    const countBefore = trafficState.selectedEdgeIds.length;
+    let preferredName = null;
+    let previousEdgeId = null;
+    const accept = (point) => {
+      const snapped = snapToTrafficRoad(point[0], point[1], preferredName, previousEdgeId);
+      if (!snapped) return;
+      if (!preferredName) preferredName = trafficEdgeName(snapped.edge);
+      previousEdgeId = snapped.edge.id;
+      if (!trafficState.selectedEdgeIds.includes(snapped.edge.id)) {
+        trafficState.selectedEdgeIds.push(snapped.edge.id);
+      }
+    };
+    for (let index = 0; index < trafficState.strokePoints.length; index += 1) {
+      const point = trafficState.strokePoints[index];
+      if (index === 0) {
+        accept(point);
+        continue;
+      }
+      const previous = trafficState.strokePoints[index - 1];
+      const distance = Math.hypot(point[0] - previous[0], point[1] - previous[1]);
+      const sampleCount = Math.max(1, Math.ceil(distance / 8));
+      for (let sample = 1; sample <= sampleCount; sample += 1) {
+        const ratio = sample / sampleCount;
+        accept([
+          previous[0] + (point[0] - previous[0]) * ratio,
+          previous[1] + (point[1] - previous[1]) * ratio,
+        ]);
+      }
+    }
     const count = trafficState.selectedEdgeIds.length;
-    if (!count) {
-      if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'No road was close enough to the stroke. Try again directly over a road.';
-      if (trafficRun) trafficRun.disabled = true;
+    const added = count - countBefore;
+    trafficState.strokePoints = [];
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = added
+      ? `${added} ${added === 1 ? 'section' : 'sections'} added · ${count} total selected. Draw another stroke, right-click to remove, or confirm.`
+      : 'That stroke did not add a new road section. Draw closer to a road centreline or confirm the current selection.';
+    if (trafficStatus) trafficStatus.textContent = count
+      ? `Editing ${trafficSelectionLabel()} · selection is not confirmed yet.`
+      : 'Draw at least one road section, then confirm the selection.';
+    if (trafficRun) trafficRun.disabled = true;
+    updateTrafficDrawPopup(added
+      ? `${added} ${added === 1 ? 'section was' : 'sections were'} added. You can lift and draw another stroke anywhere.`
+      : 'No new section was added. Try another stroke or confirm the current selection.');
+    updateTrafficDrawing();
+  }
+
+  function confirmTrafficDrawing() {
+    if (trafficState.stroking || !trafficState.selectedEdgeIds.length) {
+      updateTrafficDrawPopup('Add at least one road section before confirming.');
       return;
     }
+    trafficState.drawing = false;
+    trafficState.strokePoints = [];
+    trafficDrawLane?.classList.remove('active');
+    trafficDrawRoad?.classList.remove('active');
+    resetTrafficToolLabels();
+    if (trafficDrawPopup) trafficDrawPopup.hidden = true;
+    canvas.style.cursor = '';
+    const count = trafficState.selectedEdgeIds.length;
     const label = trafficSelectionLabel();
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${count} snapped road ${count === 1 ? 'section' : 'sections'} · ${label}.`;
-    if (trafficStatus) trafficStatus.textContent = `${label} selected · adjust the scenario or simulate the closure.`;
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${count} confirmed road ${count === 1 ? 'section' : 'sections'} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.`;
+    if (trafficStatus) trafficStatus.textContent = `${label} confirmed · adjust the scenario or run the comparison.`;
     if (trafficRun) trafficRun.disabled = false;
     updateTrafficDrawing();
   }
@@ -2675,7 +2938,8 @@ export async function startWebGLScene(canvas, status) {
       if (trafficDrawLane) trafficDrawLane.disabled = !trafficState.networkEdges.length;
       if (trafficDrawRoad) trafficDrawRoad.disabled = !trafficState.networkEdges.length;
       if (trafficState.networkEdges.length && trafficStatus) {
-        trafficStatus.textContent = `${trafficState.networkEdges.length} road sections ready for snapping.`;
+        const matched = payload.road_data?.municipal_matched_edges || 0;
+        trafficStatus.textContent = `${trafficState.networkEdges.length} road sections ready · ${matched} matched to City road-centre data.`;
       }
     } catch (error) {
       if (trafficStatus) trafficStatus.textContent = `Road list unavailable (${error.message})`;
@@ -2685,6 +2949,7 @@ export async function startWebGLScene(canvas, status) {
   async function loadTrafficLive(force) {
     if (!trafficLiveStatus) return;
     trafficLiveStatus.textContent = force ? 'Refreshing live traffic…' : 'Loading live traffic…';
+    if (trafficRefresh) trafficRefresh.disabled = true;
     try {
       const response = await fetch(`${windApi}/traffic/live${force ? '?refresh=true' : ''}`);
       const payload = await response.json();
@@ -2706,8 +2971,13 @@ export async function startWebGLScene(canvas, status) {
           <span><b>${Math.round((payload.average_speed_ratio || 0) * 100)}%</b>Avg speed vs free-flow</span>
           <span><b>${level}</b>Congestion level</span>`;
       }
+      if (force && trafficScenario?.value === 'live') {
+        invalidateTrafficResult('Live conditions changed · run the comparison again.');
+      }
     } catch (error) {
       trafficLiveStatus.textContent = `Live traffic unavailable (${error.message})`;
+    } finally {
+      if (trafficRefresh) trafficRefresh.disabled = false;
     }
   }
 
@@ -2888,8 +3158,207 @@ export async function startWebGLScene(canvas, status) {
       trafficOnScreenShownAt = now;
       const minute = Math.floor(trafficState.simClock / 60);
       const second = String(Math.floor(trafficState.simClock % 60)).padStart(2, '0');
-      trafficOnScreen.textContent = `${count} cars · ${minute}:${second}`;
+      trafficOnScreen.textContent = `${count} vehicles · ${minute}:${second}`;
     }
+  }
+
+  function trafficImpactAssessment(impact = {}) {
+    const durationChange = Number(impact.mean_duration_change_pct) || 0;
+    const completionDrop = Math.max(0,
+      ((impact.completed_trip_ratio_baseline ?? 0) - (impact.completed_trip_ratio_closure ?? 0)) * 100);
+    const severity = durationChange >= 20 || completionDrop >= 10
+      ? 'high'
+      : durationChange < 5 && completionDrop < 3 ? 'low' : 'moderate';
+    const headline = severity === 'high' ? 'High disruption in this scenario'
+      : severity === 'low' ? 'Limited network impact in this scenario'
+        : 'Moderate disruption in this scenario';
+    return { durationChange, completionDrop, severity, headline };
+  }
+
+  const reportEscape = value => String(value ?? '—').replace(/[&<>"]/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
+  })[character]);
+
+  function reportNumber(value, digits = 1, unit = '') {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '—';
+    return `${numeric.toLocaleString('en-ZA', { minimumFractionDigits: digits, maximumFractionDigits: digits })}${unit}`;
+  }
+
+  function reportChange(value, digits = 1, unit = '', inverse = false) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '<span>—</span>';
+    const className = (inverse ? numeric > 0 : numeric < 0) ? 'report-change-negative'
+      : numeric === 0 ? '' : 'report-change-positive';
+    const sign = numeric > 0 ? '+' : '';
+    return `<span class="${className}">${sign}${reportNumber(numeric, digits, unit)}</span>`;
+  }
+
+  function trafficReportMap(payload) {
+    const flows = (payload.flow_comparison || []).slice(0, 100);
+    const closures = payload.closure?.geometry_local || [];
+    const lines = [...flows.map(item => item.points), ...closures].filter(points => points?.length >= 2);
+    const allPoints = lines.flat();
+    if (!allPoints.length) return '<div class="report-note">No road geometry was available for the report diagram.</div>';
+    const xs = allPoints.map(point => Number(point[0]));
+    const zs = allPoints.map(point => Number(point[1]));
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    const width = 820, height = 300, padding = 24;
+    const scale = Math.min((width - padding * 2) / Math.max(maxX - minX, 1), (height - padding * 2) / Math.max(maxZ - minZ, 1));
+    const project = point => `${(padding + (point[0] - minX) * scale).toFixed(1)},${(height - padding - (point[1] - minZ) * scale).toFixed(1)}`;
+    const flowLines = flows.map(segment => {
+      const delta = Number(segment.vehicle_delta) || 0;
+      const color = delta >= 0 ? '#ef9b38' : '#4fc5ed';
+      const lineWidth = Math.min(6, 1.1 + Math.abs(delta) * 0.8);
+      return `<polyline points="${segment.points.map(project).join(' ')}" fill="none" stroke="${color}" stroke-width="${lineWidth.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>`;
+    }).join('');
+    const closureLines = closures.map(points => `<polyline points="${points.map(project).join(' ')}" fill="none" stroke="#ff5149" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${points.map(project).join(' ')}" fill="none" stroke="#fff3d5" stroke-width="2" stroke-dasharray="5 5"/>`).join('');
+    return `<div class="report-map">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Road closure and changed traffic flow diagram">
+        <rect width="${width}" height="${height}" rx="4" fill="#17201d"/>
+        <g>${flowLines}${closureLines}</g>
+      </svg>
+      <div class="report-map-caption">
+        <span><i style="background:#ff5149"></i>Closure</span>
+        <span><i style="background:#ef9b38"></i>More traffic</span>
+        <span><i style="background:#4fc5ed"></i>Less traffic</span>
+      </div>
+    </div>`;
+  }
+
+  function buildTrafficReport() {
+    const payload = trafficState.result;
+    if (!payload || !trafficReportDocument) return;
+    const impact = payload.impact || {};
+    const assessment = trafficImpactAssessment(impact);
+    const baseline = payload.baseline || {};
+    const closure = payload.closure_metrics || {};
+    const environment = impact.environment || {};
+    const activity = payload.street_activity || {};
+    const roadData = payload.road_data || {};
+    const demand = payload.demand_model || {};
+    const generated = new Intl.DateTimeFormat('en-ZA', {
+      dateStyle: 'long', timeStyle: 'short', timeZone: 'Africa/Johannesburg',
+    }).format(new Date());
+    const reportReference = `TRF-${Number(demand.seed || 0).toString(16).toUpperCase().padStart(8, '0')}`;
+    const percent = value => Number.isFinite(Number(value)) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%` : '—';
+    const flowItems = (payload.street_flow_summary || []).slice(0, 6).map(street => `
+      <li><b>${reportEscape(street.name)}</b><span>${Number(street.vehicle_delta) >= 0 ? '+' : ''}${reportNumber(street.vehicle_delta, 1)} avg vehicles · ${reportNumber(Number(street.closure_speed_mps) * 3.6, 0, ' km/h')} · ${reportNumber(street.section_count, 0)} ${Number(street.section_count) === 1 ? 'section' : 'sections'}</span></li>`).join('')
+      || '<li><b>No material diversion detected</b><span>—</span></li>';
+    const fleet = Object.entries(demand.fleet_mix || {}).map(([name, share]) =>
+      `${name.replaceAll('_', ' ')} ${Math.round(Number(share) * 100)}%`).join(' · ');
+
+    trafficReportDocument.innerHTML = `
+      <header class="report-header">
+        <div>
+          <p class="report-kicker">Cape Town CBD Climate Explorer</p>
+          <h1 id="traffic-report-title">Road closure simulation report</h1>
+        </div>
+        <div class="report-header-meta">
+          <b>${reportEscape(reportReference)}</b>
+          Generated ${reportEscape(generated)}<br>
+          Exploratory planning estimate
+        </div>
+      </header>
+
+      <section class="report-verdict ${assessment.severity}">
+        <div>
+          <h2>${reportEscape(assessment.headline)}</h2>
+          <p>The model estimates ${percent(assessment.durationChange)} mean trip duration and a ${assessment.completionDrop.toFixed(1)} percentage-point reduction in trips completing within the comparison window. ${payload.flow_comparison?.length || 0} road sections show a material traffic-flow change.</p>
+        </div>
+      </section>
+
+      <section class="report-section">
+        <div class="report-section-heading"><h2>Scenario definition</h2><span>What was tested</span></div>
+        <div class="report-scenario-grid">
+          <div class="report-fact"><span>Location</span><strong>${reportEscape(payload.road_name)}</strong></div>
+          <div class="report-fact"><span>Intervention</span><strong>${reportEscape(payload.closure?.description)}</strong></div>
+          <div class="report-fact"><span>Traffic period</span><strong>${reportEscape(payload.scenario?.label)}</strong></div>
+          <div class="report-fact"><span>Simulation</span><strong>${reportNumber(payload.duration_min, 0, ' min')} · ${reportEscape(payload.traffic_control === 'priority' ? 'Priority control' : 'Mapped signals')}</strong></div>
+          <div class="report-fact"><span>Demand assumption</span><strong>${reportNumber((demand.user_demand_multiplier ?? 1) * 100, 0, '%')} sensitivity level</strong></div>
+          <div class="report-fact"><span>Planned vehicles</span><strong>${reportNumber(demand.planned_vehicle_count, 0)}</strong></div>
+          <div class="report-fact"><span>Closed lanes</span><strong>${reportNumber(payload.closure?.lanes_closed, 0)}</strong></div>
+          <div class="report-fact"><span>Road-data coverage</span><strong>${reportNumber((roadData.municipal_match_ratio ?? 0) * 100, 0, '%')} City matched</strong></div>
+        </div>
+      </section>
+
+      <section class="report-section">
+        <div class="report-section-heading"><h2>Network impact diagram</h2><span>Relative corridor change</span></div>
+        ${trafficReportMap(payload)}
+      </section>
+
+      <section class="report-section">
+        <div class="report-section-heading"><h2>Headline outcomes</h2><span>Before vs closure</span></div>
+        <div class="report-stat-grid">
+          <div class="report-stat"><span>Trip duration</span><strong>${percent(impact.mean_duration_change_pct)}</strong><small>${reportChange(impact.mean_duration_change_s, 0, ' s')} per completed trip</small></div>
+          <div class="report-stat"><span>Maximum queue</span><strong>${reportNumber(impact.max_queue_closure, 0)}</strong><small>Before: ${reportNumber(impact.max_queue_baseline, 0)} vehicles</small></div>
+          <div class="report-stat"><span>Trip completion</span><strong>${reportNumber((impact.completed_trip_ratio_closure ?? 0) * 100, 0, '%')}</strong><small>Before: ${reportNumber((impact.completed_trip_ratio_baseline ?? 0) * 100, 0, '%')}</small></div>
+          <div class="report-stat"><span>Mean speed</span><strong>${percent(impact.mean_speed_change_pct)}</strong><small>${reportChange((impact.mean_speed_change_mps ?? 0) * 3.6, 1, ' km/h', true)}</small></div>
+          <div class="report-stat"><span>Diversion distance</span><strong>${reportChange(impact.mean_route_length_change_m, 0, ' m')}</strong><small>Mean route-length change</small></div>
+          <div class="report-stat"><span>Estimated CO₂</span><strong>${percent(environment.co2_kg?.change_pct)}</strong><small>${reportChange(environment.co2_kg?.change, 2, ' kg')}</small></div>
+        </div>
+      </section>
+
+      <section class="report-section">
+        <div class="report-section-heading"><h2>Transport performance</h2><span>Corridor simulation window</span></div>
+        <table class="report-table">
+          <thead><tr><th>Metric</th><th>Before</th><th>With closure</th><th>Change</th></tr></thead>
+          <tbody>
+            <tr><td>Mean trip duration</td><td>${reportNumber(baseline.mean_duration_s, 0, ' s')}</td><td>${reportNumber(closure.mean_duration_s, 0, ' s')}</td><td>${reportChange(impact.mean_duration_change_pct, 1, '%')}</td></tr>
+            <tr><td>Mean time loss</td><td>${reportNumber(baseline.mean_time_loss_s, 0, ' s')}</td><td>${reportNumber(closure.mean_time_loss_s, 0, ' s')}</td><td>${reportChange(impact.mean_time_loss_change_s, 0, ' s')}</td></tr>
+            <tr><td>Mean speed</td><td>${reportNumber(Number(baseline.mean_speed_mps) * 3.6, 1, ' km/h')}</td><td>${reportNumber(Number(closure.mean_speed_mps) * 3.6, 1, ' km/h')}</td><td>${reportChange(impact.mean_speed_change_pct, 1, '%', true)}</td></tr>
+            <tr><td>Mean queued vehicles</td><td>${reportNumber(baseline.mean_queued_vehicles, 1)}</td><td>${reportNumber(closure.mean_queued_vehicles, 1)}</td><td>${reportChange(impact.mean_queued_vehicle_change, 1)}</td></tr>
+            <tr><td>Completed trips</td><td>${reportNumber(baseline.trip_count, 0)}</td><td>${reportNumber(closure.trip_count, 0)}</td><td>${reportNumber(impact.compared_trip_count, 0)} paired trips</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="report-section">
+        <div class="report-section-heading"><h2>Environmental estimate</h2><span>SUMO HBEFA3 fleet classes</span></div>
+        <table class="report-table">
+          <thead><tr><th>Metric</th><th>Before</th><th>With closure</th><th>Change</th></tr></thead>
+          <tbody>
+            <tr><td>CO₂</td><td>${reportNumber(environment.co2_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(environment.co2_kg?.closure, 2, ' kg')}</td><td>${reportChange(environment.co2_kg?.change_pct, 1, '%')}</td></tr>
+            <tr><td>NOx</td><td>${reportNumber(environment.nox_g?.baseline, 2, ' g')}</td><td>${reportNumber(environment.nox_g?.closure, 2, ' g')}</td><td>${reportChange(environment.nox_g?.change_pct, 1, '%')}</td></tr>
+            <tr><td>Particulate matter</td><td>${reportNumber(environment.pmx_g?.baseline, 3, ' g')}</td><td>${reportNumber(environment.pmx_g?.closure, 3, ' g')}</td><td>${reportChange(environment.pmx_g?.change_pct, 1, '%')}</td></tr>
+            <tr><td>Fuel mass</td><td>${reportNumber(environment.fuel_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(environment.fuel_kg?.closure, 2, ' kg')}</td><td>${reportChange(environment.fuel_kg?.change_pct, 1, '%')}</td></tr>
+            <tr><td>Mean active-road noise</td><td>${reportNumber(environment.mean_active_edge_noise_db?.baseline, 1, ' dB')}</td><td>${reportNumber(environment.mean_active_edge_noise_db?.closure, 1, ' dB')}</td><td>${reportChange(environment.mean_active_edge_noise_db?.change, 1, ' dB')}</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="report-section report-two-column">
+        <div>
+          <div class="report-section-heading"><h2>Most affected roads</h2><span>One aggregated result per street</span></div>
+          <ul class="report-list">${flowItems}</ul>
+        </div>
+        <div>
+          <div class="report-section-heading"><h2>Mapped street context</h2><span>Inventory only</span></div>
+          <ul class="report-list">
+            <li><b>Parking spaces near corridor</b><span>${reportNumber(activity.parking_spaces, 0)}</span></li>
+            <li><b>Pedestrian crossings near corridor</b><span>${reportNumber(activity.pedestrian_crossings, 0)}</span></li>
+            <li><b>Raised crossings</b><span>${reportNumber(activity.raised_crossings, 0)}</span></li>
+            <li><b>Confirmed speed records applied</b><span>${reportNumber(roadData.confirmed_speed_limits_applied, 0)}</span></li>
+            <li><b>Inferred speed records applied</b><span>${reportNumber(roadData.inferred_speed_limits_applied, 0)}</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="report-section">
+        <div class="report-section-heading"><h2>Method, data and interpretation</h2><span>Read before decision-making</span></div>
+        <div class="report-two-column">
+          <div class="report-note"><b>Model setup.</b> Paired SUMO microsimulations replay the same seeded, corridor-scoped synthetic demand before and after the closure. Routing topology comes from OpenStreetMap; geometry, lane capacity weighting, and confirmed plus inferred speed limits are enriched with the City of Cape Town road-centre dataset. Inferred speed limits are reported separately as lower-confidence inputs. Fleet: ${reportEscape(fleet || 'representative mixed fleet')}.</div>
+          <div class="report-note"><b>Limitations.</b> This is an exploratory comparison, not a calibrated traffic forecast or engineering design. No observed origin–destination matrix, traffic counts, parking occupancy, pedestrian volumes or verified controller timings were available. Parking and crossings are context only and do not alter demand or delay. Inferred speed limits are useful for scenario testing but should not be treated as surveyed regulatory signs.</div>
+        </div>
+      </section>
+
+      <footer class="report-footer">
+        Cape Town CBD Climate Explorer · ${reportEscape(reportReference)} · Reproducible scenario seed ${reportEscape(demand.seed)} · Validation status: ${reportEscape(String(payload.validation_status || '').replaceAll('_', ' '))}
+      </footer>`;
+
+    trafficReportDocument.scrollTop = 0;
+    if (typeof trafficReportDialog.showModal === 'function') trafficReportDialog.showModal();
+    else trafficReportDialog.setAttribute('open', '');
   }
 
   function buildTrafficResult(payload) {
@@ -2902,6 +3371,8 @@ export async function startWebGLScene(canvas, status) {
     clearStatusGroup(trafficDrawingGroup);
     buildScenarioRoadStatuses(payload);
     const impact = payload.impact || {};
+    const environment = impact.environment || {};
+    const streetActivity = payload.street_activity || {};
     const formatPercent = value => (value === null || value === undefined)
       ? '—'
       : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
@@ -2913,8 +3384,23 @@ export async function startWebGLScene(canvas, status) {
         <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Mean speed</span>
         <span><b>${(impact.mean_route_length_change_m ?? 0) >= 0 ? '+' : ''}${(impact.mean_route_length_change_m ?? 0).toFixed(0)} m</b>Mean diversion distance</span>
         <span><b>${(impact.mean_queued_vehicle_change ?? 0) >= 0 ? '+' : ''}${(impact.mean_queued_vehicle_change ?? 0).toFixed(1)}</b>Queued vehicles</span>
+        <span><b>${impact.max_queue_baseline ?? 0} → ${impact.max_queue_closure ?? 0}</b>Maximum queue</span>
         <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>
-        <span><b>${Math.round((impact.completed_trip_ratio_baseline ?? 0) * 100)}% → ${Math.round((impact.completed_trip_ratio_closure ?? 0) * 100)}%</b>Trips completing in the window</span>`;
+        <span><b>${Math.round((impact.completed_trip_ratio_baseline ?? 0) * 100)}% → ${Math.round((impact.completed_trip_ratio_closure ?? 0) * 100)}%</b>Trips completing in the window</span>
+        <span><b>${Math.round((payload.road_data?.municipal_match_ratio ?? 0) * 100)}%</b>City road-data coverage</span>
+        <span><b>${formatPercent(environment.co2_kg?.change_pct)}</b>Estimated CO₂</span>
+        <span><b>${formatPercent(environment.nox_g?.change_pct)}</b>Estimated NOx</span>
+        <span><b>${(environment.mean_active_edge_noise_db?.change ?? 0) >= 0 ? '+' : ''}${(environment.mean_active_edge_noise_db?.change ?? 0).toFixed(1)} dB</b>Active-road noise</span>
+        <span><b>${streetActivity.parking_spaces ?? 0}</b>Mapped parking spaces nearby</span>
+        <span><b>${streetActivity.pedestrian_crossings ?? 0}</b>Mapped crossings nearby</span>`;
+    }
+    if (trafficImpactSummary) {
+      const assessment = trafficImpactAssessment(impact);
+      trafficImpactSummary.className = `traffic-impact-summary ${assessment.severity}`;
+      trafficImpactSummary.innerHTML = `<strong>${assessment.headline}</strong>`
+        + `${formatPercent(assessment.durationChange)} mean trip duration · ${assessment.completionDrop.toFixed(1)} percentage-point completion loss · `
+        + `${payload.flow_comparison?.length || 0} changed road sections.`;
+      trafficImpactSummary.hidden = false;
     }
     if (trafficStatus) {
       trafficStatus.textContent = `${payload.road_name} · ${payload.scenario?.label || ''} · `
@@ -2922,6 +3408,8 @@ export async function startWebGLScene(canvas, status) {
         + `${payload.closure_metrics.trip_count} with closure · ${payload.flow_comparison?.length || 0} changed road segments shown · estimate, not engineering-grade.`;
     }
     if (trafficToggle) trafficToggle.checked = true;
+    if (trafficCompare) trafficCompare.disabled = false;
+    if (trafficReport) trafficReport.disabled = false;
     trafficState.enabled = true;
     syncTrafficSceneVisibility();
     frameBounds(payload.corridor?.road_bounds_local);
@@ -2944,6 +3432,7 @@ export async function startWebGLScene(canvas, status) {
           scenario: trafficScenario?.value || 'am_peak',
           closure_mode: trafficState.closureMode,
           traffic_control: trafficControlModel?.value || 'signalized',
+          demand_multiplier: Number(trafficDemand?.value) || 1,
         }),
       });
       const payload = await response.json();
@@ -2953,7 +3442,7 @@ export async function startWebGLScene(canvas, status) {
       trafficStatus.textContent = `Closure preview unavailable (${error.message})`;
     } finally {
       trafficRun.disabled = !trafficState.selectedEdgeIds.length;
-      trafficRun.textContent = 'Simulate selection';
+      trafficRun.textContent = 'Run comparison';
     }
   }
 
@@ -3411,8 +3900,11 @@ export async function startWebGLScene(canvas, status) {
       season: windState.season,
       reference_speed_mps: windState.speed,
       reference_height_m: windState.referenceHeight,
-      height_m: 2,
+      height_m: windState.height,
       resolution_m: 5,
+      stability: windState.stability,
+      exceedance_threshold_mps: windState.exceedanceThreshold,
+      forcing_mode: windState.forcingMode,
     };
     try {
       const response = await fetch(`${windApi}/wind/preview`, {
@@ -3422,7 +3914,10 @@ export async function startWebGLScene(canvas, status) {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       windState.field = await response.json();
-      windStatus.textContent = `${windState.field.polygon_count || 0} wind zones · GPU heatmap + white gusts`;
+      const forcingNote = windState.field.era5_profile
+        ? `ERA5 ${windState.field.era5_profile.season} ${windState.field.era5_profile.sector.toUpperCase()}`
+        : 'manual forcing';
+      windStatus.textContent = `${forcingNote} · ${windState.field.polygon_count || 0} zones · preview`;
     } catch (error) {
       windState.field = fallbackWindField();
       windStatus.textContent = `Local GPU preview · API unavailable (${error.message})`;
@@ -3433,6 +3928,7 @@ export async function startWebGLScene(canvas, status) {
     windLegendMin.textContent = values.length ? Math.min(...values).toFixed(1) : '—';
     windLegendMax.textContent = values.length ? Math.max(...values).toFixed(1) : '—';
     windState.lastTime = performance.now();
+    dispatchEvent(new CustomEvent('climate-wind-result', { detail: windState.field }));
     buildWindHeatmap();
     resetWindParticles();
     requestRender();
@@ -3551,33 +4047,29 @@ export async function startWebGLScene(canvas, status) {
     if (!force && trafficState.lastScreen
       && Math.hypot(screen[0] - trafficState.lastScreen[0], screen[1] - trafficState.lastScreen[1]) < 4) return false;
 
-    const previous = trafficState.snappedPoints.at(-1);
+    const previous = trafficState.strokePoints.at(-1);
     const distance = previous ? Math.hypot(point.x - previous[0], point.z - previous[1]) : 0;
     const sampleCount = Math.max(1, Math.ceil(distance / 8));
-    let changed = false;
-    let latest = null;
-    for (let sample = 1; sample <= sampleCount; sample += 1) {
+    for (let sample = previous ? 1 : sampleCount; sample <= sampleCount; sample += 1) {
       const ratio = sample / sampleCount;
       const sampleX = previous ? previous[0] + (point.x - previous[0]) * ratio : point.x;
       const sampleZ = previous ? previous[1] + (point.z - previous[1]) * ratio : point.z;
-      const snapped = snapToTrafficRoad(sampleX, sampleZ);
-      if (!snapped) continue;
-      latest = [snapped.x, snapped.z];
-      if (!trafficState.selectedEdgeIds.includes(snapped.edge.id)) {
-        trafficState.selectedEdgeIds.push(snapped.edge.id);
-        changed = true;
+      if (!previous || sample === sampleCount) {
+        const candidate = [sampleX, sampleZ];
+        if (!trafficState.strokePoints.length || Math.hypot(
+          candidate[0] - trafficState.strokePoints.at(-1)[0],
+          candidate[1] - trafficState.strokePoints.at(-1)[1],
+        ) >= 0.35) trafficState.strokePoints.push(candidate);
       }
     }
-    if (latest) trafficState.snappedPoints.push(latest);
     trafficState.lastScreen = screen;
-    if (changed) updateTrafficDrawing();
+    updateTrafficDrawing();
     if (trafficSelectionStatus) {
-      const count = trafficState.selectedEdgeIds.length;
-      trafficSelectionStatus.textContent = count
-        ? `Snapped to ${count} road ${count === 1 ? 'section' : 'sections'} · release to finish.`
-        : 'No road under the pen yet · move closer to a road.';
+      trafficSelectionStatus.textContent = trafficState.strokePoints.length > 1
+        ? `Freehand stroke recorded · ${trafficState.strokePoints.length} points · release to snap.`
+        : 'Draw over the road centreline; release to snap the stroke.';
     }
-    return Boolean(latest);
+    return Boolean(trafficState.strokePoints.length);
   }
 
   function handleScreenPoint(handle) {
@@ -3598,7 +4090,9 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
-  canvas.addEventListener('contextmenu', event => event.preventDefault());
+  canvas.addEventListener('contextmenu', event => {
+    event.preventDefault();
+  });
   canvas.addEventListener('pointerdown', event => {
     if (streetViewState.placing && event.button === 0) {
       const point = pointerGround(event);
@@ -3615,15 +4109,16 @@ export async function startWebGLScene(canvas, status) {
       return;
     }
     if (trafficState.drawing && event.button === 0) {
-      trafficState.selectedEdgeIds = [];
-      trafficState.snappedPoints = [];
+      trafficState.strokePoints = [];
       trafficState.stroking = true;
       trafficState.pointerId = event.pointerId;
       trafficState.lastScreen = null;
+      updateTrafficDrawPopup('Drawing stroke… lift your pointer to snap and add these road sections.');
       appendTrafficClosurePoint(event, true);
       capturePointer(event);
       return;
     }
+    if (event.button === 2 && removeTrafficSelectionAt(event)) return;
     if (mitigationState.drawing && event.button === 0) {
       mitigationState.points = [];
       mitigationState.stroking = true;
@@ -3765,7 +4260,7 @@ export async function startWebGLScene(canvas, status) {
   canvas.addEventListener('pointerup', event => {
     if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
       appendTrafficClosurePoint(event, true);
-      finishTrafficDrawing();
+      commitTrafficStroke();
       return;
     }
     if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
@@ -3801,7 +4296,9 @@ export async function startWebGLScene(canvas, status) {
     if (event.pointerId === trafficState.pointerId) {
       trafficState.stroking = false;
       trafficState.pointerId = null;
-      finishTrafficDrawing();
+      trafficState.strokePoints = [];
+      updateTrafficDrawPopup('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');
+      updateTrafficDrawing();
     }
     if (event.pointerId === mitigationState.pointerId) {
       mitigationState.stroking = false;
@@ -3880,6 +4377,32 @@ export async function startWebGLScene(canvas, status) {
     windStatus.textContent = 'Season changed · click Simulate wind.';
     requestRender();
   });
+  windStability?.addEventListener('change', event => {
+    windState.stability = event.target.value;
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = 'Stability changed · click Simulate wind.';
+  });
+  windHeight?.addEventListener('change', event => {
+    windState.height = Number(event.target.value);
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = 'Result height changed · click Simulate wind.';
+  });
+  windExceedanceThreshold?.addEventListener('change', event => {
+    windState.exceedanceThreshold = Number(event.target.value);
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = 'Comfort threshold changed · click Simulate wind.';
+  });
+  windForcingMode?.addEventListener('change', event => {
+    windState.forcingMode = event.target.value;
+    windSpeed.disabled = windState.forcingMode === 'era5_climatology';
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = 'Forcing source changed · click Simulate wind.';
+  });
+  if (windSpeed) windSpeed.disabled = windState.forcingMode === 'era5_climatology';
   windSpeed?.addEventListener('input', event => {
     windState.speed = Number(event.target.value) / 3.6;
     windState.referenceHeight = 2;
@@ -4014,11 +4537,21 @@ export async function startWebGLScene(canvas, status) {
   });
   trafficDuration?.addEventListener('input', () => {
     if (trafficDurationValue) trafficDurationValue.textContent = `${trafficDuration.value} min`;
+    invalidateTrafficResult('Duration changed · run the comparison again.');
   });
+  trafficScenario?.addEventListener('change', () => invalidateTrafficResult('Time of day changed · run the comparison again.'));
+  trafficDemand?.addEventListener('change', () => invalidateTrafficResult('Demand assumption changed · run the comparison again.'));
+  trafficControlModel?.addEventListener('change', () => invalidateTrafficResult('Junction behaviour changed · run the comparison again.'));
+  trafficRefresh?.addEventListener('click', () => loadTrafficLive(true));
   trafficDrawLane?.addEventListener('click', () => beginTrafficDrawing('lane'));
   trafficDrawRoad?.addEventListener('click', () => beginTrafficDrawing('full'));
+  trafficDrawConfirm?.addEventListener('click', confirmTrafficDrawing);
+  trafficDrawCancel?.addEventListener('click', clearTrafficSelection);
   trafficRun?.addEventListener('click', runTrafficClosurePreview);
   trafficClear?.addEventListener('click', clearTrafficSelection);
+  trafficReport?.addEventListener('click', buildTrafficReport);
+  trafficReportClose?.addEventListener('click', () => trafficReportDialog?.close());
+  trafficReportPrint?.addEventListener('click', () => window.print());
   trafficCompare?.addEventListener('change', () => {
     applyTrafficCompareSelection();
     requestRender();
@@ -4035,17 +4568,16 @@ export async function startWebGLScene(canvas, status) {
     syncTrafficSceneVisibility();
     requestRender();
   });
+  addEventListener('keydown', event => {
+    if (event.key === 'Escape' && trafficState.drawing) {
+      event.preventDefault();
+      clearTrafficSelection();
+    }
+  });
   addEventListener('climate-menu-change', event => {
     trafficState.sceneActive = event.detail?.name === 'traffic';
     if (!trafficState.sceneActive && trafficState.drawing) {
-      trafficState.drawing = false;
-      trafficState.stroking = false;
-      trafficState.pointerId = null;
-      trafficDrawLane?.classList.remove('active');
-      trafficDrawRoad?.classList.remove('active');
-      if (trafficDrawLane) trafficDrawLane.textContent = 'Draw lane closure';
-      if (trafficDrawRoad) trafficDrawRoad.textContent = 'Draw street closure';
-      canvas.style.cursor = '';
+      clearTrafficSelection();
     }
     syncTrafficSceneVisibility();
     requestRender();
@@ -4087,6 +4619,9 @@ export async function startWebGLScene(canvas, status) {
     windState.direction = Number(weather.wind_direction_10m_deg) || 0;
     windState.speed = Math.max(0, Number(weather.wind_speed_10m_mps) || 0);
     windState.referenceHeight = 10;
+    windState.forcingMode = 'manual';
+    if (windForcingMode) windForcingMode.value = 'manual';
+    if (windSpeed) windSpeed.disabled = false;
     if (windDirection) {
       const option = Array.from(windDirection.options).reduce((best, candidate) => {
         const delta = Math.abs(((Number(candidate.value) - windState.direction + 180) % 360) - 180);
@@ -4103,7 +4638,7 @@ export async function startWebGLScene(canvas, status) {
     updateSunStatus('Current Cape Town time set · generate shadows when ready.');
     windState.field = null;
     clearWindSimulation();
-    windStatus.textContent = `Current forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
+    windStatus.textContent = `Current 10 m forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
     requestRender();
   });
 

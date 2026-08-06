@@ -1,4 +1,4 @@
-import { sceneFromCityModel } from './semanticCityModel.js?v=2';
+import { sceneFromCityModel } from './semanticCityModel.js?v=3';
 
 const COLORS = {
   background: '#1b2125',
@@ -199,6 +199,10 @@ export async function startScene(canvas, status) {
   const windToggle = document.querySelector('#wind-toggle');
   const windDirection = document.querySelector('#wind-direction');
   const windSeason = document.querySelector('#wind-season');
+  const windStability = document.querySelector('#wind-stability');
+  const windHeight = document.querySelector('#wind-height');
+  const windExceedanceThreshold = document.querySelector('#wind-exceedance-threshold');
+  const windForcingMode = document.querySelector('#wind-forcing-mode');
   const windSpeed = document.querySelector('#wind-speed');
   const windSize = document.querySelector('#wind-size');
   const windSpeedValue = document.querySelector('#wind-speed-value');
@@ -216,7 +220,11 @@ export async function startScene(canvas, status) {
     size: Number(windSize.value) || 250,
     direction: Number(windDirection.value) || 135,
     season: windSeason.value || 'annual',
-    speed: Number(windSpeed.value) || 10,
+    stability: windStability?.value || 'neutral',
+    height: Number(windHeight?.value) || 2,
+    exceedanceThreshold: Number(windExceedanceThreshold?.value) || 6,
+    forcingMode: windForcingMode?.value || 'era5_climatology',
+    speed: (Number(windSpeed.value) || 36) / 3.6,
     referenceHeight: 2,
     particles: [],
     moveMode: false,
@@ -461,8 +469,11 @@ export async function startScene(canvas, status) {
       season: windState.season,
       reference_speed_mps: windState.speed,
       reference_height_m: windState.referenceHeight,
-      height_m: 2,
+      height_m: windState.height,
       resolution_m: 5,
+      stability: windState.stability,
+      exceedance_threshold_mps: windState.exceedanceThreshold,
+      forcing_mode: windState.forcingMode,
     };
     try {
       const response = await fetch(`${windApi}/wind/preview`, {
@@ -477,7 +488,10 @@ export async function startScene(canvas, status) {
       }
       windState.field = await response.json();
       const sourceNote = windState.field.source_layer ? ` · ${windState.field.source_layer}` : '';
-      windStatus.textContent = `${windState.field.polygon_count || 0} wind zones${sourceNote} · exploratory model`;
+      const forcingNote = windState.field.era5_profile
+        ? `ERA5 ${windState.field.era5_profile.season} ${windState.field.era5_profile.sector.toUpperCase()}`
+        : 'manual forcing';
+      windStatus.textContent = `${forcingNote} · ${windState.field.polygon_count || 0} zones${sourceNote} · preview`;
     } catch (error) {
       console.warn('Wind API unavailable; using local preview:', error);
       windState.field = fallbackWindField();
@@ -487,6 +501,7 @@ export async function startScene(canvas, status) {
       windSimulate.textContent = 'Simulate wind';
     }
     windState.lastTime = performance.now();
+    dispatchEvent(new CustomEvent('climate-wind-result', { detail: windState.field }));
     resetWindParticles();
     updateWindLegend();
     requestRender();
@@ -2018,10 +2033,40 @@ export async function startScene(canvas, status) {
     windStatus.textContent = 'Season changed · click Simulate wind.';
     requestRender();
   });
+  windStability?.addEventListener('change', event => {
+    windState.stability = event.target.value;
+    windState.field = null;
+    windState.particles = [];
+    windStatus.textContent = 'Stability changed · click Simulate wind.';
+    requestRender();
+  });
+  windHeight?.addEventListener('change', event => {
+    windState.height = Number(event.target.value);
+    windState.field = null;
+    windState.particles = [];
+    windStatus.textContent = 'Result height changed · click Simulate wind.';
+    requestRender();
+  });
+  windExceedanceThreshold?.addEventListener('change', event => {
+    windState.exceedanceThreshold = Number(event.target.value);
+    windState.field = null;
+    windState.particles = [];
+    windStatus.textContent = 'Comfort threshold changed · click Simulate wind.';
+    requestRender();
+  });
+  windForcingMode?.addEventListener('change', event => {
+    windState.forcingMode = event.target.value;
+    windSpeed.disabled = windState.forcingMode === 'era5_climatology';
+    windState.field = null;
+    windState.particles = [];
+    windStatus.textContent = 'Forcing source changed · click Simulate wind.';
+    requestRender();
+  });
+  if (windSpeed) windSpeed.disabled = windState.forcingMode === 'era5_climatology';
   windSpeed.addEventListener('input', event => {
-    windState.speed = Number(event.target.value);
+    windState.speed = Number(event.target.value) / 3.6;
     windState.referenceHeight = 2;
-    windSpeedValue.textContent = windState.speed.toFixed(1);
+    windSpeedValue.textContent = `${Math.round(windState.speed * 3.6)} km/h`;
   });
   windSize.addEventListener('input', event => {
     windState.size = Number(event.target.value);
@@ -2139,8 +2184,11 @@ export async function startScene(canvas, status) {
     windState.direction = Number(weather.wind_direction_10m_deg) || 0;
     windState.speed = Math.max(0, Number(weather.wind_speed_10m_mps) || 0);
     windState.referenceHeight = 10;
-    windSpeed.value = String(clamp(windState.speed, Number(windSpeed.min), Number(windSpeed.max)));
-    windSpeedValue.textContent = windState.speed.toFixed(1);
+    windState.forcingMode = 'manual';
+    if (windForcingMode) windForcingMode.value = 'manual';
+    windSpeed.disabled = false;
+    windSpeed.value = String(clamp(windState.speed * 3.6, Number(windSpeed.min), Number(windSpeed.max)));
+    windSpeedValue.textContent = `${Math.round(windState.speed * 3.6)} km/h`;
     shadowState.generated = null;
     shadowGenerationToken += 1;
     sunGenerate.disabled = false;
@@ -2149,7 +2197,7 @@ export async function startScene(canvas, status) {
     windState.field = null;
     windState.particles = [];
     updateWindLegend();
-    windStatus.textContent = `Current forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
+    windStatus.textContent = `Current 10 m forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
     requestRender();
   });
 

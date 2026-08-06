@@ -193,6 +193,29 @@ def test_demand_scale_increases_as_congestion_worsens():
     assert 0.4 <= severe <= 2.0
 
 
+def test_road_names_normalise_across_osm_and_municipal_conventions():
+    assert traffic._normalise_road_name("Bree Street") == "BREE"
+    assert traffic._normalise_road_name("BREE") == "BREE"
+    assert traffic._normalise_road_name("F.W. De Klerk Boulevard") == "F W DE KLERK"
+
+
+def test_speed_limit_overrides_include_inferred_values_with_separate_counts():
+    overrides, counts = traffic._speed_limit_overrides([
+        {"id": "confirmed", "municipal": {"speed_limit_kph": 40, "speed_limit_source": "Confirmed"}},
+        {"id": "inferred", "municipal": {"speed_limit_kph": 60, "speed_limit_source": "Inferred"}},
+        {"id": "unknown", "municipal": {"speed_limit_kph": 50, "speed_limit_source": None}},
+    ])
+    assert set(overrides) == {"confirmed", "inferred"}
+    assert counts == {"confirmed": 1, "inferred": 1}
+
+
+def test_city_road_centre_records_are_available_for_traffic_enrichment():
+    records = traffic._municipal_road_records()
+    assert records
+    assert any(record["normalised_name"] == "BREE" for record in records)
+    assert all(record["line"].length > 0 for record in records)
+
+
 def test_diff_metrics_pairs_on_trips_completed_in_both_runs():
     """A severe closure must not look faster just because its worst trips
     never finished. Vehicle c is stuck in the closure run and drops out of
@@ -260,6 +283,21 @@ def test_diff_metrics_reports_percent_change():
     assert impact["completed_trip_ratio_closure"] == 0.8
 
 
+def test_diff_metrics_reports_environmental_changes():
+    baseline = {
+        "mean_duration_s": 100.0, "mean_time_loss_s": 20.0, "mean_speed_mps": 10.0,
+        "trip_count": 10, "environment": {"co2_kg": 4.0, "nox_g": 8.0},
+    }
+    closure = {
+        "mean_duration_s": 120.0, "mean_time_loss_s": 30.0, "mean_speed_mps": 8.0,
+        "trip_count": 9, "environment": {"co2_kg": 5.0, "nox_g": 10.0},
+    }
+    impact = traffic._diff_metrics(baseline, closure, planned_count=10)
+    assert impact["environment"]["co2_kg"]["change"] == 1.0
+    assert impact["environment"]["co2_kg"]["change_pct"] == 25.0
+    assert impact["environment"]["nox_g"]["change"] == 2.0
+
+
 def test_flow_comparison_reports_changed_segments_and_geometry():
     corridor = [{
         "id": "edge-a",
@@ -274,6 +312,51 @@ def test_flow_comparison_reports_changed_segments_and_geometry():
     assert flow[0]["vehicle_delta"] == 3.0
     assert flow[0]["closure_halted"] == 1.5
     assert flow[0]["points"] == [[0.0, 0.0], [20.0, 0.0]]
+
+
+def test_street_flow_summary_aggregates_duplicate_road_names():
+    summary = traffic._aggregate_flow_by_street([
+        {
+            "name": "Strand Street", "vehicle_delta": -10.0,
+            "closure_speed_mps": 5.0, "closure_halted": 1.0,
+            "points": [[0, 0], [100, 0]],
+        },
+        {
+            "name": "STRAND STREET", "vehicle_delta": -20.0,
+            "closure_speed_mps": 10.0, "closure_halted": 3.0,
+            "points": [[100, 0], [400, 0]],
+        },
+        {
+            "name": "Buitengracht Street", "vehicle_delta": 8.0,
+            "closure_speed_mps": 4.0, "closure_halted": 2.0,
+            "points": [[0, 20], [50, 20]],
+        },
+    ])
+    strand = next(item for item in summary if traffic._normalise_road_name(item["name"]) == "STRAND")
+    assert strand["section_count"] == 2
+    assert strand["vehicle_delta"] == -17.5
+    assert strand["closure_speed_mps"] == 8.75
+    assert len(summary) == 2
+
+
+def test_closure_geometry_bridges_same_road_across_junction_gap():
+    records = [
+        {"id": "a", "name": "Bree Street", "line": traffic.LineString([(0, 0), (40, 0)])},
+        {"id": "b", "name": "Bree Street", "line": traffic.LineString([(60, 0), (100, 0)])},
+        {"id": "cross", "name": "Wale Street", "line": traffic.LineString([(50, -30), (50, 30)])},
+    ]
+    geometry = traffic._lines_payload_with_junction_bridges(records)
+    assert [[40.0, 0.0], [60.0, 0.0]] in geometry
+    assert [[40.0, 0.0], [50.0, -30.0]] not in geometry
+
+
+def test_closure_geometry_does_not_bridge_laterally_between_carriageways():
+    records = [
+        {"id": "north", "name": "Adderley Street", "line": traffic.LineString([(0, 0), (40, 0)])},
+        {"id": "south", "name": "Adderley Street", "line": traffic.LineString([(40, 12), (0, 12)])},
+    ]
+    geometry = traffic._lines_payload_with_junction_bridges(records)
+    assert len(geometry) == 2
 
 
 def test_closure_preview_requires_road_name():
@@ -292,6 +375,15 @@ def test_closure_preview_validates_duration_range():
         assert "duration_min" in str(error)
     else:
         raise AssertionError("out-of-range duration_min should fail")
+
+
+def test_closure_preview_validates_demand_sensitivity_range():
+    try:
+        traffic.closure_preview({"road_name": "Long Street", "demand_multiplier": 3})
+    except ValueError as error:
+        assert "demand_multiplier" in str(error)
+    else:
+        raise AssertionError("out-of-range demand_multiplier should fail")
 
 
 def test_parse_tripinfo_computes_means(tmp_path):
@@ -518,6 +610,49 @@ def test_trip_weights_favour_larger_roads():
     ]
     origins, _ = traffic._trip_weights(corridor, inbound_bias=0.0)
     assert origins[0] > origins[1]
+
+
+def test_trip_weights_use_municipal_lanes_and_right_of_way_class():
+    from shapely.geometry import Point
+
+    corridor = [
+        {
+            "id": "arterial", "lane_count": 1, "length_m": 100.0, "midpoint": Point(100, 0),
+            "municipal": {"lane_count": 3, "right_of_way_class": "1"},
+        },
+        {
+            "id": "local", "lane_count": 1, "length_m": 100.0, "midpoint": Point(100, 10),
+            "municipal": {"lane_count": 1, "right_of_way_class": "5"},
+        },
+    ]
+    origins, _ = traffic._trip_weights(corridor, inbound_bias=0.0)
+    assert origins[0] > origins[1] * 4
+
+
+def test_street_activity_summary_counts_inventory_near_corridor(monkeypatch):
+    corridor = [{"line": traffic.LineString([(0, 0), (100, 0)])}]
+    monkeypatch.setattr(traffic, "_street_activity_records", lambda: (
+        {"type": "parkingSpace", "point": traffic.Point(20, 4), "raised": False},
+        {"type": "pedestrianCrossing", "point": traffic.Point(40, 2), "raised": True},
+        {"type": "parkingSpace", "point": traffic.Point(20, 100), "raised": False},
+    ))
+    summary = traffic._street_activity_summary(corridor)
+    assert summary["parking_spaces"] == 1
+    assert summary["pedestrian_crossings"] == 1
+    assert summary["raised_crossings"] == 1
+
+
+def test_generated_fleet_has_distinct_emission_classes(tmp_path):
+    trips_path, _ = traffic._generate_trips(
+        corridor=corridor_fixture(), duration_s=300, vehicle_count=20,
+        inbound_bias=0.0, seed=3, workdir=tmp_path,
+    )
+    root = ElementTree.parse(trips_path).getroot()
+    classes = {item.get("id"): item.get("emissionClass") for item in root.findall("vType")}
+    assert classes["car"].startswith("HBEFA3/PC_G")
+    assert classes["minibus_taxi"].startswith("HBEFA3/PC_D")
+    assert classes["delivery_van"].startswith("HBEFA3/LDV_D")
+    assert classes["city_shuttle"].startswith("HBEFA3/HDV_D")
 
 
 def test_generated_trips_are_departure_sorted_and_never_self_routing(tmp_path):
