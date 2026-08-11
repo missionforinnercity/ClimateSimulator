@@ -22,32 +22,32 @@
       "coarse_source": "calibrated_30m_srtm_company_gardens"
     },
     "roof_surface": {
-      "buildings": 1028,
-      "detailed_buildings": 957,
-      "fallback_buildings": 71,
+      "buildings": 1866,
+      "detailed_buildings": 1500,
+      "fallback_buildings": 366,
       "roof_models": {
-        "regularized_flat": 200,
-        "dominant_flat": 194,
-        "fitted_plane": 296,
-        "flat_plane": 79,
-        "height_fallback": 71,
-        "parametric_hip": 114,
-        "parametric_gable": 74
+        "height_fallback": 366,
+        "parametric_gable": 77,
+        "flat_plane": 103,
+        "dominant_flat": 405,
+        "regularized_flat": 589,
+        "fitted_plane": 312,
+        "parametric_hip": 14
       },
-      "vertices": 224213,
-      "triangles": 426842,
+      "vertices": 230673,
+      "triangles": 439045,
       "sample_spacing_m": 2,
       "height_semantics": "height_above_dtm",
-      "bytes": 8709520,
-      "cache_key": "16face2b7bed8c24"
+      "bytes": 8959316,
+      "cache_key": "f696fc57a686f7f4"
     },
     "fallback": {
-      "buildings": 1028,
+      "buildings": 1866,
       "trees": 2903,
       "roads": 2191,
       "railways": 100,
       "grass": 82,
-      "bytes": 834476
+      "bytes": 1012075
     },
     "canopy": {
       "components": 2659,
@@ -55,11 +55,11 @@
       "bytes": 641734
     },
     "city_model": {
-      "objects": 15621,
+      "objects": 17297,
       "types": {
         "ReliefFeature": 1,
-        "Building": 1028,
-        "RoofSurface": 1028,
+        "Building": 1866,
+        "RoofSurface": 1866,
         "Road": 1874,
         "CityFurniture": 3732,
         "TrafficSpace": 1460,
@@ -69,7 +69,7 @@
         "PlantCover": 82,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 15378624
+      "bytes": 17074091
     }
   },
   "assets": {

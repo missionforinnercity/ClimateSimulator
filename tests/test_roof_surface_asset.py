@@ -3,9 +3,53 @@ import struct
 from pathlib import Path
 
 import numpy as np
+from shapely.geometry import Polygon
+
+from scripts.build_scene import parametric_roof_is_credible
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def roof_fit_is_credible(polygon, **overrides):
+    values = {
+        "coverage": 0.84,
+        "shape_name": "gable",
+        "rise": 3.0,
+        "half_short_m": 7.0,
+        "shape_inlier_fraction": 0.81,
+        "shape_rmse": 0.45,
+        "flat_rmse": 0.9,
+        "observed_range": 3.0,
+    }
+    values.update(overrides)
+    return parametric_roof_is_credible(polygon, **values)
+
+
+def test_parametric_roof_rules_keep_simple_roofs_and_reject_lidar_spikes():
+    rectangle = Polygon([(0, 0), (22, 0), (22, 12), (0, 12)])
+
+    assert roof_fit_is_credible(rectangle)
+    assert not roof_fit_is_credible(rectangle, rise=5.0, half_short_m=5.0)
+    assert not roof_fit_is_credible(rectangle, coverage=0.61)
+
+
+def test_parametric_roof_rules_reject_irregular_and_oversized_hip_roofs():
+    concave = Polygon([(0, 0), (22, 0), (22, 5), (7, 5), (7, 18), (0, 18)])
+    city_block = Polygon([(0, 0), (50, 0), (50, 40), (0, 40)])
+
+    assert not roof_fit_is_credible(concave)
+    assert not roof_fit_is_credible(city_block, shape_name="hip")
+
+
+def test_parametric_roof_rules_respect_osm_shape_and_limit_untagged_hips():
+    small_roof = Polygon([(0, 0), (20, 0), (20, 12), (0, 12)])
+    medium_roof = Polygon([(0, 0), (30, 0), (30, 15), (0, 15)])
+
+    assert roof_fit_is_credible(small_roof, shape_name="hip")
+    assert not roof_fit_is_credible(medium_roof, shape_name="hip")
+    assert not roof_fit_is_credible(small_roof, roof_shape_hint="dome")
+    assert roof_fit_is_credible(small_roof, roof_shape_hint="gabled")
 
 
 def test_roof_surface_binary_matches_manifest_and_has_valid_geometry():

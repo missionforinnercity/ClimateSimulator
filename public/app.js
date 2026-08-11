@@ -46,16 +46,88 @@ function freshCanvas() {
   canvas = replacement;
 }
 
+const startupLoader = document.querySelector('#startup-loader');
+const startupProgress = document.querySelector('#startup-loader-progress');
+const startupPercent = document.querySelector('#startup-loader-percent');
+const startupStage = document.querySelector('#startup-loader-stage');
+let startupValue = 8;
+let startupTimer = null;
+let startupFinishing = false;
+
+function setStartupProgress(value, label) {
+  startupValue = Math.max(startupValue, Math.min(100, Math.round(value)));
+  startupLoader?.style.setProperty('--load-progress', `${startupValue}%`);
+  startupProgress?.style.setProperty('--load-progress', `${startupValue}%`);
+  startupProgress?.setAttribute('aria-valuenow', String(startupValue));
+  if (startupPercent) startupPercent.textContent = `${startupValue}%`;
+  if (label && startupStage) startupStage.textContent = label;
+}
+
+function startStartupProgress() {
+  const startedAt = performance.now();
+  setStartupProgress(12, 'Starting climate engine');
+  startupTimer = window.setInterval(() => {
+    const elapsed = performance.now() - startedAt;
+    const next = Math.min(88, 12 + 76 * (1 - Math.exp(-elapsed / 2600)));
+    const stage = elapsed < 900 ? 'Loading city geometry'
+      : elapsed < 2400 ? 'Preparing simulation layers'
+        : 'Calibrating 3D environment';
+    setStartupProgress(next, stage);
+  }, 180);
+}
+
+function finishStartupProgress(failed = false) {
+  if (startupFinishing) return;
+  startupFinishing = true;
+  if (startupTimer) window.clearInterval(startupTimer);
+  if (failed) {
+    setStartupProgress(100, 'Viewer unavailable');
+    document.body.removeAttribute('aria-busy');
+    window.setTimeout(() => {
+      startupLoader?.classList.add('is-complete');
+      startupLoader?.setAttribute('aria-hidden', 'true');
+    }, 240);
+    return;
+  }
+
+  const initialValue = startupValue;
+  const duration = Math.max(900, (100 - initialValue) * 16);
+  const startedAt = performance.now();
+  startupLoader?.classList.add('is-finishing');
+  if (startupStage) startupStage.textContent = 'Finalising climate model';
+
+  const completeFill = now => {
+    const elapsed = Math.min(1, (now - startedAt) / duration);
+    const eased = 1 - Math.pow(1 - elapsed, 3);
+    setStartupProgress(initialValue + (100 - initialValue) * eased);
+    if (elapsed < 1) {
+      requestAnimationFrame(completeFill);
+      return;
+    }
+    setStartupProgress(100, 'Climate engine ready');
+    document.body.removeAttribute('aria-busy');
+    window.setTimeout(() => {
+      startupLoader?.classList.add('is-complete');
+      startupLoader?.setAttribute('aria-hidden', 'true');
+    }, 450);
+  };
+  requestAnimationFrame(completeFill);
+}
+
 async function loadScene() {
+  startStartupProgress();
   status.textContent = 'Loading scene…';
   const guide = document.querySelector('#wind-box-guide');
   if (guide) guide.hidden = false;
   try {
-    const module = await import('./webglRenderer.js?v=42');
+    setStartupProgress(20, 'Loading 3D renderer');
+    const module = await import('./webglRenderer.js?v=50');
+    setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
     console.warn('WebGL renderer unavailable; loading Canvas fallback:', webglError);
     status.textContent = 'GPU renderer unavailable · loading compatibility view…';
+    setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
       const module = await import('./sceneRenderer.js?v=58');
@@ -63,6 +135,7 @@ async function loadScene() {
     } catch (fallbackError) {
       console.error(fallbackError);
       status.textContent = `Viewer failed: ${fallbackError.message}`;
+      finishStartupProgress(true);
       return;
     }
   }
@@ -71,6 +144,7 @@ async function loadScene() {
   windContext.clearRect(0, 0, windCanvas.width, windCanvas.height);
   setupCurrentConditions();
   setupStreetView();
+  finishStartupProgress();
 }
 
 function weatherDescription(code) {

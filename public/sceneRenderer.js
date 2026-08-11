@@ -11,9 +11,9 @@ const COLORS = {
   roofEdge: '#3d4447',
   trunk: '#60452f',
   canopy: '#2d653f',
-  road: '#5d6669',
-  roadMajor: '#c39b50',
-  roadSecondary: '#6c94a0',
+  road: '#444746',
+  roadMajor: '#b8a04a',
+  roadSecondary: '#58656a',
 };
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
@@ -87,6 +87,25 @@ export async function startScene(canvas, status) {
   const sceneCanvas = document.createElement('canvas');
   const sceneContext = sceneCanvas.getContext('2d', { alpha: false });
   let context = mainContext;
+  const asphaltTile = document.createElement('canvas');
+  asphaltTile.width = 48;
+  asphaltTile.height = 48;
+  const asphaltContext = asphaltTile.getContext('2d');
+  const asphaltPixels = asphaltContext.createImageData(48, 48);
+  for (let y = 0; y < 48; y += 1) {
+    for (let x = 0; x < 48; x += 1) {
+      const index = (y * 48 + x) * 4;
+      const noise = Math.sin(x * 91.73 + y * 37.19 + x * y * 0.17) * 43758.5453;
+      const grain = noise - Math.floor(noise);
+      const light = grain > 0.975 ? 20 : 238;
+      asphaltPixels.data[index] = light;
+      asphaltPixels.data[index + 1] = light;
+      asphaltPixels.data[index + 2] = light;
+      asphaltPixels.data[index + 3] = grain > 0.975 ? 22 : 8;
+    }
+  }
+  asphaltContext.putImageData(asphaltPixels, 0, 0);
+  const asphaltPattern = sceneContext.createPattern(asphaltTile, 'repeat');
 
   const [manifest, scene, canopyAsset] = await Promise.all([
     fetch('assets/manifest.json').then(response => response.json()),
@@ -235,6 +254,10 @@ export async function startScene(canvas, status) {
   const heatStatus = document.querySelector('#heat-status');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
+  const heatSummary = document.querySelector('#heat-summary');
+  const heatAverage = document.querySelector('#heat-average');
+  const heatPriorityArea = document.querySelector('#heat-priority-area');
+  const heatMaximum = document.querySelector('#heat-maximum');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
   const sunTime = document.querySelector('#sun-time');
@@ -766,6 +789,15 @@ export async function startScene(canvas, status) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       heatState.data = await response.json();
       heatState.baselineData = heatState.data;
+      const summary = heatState.data.summary;
+      const summaryReady = summary?.area_weighted_mean_c != null && summary?.maximum_c != null;
+      if (heatSummary) heatSummary.hidden = !summaryReady;
+      if (summaryReady) {
+        heatAverage.textContent = `${Number(summary.area_weighted_mean_c).toFixed(1)}°C`;
+        heatMaximum.textContent = `${Number(summary.maximum_c).toFixed(1)}°C`;
+        const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
+        heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${Number(summary.hotspot_area_pct || 0).toFixed(0)}%`;
+      }
       const range = heatState.data.color_range || heatState.data.range;
       const scale = heatState.data.color_scale || {};
       heatLegendMin.textContent = range
@@ -774,12 +806,14 @@ export async function startScene(canvas, status) {
       heatLegendMax.textContent = range
         ? `${scale.top_band_label || 'Top 10%'} ≥ ${Number(range.max).toFixed(1)}°C`
         : 'Top 10%';
-      const window = heatState.data.window?.label || 'current product';
+      const rawWindow = heatState.data.window?.label;
+      const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26 baseline' : rawWindow || 'current product';
       heatStatus.textContent = heatState.data.count
         ? `${heatState.data.count} heat zones · ${window} · percentile colour scale`
         : 'No surface-temperature values in this product.';
     } catch (error) {
       heatState.data = null;
+      if (heatSummary) heatSummary.hidden = true;
       heatLegendMin.textContent = '—';
       heatLegendMax.textContent = '—';
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
@@ -1573,11 +1607,15 @@ export async function startScene(canvas, status) {
         for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
       }
       context.lineWidth = width + 1.3;
-      context.strokeStyle = '#343b3d';
+      context.strokeStyle = '#2c2f2e';
       context.stroke();
       context.lineWidth = width;
       context.strokeStyle = group.color;
       context.stroke();
+      if (!group.path && asphaltPattern) {
+        context.strokeStyle = asphaltPattern;
+        context.stroke();
+      }
     }
   }
 

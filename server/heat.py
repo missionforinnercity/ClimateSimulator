@@ -205,10 +205,29 @@ def heat_zones(metric: str) -> dict[str, Any]:
         raise ValueError(f"unsupported heat metric: {metric}")
     data = _load_heat_zones()
     features = [
-        {"geometry": feature["geometry"], "value": feature["properties"][metric]}
+        {
+            "geometry": feature["geometry"],
+            "value": feature["properties"][metric],
+            "area_m2": shape(feature["geometry"]).area,
+        }
         for feature in data["features"]
         if feature["properties"][metric] is not None
     ]
+    total_area_m2 = sum(feature["area_m2"] for feature in features)
+    weighted_total = sum(feature["value"] * feature["area_m2"] for feature in features)
+    hotspot_threshold = (data["color_ranges"].get(metric) or {}).get("p90")
+    hotspot_area_m2 = sum(
+        feature["area_m2"] for feature in features
+        if hotspot_threshold is not None and feature["value"] >= hotspot_threshold
+    )
+    summary = {
+        "area_weighted_mean_c": weighted_total / total_area_m2 if total_area_m2 else None,
+        "maximum_c": max((feature["value"] for feature in features), default=None),
+        "hotspot_threshold_c": hotspot_threshold,
+        "hotspot_area_m2": hotspot_area_m2,
+        "hotspot_area_pct": hotspot_area_m2 / total_area_m2 * 100 if total_area_m2 else None,
+        "total_area_m2": total_area_m2,
+    }
     return {
         "version": "heat-zones-2026",
         "metric": metric,
@@ -219,6 +238,7 @@ def heat_zones(metric: str) -> dict[str, Any]:
         "color_range": data["color_ranges"].get(metric),
         "color_scale": HEAT_COLOR_SCALE,
         "count": len(features),
+        "summary": summary,
         "source": data["source"],
         "window": data["window"],
     }

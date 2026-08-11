@@ -12,9 +12,9 @@ const COLORS = {
   wallSun: 0xffffff,
   roof: 0xaeb5b8,
   roofSun: 0xffffff,
-  road: 0x465257,
-  roadMajor: 0xb08b4f,
-  roadSecondary: 0x557d89,
+  road: 0x444746,
+  roadMajor: 0xb8a04a,
+  roadSecondary: 0x58656a,
   // Permanent pedestrian streets should read as context, while the brighter
   // red/orange simulation ribbons remain the attention-grabbing states.
   pedestrian: 0x657d7b,
@@ -22,6 +22,8 @@ const COLORS = {
   rail: 0x929b9c,
   sleeper: 0x3f4545,
 };
+
+const ROAD_CLASS_OFFSETS = [0.34, 0.42, 0.38, 0.30, 0.33];
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
@@ -443,6 +445,26 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function makeRoads() {
+    const textureSize = 64;
+    const textureData = new Uint8Array(textureSize * textureSize * 4);
+    for (let y = 0; y < textureSize; y += 1) {
+      for (let x = 0; x < textureSize; x += 1) {
+        const index = (y * textureSize + x) * 4;
+        const noise = Math.sin(x * 91.73 + y * 37.19 + x * y * 0.17) * 43758.5453;
+        const grain = noise - Math.floor(noise);
+        const aggregate = grain > 0.975 ? 204 : 231 + Math.round(grain * 16);
+        textureData[index] = aggregate;
+        textureData[index + 1] = aggregate;
+        textureData[index + 2] = aggregate;
+        textureData[index + 3] = 255;
+      }
+    }
+    const asphaltTexture = new THREE.DataTexture(textureData, textureSize, textureSize, THREE.RGBAFormat);
+    asphaltTexture.wrapS = THREE.RepeatWrapping;
+    asphaltTexture.wrapT = THREE.RepeatWrapping;
+    asphaltTexture.colorSpace = THREE.SRGBColorSpace;
+    asphaltTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    asphaltTexture.needsUpdate = true;
     const positionsByStyle = [[], [], [], [], []];
     const major = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link']);
     const secondary = new Set(['secondary', 'secondary_link', 'tertiary']);
@@ -458,15 +480,16 @@ export async function startWebGLScene(canvas, status) {
     }
     const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian];
     // Higher-priority carriageways sit a few centimetres above lower classes
-    // at overlaps. This provides deterministic crossing order without visible
-    // floating roads.
-    const classOffsets = [0.30, 0.42, 0.36, 0.47, 0.50];
+    // at overlaps. Footways remain contextual and below carriageways so they
+    // cannot slice a visible road into disconnected pieces at junctions.
     const buildRibbon = (roads, styleIndex, outer = false) => {
       const vertices = [];
+      const uvs = [];
       const indices = [];
       const pushVertex = (x, z, elevationOffset) => {
         const index = vertices.length / 3;
         vertices.push(x, terrainHeightAt(x, z) + elevationOffset, z);
+        uvs.push(x / 12, z / 12);
         return index;
       };
       const addDisc = (x, z, radius, elevationOffset) => {
@@ -482,7 +505,7 @@ export async function startWebGLScene(canvas, status) {
       };
       for (const road of roads) {
         const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.24 : 0.48) : 0);
-        const elevationOffset = classOffsets[styleIndex] + (outer ? -0.10 : 0);
+        const elevationOffset = ROAD_CLASS_OFFSETS[styleIndex] + (outer ? -0.10 : 0);
         const cleanPoints = road.points.filter(([x, z], index, points) => (
           Number.isFinite(x) && Number.isFinite(z)
           && (!index || Math.hypot(x - points[index - 1][0], z - points[index - 1][1]) > 0.05)
@@ -497,12 +520,24 @@ export async function startWebGLScene(canvas, status) {
           if (length <= 0.05) continue;
           const nx = -dz / length * halfWidth;
           const nz = dx / length * halfWidth;
-          const a = pushVertex(x1 + nx, z1 + nz, elevationOffset);
-          const b = pushVertex(x1 - nx, z1 - nz, elevationOffset);
-          const c = pushVertex(x2 + nx, z2 + nz, elevationOffset);
-          const d = pushVertex(x2 - nx, z2 - nz, elevationOffset);
-          indices.push(a, b, c, b, d, c);
-          segmentCount += 1;
+          // Long source segments used to bridge over terrain undulations as
+          // one flat quad. Subdivide them so roads, paths and surface paint
+          // all follow the same terrain samples at close zoom.
+          const subdivisions = Math.max(1, Math.ceil(length / 4));
+          for (let section = 0; section < subdivisions; section += 1) {
+            const startAmount = section / subdivisions;
+            const endAmount = (section + 1) / subdivisions;
+            const sx = x1 + dx * startAmount;
+            const sz = z1 + dz * startAmount;
+            const ex = x1 + dx * endAmount;
+            const ez = z1 + dz * endAmount;
+            const a = pushVertex(sx + nx, sz + nz, elevationOffset);
+            const b = pushVertex(sx - nx, sz - nz, elevationOffset);
+            const c = pushVertex(ex + nx, ez + nz, elevationOffset);
+            const d = pushVertex(ex - nx, ez - nz, elevationOffset);
+            indices.push(a, b, c, b, d, c);
+            segmentCount += 1;
+          }
         }
         if (segmentCount) {
           // A strip based on averaged vertex normals can fold over itself at
@@ -514,10 +549,12 @@ export async function startWebGLScene(canvas, status) {
       }
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geometry.setIndex(indices);
       geometry.computeVertexNormals();
       const material = new THREE.MeshBasicMaterial({
-        color: outer ? 0x293337 : colors[styleIndex],
+        color: outer ? 0x2c2f2e : colors[styleIndex],
+        map: !outer && styleIndex <= 2 ? asphaltTexture : null,
         transparent: false,
         opacity: 1,
         depthWrite: true,
@@ -777,6 +814,100 @@ export async function startWebGLScene(canvas, status) {
         centre[1] + Math.sin(angle) * along + Math.cos(angle) * across,
       ];
     };
+    const majorRoadTypes = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link']);
+    const secondaryRoadTypes = new Set(['secondary', 'secondary_link', 'tertiary']);
+    const nonCarriagewayTypes = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator', 'pedestrian']);
+    const roadFamily = highway => majorRoadTypes.has(highway) ? 'major' : secondaryRoadTypes.has(highway) ? 'secondary' : 'local';
+    const roadSurfaceOffset = highway => majorRoadTypes.has(highway)
+      ? ROAD_CLASS_OFFSETS[1]
+      : secondaryRoadTypes.has(highway) ? ROAD_CLASS_OFFSETS[2] : ROAD_CLASS_OFFSETS[0];
+    const renderedRoadSegments = [];
+    for (const [mappedWidth, highway, points] of data.roads || []) {
+      if (nonCarriagewayTypes.has(highway)) continue;
+      const width = clamp(Number(mappedWidth) || 4, 2.5, 18);
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const [ax, az] = points[index];
+        const [bx, bz] = points[index + 1];
+        const dx = bx - ax;
+        const dz = bz - az;
+        const length = Math.hypot(dx, dz);
+        if (length < 0.2) continue;
+        renderedRoadSegments.push({ ax, az, bx, bz, dx, dz, length, width, highway });
+      }
+    }
+    const nearestOnSegment = (point, segment) => {
+      const amount = clamp(
+        ((point[0] - segment.ax) * segment.dx + (point[1] - segment.az) * segment.dz) / (segment.length * segment.length),
+        0,
+        1,
+      );
+      const x = segment.ax + segment.dx * amount;
+      const z = segment.az + segment.dz * amount;
+      return { x, z, distance: Math.hypot(point[0] - x, point[1] - z) };
+    };
+    const visibleRoadFrame = (centre, fallbackBearing, fallbackWidth) => {
+      const fallbackAngle = THREE.MathUtils.degToRad(Number(fallbackBearing) || 0);
+      const fallbackTangent = [Math.cos(fallbackAngle), Math.sin(fallbackAngle)];
+      const nearby = [];
+      for (const segment of renderedRoadSegments) {
+        const nearest = nearestOnSegment(centre, segment);
+        if (nearest.distance > 22) continue;
+        let tangent = [segment.dx / segment.length, segment.dz / segment.length];
+        let dot = tangent[0] * fallbackTangent[0] + tangent[1] * fallbackTangent[1];
+        if (dot < 0) {
+          tangent = [-tangent[0], -tangent[1]];
+          dot = -dot;
+        }
+        if (dot < Math.cos(THREE.MathUtils.degToRad(35))) continue;
+        nearby.push({ segment, nearest, tangent, alignment: dot });
+      }
+      if (!nearby.length) {
+        return {
+          centre, bearing: fallbackBearing, width: fallbackWidth,
+          surfaceOffset: ROAD_CLASS_OFFSETS[0] + 0.015,
+        };
+      }
+      const best = nearby.reduce((selected, candidate) => {
+        const score = candidate.nearest.distance + (1 - candidate.alignment) * 14;
+        return !selected || score < selected.score ? { ...candidate, score } : selected;
+      }, null);
+      const family = roadFamily(best.segment.highway);
+      const matched = nearby.filter(candidate => (
+        roadFamily(candidate.segment.highway) === family
+        && candidate.nearest.distance <= 18
+        && Math.abs(candidate.tangent[0] * best.tangent[0] + candidate.tangent[1] * best.tangent[1]) >= Math.cos(THREE.MathUtils.degToRad(22))
+      ));
+      let tangentX = 0;
+      let tangentZ = 0;
+      for (const candidate of matched) {
+        const weight = 1 / (1 + candidate.nearest.distance);
+        let [tx, tz] = candidate.tangent;
+        if (tx * best.tangent[0] + tz * best.tangent[1] < 0) [tx, tz] = [-tx, -tz];
+        tangentX += tx * weight;
+        tangentZ += tz * weight;
+      }
+      const tangentLength = Math.hypot(tangentX, tangentZ) || 1;
+      tangentX /= tangentLength;
+      tangentZ /= tangentLength;
+      const normalX = -tangentZ;
+      const normalZ = tangentX;
+      let minimumEdge = Infinity;
+      let maximumEdge = -Infinity;
+      for (const candidate of matched) {
+        const offset = (candidate.nearest.x - centre[0]) * normalX + (candidate.nearest.z - centre[1]) * normalZ;
+        minimumEdge = Math.min(minimumEdge, offset - candidate.segment.width * 0.5);
+        maximumEdge = Math.max(maximumEdge, offset + candidate.segment.width * 0.5);
+      }
+      const measuredWidth = maximumEdge - minimumEdge;
+      const width = clamp(Math.max(Number(fallbackWidth) || 5, measuredWidth), 5, 34);
+      const centreOffset = Number.isFinite(minimumEdge + maximumEdge) ? (minimumEdge + maximumEdge) * 0.5 : 0;
+      return {
+        centre: [centre[0] + normalX * centreOffset, centre[1] + normalZ * centreOffset],
+        bearing: THREE.MathUtils.radToDeg(Math.atan2(tangentZ, tangentX)),
+        width,
+        surfaceOffset: roadSurfaceOffset(best.segment.highway) + 0.015,
+      };
+    };
 
     // Assemble point bays into straight curbside runs. Each run shares its two
     // long edges and dividers, eliminating stacked boxes and slight rotations
@@ -875,45 +1006,110 @@ export async function startWebGLScene(canvas, status) {
       });
       if (!duplicate) crossingItems.push(item);
     }
-    const zebraMatrices = [];
-    const addZebraBand = (centre, bearing, roadWidth, alongOffset = 0) => {
+    const zebraMarkings = [];
+    // Road ribbons top out at +0.42 m. Each marking corner is independently
+    // draped at +0.57 m so slopes cannot push part of a crossing under a road.
+    const crossingSurfaceOffset = 0.57;
+    const addZebraBand = (centre, bearing, roadWidth, alongOffset = 0, surfaceOffset = crossingSurfaceOffset) => {
       const stripeCount = Math.max(5, Math.floor(roadWidth / 1.05));
       const spacing = roadWidth / stripeCount;
-      const quaternion = yawQuaternion(bearing);
       for (let stripe = 0; stripe < stripeCount; stripe += 1) {
         const across = -roadWidth * 0.5 + spacing * (stripe + 0.5);
-        const [x, z] = offsetOnRoad(centre, bearing, alongOffset, across);
-        zebraMatrices.push(composeMatrix(
-          new THREE.Vector3(x, terrainHeightAt(x, z) + 0.66, z),
-          quaternion,
-          new THREE.Vector3(3.2, 1, spacing * 0.58),
-        ));
+        zebraMarkings.push({ centre, bearing, along: alongOffset, across, halfAlong: 1.6, halfAcross: spacing * 0.29, surfaceOffset });
       }
+    };
+    const crossingPaint = 0xaeb2ad;
+    const makeCrossingMesh = (markings, semanticClass, surfaceOffset = crossingSurfaceOffset) => {
+      if (!markings.length) return null;
+      const positions = [];
+      for (const marking of markings) {
+        const alongDivisions = Math.max(1, Math.ceil(marking.halfAlong * 2 / 0.4));
+        const acrossDivisions = Math.max(1, Math.ceil(marking.halfAcross * 2 / 0.3));
+        const pointAt = (alongIndex, acrossIndex) => {
+          const along = marking.along - marking.halfAlong + marking.halfAlong * 2 * alongIndex / alongDivisions;
+          const across = marking.across - marking.halfAcross + marking.halfAcross * 2 * acrossIndex / acrossDivisions;
+          const [x, z] = offsetOnRoad(marking.centre, marking.bearing, along, across);
+          return [x, terrainHeightAt(x, z) + (marking.surfaceOffset ?? surfaceOffset), z];
+        };
+        for (let alongIndex = 0; alongIndex < alongDivisions; alongIndex += 1) {
+          for (let acrossIndex = 0; acrossIndex < acrossDivisions; acrossIndex += 1) {
+            const a = pointAt(alongIndex, acrossIndex);
+            const b = pointAt(alongIndex + 1, acrossIndex);
+            const c = pointAt(alongIndex + 1, acrossIndex + 1);
+            const d = pointAt(alongIndex, acrossIndex + 1);
+            positions.push(...a, ...b, ...c, ...a, ...c, ...d);
+          }
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        color: crossingPaint, side: THREE.DoubleSide, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -12, polygonOffsetUnits: -12,
+      }));
+      mesh.renderOrder = 8;
+      mesh.userData.semanticClass = semanticClass;
+      mesh.userData.maxDistance = 720;
+      group.add(mesh);
+      return mesh;
+    };
+    const makeDrapedEllipses = (ellipses, color, semanticClass, surfaceOffset) => {
+      if (!ellipses.length) return null;
+      const positions = [];
+      const segments = 12;
+      for (const ellipse of ellipses) {
+        const centre = [ellipse.x, terrainHeightAt(ellipse.x, ellipse.z) + surfaceOffset, ellipse.z];
+        const perimeter = [];
+        for (let segment = 0; segment < segments; segment += 1) {
+          const angle = segment / segments * Math.PI * 2;
+          const localLong = Math.cos(angle) * ellipse.longRadius;
+          const localShort = Math.sin(angle) * ellipse.shortRadius;
+          const x = ellipse.x + Math.cos(ellipse.rotation) * localLong - Math.sin(ellipse.rotation) * localShort;
+          const z = ellipse.z + Math.sin(ellipse.rotation) * localLong + Math.cos(ellipse.rotation) * localShort;
+          perimeter.push([x, terrainHeightAt(x, z) + surfaceOffset, z]);
+        }
+        for (let segment = 0; segment < segments; segment += 1) {
+          positions.push(...centre, ...perimeter[segment], ...perimeter[(segment + 1) % segments]);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        color, side: THREE.DoubleSide, depthWrite: false,
+        polygonOffset: true, polygonOffsetFactor: -12, polygonOffsetUnits: -12,
+      }));
+      mesh.renderOrder = 8;
+      mesh.userData.semanticClass = semanticClass;
+      mesh.userData.maxDistance = 720;
+      group.add(mesh);
+      return mesh;
     };
     const daisyItems = [];
     for (const item of crossingItems) {
       const attributes = item.attributes || {};
-      const centre = attributes.roadCentre || item.coordinates;
-      const width = clamp(Number(attributes.roadWidthM) || 8, 5, 20);
+      const frame = visibleRoadFrame(
+        attributes.roadCentre || item.coordinates,
+        attributes.roadBearingDeg || 0,
+        Number(attributes.roadWidthM) || 8,
+      );
       if (attributes.crossingDesign === 'daisy') {
-        daisyItems.push({ item, centre, width, bearing: attributes.roadBearingDeg || 0 });
+        daisyItems.push({ item, ...frame });
       } else {
-        addZebraBand(centre, attributes.roadBearingDeg || 0, width);
+        addZebraBand(frame.centre, frame.bearing, frame.width, 0, frame.surfaceOffset);
       }
     }
-    makeInstances(
-      new THREE.BoxGeometry(1, 0.035, 1),
-      new THREE.MeshBasicMaterial({ color: 0xf2f1e9, polygonOffset: true, polygonOffsetFactor: -7 }),
-      zebraMatrices,
-      'pedestrianCrossing',
-    );
+    const conventionalZebraCount = zebraMarkings.length;
+    makeCrossingMesh(zebraMarkings, 'pedestrianCrossing');
 
     // The St George's Mall / Strand Street installation has two zebra bands
     // framing a field of variable African daisies, following the supplied photo.
-    for (const { centre, width, bearing } of daisyItems) {
-      addZebraBand(centre, bearing, width, -7.1);
-      addZebraBand(centre, bearing, width, 7.1);
-      const petalMatrices = [], centreMatrices = [];
+    for (const { centre, width, bearing, surfaceOffset } of daisyItems) {
+      const daisySurfaceOffset = surfaceOffset + 0.008;
+      addZebraBand(centre, bearing, width, -7.1, daisySurfaceOffset);
+      addZebraBand(centre, bearing, width, 7.1, daisySurfaceOffset);
+      const petals = [], flowerCentres = [];
       const motifs = [
         [-4.4, -0.34, 0.95], [-4.2, 0.02, 0.48], [-4.0, 0.35, 0.78],
         [-2.0, -0.12, 0.58], [-1.8, 0.27, 1.02], [-0.5, -0.38, 0.72],
@@ -922,29 +1118,23 @@ export async function startWebGLScene(canvas, status) {
       ];
       for (const [along, acrossFactor, radius] of motifs) {
         const [cx, cz] = offsetOnRoad(centre, bearing, along, acrossFactor * width);
-        const cy = terrainHeightAt(cx, cz) + 0.68;
-        centreMatrices.push(composeMatrix(new THREE.Vector3(cx, cy + 0.008, cz), new THREE.Quaternion(), new THREE.Vector3(radius * 0.27, 1, radius * 0.27)));
+        flowerCentres.push({ x: cx, z: cz, longRadius: radius * 0.27, shortRadius: radius * 0.27, rotation: 0 });
         for (let petal = 0; petal < 12; petal += 1) {
           const angle = petal / 12 * Math.PI * 2 + THREE.MathUtils.degToRad(bearing);
           const px = cx + Math.cos(angle) * radius * 0.56;
           const pz = cz + Math.sin(angle) * radius * 0.56;
-          const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2);
-          petalMatrices.push(composeMatrix(
-            new THREE.Vector3(px, cy, pz), quaternion,
-            new THREE.Vector3(radius * 0.31, 1, radius * 0.68),
-          ));
+          petals.push({
+            x: px, z: pz, longRadius: radius * 0.68,
+            shortRadius: radius * 0.31, rotation: angle,
+          });
         }
       }
-      const petalGeometry = new THREE.CircleGeometry(1, 10);
-      petalGeometry.rotateX(-Math.PI / 2);
-      makeInstances(petalGeometry, new THREE.MeshBasicMaterial({ color: 0xf8f7ef, side: THREE.DoubleSide }), petalMatrices, 'daisyPetals');
-      makeInstances(new THREE.CylinderGeometry(1, 1, 0.025, 16), new THREE.MeshBasicMaterial({ color: 0xf4ae24 }), centreMatrices, 'daisyCentres');
+      makeDrapedEllipses(petals, 0xb7bab4, 'daisyPetals', daisySurfaceOffset);
+      makeDrapedEllipses(flowerCentres, 0xd49b32, 'daisyCentres', daisySurfaceOffset + 0.008);
     }
     // Daisy zebra bands are added after the first zebra mesh was built.
     if (daisyItems.length) {
-      const conventionalCount = zebraMatrices.length - daisyItems.reduce((sum, { width }) => sum + 2 * Math.max(5, Math.floor(width / 1.05)), 0);
-      const daisyZebraMatrices = zebraMatrices.slice(conventionalCount);
-      makeInstances(new THREE.BoxGeometry(1, 0.035, 1), new THREE.MeshBasicMaterial({ color: 0xf2f1e9 }), daisyZebraMatrices, 'daisyZebraBands');
+      makeCrossingMesh(zebraMarkings.slice(conventionalZebraCount), 'daisyZebraBands');
     }
 
     // Public toilets are point inventories, so use a recognizable compact
@@ -1210,6 +1400,10 @@ export async function startWebGLScene(canvas, status) {
   const heatStatus = document.querySelector('#heat-status');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
+  const heatSummary = document.querySelector('#heat-summary');
+  const heatAverage = document.querySelector('#heat-average');
+  const heatPriorityArea = document.querySelector('#heat-priority-area');
+  const heatMaximum = document.querySelector('#heat-maximum');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
   const sunTime = document.querySelector('#sun-time');
@@ -1814,6 +2008,18 @@ export async function startWebGLScene(canvas, status) {
     heatGroup.add(heatMesh);
   }
 
+  function renderHeatSummary(summary) {
+    if (!heatSummary) return;
+    const ready = summary?.area_weighted_mean_c != null && summary?.maximum_c != null;
+    heatSummary.hidden = !ready;
+    if (!ready) return;
+    heatAverage.textContent = `${Number(summary.area_weighted_mean_c).toFixed(1)}°C`;
+    heatMaximum.textContent = `${Number(summary.maximum_c).toFixed(1)}°C`;
+    const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
+    const hotspotPercent = Number(summary.hotspot_area_pct || 0);
+    heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${hotspotPercent.toFixed(0)}%`;
+  }
+
   async function loadHeat() {
     if (!heatStatus) return;
     heatStatus.textContent = 'Loading heat zones…';
@@ -1822,6 +2028,7 @@ export async function startWebGLScene(canvas, status) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       buildHeatMesh(payload);
+      renderHeatSummary(payload.summary);
       const range = payload.color_range || payload.range;
       heatRange = range;
       const scale = payload.color_scale || {};
@@ -1831,8 +2038,11 @@ export async function startWebGLScene(canvas, status) {
       heatLegendMax.textContent = range
         ? `${scale.top_band_label || 'Top 10%'} ≥ ${Number(range.max).toFixed(1)}°C`
         : 'Top 10%';
-      heatStatus.textContent = `${payload.count || payload.features?.length || 0} GPU heat zones · percentile colour scale`;
+      const rawWindow = payload.window?.label;
+      const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26 baseline' : rawWindow || 'Summer 2025–26 baseline';
+      heatStatus.textContent = `${payload.count || payload.features?.length || 0} heat zones · ${window}`;
     } catch (error) {
+      renderHeatSummary(null);
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
     }
     setHeatMode(Boolean(heatToggle?.checked));

@@ -6,6 +6,7 @@ Standalone lightweight Cape Town CBD 3D viewer.
 
 ```bash
 python scripts/build_hybrid_dem.py
+python scripts/build_hybrid_buildings.py
 python scripts/build_scene.py
 ```
 
@@ -29,6 +30,14 @@ without enough raster coverage retain their mapped `BLD_HGT` extrusion. The
 supplied height map already stores height above ground, so roof vertices are
 placed at DTM elevation plus the raster value; the DTM is not subtracted a
 second time.
+
+Building geometry is a hybrid: current OpenStreetMap outlines and mapped
+`building:part` shapes supply stepped massing, while the municipal
+photogrammetry layer fills places where OSM has no reliable coverage. Explicit
+OSM `height` values are retained; otherwise each OSM part is fitted to the 2025
+LiDAR height and roof surface. This avoids treating incomplete OSM level tags
+as authoritative while preserving curved and setback geometry. The derived
+footprint product remains subject to ODbL attribution and share-alike terms.
 The scene boundary is derived from the hybrid DTM's valid-pixel mask, not the
 rectangular GeoTIFF envelope. Terrain triangles, buildings, canopy, roads,
 railways, grass, heat zones, and interaction are clipped to the irregular
@@ -209,7 +218,7 @@ reproducible pedestrian-speed field map, comfort distribution, exceedance and
 uncertainty indicators, ERA5 evidence, data-quality notes, and model
 limitations. Use **Print / Save PDF** in the report toolbar for an A4 report.
 
-## Current conditions and mitigation planning
+## Current conditions and planning guidance
 
 Run the FastAPI application to enable **Current conditions**. The server
 proxies and normalizes Open-Meteo's modelled Cape Town CBD weather, caches it
@@ -219,16 +228,12 @@ Activating Current updates Cape Town local sun time and shadows, then uses the
 `WEATHER_API_BASE_URL` to use a compatible paid or self-hosted endpoint.
 
 The current weather is not a station observation, and the heat layer remains
-the explicitly labelled Summer 2025–26 baseline. The **Mitigation planner**
-uses press-drag-release freehand areas that follow the LiDAR terrain. It
-supports added canopy, constructed shade, cool and permeable pavement, green
-roofs, existing-canopy protection, rain gardens, de-paving and planting, and
-water features. Roof and canopy measures clip to their eligible mapped
-surfaces; shade follows the selected sun date/time; planted measures can use a
-local cooling buffer; and relevant measures include conceptual runoff or
-canopy co-benefits. Before/after temperature and pedestrian-exposure outputs
-remain low/central/high planning estimates, not measurements, drainage models,
-or engineering-grade results.
+the explicitly labelled Summer 2025–26 baseline. The heat panel combines the
+map with an area-weighted summary, a top-decile priority-hotspot measure and
+response guidance for shade, planting, hard surfaces and roofs. Relevant
+stormwater responses sit in the flood panel so that possible interventions are
+read alongside the evidence and limitations they depend on. These are
+screening prompts, not measurements or engineering-grade recommendations.
 
 ## Surface flood simulator
 

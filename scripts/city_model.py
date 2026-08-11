@@ -217,8 +217,13 @@ def _add_street_objects(
         nearest = road_context[int(nearest_index)]
         line = nearest["line"]
         along = line.project(point)
-        before = line.interpolate(max(0.0, along - 0.75))
-        after = line.interpolate(min(line.length, along + 0.75))
+        # A sub-metre tangent follows every digitising kink and can rotate a
+        # crossing several degrees away from the visible carriageway. Sample
+        # a longer local chord so markings stay straight while still tracking
+        # genuine bends in the road.
+        bearing_sample_m = min(6.0, max(1.5, line.length * 0.2))
+        before = line.interpolate(max(0.0, along - bearing_sample_m))
+        after = line.interpolate(min(line.length, along + bearing_sample_m))
         dx, dz = after.x - before.x, after.y - before.y
         length = math.hypot(dx, dz) or 1.0
         tx, tz = dx / length, dz / length
@@ -242,8 +247,9 @@ def _add_street_objects(
                 continue
             candidate_line = candidate["line"]
             candidate_along = candidate_line.project(point)
-            candidate_before = candidate_line.interpolate(max(0.0, candidate_along - 0.75))
-            candidate_after = candidate_line.interpolate(min(candidate_line.length, candidate_along + 0.75))
+            candidate_sample_m = min(6.0, max(1.5, candidate_line.length * 0.2))
+            candidate_before = candidate_line.interpolate(max(0.0, candidate_along - candidate_sample_m))
+            candidate_after = candidate_line.interpolate(min(candidate_line.length, candidate_along + candidate_sample_m))
             candidate_dx = candidate_after.x - candidate_before.x
             candidate_dz = candidate_after.y - candidate_before.y
             candidate_length = math.hypot(candidate_dx, candidate_dz) or 1.0

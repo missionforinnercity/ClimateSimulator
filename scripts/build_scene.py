@@ -22,7 +22,10 @@ from scipy.spatial import Delaunay, QhullError
 from shapely.geometry import LineString, Point, Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 
-from city_model import build_city_model, write_city_model
+try:
+    from .city_model import build_city_model, write_city_model
+except ImportError:  # Direct execution: python scripts/build_scene.py
+    from city_model import build_city_model, write_city_model
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 ROAD_WIDTHS = {"motorway": 15.0, "trunk": 13.0, "primary": 11.0, "secondary": 9.0, "tertiary": 7.0, "residential": 5.5, "unclassified": 5.5, "living_street": 5.0, "service": 4.0, "pedestrian": 4.0, "cycleway": 2.5, "footway": 2.0, "path": 1.5}
@@ -364,7 +367,7 @@ def load_building_records(footprints_path, height_path, dtm_path):
             ground = sample(dtm, dtm_transform, point.x, point.y, default=float("nan"))
             if not math.isfinite(ground):
                 continue
-            height_source = "survey_height"
+            height_source = properties.get("HEIGHT_SRC") or "survey_height"
             try:
                 height = float(source_height)
             except (TypeError, ValueError):
@@ -376,6 +379,7 @@ def load_building_records(footprints_path, height_path, dtm_path):
             yield ground, max(2.5, min(140.0, height)), polygon, {
                 "source_id": source_id,
                 "height_source": height_source,
+                "roof_shape_hint": properties.get("OSM_ROOF"),
                 "acquisition_method": properties.get("ACQS_MTHD"),
                 "acquisition_period": properties.get("ACQS_PRD"),
             }
@@ -435,6 +439,80 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, roads_path,
     )
     output.write_text(json.dumps({"buildings": buildings, "trees": trees, "roads": roads, "railways": railways, "grass": grass, "terrain": terrain}, separators=(",", ":")) + "\n", encoding="utf-8")
     return {"buildings": len(buildings), "trees": len(trees), "roads": len(roads), "railways": len(railways), "grass": len(grass), "bytes": output.stat().st_size}
+
+
+def parametric_roof_is_credible(
+    polygon,
+    coverage,
+    shape_name,
+    rise,
+    half_short_m,
+    shape_inlier_fraction,
+    shape_rmse,
+    flat_rmse,
+    observed_range,
+    roof_shape_hint=None,
+):
+    """Reject LiDAR roof fits that would create implausible spikes or pyramids.
+
+    A one-metre surface raster is particularly noisy along walls and on large,
+    irregular city blocks. Parametric roofs are therefore reserved for compact,
+    mostly rectangular footprints with broad raster support and a meaningful
+    improvement over a flat roof. Explicit OSM roof tags relax the outline
+    thresholds slightly, but never the physical slope/rise limits.
+    """
+    if polygon.is_empty or polygon.area < 25.0 or polygon.interiors:
+        return False
+
+    hint = str(roof_shape_hint or "").strip().lower()
+    hint_shapes = {
+        "gable": "gable",
+        "gabled": "gable",
+        "hip": "hip",
+        "hipped": "hip",
+        "pyramid": "hip",
+        "pyramidal": "hip",
+        "pitched": "gable",
+    }
+    tagged_match = hint_shapes.get(hint) == shape_name
+    # Do not replace an explicit roof description with a different primitive.
+    # Unsupported forms (flat, dome, mansard, onion, and so on) are safer as a
+    # clean regularized cap than as an invented gable or pyramid.
+    if hint and not tagged_match:
+        return False
+    simplified = polygon.simplify(0.75, preserve_topology=True)
+    vertex_count = max(0, len(simplified.exterior.coords) - 1)
+    hull_area = max(float(polygon.convex_hull.area), 1e-6)
+    rectangle_area = max(float(polygon.minimum_rotated_rectangle.area), 1e-6)
+    convexity = float(polygon.area) / hull_area
+    rectangularity = float(polygon.area) / rectangle_area
+
+    if coverage < (0.64 if tagged_match else 0.72):
+        return False
+    if convexity < (0.72 if tagged_match else 0.82):
+        return False
+    if rectangularity < (0.58 if tagged_match else 0.70):
+        return False
+    if vertex_count > (24 if tagged_match else 16):
+        return False
+    if rise < 1.2 or rise > 8.0:
+        return False
+    if half_short_m <= 0.0 or rise / half_short_m > 0.65:
+        return False
+    if shape_name == "hip" and not tagged_match:
+        if polygon.area > 350.0 or rise / half_short_m > 0.50:
+            return False
+    if rise > max(2.5, observed_range * 1.6):
+        return False
+    if polygon.area > (3200.0 if tagged_match else 2200.0):
+        return False
+    if shape_name == "hip" and polygon.area > (2400.0 if tagged_match else 1500.0):
+        return False
+    if shape_inlier_fraction < (0.66 if tagged_match else 0.72):
+        return False
+    if not math.isfinite(flat_rmse) or flat_rmse <= 1e-6:
+        return False
+    return shape_rmse <= flat_rmse * (0.80 if tagged_match else 0.74)
 
 
 def build_roof_surface(building_records, height_path, dtm_path, output, origin_x, origin_y, stride=2):
@@ -615,6 +693,8 @@ def build_roof_surface(building_records, height_path, dtm_path, output, origin_x
             short_projection = centered @ short_axis
             half_long = max(1.0, float(np.percentile(np.abs(long_projection), 98)))
             half_short = max(1.0, float(np.percentile(np.abs(short_projection), 98)))
+            pixel_size_m = math.sqrt(abs(float(transform.a * transform.e)))
+            half_short_m = half_short * pixel_size_m
             row_grid, column_grid = np.indices(denoised.shape)
             grid_centered = np.column_stack((
                 column_grid.ravel() - footprint_center[0],
@@ -647,7 +727,8 @@ def build_roof_surface(building_records, height_path, dtm_path, output, origin_x
                     rise = float(np.sum(
                         (selected_factor - factor_mean) * (selected_target - target_mean)
                     ) / variance)
-                    rise = max(0.0, min(rise, max(2.0, min(18.0, float(record[1]) * 0.45))))
+                    maximum_rise = min(8.0, float(record[1]) * 0.35, half_short_m * 0.65)
+                    rise = max(0.0, min(rise, maximum_rise))
                     base = float(np.mean(selected_target - rise * selected_factor))
                     residual = target - (base + rise * factor_values)
                     residual_median = float(np.median(residual[shape_inliers]))
@@ -662,10 +743,19 @@ def build_roof_surface(building_records, height_path, dtm_path, output, origin_x
                 flat_rmse = float(np.sqrt(np.mean((target[shape_inliers] - flat_height) ** 2)))
                 shape_inlier_fraction = float(np.count_nonzero(shape_inliers)) / len(target)
                 if (
-                    rise >= 1.2
-                    and shape_inlier_fraction >= 0.62
-                    and shape_rmse < roof_shape_rmse
-                    and shape_rmse <= flat_rmse * 0.82
+                    shape_rmse < roof_shape_rmse
+                    and parametric_roof_is_credible(
+                        record[2],
+                        coverage,
+                        shape_name,
+                        rise,
+                        half_short_m,
+                        shape_inlier_fraction,
+                        shape_rmse,
+                        flat_rmse,
+                        float(p90 - p10),
+                        record[3].get("roof_shape_hint"),
+                    )
                 ):
                     roof_shape = (shape_name, base, rise, factor)
                     roof_shape_rmse = shape_rmse
@@ -879,7 +969,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dtm", type=Path, default=Path("data/derived/company_gardens_hybrid_dem_2m.tif"))
     parser.add_argument("--height", type=Path, default=Path("data/raw/LiDAR2025/Lidar2025_Height_Map_1m.tif"))
-    parser.add_argument("--footprints", type=Path, default=Path("data/raw/BuildingFootprints2D.geojson"))
+    parser.add_argument("--footprints", type=Path, default=Path("data/derived/BuildingFootprintsHybrid.geojson"))
     parser.add_argument("--trees", type=Path, default=Path("data/raw/tree_canopy.geojson"))
     parser.add_argument("--roads", type=Path, default=Path("data/osm_cbd_roads.geojson"))
     parser.add_argument("--railways", type=Path, default=Path("data/osm_cbd_railways.geojson"))

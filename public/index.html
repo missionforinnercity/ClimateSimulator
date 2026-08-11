@@ -4,10 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%23252525'/%3E%3Cpath d='M12 46 26 18l8 16 7-11 11 23Z' fill='%23b84e92'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=21">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css?v=25">
 </head>
-<body>
+<body aria-busy="true">
+  <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
+    <div class="startup-loader-grid" aria-hidden="true"></div>
+    <div class="startup-loader-content">
+      <div id="startup-loader-progress" class="startup-loader-vessel" role="progressbar" aria-label="Climate engine loading progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="8" style="--load-progress: 8%">
+        <div class="startup-loader-chamber" aria-hidden="true">
+          <div class="startup-loader-fluid"></div>
+          <span class="startup-loader-glint"></span>
+        </div>
+      </div>
+      <div class="startup-loader-copy">
+        <span class="startup-loader-brand">Mission</span>
+        <span class="startup-loader-product">Cape Town climate engine</span>
+      </div>
+      <div class="startup-loader-readout">
+        <span id="startup-loader-stage">Initialising simulation</span>
+        <output id="startup-loader-percent">8%</output>
+      </div>
+      <div class="startup-loader-track" aria-hidden="true"><i></i></div>
+    </div>
+  </div>
   <main id="app">
     <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
@@ -64,10 +84,6 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15c2.2 0 2.2-1.5 4.5-1.5S9.8 15 12 15s2.2-1.5 4.5-1.5S18.8 15 21 15M3 19c2.2 0 2.2-1.5 4.5-1.5S9.8 19 12 19s2.2-1.5 4.5-1.5S18.8 19 21 19"/><path d="M12 3 8.5 9a4 4 0 0 0 7 0L12 3Z"/></svg>
             <span>Flood</span>
           </button>
-          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-mitigation" data-menu-target="mitigation" title="Mitigation planner">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 4C11 4 6 8.5 6 14c0 3 2 5 5 5 5.5 0 9-6 9-15Z"/><path d="M4 21c2-6 6-10 12-13"/></svg>
-            <span>Plan</span>
-          </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-traffic" data-menu-target="traffic" title="Traffic simulation">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="10" height="6" rx="1.5"/><circle cx="7" cy="16" r="1.6"/><circle cx="12" cy="16" r="1.6"/><path d="M14 10h3.5L20 13v3h-2M16 8V5h-2"/></svg>
             <span>Traffic</span>
@@ -113,11 +129,29 @@
         <p class="panel-note">Open-Meteo modelled conditions · not a weather-station observation</p>
       </section>
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
-        <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox"> Show</label></div>
-        <p class="heat-metric-label">Surface temperature · Summer 2025–26 baseline — not live</p>
+        <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
+        <div class="heat-context">
+          <span class="estimate-badge">Screening layer</span>
+          <p>Summer 2025–26 modelled surface temperature—not live air temperature or heat-stress risk.</p>
+        </div>
         <p id="heat-status" class="heat-status">Loading heat zones…</p>
+        <div id="heat-summary" class="heat-summary" aria-label="Heat screening summary" hidden>
+          <span><b id="heat-average">—</b>Area-weighted average</span>
+          <span><b id="heat-priority-area">—</b>Priority hotspot area</span>
+          <span><b id="heat-maximum">—</b>Hottest modelled surface</span>
+        </div>
         <div class="heat-gradient"></div>
         <div class="heat-legend-labels"><span id="heat-legend-min">Bottom 10%</span><span id="heat-legend-max">Top 10%</span></div>
+        <p class="heat-legend-help"><b>Red areas are priorities for investigation.</b> Compare them with trees, buildings and the Sun tool before choosing a response.</p>
+        <div class="heat-planning-card">
+          <h3>Respond to the cause</h3>
+          <ul>
+            <li><b>Busy, unshaded public space:</b> test trees or constructed shade where people wait and walk.</li>
+            <li><b>Large exposed hard surface:</b> consider cool paving, planting or de-paving.</li>
+            <li><b>Hot roof:</b> assess a cool or green roof without claiming pedestrian-level relief.</li>
+          </ul>
+        </div>
+        <p class="panel-note">Use this map to prioritise site checks. Confirm shade, footfall, vulnerable users and air temperature before design.</p>
       </section>
       <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
         <div class="sun-heading"><span>Sunlight &amp; shadows</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
@@ -238,39 +272,11 @@
         <div class="flood-gradient"></div>
         <div class="flood-legend-labels"><span id="flood-time">Dry · 0 min</span><span id="flood-legend-max">— m</span></div>
         <div id="flood-results" class="flood-results" hidden></div>
-        <p class="panel-note">2D shallow-water model · 2025 LiDAR plus lower-accuracy calibrated SRTM in Company’s Garden · drains and unverified curbs omitted.</p>
-      </section>
-      <section id="menu-mitigation" class="mitigation-panel menu-section" data-menu-panel="mitigation" role="tabpanel" aria-label="Heat mitigation planning controls" hidden>
-        <div class="mitigation-heading"><span>Mitigation planner</span><span class="estimate-badge">Estimate</span></div>
-        <label>Method
-          <select id="mitigation-method">
-            <option value="added_canopy">Added mature canopy</option>
-            <option value="constructed_shade">Constructed shade</option>
-            <option value="cool_pavement">Cool pavement</option>
-            <option value="green_roof">Green roof</option>
-            <option value="canopy_protection">Protect existing canopy</option>
-            <option value="permeable_pavement">Permeable pavement</option>
-            <option value="rain_garden">Rain garden / bioswale</option>
-            <option value="depave_plant">De-pave and plant</option>
-            <option value="water_feature">Water feature</option>
-          </select>
-        </label>
-        <p id="mitigation-method-note" class="panel-note">Tree canopy casts time-dependent shade and improves pedestrian comfort.</p>
-        <button id="mitigation-add" class="secondary" type="button" aria-pressed="false">Draw intervention</button>
-        <p id="mitigation-status" class="mitigation-status">Choose a method, then drag on the terrain to paint its area.</p>
-        <div id="mitigation-list" class="mitigation-list"></div>
-        <div class="mitigation-actions">
-          <button id="mitigation-run" type="button" disabled>Compare impact</button>
-          <button id="mitigation-clear" class="secondary" type="button">Clear</button>
+        <div class="section-response">
+          <b>Planning response</b>
+          <span>Use ponding areas to target rain gardens, permeable paving or de-paving, then verify drains, kerbs and underground services on site.</span>
         </div>
-        <label>Map
-          <select id="mitigation-compare">
-            <option value="before">Before · summer baseline</option>
-            <option value="after">After · central estimate</option>
-          </select>
-        </label>
-        <div id="mitigation-results" class="mitigation-results" hidden></div>
-        <p class="panel-note">Planning estimate—not measured or engineering-grade.</p>
+        <p class="panel-note">2D shallow-water model · 2025 LiDAR plus lower-accuracy calibrated SRTM in Company’s Garden · drains and unverified curbs omitted.</p>
       </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
         <div class="traffic-heading">
@@ -366,7 +372,7 @@
         <details class="help">
           <summary>Controls &amp; sources</summary>
           <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
-          <p class="source">Supplied LiDAR layers · © OpenStreetMap contributors</p>
+          <p class="source">Supplied LiDAR layers · Building and street geometry © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors · ODbL</a></p>
         </details>
       </footer>
     </aside>
@@ -391,6 +397,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-  <script type="module" src="app.js?v=webgl-42"></script>
+  <script type="module" src="app.js?v=webgl-54"></script>
 </body>
 </html>
