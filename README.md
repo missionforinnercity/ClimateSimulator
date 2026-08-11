@@ -135,15 +135,27 @@ live provider closures, the simulated closure, and roads gaining or losing
 traffic after rerouting. The selected road carries directional arrows, while
 closure blocks use barricades, beacons, and a floating road-closure sign.
 The SUMO network is generated with left-hand traffic for South African lane
-placement and junction behaviour. Closure results include queue, route-length,
-completion, speed, delay, and road-level diversion metrics. The representative
+placement and junction behaviour. In lane mode, each selected directional road
+section closes its left-side kerbside lane; select both opposing sections to
+model one closed lane in each direction. The orange overlay follows the actual
+lane geometry rather than the shared road centreline. Closure results include
+queue, route-length, completion, speed, delay, and road-level diversion metrics. The representative
 fleet carries HBEFA3 emission classes, allowing both runs to compare corridor
-CO₂, NOx, PMx, fuel use, and active-road noise estimates. Nearby mapped parking
+CO₂, NOx, exhaust PMx, fuel use, and relative edge-noise emissions. Nearby mapped parking
 and pedestrian crossings are reported as context only; they do not create
 invented occupancy or pedestrian demand. Completed comparisons can generate a
-print-ready A4 report with an executive finding, scenario definition, impact
-diagram, before/after tables, environmental estimates, data provenance, and
-explicit limitations; the browser print dialog can save it as PDF. Rebuild the SUMO
+print-ready A4 report with a plain-language finding, recommended action,
+scenario definition, impact diagram, before/after tables, environmental
+estimates, and data provenance; the browser print dialog can save it as PDF.
+The synthetic base load is stability-tuned at 50 corridor departures per
+minute. Reports withhold impact claims if the open-road run completes less than
+85% of demand, either run times out, or the paired sample is below 20%. This is
+not a substitute for observed counts or an origin-destination calibration; see
+`docs/TRAFFIC_VALIDATION.md` for the report review, sweep results and evidence
+needed to promote the model beyond exploratory use.
+Changing the sampling window extends the same reproducible traffic stream, so
+a 20-minute comparison is a longer observation of the 10-minute scenario rather
+than a newly randomised population. Rebuild the SUMO
 network after refreshing OSM data with:
 
 ```bash

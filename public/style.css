@@ -269,10 +269,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   line-height: 1.45;
 }
 .traffic-impact-summary strong { display: block; margin-bottom: 2px; color: #ffe57c; font-size: 12px; }
-.traffic-impact-summary.low { border-color: #39735f; background: #223b33; color: #bfe7d9; }
-.traffic-impact-summary.low strong { color: #79e2bd; }
-.traffic-impact-summary.high { border-color: #9a493c; background: #482b25; color: #f3c4ba; }
-.traffic-impact-summary.high strong { color: #ff8872; }
+.traffic-impact-summary.minor { border-color: #39735f; background: #223b33; color: #bfe7d9; }
+.traffic-impact-summary.minor strong { color: #79e2bd; }
+.traffic-impact-summary.significant, .traffic-impact-summary.major { border-color: #9a493c; background: #482b25; color: #f3c4ba; }
+.traffic-impact-summary.significant strong, .traffic-impact-summary.major strong { color: #ff8872; }
+.traffic-impact-summary.incomplete { border-color: #96713c; background: #453922; color: #f2d7a6; }
+.traffic-impact-summary.incomplete strong { color: #ffd078; }
 .traffic-map-key { color: #c9d6d3; font-size: 9px; }
 .traffic-map-key summary { padding: 3px 0; cursor: pointer; color: #abb8b5; font-weight: 700; }
 .traffic-map-key[open] summary { margin-bottom: 6px; }
@@ -357,6 +359,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   padding-bottom: 25px;
   border-bottom: 3px solid #1e6f61;
 }
+.report-brand-title { display: flex; align-items: center; gap: 20px; }
+.report-brand { width: 112px; height: 64px; object-fit: contain; padding: 7px 9px; border-radius: 4px; background: #17201d; }
 .report-kicker { margin: 0 0 8px; color: #1e6f61; font-size: 10px; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
 .report-header h1 { max-width: 650px; margin: 0; color: #17201c; font-size: 30px; line-height: 1.1; letter-spacing: -.025em; }
 .report-header-meta { min-width: 170px; color: #5d6661; font-size: 10px; text-align: right; }
@@ -373,10 +377,17 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   overflow: hidden;
 }
 .report-verdict::before { background: #d39b2e; content: ""; }
-.report-verdict.high::before { background: #c34e3f; }
-.report-verdict.low::before { background: #278267; }
+.report-verdict.major::before, .report-verdict.significant::before { background: #c34e3f; }
+.report-verdict.minor::before { background: #278267; }
+.report-verdict.incomplete::before { background: #bd8736; }
 .report-verdict h2 { margin: 0 0 5px; color: #20302a; font-size: 18px; }
 .report-verdict p { margin: 0; color: #55615c; }
+.report-decision-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 10px; margin: -10px 0 30px; }
+.report-decision-card { padding: 16px; border: 1px solid #cfd7d2; border-radius: 5px; background: #fff; }
+.report-decision-card.primary { border-color: #77a998; background: #e5f3ed; }
+.report-decision-card > span { display: block; margin-bottom: 7px; color: #397564; font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.report-decision-card h2, .report-decision-card p { margin: 0; color: #263630; font-size: 12px; line-height: 1.55; }
+.report-decision-card h2 { font-size: 13px; }
 .report-section { margin-top: 28px; break-inside: avoid; }
 .report-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin-bottom: 12px; border-bottom: 1px solid #cbd1cd; }
 .report-section h2 { margin: 0 0 7px; color: #1d2924; font-size: 16px; }
@@ -418,12 +429,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .report-list b { color: #283830; }
 .report-list span { color: #69736e; text-align: right; }
 .report-note { padding: 14px 16px; border-left: 4px solid #8d9691; background: #e7e9e7; color: #58615d; font-size: 10px; }
-.report-footer { margin-top: 34px; padding-top: 14px; border-top: 1px solid #bbc3be; color: #78817d; font-size: 9px; }
+.report-footer { display: flex; align-items: center; gap: 7px; margin-top: 34px; padding-top: 14px; border-top: 1px solid #bbc3be; color: #78817d; font-size: 9px; }
+.report-footer img { width: 18px; height: 18px; }
 
 @media (max-width: 760px) {
   .traffic-report-dialog { width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; }
   .traffic-report-document { padding: 28px 20px 44px; }
-  .report-header, .report-two-column { grid-template-columns: 1fr; }
+  .report-header, .report-two-column, .report-decision-grid { grid-template-columns: 1fr; }
+  .report-brand-title { align-items: flex-start; }
+  .report-brand { width: 88px; height: 52px; }
   .report-header-meta { text-align: left; }
   .report-scenario-grid, .report-stat-grid { grid-template-columns: repeat(2, 1fr); }
 }

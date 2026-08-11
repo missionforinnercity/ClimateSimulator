@@ -103,13 +103,43 @@ SIMULATION_WALL_CLOCK_BUDGET_S = 45.0
 # budget so thin that the street looks deserted.
 CORRIDOR_RADIUS_M = 250.0
 MIN_CORRIDOR_EDGES = 12
-# Vehicles inserted per simulated minute at demand scale 1.0. Tuned against a
-# demand sweep on the Bree Street corridor: this holds roughly 300 cars on
-# screen at once -- dense enough to read as weekday CBD traffic -- while
-# still letting most trips complete. Pushing it far higher saturates the
-# unsignalised junctions, and once vehicles stop completing at all the
-# before/after comparison inverts, because only the easiest trips finish.
-BASE_VEHICLES_PER_MIN = 160.0
+# Synthetic vehicle departures per simulated minute at demand scale 1.0, for a
+# corridor with REFERENCE_CORRIDOR_LANE_KM of capacity. This is a *model
+# loading rate*, not an observed Adderley Street count: trips both start and
+# end on edges in the 250 m corridor. A 2026 stability sweep on the supplied
+# CBD network found that 50/min retained a 92% open-road completion rate on
+# the Adderley corridor (10 minute sample, 15 minute scoring horizon). The
+# previous presentation-driven value of 160/min completed only 47% and
+# therefore started from artificial gridlock.
+#
+# That sweep fixed the *corridor*, so 50/min is only stable for a corridor
+# that size. CORRIDOR_RADIUS_M is a fixed buffer, but corridors it produces
+# vary enormously in capacity: a single drawn block can pull in a sparser
+# ~4 lane-km of surrounding street, a two-street staged closure ~19 lane-km,
+# a long road like Bree ~30. Loading every one of them with the same flat
+# demand starved the big corridors and gridlocked the small ones -- the same
+# closure looked severe or negligible depending on how much unrelated road
+# happened to be nearby, not on the closure itself. Demand is instead scaled
+# to each request's own corridor capacity, holding vehicles-per-lane-km (and
+# so the saturation level the sweep validated) constant instead of vehicles.
+BASE_VEHICLES_PER_MIN = 50.0
+# Adderley corridor capacity (sum of lane_count * length_m over corridor_edges
+# ("Adderley Street"), in lane-km) at the time of the sweep above -- the
+# denominator that turns BASE_VEHICLES_PER_MIN into a per-lane-km rate.
+REFERENCE_CORRIDOR_LANE_KM = 19.3
+# Keep the scaled rate within the band the sweep actually measured as stable.
+# 50/min (scale 1.0) was already the *top* of that band -- 60/min dropped
+# completion to 84% on the reference corridor -- so scaling up for a bigger
+# corridor is not safe to extrapolate: measured directly on Bree's ~30
+# lane-km corridor, a scale of 1.3-1.6 reproduced the exact saturation
+# inversion this whole scheme exists to avoid (closure completion *higher*
+# than baseline, negative journey-time change). Capping at 1.0 means large
+# corridors never get pushed past the validated rate; they just dilute a
+# closure's average effect across more alternative routes, which is a real
+# property of a big corridor, not a bug. Small corridors still scale down,
+# which is the case that was actually gridlocking.
+MIN_CORRIDOR_DEMAND_SCALE = 0.3
+MAX_CORRIDOR_DEMAND_SCALE = 1.0
 # Representative weekday CBD fleet. These remain in SUMO's passenger class
 # so every type obeys the same lane closure, while physical and behavioural
 # differences change queue storage and junction discharge.
@@ -131,6 +161,12 @@ DEPARTURE_WINDOW_FRACTION = 0.7
 # impossible -- and, worse, makes a severe closure appear to *speed traffic
 # up*, because the trips it delays are the ones that get truncated away.
 DRAIN_FACTOR = 1.5
+
+# A paired estimate is not decision-worthy when the unmodified network is
+# already gridlocked or when the paired survivor sample is too small.  Keep
+# the raw diagnostics, but make reports withhold impact claims in those cases.
+MIN_BASELINE_COMPLETION_RATIO = 0.85
+MIN_PAIRED_TRIP_RATIO = 0.20
 
 # Time-of-day demand profiles. `inbound_bias` runs -1..1: +1 sends most trips
 # toward the CBD core (morning commute), -1 away from it (afternoon), 0 is
@@ -671,27 +707,36 @@ def _edge_index() -> dict[str, dict[str, Any]]:
     transformer = Transformer.from_crs(WEB_CRS, LOCAL_CRS, always_xy=True)
     origin_x, origin_y = load_viewer_config()["origin"]
     footprint = _scene_footprint_local()
-    records: dict[str, dict[str, Any]] = {}
-    for edge in net.getEdges():
-        if not edge.allows("passenger"):
-            continue
+
+    def local_line(sumo_shape: Any) -> LineString | None:
+        """Project and clip a SUMO edge/lane shape into viewer coordinates."""
         points = []
-        for x, y in edge.getShape():
+        for x, y in sumo_shape:
             longitude, latitude = net.convertXY2LonLat(x, y)
             projected_x, projected_y = transformer.transform(longitude, latitude)
             points.append((projected_x - origin_x, -(projected_y - origin_y)))
         if len(points) < 2:
-            continue
-        source_line = LineString(points)
-        clipped = source_line.intersection(footprint)
+            return None
+        clipped = LineString(points).intersection(footprint)
         if clipped.is_empty:
-            continue
+            return None
         if clipped.geom_type == "MultiLineString":
-            line = max(clipped.geoms, key=lambda part: part.length)
-        elif clipped.geom_type == "LineString":
-            line = clipped
-        else:
+            return max(clipped.geoms, key=lambda part: part.length)
+        return clipped if clipped.geom_type == "LineString" else None
+
+    records: dict[str, dict[str, Any]] = {}
+    for edge in net.getEdges():
+        if not edge.allows("passenger"):
             continue
+        line = local_line(edge.getShape())
+        if line is None:
+            continue
+        lane_lines = {
+            lane.getID(): projected
+            for lane in edge.getLanes()
+            if (projected := local_line(lane.getShape())) is not None
+        }
+        lanes = edge.getLanes()
         midpoint = line.interpolate(0.5, normalized=True)
         municipal = _municipal_match(line, edge.getName())
         snap_line = line
@@ -709,6 +754,15 @@ def _edge_index() -> dict[str, dict[str, Any]]:
             "speed_mps": edge.getSpeed(),
             "visible": footprint.covers(midpoint),
             "snap_line": snap_line,
+            # Lane index in this network runs left-to-right across every
+            # multi-lane edge checked (verified against the actual lane
+            # geometry, not just SUMO's general convention) -- so index 0 is
+            # the kerbside lane for Cape Town's left-hand traffic. Keeping its
+            # real offset geometry lets the UI show and select the lane that
+            # will actually be disallowed, rather than painting the full road
+            # centreline and implying a whole-street closure.
+            "lane_lines": lane_lines,
+            "closure_lane_id": lanes[0].getID() if len(lanes) >= 2 else None,
             "municipal": municipal,
         }
     return records
@@ -761,6 +815,10 @@ def drawable_road_edges() -> tuple[dict[str, Any], ...]:
             "lane_count": record["lane_count"],
             "points": [[round(x, 1), round(z, 1)] for x, z in record["line"].coords],
             "snap_points": [[round(x, 1), round(z, 1)] for x, z in record["snap_line"].coords],
+            "lane_points": (
+                [[round(x, 1), round(z, 1)] for x, z in record["lane_lines"][record["closure_lane_id"]].coords]
+                if record["closure_lane_id"] in record["lane_lines"] else None
+            ),
             "official": ({
                 "source": "City of Cape Town road centreline",
                 "name": record["municipal"].get("name"),
@@ -800,65 +858,32 @@ def _lines_payload(records: list[dict[str, Any]]) -> list[list[list[float]]]:
     ]
 
 
-def _lines_payload_with_junction_bridges(
-    records: list[dict[str, Any]],
-    maximum_gap_m: float = 48.0,
-) -> list[list[list[float]]]:
-    """Return edge lines plus same-road bridges across SUMO junction gaps."""
-    lines = _lines_payload(records)
-    bridges: list[list[list[float]]] = []
-    for first_index, first in enumerate(records):
-        first_line = first.get("line")
-        if first_line is None or first_line.is_empty or len(first_line.coords) < 2:
-            continue
-        first_name = _normalise_road_name(first.get("name"))
-        if not first_name:
-            continue
-        for second in records[first_index + 1:]:
-            second_line = second.get("line")
-            if (
-                second_line is None or second_line.is_empty or len(second_line.coords) < 2
-                or _normalise_road_name(second.get("name")) != first_name
-            ):
-                continue
-            best: tuple[float, tuple[float, float], tuple[float, float]] | None = None
-            first_points = list(first_line.coords)
-            second_points = list(second_line.coords)
-            for first_start in (True, False):
-                a = first_points[0] if first_start else first_points[-1]
-                a_neighbour = first_points[1] if first_start else first_points[-2]
-                for second_start in (True, False):
-                    b = second_points[0] if second_start else second_points[-1]
-                    b_neighbour = second_points[1] if second_start else second_points[-2]
-                    gap_x, gap_z = b[0] - a[0], b[1] - a[1]
-                    gap = math.hypot(gap_x, gap_z)
-                    if not 0.75 <= gap <= maximum_gap_m:
-                        continue
-                    ax, az = a[0] - a_neighbour[0], a[1] - a_neighbour[1]
-                    bx, bz = b_neighbour[0] - b[0], b_neighbour[1] - b[1]
-                    a_length, b_length = math.hypot(ax, az), math.hypot(bx, bz)
-                    if not a_length or not b_length:
-                        continue
-                    continuation = (ax * bx + az * bz) / (a_length * b_length)
-                    gap_alignment = (gap_x * ax + gap_z * az) / (gap * a_length)
-                    if continuation < 0.45 or gap_alignment < 0.55:
-                        continue
-                    score = gap + (1.0 - continuation) * 18.0
-                    if best is None or score < best[0]:
-                        best = (score, a, b)
-            if best:
-                bridges.append([
-                    [round(best[1][0], 1), round(best[1][1], 1)],
-                    [round(best[2][0], 1), round(best[2][1], 1)],
-                ])
-    return lines + bridges
-
-
 def _records_bounds(records: list[dict[str, Any]]) -> list[float] | None:
     if not records:
         return None
     min_x, min_z, max_x, max_z = unary_union([record["line"] for record in records]).bounds
     return [round(min_x, 1), round(min_z, 1), round(max_x, 1), round(max_z, 1)]
+
+
+def _corridor_lane_km(corridor: list[dict[str, Any]]) -> float:
+    """Total lane-km of capacity in a corridor (sum of lane_count * length)."""
+    return sum(record["lane_count"] * record["length_m"] for record in corridor) / 1000.0
+
+
+def _corridor_demand_scale(corridor: list[dict[str, Any]]) -> float:
+    """How this corridor's demand rate should scale relative to the reference.
+
+    Held to [MIN_CORRIDOR_DEMAND_SCALE, MAX_CORRIDOR_DEMAND_SCALE] because the
+    stability sweep behind BASE_VEHICLES_PER_MIN only measured saturation
+    around the reference corridor's size; clamping keeps a pathologically
+    small or large corridor from extrapolating that result past what was
+    actually tested.
+    """
+    lane_km = _corridor_lane_km(corridor)
+    if lane_km <= 0:
+        return MIN_CORRIDOR_DEMAND_SCALE
+    raw_scale = lane_km / REFERENCE_CORRIDOR_LANE_KM
+    return max(MIN_CORRIDOR_DEMAND_SCALE, min(MAX_CORRIDOR_DEMAND_SCALE, raw_scale))
 
 
 def resolve_scenario(scenario: str, live_average_ratio: float | None = None) -> dict[str, Any]:
@@ -974,7 +999,10 @@ def resolve_closure_lanes(
     return {
         "lane_ids": lane_ids,
         "edge_ids": edge_ids,
-        "affected_edge_ids": [edge.getID() for edge in edges],
+        "affected_edge_ids": (
+            edge_ids if closure_mode == "full"
+            else [edge.getID() for edge in edges if len(edge.getLanes()) >= 2]
+        ),
         "edges_total": len(edges),
         "edges_narrowed": narrowed,
         "edges_skipped_single_lane": skipped_single_lane,
@@ -1043,6 +1071,7 @@ def resolve_drawn_closure(edge_ids: list[str], closure_mode: str) -> dict[str, A
 
     lane_ids: list[str] = []
     closed_edge_ids: list[str] = []
+    narrowed_edge_ids: list[str] = []
     narrowed = 0
     skipped_single_lane = 0
     for edge in edges:
@@ -1052,6 +1081,7 @@ def resolve_drawn_closure(edge_ids: list[str], closure_mode: str) -> dict[str, A
             closed_edge_ids.append(edge.getID())
         elif len(lanes) >= 2:
             lane_ids.append(lanes[0].getID())
+            narrowed_edge_ids.append(edge.getID())
             narrowed += 1
         else:
             skipped_single_lane += 1
@@ -1062,7 +1092,9 @@ def resolve_drawn_closure(edge_ids: list[str], closure_mode: str) -> dict[str, A
     return {
         "lane_ids": lane_ids,
         "edge_ids": closed_edge_ids,
-        "affected_edge_ids": [edge.getID() for edge in edges],
+        # Selected single-lane sections are explicitly skipped above, so do
+        # not colour or report them as closed in the response.
+        "affected_edge_ids": closed_edge_ids if closure_mode == "full" else narrowed_edge_ids,
         "requested_edge_ids": requested_ids,
         "edges_total": len(edges),
         "edges_narrowed": narrowed,
@@ -1120,17 +1152,24 @@ def _generate_trips(
     rng = random.Random(seed)
     origin_weights, destination_weights = _trip_weights(corridor, inbound_bias)
     departure_window_s = float(duration_s) * DEPARTURE_WINDOW_FRACTION
+    # Keep the arrival stream stable when the sampling window changes. With a
+    # fixed demand rate, a 20-minute run now extends the 10-minute trip stream
+    # instead of reshuffling every departure and route. This makes duration
+    # sensitivity meaningful and greatly reduces contradictory short/long
+    # comparisons caused by different random populations.
+    departure_interval_s = departure_window_s / max(vehicle_count, 1)
     trips: list[tuple[float, str, str, str]] = []
     fleet_types = list(FLEET_MIX)
     fleet_weights = list(FLEET_MIX.values())
-    for _ in range(vehicle_count):
+    for candidate_index in range(vehicle_count):
         origin = rng.choices(corridor, weights=origin_weights, k=1)[0]
         destination = rng.choices(corridor, weights=destination_weights, k=1)[0]
         # A trip that starts and ends on the same edge has nothing to route.
         if destination["id"] == origin["id"]:
             continue
         vehicle_type = rng.choices(fleet_types, weights=fleet_weights, k=1)[0]
-        trips.append((rng.uniform(0.0, departure_window_s), origin["id"], destination["id"], vehicle_type))
+        depart = (candidate_index + rng.random()) * departure_interval_s
+        trips.append((depart, origin["id"], destination["id"], vehicle_type))
     trips.sort(key=lambda trip: trip[0])  # SUMO expects departure-sorted input
 
     trips_path = workdir / "corridor.trips.xml"
@@ -1158,15 +1197,28 @@ def _generate_trips(
 
 def _parse_tripinfo(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {"trip_count": 0, "mean_duration_s": 0.0, "mean_time_loss_s": 0.0, "mean_speed_mps": 0.0, "total_distance_m": 0.0, "per_vehicle": {}}
+        return {
+            "trip_count": 0,
+            "mean_duration_s": 0.0,
+            "mean_depart_delay_s": 0.0,
+            "mean_journey_time_s": 0.0,
+            "mean_time_loss_s": 0.0,
+            "mean_speed_mps": 0.0,
+            "total_distance_m": 0.0,
+            "per_vehicle": {},
+        }
     root = ElementTree.parse(path).getroot()
-    durations, time_losses, distances, speeds = [], [], [], []
+    durations, depart_delays, journey_times, time_losses, distances, speeds = [], [], [], [], [], []
     per_vehicle: dict[str, dict[str, float]] = {}
     for trip in root.findall("tripinfo"):
         duration = float(trip.get("duration", 0.0))
+        depart_delay = float(trip.get("departDelay", 0.0))
+        journey_time = duration + depart_delay
         route_length = float(trip.get("routeLength", 0.0))
         time_loss = float(trip.get("timeLoss", 0.0))
         durations.append(duration)
+        depart_delays.append(depart_delay)
+        journey_times.append(journey_time)
         time_losses.append(time_loss)
         distances.append(route_length)
         if duration > 0:
@@ -1175,6 +1227,8 @@ def _parse_tripinfo(path: Path) -> dict[str, Any]:
         if vehicle_id is not None:
             per_vehicle[vehicle_id] = {
                 "duration_s": duration,
+                "depart_delay_s": depart_delay,
+                "journey_time_s": journey_time,
                 "time_loss_s": time_loss,
                 "route_length_m": route_length,
                 "speed_mps": route_length / duration if duration > 0 else 0.0,
@@ -1183,6 +1237,8 @@ def _parse_tripinfo(path: Path) -> dict[str, Any]:
     return {
         "trip_count": trip_count,
         "mean_duration_s": sum(durations) / trip_count if trip_count else 0.0,
+        "mean_depart_delay_s": sum(depart_delays) / trip_count if trip_count else 0.0,
+        "mean_journey_time_s": sum(journey_times) / trip_count if trip_count else 0.0,
         "mean_time_loss_s": sum(time_losses) / trip_count if trip_count else 0.0,
         "mean_speed_mps": sum(speeds) / len(speeds) if speeds else 0.0,
         "total_distance_m": sum(distances),
@@ -1234,7 +1290,12 @@ def _run_simulation(
     started_at = time.monotonic()
     truncated = False
     edge_totals: dict[str, dict[str, float]] = {
-        edge_id: {"samples": 0.0, "vehicle_count": 0.0, "speed_sum": 0.0, "halted": 0.0}
+        edge_id: {
+            "samples": 0.0,
+            "vehicle_count": 0.0,
+            "speed_vehicle_sum": 0.0,
+            "halted": 0.0,
+        }
         for edge_id in (monitored_edges or [])
     }
     network_queue_samples: list[int] = []
@@ -1279,7 +1340,14 @@ def _run_simulation(
                     vehicle_count = result.get(traci.constants.LAST_STEP_VEHICLE_NUMBER, 0)
                     totals["samples"] += 1
                     totals["vehicle_count"] += vehicle_count
-                    totals["speed_sum"] += max(0.0, result.get(traci.constants.LAST_STEP_MEAN_SPEED, 0.0))
+                    # LAST_STEP_MEAN_SPEED is an average over vehicles on the
+                    # edge. Weight it by the number present so empty edge-time
+                    # samples do not incorrectly drag a road's reported speed
+                    # toward zero.
+                    totals["speed_vehicle_sum"] += (
+                        max(0.0, result.get(traci.constants.LAST_STEP_MEAN_SPEED, 0.0))
+                        * vehicle_count
+                    )
                     halted = result.get(traci.constants.LAST_STEP_VEHICLE_HALTING_NUMBER, 0)
                     totals["halted"] += halted
                     queued_now += halted
@@ -1334,14 +1402,7 @@ def _run_simulation(
         sum(network_queue_samples) / len(network_queue_samples) if network_queue_samples else 0.0
     )
     metrics["max_queued_vehicles"] = max(network_queue_samples, default=0)
-    metrics["edge_stats"] = {
-        edge_id: {
-            "mean_vehicle_count": totals["vehicle_count"] / totals["samples"] if totals["samples"] else 0.0,
-            "mean_speed_mps": totals["speed_sum"] / totals["samples"] if totals["samples"] else 0.0,
-            "mean_halted": totals["halted"] / totals["samples"] if totals["samples"] else 0.0,
-        }
-        for edge_id, totals in edge_totals.items()
-    }
+    metrics["edge_stats"] = _summarize_edge_totals(edge_totals)
     metrics["environment"] = {
         "co2_kg": environment["co2_mg"] / 1_000_000.0,
         "nox_g": environment["nox_mg"] / 1_000.0,
@@ -1353,8 +1414,31 @@ def _run_simulation(
         ),
         "scope": "simulated_corridor_during_animation_window",
         "model": "SUMO HBEFA3 fleet-class estimate",
+        "exclusions": (
+            "tailpipe model only; excludes vehicles waiting to enter the network, "
+            "non-exhaust particles, cold-start adjustment and lifecycle emissions"
+        ),
     }
     return {"tracks": finished_tracks}, metrics
+
+
+def _summarize_edge_totals(
+    edge_totals: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """Convert sampled edge totals into occupancy and vehicle-weighted speed."""
+    return {
+        edge_id: {
+            "mean_vehicle_count": (
+                totals["vehicle_count"] / totals["samples"] if totals["samples"] else 0.0
+            ),
+            "mean_speed_mps": (
+                totals["speed_vehicle_sum"] / totals["vehicle_count"]
+                if totals["vehicle_count"] else 0.0
+            ),
+            "mean_halted": totals["halted"] / totals["samples"] if totals["samples"] else 0.0,
+        }
+        for edge_id, totals in edge_totals.items()
+    }
 
 
 def _project_tracks(tracks: list[dict[str, Any]], net: Any, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1392,8 +1476,8 @@ def _diff_metrics(baseline: dict[str, Any], closure: dict[str, Any], planned_cou
     the story (how many trips the closure stopped from finishing at all).
     """
 
-    def pct_change(before: float, after: float) -> float | None:
-        if before == 0:
+    def pct_change(before: float | None, after: float | None) -> float | None:
+        if before is None or after is None or before == 0:
             return None
         return (after - before) / before * 100.0
 
@@ -1407,6 +1491,22 @@ def _diff_metrics(baseline: dict[str, Any], closure: dict[str, Any], planned_cou
     if shared:
         before_duration = mean([baseline_trips[key]["duration_s"] for key in shared])
         after_duration = mean([closure_trips[key]["duration_s"] for key in shared])
+        before_depart_delay = mean([baseline_trips[key].get("depart_delay_s", 0.0) for key in shared])
+        after_depart_delay = mean([closure_trips[key].get("depart_delay_s", 0.0) for key in shared])
+        before_journey = mean([
+            baseline_trips[key].get(
+                "journey_time_s",
+                baseline_trips[key]["duration_s"] + baseline_trips[key].get("depart_delay_s", 0.0),
+            )
+            for key in shared
+        ])
+        after_journey = mean([
+            closure_trips[key].get(
+                "journey_time_s",
+                closure_trips[key]["duration_s"] + closure_trips[key].get("depart_delay_s", 0.0),
+            )
+            for key in shared
+        ])
         before_loss = mean([baseline_trips[key]["time_loss_s"] for key in shared])
         after_loss = mean([closure_trips[key]["time_loss_s"] for key in shared])
         before_speed = mean([baseline_trips[key]["speed_mps"] for key in shared])
@@ -1415,38 +1515,112 @@ def _diff_metrics(baseline: dict[str, Any], closure: dict[str, Any], planned_cou
         after_distance = mean([closure_trips[key]["route_length_m"] for key in shared])
         comparison = "paired_on_trips_completed_in_both_runs"
     else:
-        before_duration, after_duration = baseline["mean_duration_s"], closure["mean_duration_s"]
-        before_loss, after_loss = baseline["mean_time_loss_s"], closure["mean_time_loss_s"]
-        before_speed, after_speed = baseline["mean_speed_mps"], closure["mean_speed_mps"]
-        before_distance = baseline.get("total_distance_m", 0.0) / max(baseline.get("trip_count", 0), 1)
-        after_distance = closure.get("total_distance_m", 0.0) / max(closure.get("trip_count", 0), 1)
-        comparison = "all_completed_trips"
+        # An unpaired before/after average can reverse the apparent result when
+        # the closure prevents the slowest trips from finishing. There is no
+        # defensible trip-level change when no vehicle completed both runs.
+        before_duration = after_duration = None
+        before_depart_delay = after_depart_delay = None
+        before_journey = after_journey = None
+        before_loss = after_loss = None
+        before_speed = after_speed = None
+        before_distance = after_distance = None
+        comparison = "unavailable_no_shared_completed_trips"
+
+    def difference(before: float | None, after: float | None) -> float | None:
+        return after - before if before is not None and after is not None else None
+
+    simulation_complete = not (
+        baseline.get("truncated_by_time_budget", False)
+        or closure.get("truncated_by_time_budget", False)
+    )
+    minimum_paired_trips = (
+        1 if planned_count < 20
+        else max(10, math.ceil(planned_count * 0.10))
+    )
+    baseline_completion_ratio = baseline["trip_count"] / planned_count if planned_count else None
+    paired_trip_ratio = len(shared) / planned_count if planned_count else None
+    baseline_stable = bool(
+        baseline_completion_ratio is not None
+        and baseline_completion_ratio >= MIN_BASELINE_COMPLETION_RATIO
+    )
+    paired_sample_sufficient = bool(
+        len(shared) >= minimum_paired_trips
+        and paired_trip_ratio is not None
+        and paired_trip_ratio >= MIN_PAIRED_TRIP_RATIO
+    )
+    validity_reasons = []
+    if not simulation_complete:
+        validity_reasons.append("simulation_time_limit")
+    if not baseline_stable:
+        validity_reasons.append("open_road_baseline_overloaded")
+    if not paired_sample_sufficient:
+        validity_reasons.append("paired_sample_too_small")
+    comparison_metrics = {
+        "baseline": {
+            "mean_duration_s": before_duration,
+            "mean_depart_delay_s": before_depart_delay,
+            "mean_journey_time_s": before_journey,
+            "mean_time_loss_s": before_loss,
+            "mean_speed_mps": before_speed,
+            "mean_route_length_m": before_distance,
+        },
+        "closure": {
+            "mean_duration_s": after_duration,
+            "mean_depart_delay_s": after_depart_delay,
+            "mean_journey_time_s": after_journey,
+            "mean_time_loss_s": after_loss,
+            "mean_speed_mps": after_speed,
+            "mean_route_length_m": after_distance,
+        },
+    }
 
     before_environment = baseline.get("environment") or {}
     after_environment = closure.get("environment") or {}
     return {
         "comparison": comparison,
         "compared_trip_count": len(shared),
-        "mean_duration_change_s": after_duration - before_duration,
+        "paired_trip_ratio": paired_trip_ratio,
+        "minimum_paired_trips": minimum_paired_trips,
+        "minimum_paired_trip_ratio": MIN_PAIRED_TRIP_RATIO,
+        "paired_sample_sufficient": paired_sample_sufficient,
+        "minimum_baseline_completion_ratio": MIN_BASELINE_COMPLETION_RATIO,
+        "baseline_stable": baseline_stable,
+        "validity_reasons": validity_reasons,
+        "simulation_complete": simulation_complete,
+        "assessment_ready": bool(shared) and paired_sample_sufficient and baseline_stable and simulation_complete,
+        "comparison_metrics": comparison_metrics,
+        "mean_journey_time_change_s": difference(before_journey, after_journey),
+        "mean_journey_time_change_pct": pct_change(before_journey, after_journey),
+        "mean_duration_change_s": difference(before_duration, after_duration),
         "mean_duration_change_pct": pct_change(before_duration, after_duration),
-        "mean_time_loss_change_s": after_loss - before_loss,
+        "mean_depart_delay_change_s": difference(before_depart_delay, after_depart_delay),
+        "mean_time_loss_change_s": difference(before_loss, after_loss),
         "mean_time_loss_change_pct": pct_change(before_loss, after_loss),
-        "mean_speed_change_mps": after_speed - before_speed,
+        "mean_speed_change_mps": difference(before_speed, after_speed),
         "mean_speed_change_pct": pct_change(before_speed, after_speed),
-        "mean_route_length_change_m": after_distance - before_distance,
+        "mean_route_length_change_m": difference(before_distance, after_distance),
         "mean_route_length_change_pct": pct_change(before_distance, after_distance),
         "mean_queued_vehicle_change": closure.get("mean_queued_vehicles", 0.0) - baseline.get("mean_queued_vehicles", 0.0),
         "max_queue_baseline": baseline.get("max_queued_vehicles", 0),
         "max_queue_closure": closure.get("max_queued_vehicles", 0),
-        "completed_trip_ratio_baseline": baseline["trip_count"] / planned_count if planned_count else None,
+        "completed_trip_ratio_baseline": baseline_completion_ratio,
         "completed_trip_ratio_closure": closure["trip_count"] / planned_count if planned_count else None,
+        "completed_trip_change": closure["trip_count"] - baseline["trip_count"],
+        "completion_change_percentage_points": (
+            (closure["trip_count"] - baseline["trip_count"]) / planned_count * 100.0
+            if planned_count else None
+        ),
         "environment": {
             key: {
                 "baseline": before_environment.get(key, 0.0),
                 "closure": after_environment.get(key, 0.0),
                 "change": after_environment.get(key, 0.0) - before_environment.get(key, 0.0),
-                "change_pct": pct_change(
-                    before_environment.get(key, 0.0), after_environment.get(key, 0.0)
+                # A percentage change is not meaningful for logarithmic dB.
+                "change_pct": (
+                    None if key == "mean_active_edge_noise_db"
+                    else pct_change(
+                        before_environment.get(key, 0.0), after_environment.get(key, 0.0)
+                    )
                 ),
             }
             for key in ("co2_kg", "nox_g", "pmx_g", "fuel_kg", "mean_active_edge_noise_db")
@@ -1486,7 +1660,13 @@ def _flow_comparison(
 
 
 def _aggregate_flow_by_street(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse edge-level flow changes into one length-weighted row per street."""
+    """Collapse changed edges into meaningful concurrent street totals.
+
+    Edge vehicle counts are already concurrent occupancies and naturally grow
+    with edge length, so length-weighting them again would double-count long
+    sections. Counts and halted vehicles are summed across changed sections;
+    speed is weighted by the closure-run vehicle occupancy on each edge.
+    """
     grouped: dict[str, dict[str, Any]] = {}
     for segment in segments:
         name = str(segment.get("name") or "Unnamed road").strip() or "Unnamed road"
@@ -1500,27 +1680,32 @@ def _aggregate_flow_by_street(segments: list[dict[str, Any]]) -> list[dict[str, 
             "name": name,
             "section_count": 0,
             "length_m": 0.0,
-            "vehicle_delta_weighted": 0.0,
+            "vehicle_delta_total": 0.0,
             "closure_speed_weighted": 0.0,
-            "closure_halted_weighted": 0.0,
+            "closure_speed_weight": 0.0,
+            "closure_halted_total": 0.0,
         })
         item["section_count"] += 1
         item["length_m"] += length
-        item["vehicle_delta_weighted"] += float(segment.get("vehicle_delta") or 0.0) * length
-        item["closure_speed_weighted"] += float(segment.get("closure_speed_mps") or 0.0) * length
-        item["closure_halted_weighted"] += float(segment.get("closure_halted") or 0.0) * length
+        item["vehicle_delta_total"] += float(segment.get("vehicle_delta") or 0.0)
+        occupancy = max(0.0, float(segment.get("closure_vehicles") or 0.0))
+        item["closure_speed_weighted"] += float(segment.get("closure_speed_mps") or 0.0) * occupancy
+        item["closure_speed_weight"] += occupancy
+        item["closure_halted_total"] += float(segment.get("closure_halted") or 0.0)
 
     summary = []
     for item in grouped.values():
-        length = max(item["length_m"], 1.0)
+        speed_weight = item["closure_speed_weight"]
         summary.append({
             "name": item["name"],
             "section_count": item["section_count"],
             "modelled_length_m": round(item["length_m"], 1),
-            "vehicle_delta": round(item["vehicle_delta_weighted"] / length, 2),
-            "closure_speed_mps": round(item["closure_speed_weighted"] / length, 2),
-            "closure_halted": round(item["closure_halted_weighted"] / length, 2),
-            "aggregation": "length_weighted_mean_across_changed_sections",
+            "vehicle_delta": round(item["vehicle_delta_total"], 2),
+            "closure_speed_mps": round(
+                item["closure_speed_weighted"] / speed_weight if speed_weight else 0.0, 2
+            ),
+            "closure_halted": round(item["closure_halted_total"], 2),
+            "aggregation": "sum_of_concurrent_changes_speed_weighted_by_vehicle_occupancy",
         })
     return sorted(summary, key=lambda item: abs(item["vehicle_delta"]), reverse=True)
 
@@ -1577,16 +1762,21 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     monitored_edge_ids = [record["id"] for record in corridor]
 
     duration_s = int(duration_min * 60)
+    corridor_lane_km = _corridor_lane_km(corridor)
+    corridor_demand_scale = _corridor_demand_scale(corridor)
+    demand_rate_per_min = BASE_VEHICLES_PER_MIN * corridor_demand_scale
     vehicle_target = int(
-        BASE_VEHICLES_PER_MIN * duration_min * scenario["demand_scale"] * demand_multiplier
+        demand_rate_per_min * duration_min * scenario["demand_scale"] * demand_multiplier
     )
     # A stable hash (not the builtin `hash()`, which is salted per-process)
     # so the same request always gets the same synthetic demand -- otherwise
     # repeat previews would be silently non-reproducible and the "seed"
     # reported in demand_model would be meaningless.
     selection_seed = ",".join(requested_edge_ids) if requested_edge_ids else road_name
+    # Duration deliberately does not affect the seed: changing 10 to 20
+    # minutes should extend the same demand stream, not invent a new scenario.
     seed = zlib.crc32(
-        f"{selection_seed}|{duration_min}|{scenario_key}|{demand_multiplier}".encode("utf-8")
+        f"{selection_seed}|{scenario_key}|{demand_multiplier}".encode("utf-8")
     )
     municipal_speed_limits, speed_limit_counts = _speed_limit_overrides(corridor)
     speed_limit_records = [
@@ -1638,6 +1828,16 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     affected_records = [
         index[edge_id] for edge_id in closure["affected_edge_ids"] if edge_id in index
     ]
+    if closure_mode == "lane":
+        closed_lane_ids = set(closure["lane_ids"])
+        closure_geometry_records = [
+            {"id": lane_id, "name": record.get("name"), "line": lane_line}
+            for record in affected_records
+            for lane_id, lane_line in record.get("lane_lines", {}).items()
+            if lane_id in closed_lane_ids
+        ]
+    else:
+        closure_geometry_records = affected_records
     # Per-vehicle rows exist only to pair the two runs; sending thousands of
     # them to the viewer would dwarf the trajectories they came from.
     baseline_metrics.pop("per_vehicle", None)
@@ -1658,7 +1858,11 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "edges_narrowed": closure["edges_narrowed"],
             "edges_skipped_single_lane": closure["edges_skipped_single_lane"],
             "scope": closure_scope,
-            "geometry_local": _lines_payload_with_junction_bridges(affected_records),
+            # Lane closures use the actual offset kerbside-lane shapes. Full closures
+            # use the road edge centreline. The old response always returned
+            # the centreline, which made a one-lane intervention look like the
+            # whole carriageway was closed and could paint skipped sections.
+            "geometry_local": _lines_payload(closure_geometry_records),
             "description": (
                 f"kerbside lane closed on {closure['edges_narrowed']} of "
                 f"{closure['edges_total']} "
@@ -1671,14 +1875,24 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         "corridor": {
             "radius_m": CORRIDOR_RADIUS_M,
             "edge_count": len(corridor),
+            "lane_km": round(corridor_lane_km, 2),
             # Viewer-local [minX, minZ, maxX, maxZ] of the closed road itself,
             # so the camera can frame the thing the user asked about instead
             # of leaving them to hunt for it across the whole CBD.
-            "road_bounds_local": _records_bounds(affected_records) or _road_bounds_local(road_name),
+            "road_bounds_local": _records_bounds(closure_geometry_records) or _road_bounds_local(road_name),
             "note": "demand is generated only between visible edges inside this corridor",
         },
         "demand_model": {
             "generator": "corridor-scoped synthetic trips, lane/length weighted, time-of-day biased",
+            "base_departures_per_min": BASE_VEHICLES_PER_MIN,
+            "reference_corridor_lane_km": REFERENCE_CORRIDOR_LANE_KM,
+            "corridor_demand_scale": round(corridor_demand_scale, 3),
+            "demand_departures_per_min": round(demand_rate_per_min, 1),
+            "calibration_basis": (
+                "network-stability sweep on the supplied Cape Town CBD SUMO network, "
+                "scaled to this corridor's lane-km relative to the reference corridor"
+            ),
+            "observed_count_calibration": False,
             "scenario": scenario["key"],
             "demand_scale": scenario["demand_scale"],
             "user_demand_multiplier": demand_multiplier,
@@ -1716,6 +1930,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         "playback": {
             "sample_interval_s": TRAJECTORY_SAMPLE_INTERVAL_S,
             "duration_s": duration_s,
+            "scoring_horizon_s": int(duration_s * DRAIN_FACTOR),
         },
         "trajectories": {
             "baseline": baseline_tracks,

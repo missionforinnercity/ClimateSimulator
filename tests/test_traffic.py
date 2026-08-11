@@ -243,17 +243,113 @@ def test_diff_metrics_pairs_on_trips_completed_in_both_runs():
     assert impact["mean_duration_change_pct"] == 30.0  # slower, as it should be
     assert impact["mean_time_loss_change_s"] == 20.0
     assert impact["mean_speed_change_pct"] < 0
+    assert impact["comparison_metrics"]["baseline"]["mean_duration_s"] == 100.0
+    assert impact["comparison_metrics"]["closure"]["mean_duration_s"] == 130.0
+    assert impact["assessment_ready"] is True
     # The trips the closure prevented from finishing are reported separately.
     assert impact["completed_trip_ratio_baseline"] == 1.0
     assert round(impact["completed_trip_ratio_closure"], 3) == 0.667
 
 
-def test_diff_metrics_falls_back_to_aggregate_without_per_vehicle_rows():
+def test_diff_metrics_does_not_compare_unpaired_aggregate_populations():
     baseline = {"mean_duration_s": 100.0, "mean_time_loss_s": 20.0, "mean_speed_mps": 10.0, "trip_count": 45}
     closure = {"mean_duration_s": 120.0, "mean_time_loss_s": 30.0, "mean_speed_mps": 8.0, "trip_count": 40}
     impact = traffic._diff_metrics(baseline, closure, planned_count=50)
-    assert impact["comparison"] == "all_completed_trips"
-    assert impact["mean_duration_change_pct"] == 20.0
+    assert impact["comparison"] == "unavailable_no_shared_completed_trips"
+    assert impact["mean_duration_change_pct"] is None
+    assert impact["mean_duration_change_s"] is None
+    assert impact["assessment_ready"] is False
+
+
+def test_diff_metrics_rejects_timed_out_run_for_assessment():
+    baseline = {
+        "trip_count": 1,
+        "per_vehicle": {"a": {"duration_s": 10, "time_loss_s": 2, "route_length_m": 50, "speed_mps": 5}},
+        "truncated_by_time_budget": False,
+    }
+    closure = {
+        "trip_count": 1,
+        "per_vehicle": {"a": {"duration_s": 12, "time_loss_s": 4, "route_length_m": 50, "speed_mps": 4.2}},
+        "truncated_by_time_budget": True,
+    }
+    impact = traffic._diff_metrics(baseline, closure, planned_count=1)
+    assert impact["simulation_complete"] is False
+    assert impact["assessment_ready"] is False
+
+
+def test_diff_metrics_rejects_an_overloaded_open_road_baseline():
+    baseline = {
+        "trip_count": 8,
+        "per_vehicle": {
+            f"v{i}": {"duration_s": 10, "time_loss_s": 2, "route_length_m": 50, "speed_mps": 5}
+            for i in range(8)
+        },
+    }
+    closure = {
+        "trip_count": 8,
+        "per_vehicle": {
+            f"v{i}": {"duration_s": 12, "time_loss_s": 4, "route_length_m": 50, "speed_mps": 4.2}
+            for i in range(8)
+        },
+    }
+    impact = traffic._diff_metrics(baseline, closure, planned_count=10)
+    assert impact["baseline_stable"] is False
+    assert "open_road_baseline_overloaded" in impact["validity_reasons"]
+    assert impact["assessment_ready"] is False
+
+
+def test_diff_metrics_requires_a_meaningful_paired_share():
+    common = {"duration_s": 10, "time_loss_s": 2, "route_length_m": 50, "speed_mps": 5}
+    baseline = {"trip_count": 100, "per_vehicle": {f"v{i}": common for i in range(100)}}
+    closure = {"trip_count": 15, "per_vehicle": {f"v{i}": common for i in range(15)}}
+    impact = traffic._diff_metrics(baseline, closure, planned_count=100)
+    assert impact["paired_trip_ratio"] == 0.15
+    assert impact["paired_sample_sufficient"] is False
+    assert "paired_sample_too_small" in impact["validity_reasons"]
+    assert impact["assessment_ready"] is False
+
+
+def test_diff_metrics_includes_departure_insertion_delay_in_journey_time():
+    baseline = {
+        "trip_count": 1,
+        "per_vehicle": {"a": {
+            "duration_s": 100, "depart_delay_s": 20, "journey_time_s": 120,
+            "time_loss_s": 10, "route_length_m": 1000, "speed_mps": 10,
+        }},
+    }
+    closure = {
+        "trip_count": 1,
+        "per_vehicle": {"a": {
+            "duration_s": 105, "depart_delay_s": 40, "journey_time_s": 145,
+            "time_loss_s": 15, "route_length_m": 1000, "speed_mps": 9.5,
+        }},
+    }
+    impact = traffic._diff_metrics(baseline, closure, planned_count=1)
+    assert impact["mean_duration_change_s"] == 5
+    assert impact["mean_depart_delay_change_s"] == 20
+    assert impact["mean_journey_time_change_s"] == 25
+    assert round(impact["mean_journey_time_change_pct"], 3) == 20.833
+
+
+def test_edge_speed_is_weighted_by_vehicle_observations_not_empty_samples():
+    stats = traffic._summarize_edge_totals({
+        "edge": {
+            "samples": 3.0,
+            "vehicle_count": 3.0,
+            # Two vehicles at 10 m/s, then one at 4 m/s, plus one empty sample.
+            "speed_vehicle_sum": 24.0,
+            "halted": 1.0,
+        },
+        "empty": {
+            "samples": 3.0,
+            "vehicle_count": 0.0,
+            "speed_vehicle_sum": 0.0,
+            "halted": 0.0,
+        },
+    })
+    assert stats["edge"]["mean_speed_mps"] == 8.0
+    assert stats["edge"]["mean_vehicle_count"] == 1.0
+    assert stats["empty"]["mean_speed_mps"] == 0.0
 
 
 def test_parse_tripinfo_keeps_per_vehicle_rows_for_pairing(tmp_path):
@@ -261,7 +357,7 @@ def test_parse_tripinfo_keeps_per_vehicle_rows_for_pairing(tmp_path):
     tripinfo.write_text(
         """<?xml version="1.0"?>
 <tripinfos>
-    <tripinfo id="v0" duration="100" routeLength="1000" timeLoss="10"/>
+    <tripinfo id="v0" duration="100" departDelay="5" routeLength="1000" timeLoss="10"/>
     <tripinfo id="v1" duration="200" routeLength="1000" timeLoss="30"/>
 </tripinfos>
 """,
@@ -270,17 +366,27 @@ def test_parse_tripinfo_keeps_per_vehicle_rows_for_pairing(tmp_path):
     metrics = traffic._parse_tripinfo(tripinfo)
     assert set(metrics["per_vehicle"]) == {"v0", "v1"}
     assert metrics["per_vehicle"]["v0"]["duration_s"] == 100.0
+    assert metrics["per_vehicle"]["v0"]["depart_delay_s"] == 5.0
+    assert metrics["per_vehicle"]["v0"]["journey_time_s"] == 105.0
     assert metrics["per_vehicle"]["v1"]["time_loss_s"] == 30.0
 
 
 def test_diff_metrics_reports_percent_change():
-    baseline = {"mean_duration_s": 100.0, "mean_time_loss_s": 20.0, "mean_speed_mps": 10.0, "trip_count": 45}
-    closure = {"mean_duration_s": 120.0, "mean_time_loss_s": 30.0, "mean_speed_mps": 8.0, "trip_count": 40}
+    baseline = {
+        "mean_duration_s": 100.0, "mean_time_loss_s": 20.0, "mean_speed_mps": 10.0, "trip_count": 45,
+        "per_vehicle": {"a": {"duration_s": 100, "time_loss_s": 20, "route_length_m": 1000, "speed_mps": 10}},
+    }
+    closure = {
+        "mean_duration_s": 120.0, "mean_time_loss_s": 30.0, "mean_speed_mps": 8.0, "trip_count": 40,
+        "per_vehicle": {"a": {"duration_s": 120, "time_loss_s": 30, "route_length_m": 1100, "speed_mps": 8}},
+    }
     impact = traffic._diff_metrics(baseline, closure, planned_count=50)
     assert impact["mean_duration_change_s"] == 20.0
     assert impact["mean_duration_change_pct"] == 20.0
     assert impact["completed_trip_ratio_baseline"] == 0.9
     assert impact["completed_trip_ratio_closure"] == 0.8
+    assert impact["completed_trip_change"] == -5
+    assert impact["completion_change_percentage_points"] == -10.0
 
 
 def test_diff_metrics_reports_environmental_changes():
@@ -290,12 +396,16 @@ def test_diff_metrics_reports_environmental_changes():
     }
     closure = {
         "mean_duration_s": 120.0, "mean_time_loss_s": 30.0, "mean_speed_mps": 8.0,
-        "trip_count": 9, "environment": {"co2_kg": 5.0, "nox_g": 10.0},
+        "trip_count": 9,
+        "environment": {"co2_kg": 5.0, "nox_g": 10.0, "mean_active_edge_noise_db": 72.0},
     }
+    baseline["environment"]["mean_active_edge_noise_db"] = 70.0
     impact = traffic._diff_metrics(baseline, closure, planned_count=10)
     assert impact["environment"]["co2_kg"]["change"] == 1.0
     assert impact["environment"]["co2_kg"]["change_pct"] == 25.0
     assert impact["environment"]["nox_g"]["change"] == 2.0
+    assert impact["environment"]["mean_active_edge_noise_db"]["change"] == 2.0
+    assert impact["environment"]["mean_active_edge_noise_db"]["change_pct"] is None
 
 
 def test_flow_comparison_reports_changed_segments_and_geometry():
@@ -318,45 +428,26 @@ def test_street_flow_summary_aggregates_duplicate_road_names():
     summary = traffic._aggregate_flow_by_street([
         {
             "name": "Strand Street", "vehicle_delta": -10.0,
-            "closure_speed_mps": 5.0, "closure_halted": 1.0,
+            "closure_vehicles": 2.0, "closure_speed_mps": 5.0, "closure_halted": 1.0,
             "points": [[0, 0], [100, 0]],
         },
         {
             "name": "STRAND STREET", "vehicle_delta": -20.0,
-            "closure_speed_mps": 10.0, "closure_halted": 3.0,
+            "closure_vehicles": 6.0, "closure_speed_mps": 10.0, "closure_halted": 3.0,
             "points": [[100, 0], [400, 0]],
         },
         {
             "name": "Buitengracht Street", "vehicle_delta": 8.0,
-            "closure_speed_mps": 4.0, "closure_halted": 2.0,
+            "closure_vehicles": 4.0, "closure_speed_mps": 4.0, "closure_halted": 2.0,
             "points": [[0, 20], [50, 20]],
         },
     ])
     strand = next(item for item in summary if traffic._normalise_road_name(item["name"]) == "STRAND")
     assert strand["section_count"] == 2
-    assert strand["vehicle_delta"] == -17.5
+    assert strand["vehicle_delta"] == -30.0
     assert strand["closure_speed_mps"] == 8.75
+    assert strand["closure_halted"] == 4.0
     assert len(summary) == 2
-
-
-def test_closure_geometry_bridges_same_road_across_junction_gap():
-    records = [
-        {"id": "a", "name": "Bree Street", "line": traffic.LineString([(0, 0), (40, 0)])},
-        {"id": "b", "name": "Bree Street", "line": traffic.LineString([(60, 0), (100, 0)])},
-        {"id": "cross", "name": "Wale Street", "line": traffic.LineString([(50, -30), (50, 30)])},
-    ]
-    geometry = traffic._lines_payload_with_junction_bridges(records)
-    assert [[40.0, 0.0], [60.0, 0.0]] in geometry
-    assert [[40.0, 0.0], [50.0, -30.0]] not in geometry
-
-
-def test_closure_geometry_does_not_bridge_laterally_between_carriageways():
-    records = [
-        {"id": "north", "name": "Adderley Street", "line": traffic.LineString([(0, 0), (40, 0)])},
-        {"id": "south", "name": "Adderley Street", "line": traffic.LineString([(40, 12), (0, 12)])},
-    ]
-    geometry = traffic._lines_payload_with_junction_bridges(records)
-    assert len(geometry) == 2
 
 
 def test_closure_preview_requires_road_name():
@@ -488,10 +579,12 @@ def fake_lane_net():
     )
 
 
-def test_lane_closure_takes_one_kerbside_lane_and_leaves_single_lane_sections(monkeypatch):
+def test_lane_closure_takes_left_hand_kerbside_lane_and_leaves_single_lane_sections(monkeypatch):
     monkeypatch.setattr(traffic, "_sumo_net", fake_lane_net)
     closure = traffic.resolve_closure_lanes("Bree Street", "lane")
-    # SUMO lane index 0 is the kerbside lane: exactly one per multi-lane edge.
+    # Verified against the network's actual lane geometry: index 0 runs along
+    # the left side of the travel direction, which is the kerbside lane for
+    # Cape Town's left-hand traffic -- exactly one removed per multi-lane edge.
     assert closure["lane_ids"] == ["a_0", "b_0"]
     assert closure["edges_narrowed"] == 2
     assert closure["edges_skipped_single_lane"] == 1
@@ -513,6 +606,14 @@ def test_drawn_lane_closure_uses_only_selected_edges(monkeypatch):
     assert closure["lane_ids"] == ["b_0"]
     assert closure["affected_edge_ids"] == ["b"]
     assert closure["scope"] == "drawn"
+
+
+def test_drawn_lane_closure_does_not_report_skipped_single_lane_edge(monkeypatch):
+    monkeypatch.setattr(traffic, "_sumo_net", fake_lane_net)
+    closure = traffic.resolve_drawn_closure(["b", "c"], "lane")
+    assert closure["lane_ids"] == ["b_0"]
+    assert closure["affected_edge_ids"] == ["b"]
+    assert closure["edges_skipped_single_lane"] == 1
 
 
 def test_drawn_full_closure_includes_aligned_parallel_carriageway(monkeypatch):
@@ -689,3 +790,27 @@ def test_generated_trips_are_reproducible_for_a_given_seed(tmp_path):
         inbound_bias=0.0, seed=99, workdir=tmp_path / "b",
     )
     assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
+
+
+def test_longer_window_extends_the_same_demand_stream(tmp_path):
+    """A longer preview must not silently swap in a different population."""
+    corridor = corridor_fixture()
+    short_path, _ = traffic._generate_trips(
+        corridor=corridor, duration_s=300, vehicle_count=50,
+        inbound_bias=0.0, seed=99, workdir=tmp_path / "short",
+    )
+    long_path, _ = traffic._generate_trips(
+        corridor=corridor, duration_s=600, vehicle_count=100,
+        inbound_bias=0.0, seed=99, workdir=tmp_path / "long",
+    )
+    short_trips = ElementTree.parse(short_path).getroot().findall("trip")
+    long_trips = ElementTree.parse(long_path).getroot().findall("trip")
+    short_rows = [
+        (trip.get("depart"), trip.get("from"), trip.get("to"), trip.get("type"))
+        for trip in short_trips
+    ]
+    long_prefix = [
+        (trip.get("depart"), trip.get("from"), trip.get("to"), trip.get("type"))
+        for trip in long_trips[:len(short_rows)]
+    ]
+    assert long_prefix == short_rows

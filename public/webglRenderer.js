@@ -2459,6 +2459,9 @@ export async function startWebGLScene(canvas, status) {
 
     const barrierRed = new THREE.MeshBasicMaterial({ color: 0xf13f37, depthTest: false });
     const barrierWhite = new THREE.MeshBasicMaterial({ color: 0xfff4df, depthTest: false });
+    const barrierWidth = mode === 'full' ? 11 : 3.4;
+    const stripePositions = mode === 'full' ? [-4, -1.35, 1.35, 4] : [-1.05, 0, 1.05];
+    const legPositions = mode === 'full' ? [-4.3, 4.3] : [-1.25, 1.25];
     for (const points of lines) {
       if (points.length < 2) continue;
       const ends = [
@@ -2469,15 +2472,15 @@ export async function startWebGLScene(canvas, status) {
         const [x, z] = point;
         const dx = neighbour[0] - x, dz = neighbour[1] - z;
         const barrier = new THREE.Group();
-        const panel = new THREE.Mesh(new THREE.BoxGeometry(11, 2.4, 0.8), barrierRed.clone());
+        const panel = new THREE.Mesh(new THREE.BoxGeometry(barrierWidth, 2.4, 0.8), barrierRed.clone());
         panel.position.y = 2.5;
         barrier.add(panel);
-        for (const stripeX of [-4, -1.35, 1.35, 4]) {
-          const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.25, 2.5, 0.86), barrierWhite.clone());
+        for (const stripeX of stripePositions) {
+          const stripe = new THREE.Mesh(new THREE.BoxGeometry(mode === 'full' ? 1.25 : 0.52, 2.5, 0.86), barrierWhite.clone());
           stripe.position.set(stripeX, 2.5, 0);
           barrier.add(stripe);
         }
-        for (const legX of [-4.3, 4.3]) {
+        for (const legX of legPositions) {
           const leg = new THREE.Mesh(new THREE.BoxGeometry(0.65, 4.8, 0.65), barrierRed.clone());
           leg.position.set(legX, 0.3, 0);
           barrier.add(leg);
@@ -2502,8 +2505,8 @@ export async function startWebGLScene(canvas, status) {
       .filter(points => points.length >= 2);
     const isFull = payload?.closure_mode === 'full';
     for (const points of closureLines) {
-      const halo = statusRibbon(points, isFull ? 10 : 6, isFull ? 0xff342f : 0xff9d27, 0.25, 0.69, true);
-      const closure = statusRibbon(points, isFull ? 6.5 : 2.7, isFull ? 0xff4b45 : 0xffbd45, 0.95, 0.75, true);
+      const halo = statusRibbon(points, isFull ? 10 : 4.6, isFull ? 0xff342f : 0xff9d27, isFull ? 0.25 : 0.2, 0.69, true);
+      const closure = statusRibbon(points, isFull ? 6.5 : 2.3, isFull ? 0xff4b45 : 0xffbd45, 0.95, 0.75, true);
       if (halo) scenarioStatusGroup.add(halo);
       if (closure) scenarioStatusGroup.add(closure);
       if (isFull) {
@@ -2539,15 +2542,20 @@ export async function startWebGLScene(canvas, status) {
       trafficState.snapGrid.get(key).push(segment);
     };
     for (const edge of edges) {
-      // The municipal centreline is the primary snap path. SUMO's routable
-      // edge is also indexed as a junction bridge because surveyed centreline
-      // segments can stop a few metres short of the intersection node.
-      const snapPaths = [edge.snap_points, edge.points]
-        .filter(points => points?.length >= 2);
-      for (const snapPoints of snapPaths) {
+      // Lane mode must snap to the offset SUMO lane which will actually be
+      // closed. Using a shared municipal centreline here made two opposing
+      // carriageways indistinguishable and made it impossible to reliably
+      // ask for one closed lane in each direction.
+      const snapPaths = [
+        { points: edge.lane_points, mode: 'lane' },
+        { points: edge.snap_points, mode: 'full' },
+        { points: edge.points, mode: 'full' },
+      ].filter(path => path.points?.length >= 2);
+      for (const path of snapPaths) {
+        const snapPoints = path.points;
         for (let index = 0; index < snapPoints.length - 1; index += 1) {
           const a = snapPoints[index], b = snapPoints[index + 1];
-          const segment = { edge, a, b };
+          const segment = { edge, a, b, mode: path.mode };
           const minColumn = Math.floor((Math.min(a[0], b[0]) - radius) / cellSize);
           const maxColumn = Math.floor((Math.max(a[0], b[0]) + radius) / cellSize);
           const minRow = Math.floor((Math.min(a[1], b[1]) - radius) / cellSize);
@@ -2566,6 +2574,7 @@ export async function startWebGLScene(canvas, status) {
     const candidates = trafficState.snapGrid.get(`${column}:${row}`) || [];
     let nearest = null;
     for (const candidate of candidates) {
+      if (candidate.mode !== trafficState.closureMode) continue;
       const dx = candidate.b[0] - candidate.a[0];
       const dz = candidate.b[1] - candidate.a[1];
       const denominator = dx * dx + dz * dz || 1;
@@ -2675,6 +2684,20 @@ export async function startWebGLScene(canvas, status) {
     return details.join(' · ');
   }
 
+  function trafficSelectionEffect() {
+    const edges = trafficState.selectedEdgeIds
+      .map(edgeId => trafficState.edgesById.get(edgeId))
+      .filter(Boolean);
+    if (trafficState.closureMode === 'full') {
+      const lanes = edges.reduce((total, edge) => total + (Number(edge.lane_count) || 0), 0);
+      return `${lanes} ${lanes === 1 ? 'lane' : 'lanes'} closed across ${edges.length} road ${edges.length === 1 ? 'section' : 'sections'}`;
+    }
+    const narrowed = edges.filter(edge => Number(edge.lane_count) >= 2).length;
+    const skipped = edges.length - narrowed;
+    return `${narrowed} kerbside ${narrowed === 1 ? 'lane' : 'lanes'} closed across ${narrowed} directional ${narrowed === 1 ? 'section' : 'sections'}`
+      + (skipped ? ` · ${skipped} single-lane ${skipped === 1 ? 'section is' : 'sections are'} not closable in lane mode` : '');
+  }
+
   function trafficJunctionBridges(edges, maximumGap = 48) {
     const bridges = [];
     const seen = new Set();
@@ -2729,8 +2752,9 @@ export async function startWebGLScene(canvas, status) {
     for (const edgeId of trafficState.selectedEdgeIds) {
       const edge = trafficState.edgesById.get(edgeId);
       if (!edge) continue;
-      const halo = statusRibbon(edge.points, fullClosure ? 11 : 7, fullClosure ? 0xff352f : 0xff9825, 0.28, 0.82, true);
-      const core = statusRibbon(edge.points, fullClosure ? 6 : 3.2, fullClosure ? 0xff554d : 0xffc24a, 0.94, 0.87, true);
+      const points = !fullClosure && edge.lane_points?.length >= 2 ? edge.lane_points : edge.points;
+      const halo = statusRibbon(points, fullClosure ? 11 : 4.6, fullClosure ? 0xff352f : 0xff9825, fullClosure ? 0.28 : 0.2, 0.82, true);
+      const core = statusRibbon(points, fullClosure ? 6 : 2.3, fullClosure ? 0xff554d : 0xffc24a, 0.94, 0.87, true);
       if (halo) trafficDrawingGroup.add(halo);
       if (core) trafficDrawingGroup.add(core);
     }
@@ -2741,17 +2765,25 @@ export async function startWebGLScene(canvas, status) {
     const selectedEdges = trafficState.selectedEdgeIds
       .map(edgeId => trafficState.edgesById.get(edgeId))
       .filter(Boolean);
-    const junctionBridges = trafficJunctionBridges(selectedEdges);
+    const displayedEdges = selectedEdges.map(edge => ({
+      ...edge,
+      points: !fullClosure && edge.lane_points?.length >= 2 ? edge.lane_points : edge.points,
+    }));
+    // Never invent geometry between lane endpoints. The former junction
+    // bridges could connect opposing carriageways diagonally and draw large
+    // X shapes across the road. A kerbside closure should show only the real
+    // sidewalk-side lane segments supplied by SUMO.
+    const junctionBridges = fullClosure ? trafficJunctionBridges(displayedEdges) : [];
     for (const points of junctionBridges) {
-      const bridgeHalo = statusRibbon(points, fullClosure ? 11 : 7, fullClosure ? 0xff352f : 0xff9825, 0.28, 0.82, true);
-      const bridgeCore = statusRibbon(points, fullClosure ? 6 : 3.2, fullClosure ? 0xff554d : 0xffc24a, 0.94, 0.87, true);
+      const bridgeHalo = statusRibbon(points, fullClosure ? 11 : 4.6, fullClosure ? 0xff352f : 0xff9825, fullClosure ? 0.28 : 0.2, 0.82, true);
+      const bridgeCore = statusRibbon(points, fullClosure ? 6 : 2.3, fullClosure ? 0xff554d : 0xffc24a, 0.94, 0.87, true);
       if (bridgeHalo) trafficDrawingGroup.add(bridgeHalo);
       if (bridgeCore) trafficDrawingGroup.add(bridgeCore);
     }
     buildSelectedRoadDirections({
       name: trafficSelectionLabel(),
       direction_segments: [
-        ...selectedEdges.map(edge => ({ points: edge.points, direction: 'oneway' })),
+        ...displayedEdges.map(edge => ({ points: edge.points, direction: 'oneway' })),
         ...junctionBridges.map(points => ({ points, direction: 'oneway' })),
       ],
     });
@@ -2794,6 +2826,9 @@ export async function startWebGLScene(canvas, status) {
         : 'Edit lane closure';
     }
     if (trafficDrawPopupCount) trafficDrawPopupCount.textContent = String(count);
+    if (trafficDrawPopupCount?.nextElementSibling) {
+      trafficDrawPopupCount.nextElementSibling.textContent = count ? trafficSelectionEffect() : 'road sections selected';
+    }
     if (trafficDrawConfirm) trafficDrawConfirm.disabled = count === 0 || trafficState.stroking;
     if (trafficDrawPopupStatus && message) trafficDrawPopupStatus.textContent = message;
   }
@@ -2910,7 +2945,7 @@ export async function startWebGLScene(canvas, status) {
     canvas.style.cursor = '';
     const count = trafficState.selectedEdgeIds.length;
     const label = trafficSelectionLabel();
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${count} confirmed road ${count === 1 ? 'section' : 'sections'} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.`;
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${trafficSelectionEffect()} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.`;
     if (trafficStatus) trafficStatus.textContent = `${label} confirmed · adjust the scenario or run the comparison.`;
     if (trafficRun) trafficRun.disabled = false;
     updateTrafficDrawing();
@@ -3163,16 +3198,55 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function trafficImpactAssessment(impact = {}) {
-    const durationChange = Number(impact.mean_duration_change_pct) || 0;
-    const completionDrop = Math.max(0,
-      ((impact.completed_trip_ratio_baseline ?? 0) - (impact.completed_trip_ratio_closure ?? 0)) * 100);
-    const severity = durationChange >= 20 || completionDrop >= 10
-      ? 'high'
-      : durationChange < 5 && completionDrop < 3 ? 'low' : 'moderate';
-    const headline = severity === 'high' ? 'High disruption in this scenario'
-      : severity === 'low' ? 'Limited network impact in this scenario'
-        : 'Moderate disruption in this scenario';
-    return { durationChange, completionDrop, severity, headline };
+    if (impact.assessment_ready === false) {
+      return {
+        durationChange: null,
+        completionChange: Number(impact.completion_change_percentage_points) || 0,
+        completionDrop: 0,
+        queueIncrease: 0,
+        severity: 'incomplete',
+        headline: 'Comparison incomplete — do not use this result yet',
+        action: impact.simulation_complete === false
+          ? 'One or both simulation runs reached the processing time limit. Reduce the selected area or demand and rerun the comparison.'
+          : impact.baseline_stable === false
+            ? `The open-road baseline completed only ${reportNumber(Number(impact.completed_trip_ratio_baseline || 0) * 100, 0, '%')} of generated trips; at least ${reportNumber(Number(impact.minimum_baseline_completion_ratio || 0) * 100, 0, '%')} is required. Reduce synthetic demand or shorten the selected area and rerun it.`
+          : impact.paired_sample_sufficient === false
+            ? `Only ${Number(impact.compared_trip_count) || 0} trips completed both runs (${reportNumber(Number(impact.paired_trip_ratio || 0) * 100, 0, '%')} of generated trips). Increase the sampling window or reduce disruption and rerun it.`
+            : 'No trip completed in both runs, so a like-for-like travel-time comparison is not available. Revise the closure or demand and rerun it.',
+      };
+    }
+    const durationChange = Number(
+      impact.mean_journey_time_change_pct ?? impact.mean_duration_change_pct,
+    ) || 0;
+    const completionChange = (
+      (impact.completed_trip_ratio_closure ?? 0) - (impact.completed_trip_ratio_baseline ?? 0)) * 100;
+    const completionDrop = Math.max(0, -completionChange);
+    const queueIncrease = Math.max(0,
+      (Number(impact.max_queue_closure) || 0) - (Number(impact.max_queue_baseline) || 0));
+    let severity = 'minor';
+    if (durationChange >= 35 || completionDrop >= 15) severity = 'major';
+    else if (durationChange >= 18 || completionDrop >= 8 || queueIncrease >= 15) severity = 'significant';
+    else if (durationChange >= 7 || completionDrop >= 3 || queueIncrease >= 5) severity = 'noticeable';
+
+    const headline = {
+      major: 'Major modelled disruption — revise the option',
+      significant: 'Significant modelled disruption — test mitigation',
+      noticeable: 'Noticeable modelled disruption — mitigation is advisable',
+      minor: 'Limited modelled disruption in this scenario',
+    }[severity];
+    const action = {
+      major: 'Revise the option before progressing it. Shorten or phase the work zone, retain available capacity where possible, or move it outside the peak, then compare the revision.',
+      significant: 'Test a shorter or off-peak work zone and explicit junction or diversion management before taking the option forward.',
+      noticeable: 'Compare practical mitigation such as off-peak timing, a shorter work zone, and monitoring of the busiest diversion roads.',
+      minor: 'Retain this option for further assessment, alongside diversion signing, monitoring, emergency access and an operational contingency.',
+    }[severity];
+    return { durationChange, completionChange, completionDrop, queueIncrease, severity, headline, action };
+  }
+
+  function publicChange(value, noun = 'traffic') {
+    const numeric = Number(value) || 0;
+    if (Math.abs(numeric) < 0.05) return `about the same ${noun}`;
+    return `${reportNumber(Math.abs(numeric), 1)} ${numeric > 0 ? 'more' : 'fewer'} ${noun}`;
   }
 
   const reportEscape = value => String(value ?? '—').replace(/[&<>"]/g, character => ({
@@ -3180,12 +3254,14 @@ export async function startWebGLScene(canvas, status) {
   })[character]);
 
   function reportNumber(value, digits = 1, unit = '') {
+    if (value === null || value === undefined || value === '') return '—';
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '—';
     return `${numeric.toLocaleString('en-ZA', { minimumFractionDigits: digits, maximumFractionDigits: digits })}${unit}`;
   }
 
   function reportChange(value, digits = 1, unit = '', inverse = false) {
+    if (value === null || value === undefined || value === '') return '<span>—</span>';
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '<span>—</span>';
     const className = (inverse ? numeric > 0 : numeric < 0) ? 'report-change-negative'
@@ -3234,37 +3310,74 @@ export async function startWebGLScene(canvas, status) {
     const baseline = payload.baseline || {};
     const closure = payload.closure_metrics || {};
     const environment = impact.environment || {};
+    const assessmentReady = impact.assessment_ready !== false;
+    const reportedEnvironment = assessmentReady ? environment : {};
     const activity = payload.street_activity || {};
     const roadData = payload.road_data || {};
     const demand = payload.demand_model || {};
+    const paired = impact.comparison_metrics || {};
+    const pairedBaseline = assessmentReady ? (paired.baseline || {}) : {};
+    const pairedClosure = assessmentReady ? (paired.closure || {}) : {};
+    const decisionValue = value => assessmentReady ? value : null;
+    const scoringMinutes = Number(payload.playback?.scoring_horizon_s) / 60;
+    const toKmh = value => value === null || value === undefined ? null : Number(value) * 3.6;
     const generated = new Intl.DateTimeFormat('en-ZA', {
       dateStyle: 'long', timeStyle: 'short', timeZone: 'Africa/Johannesburg',
     }).format(new Date());
     const reportReference = `TRF-${Number(demand.seed || 0).toString(16).toUpperCase().padStart(8, '0')}`;
-    const percent = value => Number.isFinite(Number(value)) ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%` : '—';
+    const percent = value => value !== null && value !== undefined && Number.isFinite(Number(value))
+      ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%`
+      : '—';
+    const completionText = Math.abs(assessment.completionChange) < 0.05
+      ? 'about the same share of trips finish'
+      : `${Math.abs(assessment.completionChange).toFixed(1)} percentage points ${assessment.completionChange > 0 ? 'more' : 'fewer'} trips finish`;
     const flowItems = (payload.street_flow_summary || []).slice(0, 6).map(street => `
-      <li><b>${reportEscape(street.name)}</b><span>${Number(street.vehicle_delta) >= 0 ? '+' : ''}${reportNumber(street.vehicle_delta, 1)} avg vehicles · ${reportNumber(Number(street.closure_speed_mps) * 3.6, 0, ' km/h')} · ${reportNumber(street.section_count, 0)} ${Number(street.section_count) === 1 ? 'section' : 'sections'}</span></li>`).join('')
+      <li><b>${reportEscape(street.name)}</b><span>${publicChange(street.vehicle_delta, 'concurrent vehicles')} across changed sections · vehicle-weighted speed about ${reportNumber(Number(street.closure_speed_mps) * 3.6, 0, ' km/h')}</span></li>`).join('')
       || '<li><b>No material diversion detected</b><span>—</span></li>';
     const fleet = Object.entries(demand.fleet_mix || {}).map(([name, share]) =>
       `${name.replaceAll('_', ' ')} ${Math.round(Number(share) * 100)}%`).join(' · ');
+    const durationDetail = assessment.severity === 'incomplete'
+      ? reportEscape(assessment.action)
+      : `Among the ${reportNumber(impact.compared_trip_count, 0)} trips completed in both runs, mean requested-departure-to-arrival time was <b>${reportNumber(Math.abs(impact.mean_journey_time_change_s), 0, ' seconds')} ${Number(impact.mean_journey_time_change_s) >= 0 ? 'longer' : 'shorter'}</b>. <b>${completionText}</b> by the end of the scoring horizon.`;
+    const meaningDetail = assessment.severity === 'incomplete'
+      ? 'A like-for-like impact percentage is withheld because the comparison did not satisfy the minimum validity checks.'
+      : `For matched completed trips, the closure changes mean travel time by <b>${percent(assessment.durationChange)}</b>. ${reportNumber(payload.flow_comparison?.length || 0, 0)} nearby directional road sections show a material occupancy or queue change.`;
 
     trafficReportDocument.innerHTML = `
       <header class="report-header">
-        <div>
+        <div class="report-brand-title">
+          <img class="report-brand" src="/branding/MissionWordmark.webp" alt="Mission for Inner City Cape Town">
+          <div>
           <p class="report-kicker">Cape Town CBD Climate Explorer</p>
           <h1 id="traffic-report-title">Road closure simulation report</h1>
+          </div>
         </div>
         <div class="report-header-meta">
           <b>${reportEscape(reportReference)}</b>
           Generated ${reportEscape(generated)}<br>
-          Exploratory planning estimate
+          Exploratory planning summary
         </div>
       </header>
 
       <section class="report-verdict ${assessment.severity}">
         <div>
           <h2>${reportEscape(assessment.headline)}</h2>
-          <p>The model estimates ${percent(assessment.durationChange)} mean trip duration and a ${assessment.completionDrop.toFixed(1)} percentage-point reduction in trips completing within the comparison window. ${payload.flow_comparison?.length || 0} road sections show a material traffic-flow change.</p>
+          <p>${durationDetail}</p>
+        </div>
+      </section>
+
+      <section class="report-decision-grid" aria-label="Interpretation and recommendation">
+        <div class="report-decision-card primary">
+          <span>Recommended action</span>
+          <h2>${reportEscape(assessment.action)}</h2>
+        </div>
+        <div class="report-decision-card">
+          <span>What the result means</span>
+          <p>${meaningDetail}</p>
+        </div>
+        <div class="report-decision-card">
+          <span>About the ${reportNumber(payload.duration_min, 0)}-minute window</span>
+          <p>This is the environmental and queue sampling window, not the proposed closure length. Trips may finish during the ${reportNumber(scoringMinutes, 1)}-minute scoring horizon. Changing the window extends the same reproducible demand stream.</p>
         </div>
       </section>
 
@@ -3274,9 +3387,11 @@ export async function startWebGLScene(canvas, status) {
           <div class="report-fact"><span>Location</span><strong>${reportEscape(payload.road_name)}</strong></div>
           <div class="report-fact"><span>Intervention</span><strong>${reportEscape(payload.closure?.description)}</strong></div>
           <div class="report-fact"><span>Traffic period</span><strong>${reportEscape(payload.scenario?.label)}</strong></div>
-          <div class="report-fact"><span>Simulation</span><strong>${reportNumber(payload.duration_min, 0, ' min')} · ${reportEscape(payload.traffic_control === 'priority' ? 'Priority control' : 'Mapped signals')}</strong></div>
-          <div class="report-fact"><span>Demand assumption</span><strong>${reportNumber((demand.user_demand_multiplier ?? 1) * 100, 0, '%')} sensitivity level</strong></div>
-          <div class="report-fact"><span>Planned vehicles</span><strong>${reportNumber(demand.planned_vehicle_count, 0)}</strong></div>
+          <div class="report-fact"><span>Traffic sampled</span><strong>${reportNumber(payload.duration_min, 0, ' minutes')} · ${reportEscape(payload.traffic_control === 'priority' ? 'Priority junctions' : 'Mapped traffic lights')}</strong></div>
+          <div class="report-fact"><span>Traffic level</span><strong>${reportNumber((demand.user_demand_multiplier ?? 1) * 100, 0, '%')} of the synthetic ${reportEscape(payload.scenario?.key || 'selected')} profile</strong></div>
+          <div class="report-fact"><span>Synthetic trips generated</span><strong>${reportNumber(demand.planned_vehicle_count, 0)}</strong></div>
+          <div class="report-fact"><span>Base loading rate</span><strong>${reportNumber(demand.base_departures_per_min, 0, ' departures/min')} · stability-tuned</strong></div>
+          <div class="report-fact"><span>Observed-count calibration</span><strong>${demand.observed_count_calibration ? 'Applied' : 'Not available'}</strong></div>
           <div class="report-fact"><span>Closed lanes</span><strong>${reportNumber(payload.closure?.lanes_closed, 0)}</strong></div>
           <div class="report-fact"><span>Road-data coverage</span><strong>${reportNumber((roadData.municipal_match_ratio ?? 0) * 100, 0, '%')} City matched</strong></div>
         </div>
@@ -3288,41 +3403,44 @@ export async function startWebGLScene(canvas, status) {
       </section>
 
       <section class="report-section">
-        <div class="report-section-heading"><h2>Headline outcomes</h2><span>Before vs closure</span></div>
+        <div class="report-section-heading"><h2>What changes for road users</h2><span>Road open compared with road closed</span></div>
         <div class="report-stat-grid">
-          <div class="report-stat"><span>Trip duration</span><strong>${percent(impact.mean_duration_change_pct)}</strong><small>${reportChange(impact.mean_duration_change_s, 0, ' s')} per completed trip</small></div>
-          <div class="report-stat"><span>Maximum queue</span><strong>${reportNumber(impact.max_queue_closure, 0)}</strong><small>Before: ${reportNumber(impact.max_queue_baseline, 0)} vehicles</small></div>
-          <div class="report-stat"><span>Trip completion</span><strong>${reportNumber((impact.completed_trip_ratio_closure ?? 0) * 100, 0, '%')}</strong><small>Before: ${reportNumber((impact.completed_trip_ratio_baseline ?? 0) * 100, 0, '%')}</small></div>
-          <div class="report-stat"><span>Mean speed</span><strong>${percent(impact.mean_speed_change_pct)}</strong><small>${reportChange((impact.mean_speed_change_mps ?? 0) * 3.6, 1, ' km/h', true)}</small></div>
-          <div class="report-stat"><span>Diversion distance</span><strong>${reportChange(impact.mean_route_length_change_m, 0, ' m')}</strong><small>Mean route-length change</small></div>
-          <div class="report-stat"><span>Estimated CO₂</span><strong>${percent(environment.co2_kg?.change_pct)}</strong><small>${reportChange(environment.co2_kg?.change, 2, ' kg')}</small></div>
+          <div class="report-stat"><span>Change in journey time</span><strong>${reportChange(decisionValue(impact.mean_journey_time_change_s), 0, ' sec')}</strong><small>${percent(decisionValue(impact.mean_journey_time_change_pct))} for paired completed trips, including insertion delay</small></div>
+          <div class="report-stat"><span>Peak queued vehicles</span><strong>${reportNumber(impact.max_queue_closure, 0, ' vehicles')}</strong><small>Across the corridor · open road: ${reportNumber(impact.max_queue_baseline, 0)}</small></div>
+          <div class="report-stat"><span>Trips completed</span><strong>${reportNumber(impact.completed_trip_ratio_closure === null ? null : impact.completed_trip_ratio_closure * 100, 0, '%')}</strong><small>By end of scoring horizon · open road: ${reportNumber(impact.completed_trip_ratio_baseline === null ? null : impact.completed_trip_ratio_baseline * 100, 0, '%')}</small></div>
+          <div class="report-stat"><span>Average in-network speed</span><strong>${reportChange(toKmh(decisionValue(impact.mean_speed_change_mps)), 1, ' km/h', true)}</strong><small>${percent(decisionValue(impact.mean_speed_change_pct))} for paired completed trips</small></div>
+          <div class="report-stat"><span>Change in distance per trip</span><strong>${reportChange(decisionValue(impact.mean_route_length_change_m), 0, ' m')}</strong><small>Average for paired completed trips</small></div>
+          <div class="report-stat"><span>Change in CO₂</span><strong>${percent(reportedEnvironment.co2_kg?.change_pct)}</strong><small>${reportChange(reportedEnvironment.co2_kg?.change, 2, ' kg')} during the sampling window</small></div>
         </div>
       </section>
 
       <section class="report-section">
-        <div class="report-section-heading"><h2>Transport performance</h2><span>Corridor simulation window</span></div>
+        <div class="report-section-heading"><h2>Detailed transport results</h2><span>For readers who want the numbers</span></div>
         <table class="report-table">
           <thead><tr><th>Metric</th><th>Before</th><th>With closure</th><th>Change</th></tr></thead>
           <tbody>
-            <tr><td>Mean trip duration</td><td>${reportNumber(baseline.mean_duration_s, 0, ' s')}</td><td>${reportNumber(closure.mean_duration_s, 0, ' s')}</td><td>${reportChange(impact.mean_duration_change_pct, 1, '%')}</td></tr>
-            <tr><td>Mean time loss</td><td>${reportNumber(baseline.mean_time_loss_s, 0, ' s')}</td><td>${reportNumber(closure.mean_time_loss_s, 0, ' s')}</td><td>${reportChange(impact.mean_time_loss_change_s, 0, ' s')}</td></tr>
-            <tr><td>Mean speed</td><td>${reportNumber(Number(baseline.mean_speed_mps) * 3.6, 1, ' km/h')}</td><td>${reportNumber(Number(closure.mean_speed_mps) * 3.6, 1, ' km/h')}</td><td>${reportChange(impact.mean_speed_change_pct, 1, '%', true)}</td></tr>
-            <tr><td>Mean queued vehicles</td><td>${reportNumber(baseline.mean_queued_vehicles, 1)}</td><td>${reportNumber(closure.mean_queued_vehicles, 1)}</td><td>${reportChange(impact.mean_queued_vehicle_change, 1)}</td></tr>
-            <tr><td>Completed trips</td><td>${reportNumber(baseline.trip_count, 0)}</td><td>${reportNumber(closure.trip_count, 0)}</td><td>${reportNumber(impact.compared_trip_count, 0)} paired trips</td></tr>
+            <tr><td>Mean journey time <small>(paired, including insertion delay)</small></td><td>${reportNumber(pairedBaseline.mean_journey_time_s, 0, ' s')}</td><td>${reportNumber(pairedClosure.mean_journey_time_s, 0, ' s')}</td><td>${reportChange(decisionValue(impact.mean_journey_time_change_pct), 1, '%')}</td></tr>
+            <tr><td>Mean in-network duration <small>(paired trips)</small></td><td>${reportNumber(pairedBaseline.mean_duration_s, 0, ' s')}</td><td>${reportNumber(pairedClosure.mean_duration_s, 0, ' s')}</td><td>${reportChange(decisionValue(impact.mean_duration_change_pct), 1, '%')}</td></tr>
+            <tr><td>Mean insertion delay <small>(paired trips)</small></td><td>${reportNumber(pairedBaseline.mean_depart_delay_s, 1, ' s')}</td><td>${reportNumber(pairedClosure.mean_depart_delay_s, 1, ' s')}</td><td>${reportChange(decisionValue(impact.mean_depart_delay_change_s), 1, ' s')}</td></tr>
+            <tr><td>Mean time loss vs ideal speed <small>(paired trips)</small></td><td>${reportNumber(pairedBaseline.mean_time_loss_s, 0, ' s')}</td><td>${reportNumber(pairedClosure.mean_time_loss_s, 0, ' s')}</td><td>${reportChange(decisionValue(impact.mean_time_loss_change_s), 0, ' s')}</td></tr>
+            <tr><td>Mean in-network speed <small>(paired trips)</small></td><td>${reportNumber(toKmh(pairedBaseline.mean_speed_mps), 1, ' km/h')}</td><td>${reportNumber(toKmh(pairedClosure.mean_speed_mps), 1, ' km/h')}</td><td>${reportChange(decisionValue(impact.mean_speed_change_pct), 1, '%', true)}</td></tr>
+            <tr><td>Mean queued vehicles <small>(whole corridor)</small></td><td>${reportNumber(baseline.mean_queued_vehicles, 1)}</td><td>${reportNumber(closure.mean_queued_vehicles, 1)}</td><td>${reportChange(impact.mean_queued_vehicle_change, 1)}</td></tr>
+            <tr><td>Completed trips <small>(of ${reportNumber(demand.planned_vehicle_count, 0)} generated)</small></td><td>${reportNumber(baseline.trip_count, 0)}</td><td>${reportNumber(closure.trip_count, 0)}</td><td>${reportChange(impact.completed_trip_change, 0, '', true)}</td></tr>
+            <tr><td>Paired comparison sample</td><td colspan="2">${reportNumber(impact.compared_trip_count, 0)} trips completed in both runs</td><td>${reportNumber(impact.paired_trip_ratio === null ? null : impact.paired_trip_ratio * 100, 1, '%')} of generated</td></tr>
           </tbody>
         </table>
       </section>
 
       <section class="report-section">
-        <div class="report-section-heading"><h2>Environmental estimate</h2><span>SUMO HBEFA3 fleet classes</span></div>
+        <div class="report-section-heading"><h2>Air, fuel and noise results</h2><span>Change during the sampling window</span></div>
         <table class="report-table">
           <thead><tr><th>Metric</th><th>Before</th><th>With closure</th><th>Change</th></tr></thead>
           <tbody>
-            <tr><td>CO₂</td><td>${reportNumber(environment.co2_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(environment.co2_kg?.closure, 2, ' kg')}</td><td>${reportChange(environment.co2_kg?.change_pct, 1, '%')}</td></tr>
-            <tr><td>NOx</td><td>${reportNumber(environment.nox_g?.baseline, 2, ' g')}</td><td>${reportNumber(environment.nox_g?.closure, 2, ' g')}</td><td>${reportChange(environment.nox_g?.change_pct, 1, '%')}</td></tr>
-            <tr><td>Particulate matter</td><td>${reportNumber(environment.pmx_g?.baseline, 3, ' g')}</td><td>${reportNumber(environment.pmx_g?.closure, 3, ' g')}</td><td>${reportChange(environment.pmx_g?.change_pct, 1, '%')}</td></tr>
-            <tr><td>Fuel mass</td><td>${reportNumber(environment.fuel_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(environment.fuel_kg?.closure, 2, ' kg')}</td><td>${reportChange(environment.fuel_kg?.change_pct, 1, '%')}</td></tr>
-            <tr><td>Mean active-road noise</td><td>${reportNumber(environment.mean_active_edge_noise_db?.baseline, 1, ' dB')}</td><td>${reportNumber(environment.mean_active_edge_noise_db?.closure, 1, ' dB')}</td><td>${reportChange(environment.mean_active_edge_noise_db?.change, 1, ' dB')}</td></tr>
+            <tr><td>CO₂</td><td>${reportNumber(reportedEnvironment.co2_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(reportedEnvironment.co2_kg?.closure, 2, ' kg')}</td><td>${reportChange(reportedEnvironment.co2_kg?.change_pct, 1, '%')}</td></tr>
+            <tr><td>NOx</td><td>${reportNumber(reportedEnvironment.nox_g?.baseline, 2, ' g')}</td><td>${reportNumber(reportedEnvironment.nox_g?.closure, 2, ' g')}</td><td>${reportChange(reportedEnvironment.nox_g?.change_pct, 1, '%')}</td></tr>
+            <tr><td>Exhaust PMx</td><td>${reportNumber(reportedEnvironment.pmx_g?.baseline, 3, ' g')}</td><td>${reportNumber(reportedEnvironment.pmx_g?.closure, 3, ' g')}</td><td>${reportChange(reportedEnvironment.pmx_g?.change_pct, 1, '%')}</td></tr>
+            <tr><td>Fuel mass</td><td>${reportNumber(reportedEnvironment.fuel_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(reportedEnvironment.fuel_kg?.closure, 2, ' kg')}</td><td>${reportChange(reportedEnvironment.fuel_kg?.change_pct, 1, '%')}</td></tr>
+            <tr><td>Mean active-edge emission level</td><td>${reportNumber(reportedEnvironment.mean_active_edge_noise_db?.baseline, 1, ' dB')}</td><td>${reportNumber(reportedEnvironment.mean_active_edge_noise_db?.closure, 1, ' dB')}</td><td>${reportChange(reportedEnvironment.mean_active_edge_noise_db?.change, 1, ' dB')}</td></tr>
           </tbody>
         </table>
       </section>
@@ -3345,15 +3463,15 @@ export async function startWebGLScene(canvas, status) {
       </section>
 
       <section class="report-section">
-        <div class="report-section-heading"><h2>Method, data and interpretation</h2><span>Read before decision-making</span></div>
+        <div class="report-section-heading"><h2>How this comparison works</h2><span>Same roads, trips and traffic conditions</span></div>
         <div class="report-two-column">
-          <div class="report-note"><b>Model setup.</b> Paired SUMO microsimulations replay the same seeded, corridor-scoped synthetic demand before and after the closure. Routing topology comes from OpenStreetMap; geometry, lane capacity weighting, and confirmed plus inferred speed limits are enriched with the City of Cape Town road-centre dataset. Inferred speed limits are reported separately as lower-confidence inputs. Fleet: ${reportEscape(fleet || 'representative mixed fleet')}.</div>
-          <div class="report-note"><b>Limitations.</b> This is an exploratory comparison, not a calibrated traffic forecast or engineering design. No observed origin–destination matrix, traffic counts, parking occupancy, pedestrian volumes or verified controller timings were available. Parking and crossings are context only and do not alter demand or delay. Inferred speed limits are useful for scenario testing but should not be treated as surveyed regulatory signs.</div>
+          <div class="report-note"><b>Like-for-like comparison.</b> The same generated trips are submitted to both runs. Travel-time, time-loss, speed and distance changes use only vehicle IDs that completed both runs, preventing unfinished delayed trips from making the closure look artificially faster. Routes come from OpenStreetMap and are enriched with City road-centre attributes. Fleet: ${reportEscape(fleet || 'representative mixed fleet')}.</div>
+          <div class="report-note"><b>Limitations and use.</b> This is an exploratory synthetic-demand comparison, not a calibrated forecast or traffic-engineering design. The base loading is stability-tuned, not fitted to counts; there is no observed origin–destination matrix, parking occupancy, pedestrian volume or verified signal timing. Tailpipe outputs use European HBEFA3 classes and exclude vehicles waiting to enter, cold-start adjustment, tyre/brake dust and lifecycle emissions. The dB value is a relative simulated edge-emission indicator, not receptor noise. Validate a preferred arrangement with observed counts, signal plans, public-transport operations, emergency access and affected-street stakeholders.</div>
         </div>
       </section>
 
       <footer class="report-footer">
-        Cape Town CBD Climate Explorer · ${reportEscape(reportReference)} · Reproducible scenario seed ${reportEscape(demand.seed)} · Validation status: ${reportEscape(String(payload.validation_status || '').replaceAll('_', ' '))}
+        <img src="/branding/MisisonFavicon.webp" alt=""> Mission for Inner City Cape Town · ${reportEscape(reportReference)} · Reproducible scenario ${reportEscape(demand.seed)}
       </footer>`;
 
     trafficReportDocument.scrollTop = 0;
@@ -3375,22 +3493,22 @@ export async function startWebGLScene(canvas, status) {
     const streetActivity = payload.street_activity || {};
     const formatPercent = value => (value === null || value === undefined)
       ? '—'
-      : `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
+      : `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
     if (trafficResults) {
       trafficResults.hidden = false;
       trafficResults.innerHTML = `
-        <span><b>${formatPercent(impact.mean_duration_change_pct)}</b>Mean trip duration</span>
-        <span><b>${(impact.mean_time_loss_change_s ?? 0) >= 0 ? '+' : ''}${(impact.mean_time_loss_change_s ?? 0).toFixed(0)} s</b>Mean time lost</span>
-        <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Mean speed</span>
-        <span><b>${(impact.mean_route_length_change_m ?? 0) >= 0 ? '+' : ''}${(impact.mean_route_length_change_m ?? 0).toFixed(0)} m</b>Mean diversion distance</span>
-        <span><b>${(impact.mean_queued_vehicle_change ?? 0) >= 0 ? '+' : ''}${(impact.mean_queued_vehicle_change ?? 0).toFixed(1)}</b>Queued vehicles</span>
-        <span><b>${impact.max_queue_baseline ?? 0} → ${impact.max_queue_closure ?? 0}</b>Maximum queue</span>
+        <span><b>${formatPercent(impact.mean_journey_time_change_pct)}</b>Paired mean journey time</span>
+        <span><b>${impact.mean_time_loss_change_s === null || impact.mean_time_loss_change_s === undefined ? '—' : `${impact.mean_time_loss_change_s >= 0 ? '+' : ''}${Number(impact.mean_time_loss_change_s).toFixed(0)} s`}</b>Paired mean time loss</span>
+        <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Paired mean in-network speed</span>
+        <span><b>${impact.mean_route_length_change_m === null || impact.mean_route_length_change_m === undefined ? '—' : `${impact.mean_route_length_change_m >= 0 ? '+' : ''}${Number(impact.mean_route_length_change_m).toFixed(0)} m`}</b>Paired mean route length</span>
+        <span><b>${(impact.mean_queued_vehicle_change ?? 0) >= 0 ? '+' : ''}${Number(impact.mean_queued_vehicle_change ?? 0).toFixed(1)}</b>Mean queued vehicles · corridor</span>
+        <span><b>${impact.max_queue_baseline ?? 0} → ${impact.max_queue_closure ?? 0}</b>Peak queued vehicles · corridor</span>
         <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>
-        <span><b>${Math.round((impact.completed_trip_ratio_baseline ?? 0) * 100)}% → ${Math.round((impact.completed_trip_ratio_closure ?? 0) * 100)}%</b>Trips completing in the window</span>
+        <span><b>${impact.completed_trip_ratio_baseline === null || impact.completed_trip_ratio_baseline === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_baseline * 100)}%`} → ${impact.completed_trip_ratio_closure === null || impact.completed_trip_ratio_closure === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_closure * 100)}%`}</b>Trips completed by scoring horizon</span>
         <span><b>${Math.round((payload.road_data?.municipal_match_ratio ?? 0) * 100)}%</b>City road-data coverage</span>
         <span><b>${formatPercent(environment.co2_kg?.change_pct)}</b>Estimated CO₂</span>
         <span><b>${formatPercent(environment.nox_g?.change_pct)}</b>Estimated NOx</span>
-        <span><b>${(environment.mean_active_edge_noise_db?.change ?? 0) >= 0 ? '+' : ''}${(environment.mean_active_edge_noise_db?.change ?? 0).toFixed(1)} dB</b>Active-road noise</span>
+        <span><b>${(environment.mean_active_edge_noise_db?.change ?? 0) >= 0 ? '+' : ''}${(environment.mean_active_edge_noise_db?.change ?? 0).toFixed(1)} dB</b>Relative edge noise emission</span>
         <span><b>${streetActivity.parking_spaces ?? 0}</b>Mapped parking spaces nearby</span>
         <span><b>${streetActivity.pedestrian_crossings ?? 0}</b>Mapped crossings nearby</span>`;
     }
@@ -3398,14 +3516,16 @@ export async function startWebGLScene(canvas, status) {
       const assessment = trafficImpactAssessment(impact);
       trafficImpactSummary.className = `traffic-impact-summary ${assessment.severity}`;
       trafficImpactSummary.innerHTML = `<strong>${assessment.headline}</strong>`
-        + `${formatPercent(assessment.durationChange)} mean trip duration · ${assessment.completionDrop.toFixed(1)} percentage-point completion loss · `
-        + `${payload.flow_comparison?.length || 0} changed road sections.`;
+        + (assessment.severity === 'incomplete'
+          ? assessment.action
+          : `${assessment.action} ${formatPercent(assessment.durationChange)} paired journey time · `
+            + `${assessment.completionChange >= 0 ? '+' : ''}${assessment.completionChange.toFixed(1)} percentage-point completion change.`);
       trafficImpactSummary.hidden = false;
     }
     if (trafficStatus) {
       trafficStatus.textContent = `${payload.road_name} · ${payload.scenario?.label || ''} · `
-        + `${payload.closure?.description || ''} · ${payload.baseline.trip_count} trips vs `
-        + `${payload.closure_metrics.trip_count} with closure · ${payload.flow_comparison?.length || 0} changed road segments shown · estimate, not engineering-grade.`;
+        + `${payload.closure?.description || ''} · ${payload.baseline.trip_count} completed trips before vs `
+        + `${payload.closure_metrics.trip_count} with closure · ${payload.flow_comparison?.length || 0} changed directional road sections shown.`;
     }
     if (trafficToggle) trafficToggle.checked = true;
     if (trafficCompare) trafficCompare.disabled = false;

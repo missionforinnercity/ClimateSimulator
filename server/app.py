@@ -279,6 +279,15 @@ def field_tile(direction: str, tile: str) -> dict[str, str]:
     return {"status": "use_preview", "direction": direction, "tile": tile}
 
 
+# Brand assets live with the source data rather than the generated viewer
+# bundle. Expose them explicitly before the catch-all public mount so reports
+# and print previews can use the approved Mission identity.
+app.mount(
+    "/branding",
+    StaticFiles(directory=Path(__file__).resolve().parents[1] / "data" / "branding"),
+    name="branding",
+)
+
 # Serving the existing static viewer from the same process keeps the browser
 # same-origin with the API and avoids exposing DATABASE_URL to client code.
 app.mount("/", StaticFiles(directory=Path(__file__).resolve().parents[1] / "public", html=True), name="public")
