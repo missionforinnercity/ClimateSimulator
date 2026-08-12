@@ -12,7 +12,7 @@ import functools
 import json
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +24,18 @@ from shapely.ops import transform as transform_geometry
 from shapely.strtree import STRtree
 
 from server.terrain_wind import sample_bilinear
-from server.wind_metrics import STABILITY_PROFILES, add_screening_metrics
+from server.wind_metrics import (
+    COMFORT_CATEGORIES,
+    STABILITY_PROFILES,
+    add_screening_metrics,
+    comfort_codes_from_exceedance,
+    weibull_exceedance,
+)
 from server.era5_wind import forcing_profile
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 WEB_CRS = "EPSG:4326"
-FIELD_VERSION = "terrain-buildings-era5-comfort-2026-08-06"
+FIELD_VERSION = "terrain-buildings-era5-comfort-2026-08-12"
 REGIONAL_FIELD_DIR = Path(__file__).resolve().parents[1] / "data" / "wind_fields" / "regional"
 CBD_FIELD_DIR = Path(__file__).resolve().parents[1] / "data" / "wind_fields" / "cbd"
 VALID_DIRECTIONS = {
@@ -390,7 +396,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
     shear_exponent = era5_profile["median_shear_exponent_10_100m"] if era5_profile else STABILITY_PROFILES[request.stability]["power_law_exponent"]
     height_factor = (request.height_m / effective_reference_height) ** shear_exponent
     output_reference_speed = effective_reference_speed * height_factor
-    u, v, speed = [], [], []
+    u, v, speed, speedup = [], [], [], []
     for row in range(height):
         z = min_z + (row + 0.5) * dz
         for column in range(width):
@@ -411,6 +417,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
             u.append(point_flow_x * local_speed)
             v.append(point_flow_z * local_speed)
             speed.append(local_speed)
+            speedup.append(local_speed / output_reference_speed if output_reference_speed > 1e-9 else 0.0)
     if cbd_field is not None:
         model_kind = "mass_conserving_terrain_buildings"
     elif regional_field is not None:
@@ -440,6 +447,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         "u": u,
         "v": v,
         "speed": speed,
+        "speedup": speedup,
         "polygons": [
             {key: value for key, value in feature.items() if key != "local_geometry"}
             for feature in polygons
@@ -453,3 +461,71 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         weibull_shape=era5_profile["weibull_shape"] if era5_profile else None,
         sector_frequency_fraction=era5_profile["frequency_fraction"] if era5_profile else None,
     )
+
+
+def build_comfort_field(
+    request: PreviewRequest, bounds: tuple[float, float, float, float], polygons: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Combine sixteen direction fields with the selected ERA5 wind rose.
+
+    This is a climatological screening calculation, not CFD: each directional
+    mass-conserving field is retained as-is and its Weibull exceedance is
+    weighted by that direction's observed frequency.
+    """
+    direction_fields: list[tuple[float, dict[str, Any]]] = []
+    for direction_deg in (index * 22.5 for index in range(16)):
+        directional_request = replace(request, direction_deg=direction_deg, forcing_mode="era5_climatology")
+        field = build_field(directional_request, bounds, polygons)
+        frequency = float(field["era5_profile"]["frequency_fraction"])
+        direction_fields.append((frequency, field))
+
+    frequency_total = sum(frequency for frequency, _ in direction_fields)
+    if frequency_total <= 0:
+        raise ValueError("ERA5 direction frequencies are unavailable for this scenario")
+    weights = [frequency / frequency_total for frequency, _ in direction_fields]
+    cell_count = len(direction_fields[0][1]["speed"])
+    weighted_speed = np.zeros(cell_count, dtype=float)
+    threshold_probabilities = {
+        float(category["max_speed_mps"]): np.zeros(cell_count, dtype=float)
+        for category in COMFORT_CATEGORIES[:-1]
+    }
+    selected_exceedance = np.zeros(cell_count, dtype=float)
+    directional_summary = []
+    for weight, (_, field) in zip(weights, direction_fields):
+        speed = np.asarray(field["speed"], dtype=float)
+        shape = float(field["era5_profile"]["weibull_shape"])
+        weighted_speed += weight * speed
+        for threshold, probability in threshold_probabilities.items():
+            probability += weight * weibull_exceedance(speed, threshold, shape)
+        selected_exceedance += weight * weibull_exceedance(speed, request.exceedance_threshold_mps, shape)
+        directional_summary.append({
+            "sector": field["era5_profile"]["sector"],
+            "direction_deg": field["direction_deg"],
+            "frequency_fraction": round(weight, 6),
+            "mean_speed_mps": round(float(np.mean(speed)), 3),
+        })
+
+    dominant_index = int(np.argmax(weights))
+    result = dict(direction_fields[dominant_index][1])
+    result.update({
+        "analysis_mode": "comfort",
+        "analysis_kind": "multi_direction_wind_rose_comfort_screening",
+        "direction_count": len(direction_fields),
+        "direction_deg": direction_fields[dominant_index][1]["direction_deg"],
+        "representative_direction_deg": direction_fields[dominant_index][1]["direction_deg"],
+        "directional_summary": directional_summary,
+        "speed": np.round(weighted_speed, 4).tolist(),
+        "comfort_standard": "Lawson-LDDC-style screening; wind-rose-weighted 5% exceedance activity thresholds",
+        "comfort_category": comfort_codes_from_exceedance(threshold_probabilities).tolist(),
+        "comfort_exceedance_probability": {
+            str(threshold): np.round(probability, 6).tolist()
+            for threshold, probability in threshold_probabilities.items()
+        },
+        "exceedance": {
+            "threshold_mps": request.exceedance_threshold_mps,
+            "basis": "wind_rose_weighted_all_direction_seasonal_probability",
+            "probability": np.round(selected_exceedance, 6).tolist(),
+            "frequency_quality": "provisional_incomplete_hourly_archive",
+        },
+    })
+    return result

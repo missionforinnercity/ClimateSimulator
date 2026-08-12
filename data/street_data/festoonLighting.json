@@ -1,126 +1,14 @@
 {
-  "type": "FeatureCollection",
-  "features": [
-    {
-      "type": "Feature",
-      "properties": {
-        "id": "1",
-        "title": "Short Market Street Lighting",
-        "description": "Located near the Mission for Inner City's HQ, this installation provides essential ambiance and visibility for this busy culinary corridor.",
-        "image": "/shortMark.jpeg"
-      },
-      "geometry": {
-        "coordinates": [
-          [
-            18.418320988380742,
-            -33.92109093521274
-          ],
-          [
-            18.4189491933777,
-            -33.921520742442766
-          ]
-        ],
-        "type": "LineString"
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "id": "2",
-        "title": "Church Street Lighting",
-        "description": "Revitalizing a previously dimly lit route to support artisanal market vendors and increase pedestrian footfall.",
-        "image": "/church.jpeg"
-      },
-      "geometry": {
-        "coordinates": [
-          [
-            18.41929783001484,
-            -33.923406285124074
-          ],
-          [
-            18.418661560801127,
-            -33.92293745330608
-          ]
-        ],
-        "type": "LineString"
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "id": "3",
-        "title": "Bree Street Gallery Lighting",
-        "description": "Accent lighting designed to highlight the gallery façade and secure the public walkway.",
-        "image": "/breeGallery.jpeg"
-      },
-      "geometry": {
-        "coordinates": [
-          [
-            18.41790187401307,
-            -33.92105094587844
-          ],
-          [
-            18.417973003394195,
-            -33.921104597054466
-          ],
-          [
-            18.417845837496316,
-            -33.92122116363464
-          ],
-          [
-            18.417774177073852,
-            -33.921167988399
-          ],
-          [
-            18.417901797931165,
-            -33.921051185788876
-          ]
-        ],
-        "type": "LineString"
-      }
-    },
-    {
-      "type": "Feature",
-      "properties": {
-        "id": "4",
-        "title": "Long Street Lighting",
-        "description": "Promoting safety and visibility along the city's busiest nightlife artery.",
-        "image": "/long.jpeg"
-      },
-      "geometry": {
-        "coordinates": [
-          [
-            18.416143306869742,
-            -33.925200050384234
-          ],
-          [
-            18.415960403961208,
-            -33.92536585316424]
-        ],
-        "type": "LineString"
-      }
-    },
-     {
-      "type": "Feature",
-      "properties": {
-        "id": "5",
-        "title": "St Georges Mall Lighting",
-        "description": "Enhancing the pedestrian walkway to support local street vendors and spotlight the Mission's Kiosk of Curiosities.",
-        "image": "/stGeorges.jpeg"
-      },
-      "geometry": {
-        "coordinates": [
-          [
-            18.42198971061768,
-            -33.9220413621816
-          ],
-          [
-            18.42153749037854,
-            -33.92246807268426
-          ]
-        ],
-        "type": "LineString"
-      }
-    }
-  ]
+"type": "FeatureCollection",
+"name": "festoonLighting",
+"features": [
+{ "type": "Feature", "properties": { "id": "1", "title": "Short Market Street Lighting", "description": "Located near the Mission for Inner City's HQ, this installation provides essential ambiance and visibility for this busy culinary corridor.", "image": "/shortMark.jpeg" }, "geometry": { "type": "LineString", "coordinates": [ [ 18.418320988380742, -33.921090935212739 ], [ 18.418949193377699, -33.921520742442766 ] ] } },
+{ "type": "Feature", "properties": { "id": "2", "title": "Church Street Lighting", "description": "Revitalizing a previously dimly lit route to support artisanal market vendors and increase pedestrian footfall.", "image": "/church.jpeg" }, "geometry": { "type": "LineString", "coordinates": [ [ 18.419297830014841, -33.923406285124074 ], [ 18.418661560801127, -33.922937453306083 ] ] } },
+{ "type": "Feature", "properties": { "id": "3", "title": "Bree Street Gallery Lighting", "description": "Accent lighting designed to highlight the gallery façade and secure the public walkway.", "image": "/breeGallery.jpeg" }, "geometry": { "type": "LineString", "coordinates": [ [ 18.417901874013069, -33.921050945878441 ], [ 18.417973003394195, -33.921104597054466 ], [ 18.417845837496316, -33.921221163634641 ], [ 18.417774177073852, -33.921167988398999 ], [ 18.417901797931165, -33.921051185788876 ] ] } },
+{ "type": "Feature", "properties": { "id": "4", "title": "Long Street Lighting", "description": "Promoting safety and visibility along the city's busiest nightlife artery.", "image": "/long.jpeg" }, "geometry": { "type": "LineString", "coordinates": [ [ 18.416143306869742, -33.925200050384234 ], [ 18.415960403961208, -33.925365853164237 ] ] } },
+{ "type": "Feature", "properties": { "id": "5", "title": "St Georges Mall Lighting", "description": "Enhancing the pedestrian walkway to support local street vendors and spotlight the Mission's Kiosk of Curiosities.", "image": "/stGeorges.jpeg" }, "geometry": { "type": "LineString", "coordinates": [ [ 18.42198971061768, -33.922041362181602 ], [ 18.42153749037854, -33.922468072684261 ] ] } },
+{ "type": "Feature", "properties": { "id": "100", "title": "Shortmarket Street", "description": "", "image": null }, "geometry": { "type": "LineString", "coordinates": [ [ 18.420653774176095, -33.922772425593045 ], [ 18.420898556880015, -33.92294768421538 ] ] } },
+{ "type": "Feature", "properties": { "id": "101", "title": "Clock Tower Lighting Intervention", "description": null, "image": null }, "geometry": { "type": "LineString", "coordinates": [ [ 18.419482003717668, -33.924378721561382 ], [ 18.419925219737785, -33.923952886561665 ] ] } },
+{ "type": "Feature", "properties": { "id": "102", "title": "Southern Sun", "description": null, "image": null }, "geometry": { "type": "LineString", "coordinates": [ [ 18.42164014708359, -33.921710010721284 ], [ 18.421965317006851, -33.921946827124195 ], [ 18.422221687057704, -33.921700596001905 ] ] } }
+]
 }

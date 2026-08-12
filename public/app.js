@@ -121,7 +121,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=52');
+    const module = await import('./webglRenderer.js?v=67');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -130,7 +130,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=60');
+      const module = await import('./sceneRenderer.js?v=69');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
@@ -298,6 +298,8 @@ function windReportFieldMap(field) {
   const domainRatio = (sourceRows * field.dz) / Math.max(sourceColumns * field.dx, 1);
   const height = Math.round(Math.max(280, Math.min(500, width * domainRatio)));
   const values = field.speed || [];
+  const comfortMode = field.analysis_mode === 'comfort' && field.comfort_category?.length;
+  const comfortColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
   const minimum = Math.min(...values), maximum = Math.max(...values);
   const cells = [];
   for (let targetRow = 0; targetRow < rows; targetRow += 1) {
@@ -315,7 +317,12 @@ function windReportFieldMap(field) {
       }
       const speed = total / Math.max(count, 1);
       const x = targetColumn * width / columns, y = targetRow * height / rows;
-      cells.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${(width / columns + 0.35).toFixed(2)}" height="${(height / rows + 0.35).toFixed(2)}" fill="${windReportColor(speed, minimum, maximum)}"/>`);
+      const sampleRow = Math.min(sourceRows - 1, Math.floor((rowStart + rowEnd - 1) / 2));
+      const sampleColumn = Math.min(sourceColumns - 1, Math.floor((columnStart + columnEnd - 1) / 2));
+      const fill = comfortMode
+        ? comfortColors[field.comfort_category[sampleRow * sourceColumns + sampleColumn] ?? 5]
+        : windReportColor(speed, minimum, maximum);
+      cells.push(`<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${(width / columns + 0.35).toFixed(2)}" height="${(height / rows + 0.35).toFixed(2)}" fill="${fill}"/>`);
     }
   }
   const bearing = Number(field.direction_deg) || 0;
@@ -331,18 +338,18 @@ function windReportFieldMap(field) {
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Pedestrian wind speed field">
       <rect width="${width}" height="${height}" fill="#12202a"/>
       ${cells.join('')}${gridLines}
-      <g stroke="#fff" fill="#fff" stroke-width="4" stroke-linecap="round">
+      ${comfortMode ? '' : `<g stroke="#fff" fill="#fff" stroke-width="4" stroke-linecap="round">
         <line x1="${arrowStartX}" y1="${arrowStartY}" x2="${arrowEndX}" y2="${arrowEndY}" marker-end="url(#wind-arrow)"/>
         <defs><marker id="wind-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z"/></marker></defs>
       </g>
-      <text x="${width - 150}" y="115" fill="#fff" font-size="15" font-family="system-ui" font-weight="700">FROM ${Math.round(bearing)}°</text>
-      <text x="18" y="28" fill="#fff" font-size="15" font-family="system-ui" font-weight="800">${windReportEscape(field.height_m)} m pedestrian wind</text>
+      <text x="${width - 150}" y="115" fill="#fff" font-size="15" font-family="system-ui" font-weight="700">FROM ${Math.round(bearing)}°</text>`}
+      <text x="18" y="28" fill="#fff" font-size="15" font-family="system-ui" font-weight="800">${windReportEscape(field.height_m)} m ${comfortMode ? 'wind comfort' : 'pedestrian wind'}</text>
       <text x="18" y="49" fill="#e1eef4" font-size="11" font-family="system-ui">${windReportEscape(field.width)} × ${windReportEscape(field.height)} cells · ${windReportNumber(field.dx, 1, ' m')} resolution</text>
       <text x="18" y="${height - 17}" fill="#fff" font-size="11" font-family="system-ui">N ↑ · viewer-local x east / z south</text>
     </svg>
     <div class="wind-report-map-meta">
-      <span>${windReportNumber(minimum, 1, ' m/s')} <i class="wind-report-gradient"></i> ${windReportNumber(maximum, 1, ' m/s')}</span>
-      <span>Cell colours show modelled mean speed</span>
+      <span>${comfortMode ? 'Long sitting → uncomfortable' : `${windReportNumber(minimum, 1, ' m/s')} <i class="wind-report-gradient"></i> ${windReportNumber(maximum, 1, ' m/s')}`}</span>
+      <span>Cell colours show ${comfortMode ? 'wind-rose-weighted comfort class' : 'modelled mean speed'}</span>
     </div>
   </div>`;
 }
@@ -363,8 +370,9 @@ function setupWindResults() {
     latestField = null;
     if (reportButton) reportButton.disabled = true;
   };
-  ['wind-direction', 'wind-season', 'wind-stability', 'wind-height', 'wind-exceedance-threshold', 'wind-forcing-mode', 'wind-speed', 'wind-size']
+  ['wind-direction', 'wind-season', 'wind-stability', 'wind-height', 'wind-resolution', 'wind-exceedance-threshold', 'wind-forcing-mode', 'wind-speed', 'wind-size']
     .forEach(id => document.querySelector(`#${id}`)?.addEventListener('input', invalidate));
+  document.querySelectorAll('[data-wind-lens="direction"], [data-wind-lens="comfort"]').forEach(button => button.addEventListener('click', invalidate));
   addEventListener('climate-wind-result', event => {
     const field = event.detail;
     if (!field?.comfort_category || !field?.exceedance?.probability) {
@@ -382,7 +390,9 @@ function setupWindResults() {
     const speeds = field.speed || [];
     const meanSpeed = speeds.reduce((sum, value) => sum + value, 0) / Math.max(1, speeds.length);
     const relative = (field.uncertainty?.relative_fraction || 0) * 100;
-    const forcingLabel = field.era5_profile
+    const forcingLabel = field.analysis_mode === 'comfort'
+      ? `${field.direction_count || 16} directions · ${field.season} wind rose`
+      : field.era5_profile
       ? `ERA5 ${field.era5_profile.sector.toUpperCase()} · ${(field.era5_profile.frequency_fraction * 100).toFixed(1)}% sampled group hours`
       : 'Manual mean forcing';
     results.innerHTML = `
@@ -434,6 +444,12 @@ function setupWindResults() {
       if (imageUrl?.length > 2000) sceneImage = `<figure class="wind-report-scene"><img src="${imageUrl}" alt="Current 3D wind simulation view"><figcaption>Interactive scene at report generation time. The reproducible field map below is generated directly from the returned simulation grid.</figcaption></figure>`;
     } catch { /* A field-derived report remains available if canvas capture is restricted. */ }
     const uncertaintyDrivers = (field.uncertainty?.drivers || []).map(value => String(value).replaceAll('_', ' ')).join(' · ');
+    const isComfortStudy = field.analysis_mode === 'comfort';
+    const directionDescription = isComfortStudy
+      ? `${field.direction_count || 16} direction sectors, wind-rose weighted`
+      : `${field.direction_name?.replaceAll('_', ' ').toUpperCase() || ''} · from ${windReportNumber(field.direction_deg, 0, '°')}`;
+    const forcingDescription = isComfortStudy ? 'ERA5 all-direction seasonal profiles'
+      : era5 ? `ERA5 ${windReportEscape(era5.sector.toUpperCase())} conditional profile` : 'Manual mean wind';
     reportDocument.innerHTML = `
       <header class="report-header">
         <div><p class="report-kicker">Cape Town CBD Climate Explorer</p><h1 id="wind-report-title">Pedestrian wind analysis report</h1></div>
@@ -441,11 +457,11 @@ function setupWindResults() {
       </header>
       <section class="report-verdict ${severity}"><div><h2>${windReportEscape(headline)}</h2><p>${windReportNumber(uncomfortable, 1, '%')} of the analysed grid is classified as uncomfortable and ${windReportNumber(restricted, 1, '%')} is limited to business walking or worse. The most common category is ${windReportEscape(dominant?.label || 'unknown')}.</p></div></section>
       <section class="report-section"><div class="report-section-heading"><h2>Scenario definition</h2><span>Boundary conditions and domain</span></div><div class="report-scenario-grid">
-        <div class="report-fact"><span>Wind direction</span><strong>${windReportEscape(field.direction_name?.replaceAll('_', ' ').toUpperCase() || '')} · from ${windReportNumber(field.direction_deg, 0, '°')}</strong></div>
+        <div class="report-fact"><span>Wind direction</span><strong>${windReportEscape(directionDescription)}</strong></div>
         <div class="report-fact"><span>Season / stability</span><strong>${windReportEscape(field.season)} · ${windReportEscape(field.stability?.label || field.stability?.key)}</strong></div>
         <div class="report-fact"><span>Result height</span><strong>${windReportNumber(field.height_m, 1, ' m')} pedestrian layer</strong></div>
         <div class="report-fact"><span>Analysis domain</span><strong>${windReportNumber(field.width * field.dx, 0, ' m')} × ${windReportNumber(field.height * field.dz, 0, ' m')}</strong></div>
-        <div class="report-fact"><span>Forcing</span><strong>${era5 ? `ERA5 ${windReportEscape(era5.sector.toUpperCase())} conditional profile` : 'Manual mean wind'}</strong></div>
+        <div class="report-fact"><span>Forcing</span><strong>${forcingDescription}</strong></div>
         <div class="report-fact"><span>Reference wind</span><strong>${windReportNumber(field.reference_speed_mps, 2, ' m/s')} at ${windReportNumber(field.reference_height_m, 1, ' m')}</strong></div>
         <div class="report-fact"><span>Height profile</span><strong>Exponent ${windReportNumber(field.height_profile_exponent, 3)}</strong></div>
         <div class="report-fact"><span>Flow model</span><strong>${windReportEscape(String(field.model_kind).replaceAll('_', ' '))}</strong></div>
@@ -464,7 +480,7 @@ function setupWindResults() {
         <div class="wind-comfort-bar" aria-label="Wind comfort category proportions">${comfortBar}</div><div class="wind-comfort-legend">${comfortLegend}</div>
       </section>
       <section class="report-section report-two-column">
-        <div><div class="report-section-heading"><h2>ERA5 forcing evidence</h2><span>${era5 ? 'Selected sector profile' : 'Not used'}</span></div>${era5 ? `<ul class="report-list">
+        <div><div class="report-section-heading"><h2>ERA5 forcing evidence</h2><span>${isComfortStudy ? 'All 16 sector profiles' : era5 ? 'Selected sector profile' : 'Not used'}</span></div>${isComfortStudy ? `<div class="report-note">The comfort result combines ${field.direction_count || 16} directional fields. Each field is weighted by its normalized ${windReportEscape(field.season)} ERA5 sector frequency and fitted Weibull exceedance curve.</div>` : era5 ? `<ul class="report-list">
           <li><b>Profile sample</b><span>${windReportNumber(era5.sample_count, 0)} records</span></li><li><b>Mean direction</b><span>${windReportNumber(era5.mean_direction_deg, 1, '°')}</span></li>
           <li><b>95th wind speed</b><span>${windReportNumber(era5.p95_speed_mps, 2, ' m/s')}</span></li><li><b>95th gust</b><span>${windReportNumber(era5.p95_gust_mps, 2, ' m/s')}</span></li>
           <li><b>Weibull shape</b><span>${windReportNumber(era5.weibull_shape, 3)}</span></li><li><b>Sector frequency</b><span>${windReportNumber(era5.frequency_fraction * 100, 1, '%')}</span></li>
@@ -476,7 +492,7 @@ function setupWindResults() {
         </ul></div>
       </section>
       <section class="report-section"><div class="report-section-heading"><h2>Method and interpretation</h2><span>Read before decision-making</span></div><div class="report-two-column">
-        <div class="report-note"><b>Method.</b> ERA5 or manual boundary forcing is adjusted to pedestrian height, then combined with the directional terrain field, building-resolved CBD field and available ventilation factors. Conditional exceedance uses the reported Weibull distribution. Comfort categories use five-percent-exceedance activity thresholds.</div>
+        <div class="report-note"><b>Method.</b> ERA5 or manual boundary forcing is adjusted to pedestrian height, then combined with the directional terrain field, building-resolved CBD field and available ventilation factors. ${isComfortStudy ? 'Sixteen directional exceedance fields are weighted by the selected period wind rose.' : 'The displayed exceedance is conditional on the selected direction.'} Comfort categories use five-percent-exceedance activity thresholds.</div>
         <div class="report-note"><b>Limitations.</b> This is a preview screening result, not certified CFD, wind-tunnel evidence or a local measurement. ERA5 is regional-scale; the current attached archive is temporally incomplete. Building wakes, turbulence and façade effects require independent OpenFOAM/WindNinja benchmarks and pedestrian anemometer validation.</div>
       </div></section>
       <footer class="report-footer">Cape Town CBD Climate Explorer · ${reference} · ${windReportEscape(field.crs)} · Analysis mode: ${windReportEscape(field.analysis_mode)} · Source layer: ${windReportEscape(field.source_layer || 'generated field')}</footer>`;

@@ -180,48 +180,59 @@ from `.env` on the server only; the database URL is never sent to the browser.
 uvicorn server.app:app --reload --port 8000
 ```
 
-Open http://localhost:8000. The Wind explorer supports an explicitly editable
-analysis domain, directional and seasonal scenarios, a speed slider, and a
-particle-first flow display without a blocky raster overlay. Clicking the city
+Open http://localhost:8000. The Wind explorer separates single-direction
+diagnostics from 16-direction wind-rose-weighted comfort screening. Its
+Jifto-inspired controls expose the editable domain, result height, grid,
+period, stability, activity threshold, surface layer and flowline appearance.
+Clicking the city
 normally orbits the camera; use **Move / resize domain** when repositioning the
 box, or drag its corner handle to resize it. Gusts are constrained to free
 pedestrian ground and use a wall-normal/tangential response to slide around
-building footprints. Editing clears the old field; click **Simulate wind** to
-calculate the new domain.
+building footprints. Editing clears the old field; click **Run direction
+study** or **Run 16-direction comfort study** to calculate the new domain.
 
 The **Urban heat** layer reads the generated local product in
 `data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a
-set of simplified vector zones on the scene ground. It defaults to a pedestrian
-intervention-priority view anchored to pedestrian heat. Time-specific shade
-from mapped buildings and tree canopies can modify that signal by up to 25%,
-and anonymous nearby-destination density can modify it by up to 15%. When
-`data/raw/POI_innercity.csv` is installed, its coordinates contribute only to
-the aggregated 60 m activity signal; POI records, categories, names, addresses,
-IDs, and locations are not returned by the heat API or drawn by this viewer.
+set of simplified vector zones on the scene ground. It defaults to an
+intervention-priority view anchored directly to modelled surface temperature
+(70%) and time-specific mapped shade deficit (30%). Priority and shade retain
+every surface-temperature zone rather than dropping building-heavy cells, so
+the screening surface remains continuous.
 Users can switch to pedestrian thermal exposure, shade deficit, the original
-`heat_model_lst_c` surface temperature, or a rooftop-temperature view limited
-to zones with at least 50% mapped building cover. Heat mode keeps routes visible alongside
-white buildings, green trees, and the heat surface; the
+`heat_model_lst_c` surface temperature, or a rooftop-temperature view clipped
+to mapped building footprints and conformed to the detailed rendered roof
+surface rather than the LiDAR terrain. Ground-level heat views hide roads and
+paths so those layers do not cover the thermal surface; rooftop mode retains
+them for orientation alongside white buildings, green trees, and the heat surface. The
 database `climate.heat_zones` table remains a fallback when the local product
 is absent.
 
-The panel also exposes the existing mitigation planner. Its concise planning
-set follows the EPA heat-island strategy families—trees and vegetation, cool
-pavements, cool roofs and green roofs—plus pedestrian shade structures for
-immediate route and waiting-area relief. Users choose a design
-date and time, paint one or more interventions, tune their parameters, and
-compare the baseline with a time-dependent surface-temperature estimate and a
-pedestrian-relief summary. These outputs remain literature-bounded screening
-estimates rather than measured or engineering-grade performance claims.
+The **Sunlight** panel provides both instantaneous GPU shadows and cumulative
+direct-sun hours. Ground sun is accumulated from mapped shadow overlap. The 3D
+building study places analysis cells on roofs and outward-facing façades, casts
+a clear-sky ray toward every sampled sun position, and tests it against mapped
+opaque building prisms and canopy volumes. Ground, building, or combined
+surfaces can be selected over an editable daily window at 15, 30, or 60 minute
+steps. Full-CBD building grids are available at 20 m (faster) and 10 m
+(detailed); a 20 m all-surface study contains roughly 25,000 cells. Unlike
+Jifto's OptiX implementation, this CPU planning approximation uses flat roof
+planes and does not ray-test terrain, detailed roof slopes, diffuse light, or
+reflections, so it is not a regulatory solar-radiation calculation.
+
+The former intervention-painting preview has been removed. Heat outputs remain
+screening evidence rather than measured or engineering-grade performance
+claims. Rooftop values are the source model's land-surface temperature painted
+directly onto the detailed roof triangles; they are not measured roof-membrane
+temperatures.
 
 Wind results include stability-dependent pedestrian-height conversion,
 Lawson-LDDC-style screening categories, conditional threshold exceedance,
-and model-form uncertainty bands. The interface and API label these outputs
-**Preview**. Seasonal labels do not yet change occurrence frequencies: an
-observed station or reanalysis wind rose must be installed before annual or
-seasonal exceedance can be claimed. See `docs/WIND_VALIDATION.md` for the
-benchmark workflow, observation schema, error maps, and promotion criteria
-for a future validated mode.
+wind-rose-weighted seasonal/annual comfort, and model-form uncertainty bands.
+The interface and API label these outputs **Screening**. The installed ERA5
+archive covers only 35.4% of possible hours, so its directional frequencies
+and comfort results remain provisional. See `docs/WIND_VALIDATION.md` for the
+calculation, Jifto comparison, benchmark workflow, observation schema, error
+maps, and promotion criteria for a future validated mode.
 
 When `data/wind_climatology/cape_town_era5.json` is present, the Wind panel
 defaults to ERA5 forcing. Direction, season and stability select the measured

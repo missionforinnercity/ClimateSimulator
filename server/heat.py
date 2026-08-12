@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import csv
+from concurrent.futures import ThreadPoolExecutor
 import functools
 import json
 from pathlib import Path
 from typing import Any
 
 from pyproj import Transformer
-from shapely.geometry import Point, Polygon, box, mapping, shape
+from shapely.geometry import Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 from shapely.strtree import STRtree
 
@@ -18,7 +18,6 @@ from .solar import cast_shadow, sun_position
 
 HEAT_TABLE = "heat_zones"
 HEAT_SOURCE_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "scene_footprint_heat_2026_academic_v3_zones.geojson"
-POI_SOURCE_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "POI_innercity.csv"
 SCENE_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "fallback.json"
 CANOPY_ASSET_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "canopy.json"
 # The source polygons are more detailed than the Canvas scene can display.
@@ -36,6 +35,7 @@ HEAT_METRICS = {
     "pedestrian_heat_exposure_c": "Pedestrian thermal exposure",
     "shade_deficit_score": "Time-specific shade deficit",
     "pedestrian_priority_score": "Pedestrian intervention priority",
+    "cumulative_sun_hours": "Cumulative direct sunlight",
 }
 HEAT_METRIC_METADATA = {
     "heat_model_lst_c": {"unit": "°C", "decimals": 1, "kind": "temperature"},
@@ -43,6 +43,7 @@ HEAT_METRIC_METADATA = {
     "pedestrian_heat_exposure_c": {"unit": "°C", "decimals": 1, "kind": "temperature_delta"},
     "shade_deficit_score": {"unit": "/100", "decimals": 0, "kind": "score"},
     "pedestrian_priority_score": {"unit": "/100", "decimals": 0, "kind": "score"},
+    "cumulative_sun_hours": {"unit": " h", "decimals": 1, "kind": "duration"},
 }
 HEAT_COLOR_PERCENTILES = {metric: (0.10, 0.90) for metric in HEAT_METRICS}
 HEAT_COLOR_SCALE = {
@@ -94,33 +95,6 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[lower] * (1 - amount) + ordered[upper] * amount
 
 
-def _poi_activity_scores(zone_geometries: list[Any]) -> list[float]:
-    """Return anonymous activity-density scores; never expose source POI records."""
-    if not POI_SOURCE_PATH.exists() or not zone_geometries:
-        return [0.0] * len(zone_geometries)
-    config = load_viewer_config()
-    origin_x, origin_y = config["origin"]
-    transformer = Transformer.from_crs(WEB_CRS, LOCAL_CRS, always_xy=True)
-    points = []
-    with POI_SOURCE_PATH.open(newline="", encoding="utf-8-sig") as source:
-        for row in csv.DictReader(source):
-            try:
-                lon = float(row.get("nearest_x") or row.get("google_longitude") or "")
-                lat = float(row.get("nearest_y") or row.get("google_latitude") or "")
-            except (TypeError, ValueError):
-                continue
-            x, y = transformer.transform(lon, lat)
-            points.append(Point(x - origin_x, -(y - origin_y)))
-    if not points:
-        return [0.0] * len(zone_geometries)
-    tree = STRtree(points)
-    # A 60 m catchment represents nearby destinations without revealing any
-    # individual business location or category in the response.
-    counts = [len(tree.query(geometry.buffer(60.0))) for geometry in zone_geometries]
-    upper = _percentile([float(count) for count in counts], 0.95) or 1.0
-    return [min(100.0, count / upper * 100.0) for count in counts]
-
-
 @functools.lru_cache(maxsize=16)
 def _shadow_surface(date_text: str, minutes: int) -> Any:
     """Build mapped building and tree-canopy shade for one local solar time."""
@@ -155,31 +129,75 @@ def _dynamic_shade_deficits(date_text: str, minutes: int) -> tuple[float, ...]:
     features = _load_heat_zones()["features"]
     shadows = _shadow_surface(date_text, minutes)
     if not shadows:
-        return tuple(0.0 for _ in features)
+        return tuple(100.0 for _ in features)
     tree = STRtree(shadows)
-    deficits = []
+    deficits: list[float] = []
     for feature in features:
         geometry = shape(feature["geometry"])
-        min_x, min_y, max_x, max_y = geometry.bounds
-        samples = [geometry.representative_point()]
-        for x_fraction in (0.2, 0.5, 0.8):
-            for y_fraction in (0.2, 0.5, 0.8):
-                point = Point(min_x + (max_x - min_x) * x_fraction, min_y + (max_y - min_y) * y_fraction)
-                if geometry.covers(point):
-                    samples.append(point)
-        shaded_samples = 0
-        for point in samples:
-            if any(shadows[int(index)].covers(point) for index in tree.query(point)):
-                shaded_samples += 1
-        shaded_fraction = shaded_samples / len(samples)
+        candidate_shadows = [shadows[int(index)] for index in tree.query(geometry)]
+        if not candidate_shadows or geometry.area <= 0:
+            deficits.append(100.0)
+            continue
+        # Use covered area instead of a handful of point samples. This removes
+        # speckled false gaps along shadow boundaries and gives small zones the
+        # same spatial fidelity as large ones.
+        shaded_area = geometry.intersection(unary_union(candidate_shadows)).area
+        shaded_fraction = min(1.0, max(0.0, shaded_area / geometry.area))
         deficits.append(round((1.0 - shaded_fraction) * 100.0, 2))
     return tuple(deficits)
 
 
+@functools.lru_cache(maxsize=8)
+def _cumulative_sun_hours(date_text: str, start_minutes: int, end_minutes: int, step_minutes: int) -> tuple[float, ...]:
+    """Accumulate direct-sun duration on every heat-zone analysis surface."""
+    totals = [0.0] * len(_load_heat_zones()["features"])
+    intervals = []
+    for start in range(start_minutes, end_minutes, step_minutes):
+        duration = min(step_minutes, end_minutes - start)
+        sample_minutes = start + duration // 2
+        altitude, _, _ = sun_position(date_text, sample_minutes)
+        if altitude <= 0.008:
+            continue
+        intervals.append((duration, sample_minutes))
+    # GEOS releases the GIL while intersecting geometry, so evaluating time
+    # samples concurrently keeps an interactive daily study practical without
+    # changing its spatial or temporal result.
+    with ThreadPoolExecutor(max_workers=min(4, len(intervals) or 1)) as executor:
+        results = executor.map(lambda item: _dynamic_shade_deficits(date_text, item[1]), intervals)
+        for (duration, _), deficits in zip(intervals, results):
+            duration_hours = duration / 60.0
+            for index, deficit in enumerate(deficits):
+                totals[index] += deficit / 100.0 * duration_hours
+    return tuple(round(value, 3) for value in totals)
+
+
 @functools.lru_cache(maxsize=1)
-def _activity_scores() -> tuple[float, ...]:
-    features = _load_heat_zones()["features"]
-    return tuple(_poi_activity_scores([shape(feature["geometry"]) for feature in features]))
+def _roof_surfaces() -> tuple[tuple[Any, float], ...]:
+    """Return the mapped building footprints and their modelled roof planes."""
+    if not SCENE_PATH.exists():
+        return ()
+    scene = json.loads(SCENE_PATH.read_text(encoding="utf-8"))
+    candidates = []
+    for record in scene.get("buildings", []):
+        if len(record) < 3 or len(record[2]) < 3:
+            continue
+        ground, height, ring = record[0], record[1], record[2]
+        wall_height = record[5] if len(record) > 5 else height
+        footprint = Polygon(ring)
+        if footprint.is_valid and not footprint.is_empty:
+            candidates.append((footprint, float(ground) + max(float(height), float(wall_height))))
+    # Building parts and parent footprints often overlap. Keep the highest
+    # mapped roof at each x/z location so roof area is not double-counted and
+    # stacked thermal polygons cannot fight in the depth buffer.
+    roofs = []
+    ordered = sorted(candidates, key=lambda item: item[1], reverse=True)
+    footprint_tree = STRtree([item[0] for item in ordered])
+    for index, (footprint, surface_y) in enumerate(ordered):
+        higher = [ordered[int(candidate)][0] for candidate in footprint_tree.query(footprint) if int(candidate) < index]
+        visible = footprint.difference(unary_union(higher)) if higher else footprint
+        if not visible.is_empty and visible.area >= 0.25:
+            roofs.append((visible, surface_y))
+    return tuple(roofs)
 
 
 @functools.lru_cache(maxsize=1)
@@ -254,18 +272,8 @@ def _load_heat_zones() -> dict[str, Any]:
             metric: (float(properties.get(metric)) if properties.get(metric) is not None else None)
             for metric in ("heat_model_lst_c", "pedestrian_heat_exposure_c", "shade_deficit_score")
         }
-        building_cover_pct = float(properties.get("building_cover_pct") or 0.0)
-        pedestrian_candidate = (
-            str(properties.get("land_type") or "").lower() != "water"
-            and building_cover_pct < 50.0
-        )
-        normalized_properties["rooftop_temperature_c"] = (
-            normalized_properties["heat_model_lst_c"] if building_cover_pct >= 50.0 else None
-        )
-        normalized_properties["_pedestrian_candidate"] = pedestrian_candidate
-        if not pedestrian_candidate:
-            normalized_properties["pedestrian_heat_exposure_c"] = None
-            normalized_properties["shade_deficit_score"] = None
+        normalized_properties["air_temp_c"] = float(properties.get("air_temp_c") or 20.71)
+        normalized_properties["rooftop_temperature_c"] = None
         normalized_properties["pedestrian_heat_score"] = (
             float(properties["pedestrian_heat_score"])
             if properties.get("pedestrian_heat_score") is not None else None
@@ -321,41 +329,73 @@ def _load_heat_zones() -> dict[str, Any]:
     }
 
 
-def heat_zones(metric: str, date_text: str = "2026-01-15", minutes: int = 720) -> dict[str, Any]:
+def heat_zones(
+    metric: str,
+    date_text: str = "2026-01-15",
+    minutes: int = 720,
+    start_minutes: int = 480,
+    end_minutes: int = 1080,
+    step_minutes: int = 60,
+) -> dict[str, Any]:
     if metric not in HEAT_METRICS:
         raise ValueError(f"unsupported heat metric: {metric}")
     data = _load_heat_zones()
     if minutes < 0 or minutes >= 1440:
         raise ValueError("minutes must be between 0 and 1439")
+    if not 0 <= start_minutes < end_minutes <= 1440:
+        raise ValueError("sunlight window must satisfy 0 <= start < end <= 1440")
+    if not 10 <= step_minutes <= 120:
+        raise ValueError("sunlight time step must be between 10 and 120 minutes")
     source_features = data["features"]
     dynamic_metric = metric in {"shade_deficit_score", "pedestrian_priority_score"}
     shade_deficits = _dynamic_shade_deficits(date_text, minutes) if dynamic_metric else ()
-    activity_scores = _activity_scores() if metric == "pedestrian_priority_score" else ()
+    sun_hours = _cumulative_sun_hours(date_text, start_minutes, end_minutes, step_minutes) if metric == "cumulative_sun_hours" else ()
+    temperatures = [
+        float(feature["properties"]["heat_model_lst_c"])
+        for feature in source_features if feature["properties"].get("heat_model_lst_c") is not None
+    ]
+    cool_temperature = _percentile(temperatures, 0.10) or 0.0
+    hot_temperature = _percentile(temperatures, 0.90) or cool_temperature + 1.0
 
     def metric_value(feature: dict[str, Any], index: int) -> float | None:
         properties = feature["properties"]
-        pedestrian_candidate = properties.get("_pedestrian_candidate", True)
         if metric == "shade_deficit_score":
-            return shade_deficits[index] if pedestrian_candidate else None
+            return shade_deficits[index]
         if metric == "pedestrian_priority_score":
-            if not pedestrian_candidate:
+            temperature = properties.get("heat_model_lst_c")
+            if temperature is None:
                 return None
-            thermal = float(properties.get("pedestrian_heat_score") or 0.0)
-            # Shade and nearby activity moderate the measured/modelled thermal
-            # signal rather than independently creating a high priority.
-            modifier = 0.60 + 0.25 * shade_deficits[index] / 100.0 + 0.15 * activity_scores[index] / 100.0
-            return round(min(100.0, thermal * modifier), 2)
+            thermal_score = min(1.0, max(0.0, (float(temperature) - cool_temperature) / max(hot_temperature - cool_temperature, 0.01)))
+            return round(70.0 * thermal_score + 30.0 * shade_deficits[index] / 100.0, 2)
+        if metric == "cumulative_sun_hours":
+            return sun_hours[index]
         return properties.get(metric)
 
-    features = [
-        {
-            "geometry": feature["geometry"],
-            "value": metric_value(feature, index),
-            "area_m2": shape(feature["geometry"]).area,
-        }
-        for index, feature in enumerate(source_features)
-        if metric_value(feature, index) is not None
-    ]
+    features = []
+    if metric == "rooftop_temperature_c":
+        zone_geometries = [shape(feature["geometry"]) for feature in source_features]
+        zone_tree = STRtree(zone_geometries)
+        for roof, surface_y in _roof_surfaces():
+            for index in zone_tree.query(roof):
+                source = source_features[int(index)]
+                value = source["properties"].get("heat_model_lst_c")
+                clipped = roof.intersection(zone_geometries[int(index)])
+                if value is None or clipped.is_empty or clipped.area < 0.25:
+                    continue
+                features.append({
+                    "geometry": mapping(clipped), "value": value,
+                    "area_m2": clipped.area, "surface_y": round(surface_y, 2),
+                })
+    else:
+        for index, feature in enumerate(source_features):
+            value = metric_value(feature, index)
+            if value is None:
+                continue
+            features.append({
+                "geometry": feature["geometry"],
+                "value": value,
+                "area_m2": shape(feature["geometry"]).area,
+            })
     metric_values = [feature["value"] for feature in features]
     raw_range = {"min": min(metric_values), "max": max(metric_values)} if metric_values else None
     color_range = {
@@ -398,15 +438,22 @@ def heat_zones(metric: str, date_text: str = "2026-01-15", minutes: int = 720) -
         "summary": summary,
         "source": data["source"],
         "window": data["window"],
-        "scenario": {"date": date_text, "minutes": minutes, "shade_sources": ["mapped_buildings", "mapped_tree_canopies"]},
+        "scenario": {
+            "date": date_text, "minutes": minutes,
+            "start_minutes": start_minutes, "end_minutes": end_minutes, "step_minutes": step_minutes,
+            "sample_count": len(range(start_minutes, end_minutes, step_minutes)),
+            "shade_sources": ["mapped_buildings", "mapped_tree_canopies"],
+        },
         "methodology": {
-            "priority_formula": "Pedestrian heat moderated by 25% time-specific shade deficit and 15% anonymous nearby-destination density",
-            "activity_input": "Aggregated from POI_innercity within 60 m; source records and locations are not returned",
+            "priority_formula": "70% percentile-normalized surface temperature plus 30% time-specific shade deficit",
             "priority_use": "Screening rank for site investigation, not a measured health-risk score",
-            "pedestrian_mask": "Water and zones with at least 50% building cover are excluded",
-            "shade_method": "Up to ten samples per zone against mapped building and tree-canopy shadows",
+            "surface_coverage": "All source-temperature zones are retained so the screening surface remains continuous",
+            "shade_method": "Exact zone-area overlap against mapped building and tree-canopy shadows",
         } if metric == "pedestrian_priority_score" else ({
-            "rooftop_mask": "Only zones with at least 50% mapped building cover are included",
+            "rooftop_mask": "Surface-temperature zones are clipped to mapped building roof footprints",
             "rooftop_use": "Screening view for roof interventions; values are modelled land-surface temperature",
-        } if metric == "rooftop_temperature_c" else None),
+        } if metric == "rooftop_temperature_c" else ({
+            "sun_hours_method": "Direct-sun fraction is accumulated from exact shadow-area overlap at each time step",
+            "analysis_surface": "The same continuous surface-temperature zone geometry used by the heat screening layers",
+        } if metric == "cumulative_sun_hours" else None)),
     }

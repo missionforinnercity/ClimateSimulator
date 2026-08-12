@@ -23,12 +23,14 @@ def test_heat_summary_identifies_priority_hotspot_area():
     assert summary["maximum_c"] == payload["range"]["max"]
 
 
-def test_pedestrian_priority_is_bounded_and_does_not_expose_poi_records():
+def test_pedestrian_priority_is_surface_temperature_plus_shade_and_is_continuous():
     payload = heat_zones("pedestrian_priority_score")
+    surface = heat_zones("heat_model_lst_c")
 
     assert payload["metric_metadata"]["unit"] == "/100"
     assert 0 <= payload["range"]["min"] <= payload["range"]["max"] <= 100
-    assert payload["methodology"]["priority_formula"].startswith("Pedestrian heat moderated")
+    assert payload["methodology"]["priority_formula"].startswith("70% percentile-normalized surface temperature")
+    assert payload["count"] == surface["count"]
     forbidden = {"google_address", "google_place_id", "google_latitude", "google_longitude", "google_primary_type"}
     assert all(not forbidden.intersection(feature) for feature in payload["features"])
     assert all(set(feature) == {"geometry", "value", "area_m2"} for feature in payload["features"])
@@ -48,8 +50,10 @@ def test_rooftop_temperature_is_a_filtered_surface_temperature_view():
     surface = heat_zones("heat_model_lst_c")
 
     assert rooftop["metric_metadata"]["unit"] == "°C"
-    assert 0 < rooftop["count"] < surface["count"]
-    assert rooftop["methodology"]["rooftop_mask"].startswith("Only zones with at least 50%")
+    assert rooftop["count"] > 0
+    assert rooftop["summary"]["total_area_m2"] < surface["summary"]["total_area_m2"]
+    assert rooftop["methodology"]["rooftop_mask"].endswith("mapped building roof footprints")
+    assert all(feature["surface_y"] > 2 for feature in rooftop["features"])
     assert surface["range"]["min"] <= rooftop["range"]["min"] <= surface["range"]["max"]
     assert surface["range"]["min"] <= rooftop["range"]["max"] <= surface["range"]["max"]
 
@@ -63,3 +67,14 @@ def test_shade_deficit_changes_with_time_and_includes_mapped_shade():
     assert morning_values != noon_values
     assert min(morning_values) < 100
     assert morning["scenario"]["shade_sources"] == ["mapped_buildings", "mapped_tree_canopies"]
+
+
+def test_cumulative_sunlight_accumulates_over_the_requested_window():
+    short = heat_zones("cumulative_sun_hours", "2026-01-15", start_minutes=600, end_minutes=720, step_minutes=60)
+    long = heat_zones("cumulative_sun_hours", "2026-01-15", start_minutes=480, end_minutes=1080, step_minutes=60)
+
+    assert short["metric_metadata"]["unit"] == " h"
+    assert short["scenario"]["sample_count"] == 2
+    assert long["scenario"]["sample_count"] == 10
+    assert long["summary"]["area_weighted_mean"] >= short["summary"]["area_weighted_mean"]
+    assert long["range"]["max"] <= 10

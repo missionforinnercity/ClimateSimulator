@@ -65,6 +65,23 @@ def comfort_codes(speed_exceeded_5pct: np.ndarray) -> np.ndarray:
     return codes
 
 
+def comfort_codes_from_exceedance(
+    exceedance_by_threshold: dict[float, np.ndarray], *, accepted_probability: float = 0.05,
+) -> np.ndarray:
+    """Classify activity from wind-rose-weighted threshold exceedance.
+
+    Unlike :func:`comfort_codes`, this consumes the annual/seasonal probability
+    from all simulated direction sectors.  The first (most sensitive) activity
+    whose threshold is exceeded no more than five percent of the time wins.
+    """
+    first = next(iter(exceedance_by_threshold.values()))
+    codes = np.full(np.asarray(first).shape, 5, dtype=np.uint8)
+    for category in COMFORT_CATEGORIES[:-1]:
+        probability = np.asarray(exceedance_by_threshold[float(category["max_speed_mps"])])
+        codes = np.where((codes == 5) & (probability <= accepted_probability), category["code"], codes)
+    return codes
+
+
 def add_screening_metrics(
     field: dict[str, Any], *, stability: str, exceedance_threshold_mps: float,
     weibull_shape: float | None = None, sector_frequency_fraction: float | None = None,

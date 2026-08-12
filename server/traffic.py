@@ -1,8 +1,8 @@
 """Live traffic conditions (TomTom) and SUMO-based lane-closure impact simulation.
 
 Mirrors the caching shape of ``server/weather.py`` for the live-conditions
-half, and the ``lru_cache``-memoized-parse shape of ``server/mitigation.py``/
-``server/flood.py`` for the road-network half. The closure simulation itself
+half, and the ``lru_cache``-memoized-parse shape of ``server/flood.py`` for the
+road-network half. The closure simulation itself
 runs two SUMO microsimulations (via ``traci``) against the same synthetic
 demand -- one with the target road untouched, one with a lane (or the whole
 road) closed -- and diffs the resulting trip metrics.

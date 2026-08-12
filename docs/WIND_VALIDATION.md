@@ -8,11 +8,33 @@ exceedance probability, a five-percent-exceedance comfort class, and lower /
 upper screening speeds. The interval represents model-form and height-profile
 uncertainty; it is not a statistical confidence interval.
 
-The selected forcing speed is treated as the conditional mean speed for the
-selected direction. A Weibull distribution estimates the fraction of that
-sector's hours above the selected threshold. It is not multiplied by an
-annual or seasonal sector occurrence until a Cape Town climatology is
-installed.
+The Wind panel now separates two different questions:
+
+- **Direction** calls `/api/wind/preview` for one selected inflow sector. It is
+  a diagnostic velocity/speedup study and its exceedance is conditional on
+  that direction occurring.
+- **Comfort** calls `/api/wind/comfort` and combines 16 directional fields.
+  For every grid cell and Lawson-LDDC-style activity threshold, the API sums
+  the sector Weibull exceedance multiplied by its normalized seasonal/annual
+  ERA5 wind-rose frequency. The first activity with no more than 5% combined
+  exceedance becomes the displayed comfort class.
+
+In Direction mode, the selected forcing speed is treated as the conditional
+mean speed for the selected direction. A Weibull distribution estimates the
+fraction of that sector's hours above the selected threshold. In Comfort mode,
+all 16 conditional curves are frequency weighted and summed.
+
+## Comparison with jifto Wind
+
+The revised workflow follows jifto's useful product separation—single-
+direction diagnostics, multi-direction wind-rose comfort, selectable surface
+and flowline layers, analysis height, grid resolution, domain, period and
+appearance controls. It does **not** claim solver parity. jifto documents a
+GPU D3Q19 lattice-Boltzmann LES solver with synthetic turbulence, wall stress,
+warmup/averaging and wind-tunnel benchmark results. This application uses
+precomputed diagnostic mass-conserving terrain/building fields and does not
+resolve transient turbulence, scalar/vector time averages or tower wakes to
+the same standard. Its results therefore remain screening-grade.
 
 ## ERA5 Cape Town forcing
 

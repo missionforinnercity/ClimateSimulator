@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from server.wind_metrics import add_screening_metrics, comfort_codes, validate_against_observations
+from server.wind_metrics import (
+    add_screening_metrics, comfort_codes, comfort_codes_from_exceedance, validate_against_observations,
+)
 
 
 def sample_field() -> dict:
@@ -32,6 +34,17 @@ def test_screening_metrics_have_one_value_per_grid_cell():
 def test_comfort_category_worsens_as_five_percent_speed_rises():
     codes = comfort_codes(np.asarray([2.0, 3.0, 5.0, 7.0, 9.0, 12.0]))
     assert codes.tolist() == [0, 1, 2, 3, 4, 5]
+
+
+def test_wind_rose_exceedance_chooses_first_acceptable_activity():
+    probabilities = {
+        2.5: np.asarray([0.04, 0.20, 0.30]),
+        4.0: np.asarray([0.02, 0.04, 0.20]),
+        6.0: np.asarray([0.01, 0.02, 0.04]),
+        8.0: np.asarray([0.00, 0.01, 0.02]),
+        10.0: np.asarray([0.00, 0.00, 0.01]),
+    }
+    assert comfort_codes_from_exceedance(probabilities).tolist() == [0, 1, 2]
 
 
 def test_validation_returns_error_and_observation_distance_maps():

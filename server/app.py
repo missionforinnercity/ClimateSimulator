@@ -12,11 +12,12 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from shapely.geometry import box, mapping, shape
 
 from .field import (
     FIELD_VERSION,
     VALID_DIRECTIONS,
-    build_field,
+    build_field, build_comfort_field,
     current_model_kind,
     direction_name,
     load_viewer_config,
@@ -27,7 +28,7 @@ from .field import (
 )
 from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, heat_zones
 from .flood import dem_control_summary, flood_preview
-from .mitigation import mitigation_preview
+from .sunlight import building_surface_sunlight
 from .location import streetview_location
 from .weather import current_weather
 from .traffic import SCENARIOS as TRAFFIC_SCENARIOS
@@ -76,13 +77,6 @@ class WindObservation(BaseModel):
 class WindValidationPayload(BaseModel):
     scenario: PreviewPayload
     observations: list[WindObservation] = Field(min_length=3, max_length=500)
-
-
-class MitigationPayload(BaseModel):
-    interventions: list[dict[str, Any]]
-    sun_date: str = "2026-01-15"
-    sun_minutes: int = Field(default=720, ge=0, lt=1440)
-    baseline_metric: str = "heat_model_lst_c"
 
 
 class TrafficClosurePayload(BaseModel):
@@ -139,13 +133,65 @@ def location_streetview(x: float, z: float) -> dict[str, Any]:
 
 
 @app.get("/api/heat/zones")
-def heat_preview(metric: str = "heat_model_lst_c", date: str = "2026-01-15", minutes: int = 720) -> dict[str, Any]:
+def heat_preview(
+    metric: str = "heat_model_lst_c", date: str = "2026-01-15", minutes: int = 720,
+    start_minutes: int = 480, end_minutes: int = 1080, step_minutes: int = 60,
+    min_x: float | None = None, min_z: float | None = None,
+    max_x: float | None = None, max_z: float | None = None,
+) -> dict[str, Any]:
     try:
-        return heat_zones(metric, date, minutes)
+        payload = heat_zones(metric, date, minutes, start_minutes, end_minutes, step_minutes)
+        bounds = (min_x, min_z, max_x, max_z)
+        if not any(value is not None for value in bounds):
+            return payload
+        if not all(value is not None and math.isfinite(value) for value in bounds):
+            raise ValueError("analysis domain requires finite min_x, min_z, max_x, and max_z")
+        if min_x >= max_x or min_z >= max_z:
+            raise ValueError("analysis domain bounds must have positive width and height")
+        domain = box(min_x, min_z, max_x, max_z)
+        features = []
+        for source in payload.get("features", []):
+            clipped = shape(source["geometry"]).intersection(domain)
+            if clipped.is_empty or clipped.area < 0.01:
+                continue
+            feature = {**source, "geometry": mapping(clipped), "area_m2": clipped.area}
+            features.append(feature)
+        result = {**payload, "features": features, "count": len(features), "domain_bounds": bounds}
+        total_area = sum(feature["area_m2"] for feature in features)
+        weighted = sum(float(feature.get("value", 0)) * feature["area_m2"] for feature in features)
+        summary = {**payload.get("summary", {})}
+        summary["total_area_m2"] = total_area
+        summary["area_weighted_mean"] = weighted / total_area if total_area else None
+        summary["maximum"] = max((float(feature.get("value", 0)) for feature in features), default=None)
+        threshold = summary.get("hotspot_threshold")
+        if threshold is not None and total_area:
+            hotspot_area = sum(feature["area_m2"] for feature in features if float(feature.get("value", 0)) >= threshold)
+            summary["hotspot_area_m2"] = hotspot_area
+            summary["hotspot_area_pct"] = hotspot_area / total_area * 100
+        result["summary"] = summary
+        return result
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"heat data unavailable: {error}") from error
+
+
+@app.get("/api/sunlight/building-surfaces")
+def sunlight_building_surfaces(
+    date: str = "2026-01-15", start_minutes: int = 480, end_minutes: int = 1080,
+    step_minutes: int = 60, resolution_m: float = 10.0, surfaces: str = "all",
+    min_x: float | None = None, min_z: float | None = None,
+    max_x: float | None = None, max_z: float | None = None,
+) -> dict[str, Any]:
+    try:
+        return building_surface_sunlight(
+            date, start_minutes, end_minutes, step_minutes, resolution_m, surfaces,
+            min_x, min_z, max_x, max_z,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"building sunlight unavailable: {error}") from error
 
 
 @app.get("/api/wind/scenarios")
@@ -189,6 +235,27 @@ def preview(payload: PreviewPayload) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"wind data unavailable: {error}") from error
 
 
+@app.post("/api/wind/comfort")
+def wind_comfort(payload: PreviewPayload) -> dict[str, Any]:
+    """Return a 16-direction, wind-rose-weighted comfort screening field."""
+    config = load_viewer_config()
+    try:
+        request = request_from_payload({**payload.model_dump(), "forcing_mode": "era5_climatology"}, config)
+        bounds = local_bounds(request, config)
+        viewer_bounds = config["bounds"]
+        if bounds[2] < viewer_bounds[0] or bounds[0] > viewer_bounds[2] or bounds[3] < viewer_bounds[1] or bounds[1] > viewer_bounds[3]:
+            raise ValueError("analysis box is outside the CBD scene")
+        polygons = query_polygons(request, bounds, config)
+        projected = project_polygons(polygons, config)
+        field = build_comfort_field(request, bounds, projected)
+        field["polygon_count"] = len(polygons)
+        return field
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"wind comfort unavailable: {error}") from error
+
+
 @app.post("/api/wind/validate")
 def validate_wind(payload: WindValidationPayload) -> dict[str, Any]:
     """Benchmark one scenario against co-located pedestrian observations.
@@ -211,16 +278,6 @@ def validate_wind(payload: WindValidationPayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"wind validation unavailable: {error}") from error
-
-
-@app.post("/api/mitigations/preview")
-def mitigations_preview(payload: MitigationPayload) -> dict[str, Any]:
-    try:
-        return mitigation_preview(payload.model_dump())
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(status_code=503, detail=f"mitigation preview unavailable: {error}") from error
 
 
 @app.get("/api/traffic/live")

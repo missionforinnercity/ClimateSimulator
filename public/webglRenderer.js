@@ -78,6 +78,17 @@ export async function startWebGLScene(canvas, status) {
   };
   Object.values(layerGroups).forEach(group => scene.add(group));
 
+  // Decorative and municipal lighting share the same solar switch. Thousands
+  // of street lamps use one point-sprite draw call; only the handful of
+  // festoon fill lights are real PointLights.
+  const nightLighting = {
+    streetGlow: null,
+    streetBulbMaterial: null,
+    festoonGlow: null,
+    festoonBulbMaterial: null,
+    festoonPointLights: [],
+  };
+
   const ambient = new THREE.HemisphereLight(0xeaf5ff, 0x364147, 1.65);
   scene.add(ambient);
   const sunLight = new THREE.DirectionalLight(0xfff3d6, 3.25);
@@ -98,6 +109,23 @@ export async function startWebGLScene(canvas, status) {
   const maxZ = -bottom;
   const terrainWidth = right - left;
   const terrainDepth = maxZ - minZ;
+
+  let shadowMinimumY = Infinity;
+  let shadowMaximumY = -Infinity;
+  for (const height of terrain.heights) {
+    if (!Number.isFinite(height)) continue;
+    shadowMinimumY = Math.min(shadowMinimumY, height);
+    shadowMaximumY = Math.max(shadowMaximumY, height);
+  }
+  for (const [ground, height, , , , wallHeight = height] of data.buildings) {
+    shadowMinimumY = Math.min(shadowMinimumY, ground);
+    shadowMaximumY = Math.max(shadowMaximumY, ground + Math.max(height, wallHeight));
+  }
+  for (const [, , , crownTop] of canopyAsset.canopies || []) {
+    if (Number.isFinite(crownTop)) shadowMaximumY = Math.max(shadowMaximumY, crownTop);
+  }
+  if (!Number.isFinite(shadowMinimumY)) shadowMinimumY = 0;
+  if (!Number.isFinite(shadowMaximumY)) shadowMaximumY = shadowMinimumY + 100;
 
   function terrainHeightAt(x, z) {
     const u = clamp((x - left) / terrainWidth, 0, 1) * (terrain.columns - 1);
@@ -302,10 +330,11 @@ export async function startWebGLScene(canvas, status) {
 
   function makeBuildings() {
     const wallPositions = [];
+    const wallTriangles = [];
     const roofPositions = [];
     const wallColors = [];
     const roofColors = [];
-    for (const [ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null] of data.buildings) {
+    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null], buildingIndex) => {
       const roofY = ground + wallHeight;
       const colour = elevationColour(height);
       for (let index = 0; index < ring.length; index += 1) {
@@ -317,6 +346,10 @@ export async function startWebGLScene(canvas, status) {
         wallPositions.push(
           x1, ground, z1, x2, ground, z2, x2, top2, z2,
           x1, ground, z1, x2, top2, z2, x1, top1, z1,
+        );
+        wallTriangles.push(
+          { sourceId: buildingIndex, edgeIndex: index },
+          { sourceId: buildingIndex, edgeIndex: index },
         );
         for (let vertex = 0; vertex < 6; vertex += 1) wallColors.push(colour.r, colour.g, colour.b);
       }
@@ -332,8 +365,10 @@ export async function startWebGLScene(canvas, status) {
           for (let vertex = 0; vertex < 3; vertex += 1) roofColors.push(colour.r, colour.g, colour.b);
         }
       }
-    }
+    });
     const wallGeometry = new THREE.BufferGeometry();
+    buildingWallGeometrySource = { positions: new Float32Array(wallPositions), triangles: wallTriangles };
+    simplifiedRoofGeometrySource = { positions: new Float32Array(roofPositions) };
     wallGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
     wallGeometry.setAttribute('color', new THREE.Float32BufferAttribute(wallColors, 3));
     wallGeometry.computeVertexNormals();
@@ -377,6 +412,13 @@ export async function startWebGLScene(canvas, status) {
     return { walls, roofs };
   }
 
+  const detailedRoofHeightCellSize = 12;
+  const detailedRoofHeightGrid = new Map();
+  const detailedRoofCellKey = (column, row) => `${column}:${row}`;
+  let detailedRoofGeometrySource = null;
+  let simplifiedRoofGeometrySource = null;
+  let buildingWallGeometrySource = null;
+
   function makeDetailedRoofSurface() {
     if (!roofSurfaceBuffer || roofSurfaceBuffer.byteLength < 8) return null;
     const header = new DataView(roofSurfaceBuffer, 0, 8);
@@ -390,12 +432,19 @@ export async function startWebGLScene(canvas, status) {
     const positions = new Float32Array(roofSurfaceBuffer, positionOffset, vertexCount * 3);
     const heights = new Float32Array(roofSurfaceBuffer, heightOffset, vertexCount);
     const indices = new Uint32Array(roofSurfaceBuffer, indexOffset, indexCount);
+    detailedRoofGeometrySource = { positions, indices };
     const colours = new Float32Array(vertexCount * 3);
     for (let index = 0; index < vertexCount; index += 1) {
       const colour = elevationColour(heights[index]);
       colours[index * 3] = colour.r;
       colours[index * 3 + 1] = colour.g;
       colours[index * 3 + 2] = colour.b;
+      const x = positions[index * 3];
+      const y = positions[index * 3 + 1];
+      const z = positions[index * 3 + 2];
+      const key = detailedRoofCellKey(Math.floor(x / detailedRoofHeightCellSize), Math.floor(z / detailedRoofHeightCellSize));
+      if (!detailedRoofHeightGrid.has(key)) detailedRoofHeightGrid.set(key, []);
+      detailedRoofHeightGrid.get(key).push([x, y, z]);
     }
 
     const geometry = new THREE.BufferGeometry();
@@ -424,6 +473,27 @@ export async function startWebGLScene(canvas, status) {
     });
     layerGroups.buildings.add(mesh);
     return mesh;
+  }
+
+  function detailedRoofHeightAt(x, z, fallbackY) {
+    const column = Math.floor(x / detailedRoofHeightCellSize);
+    const row = Math.floor(z / detailedRoofHeightCellSize);
+    const nearby = [];
+    for (let rowOffset = -1; rowOffset <= 1; rowOffset += 1) {
+      for (let columnOffset = -1; columnOffset <= 1; columnOffset += 1) {
+        for (const vertex of detailedRoofHeightGrid.get(detailedRoofCellKey(column + columnOffset, row + rowOffset)) || []) {
+          if (Math.abs(vertex[1] - fallbackY) > 10) continue;
+          const distance = Math.hypot(vertex[0] - x, vertex[2] - z);
+          if (distance <= 18) nearby.push([distance, vertex[1]]);
+        }
+      }
+    }
+    if (!nearby.length) return fallbackY + 0.08;
+    nearby.sort((a, b) => a[0] - b[0]);
+    const nearest = nearby.slice(0, 4);
+    const weights = nearest.map(([distance]) => 1 / Math.max(distance, 0.35) ** 2);
+    return nearest.reduce((sum, item, index) => sum + item[1] * weights[index], 0)
+      / weights.reduce((sum, weight) => sum + weight, 0) + 0.08;
   }
 
   function makeGrass() {
@@ -757,7 +827,7 @@ export async function startWebGLScene(canvas, status) {
     // support rather than pole height. These conservative values are inferred
     // from support type and wattage and remain tagged as inferred, not survey.
     const publicLights = (data.cityFurniture || []).filter(item => item.class === 'publicLight' && item.coordinates);
-    const poleMatrices = [], armMatrices = [], headMatrices = [], lampMatrices = [];
+    const poleMatrices = [], armMatrices = [], headMatrices = [], lampMatrices = [], lampGlowPositions = [];
     for (const item of publicLights) {
       const [x, z] = item.coordinates;
       const baseY = terrainHeightAt(x, z) + 0.18;
@@ -795,14 +865,40 @@ export async function startWebGLScene(canvas, status) {
           headQuaternion,
           postTop ? new THREE.Vector3(0.34, 0.5, 0.34) : flood ? new THREE.Vector3(0.48, 0.22, 0.62) : new THREE.Vector3(0.62, 0.17, 0.28),
         ));
-        lampMatrices.push(composeMatrix(lampPosition.clone().add(new THREE.Vector3(0, -0.16, 0)), headQuaternion));
+        const bulbPosition = lampPosition.clone().add(new THREE.Vector3(0, -0.16, 0));
+        lampMatrices.push(composeMatrix(bulbPosition, headQuaternion));
+        lampGlowPositions.push(bulbPosition);
       }
     }
     const galvanized = new THREE.MeshLambertMaterial({ color: 0x8c9698 });
     makeInstances(new THREE.CylinderGeometry(0.065, 0.14, 1, 8), galvanized, poleMatrices, 'publicLightPole');
     makeInstances(new THREE.CylinderGeometry(0.045, 0.055, 1, 7), galvanized, armMatrices, 'publicLightArm');
     makeInstances(new THREE.SphereGeometry(0.5, 10, 6), new THREE.MeshLambertMaterial({ color: 0x596164 }), headMatrices, 'publicLightFixture');
-    makeInstances(new THREE.SphereGeometry(0.09, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffe0a0 }), lampMatrices, 'publicLightLamp');
+    nightLighting.streetBulbMaterial = new THREE.MeshBasicMaterial({ color: 0xd8c9a8 });
+    makeInstances(new THREE.SphereGeometry(0.09, 8, 6), nightLighting.streetBulbMaterial, lampMatrices, 'publicLightLamp');
+
+    if (lampGlowPositions.length) {
+      const glowCanvas = document.createElement('canvas');
+      glowCanvas.width = glowCanvas.height = 64;
+      const glowContext = glowCanvas.getContext('2d');
+      const gradient = glowContext.createRadialGradient(32, 32, 2, 32, 32, 32);
+      gradient.addColorStop(0, 'rgba(255,247,205,1)');
+      gradient.addColorStop(0.2, 'rgba(255,205,120,0.72)');
+      gradient.addColorStop(1, 'rgba(255,172,72,0)');
+      glowContext.fillStyle = gradient;
+      glowContext.fillRect(0, 0, 64, 64);
+      const glowGeometry = new THREE.BufferGeometry().setFromPoints(lampGlowPositions);
+      const glowMaterial = new THREE.PointsMaterial({
+        map: new THREE.CanvasTexture(glowCanvas), color: 0xffd28a, size: 1.55,
+        transparent: true, opacity: 0, depthWrite: false,
+        blending: THREE.AdditiveBlending, sizeAttenuation: true,
+      });
+      const glow = new THREE.Points(glowGeometry, glowMaterial);
+      glow.userData = { semanticClass: 'publicLightGlow', maxDistance: 1000 };
+      glow.renderOrder = 9;
+      group.add(glow);
+      nightLighting.streetGlow = glow;
+    }
 
     const yawQuaternion = degrees => new THREE.Quaternion().setFromAxisAngle(
       new THREE.Vector3(0, 1, 0), -THREE.MathUtils.degToRad(Number(degrees) || 0),
@@ -1305,10 +1401,11 @@ export async function startWebGLScene(canvas, status) {
       };
       setInstances(anchors, new THREE.SphereGeometry(0.11, 7, 5), new THREE.MeshBasicMaterial({ color: 0x35383a }));
       setInstances(socketPositions, new THREE.CylinderGeometry(0.055, 0.075, 0.18, 6), new THREE.MeshBasicMaterial({ color: 0x292a27 }));
+      nightLighting.festoonBulbMaterial = new THREE.MeshBasicMaterial({ color: 0xd6bd83 });
       const bulbs = setInstances(
         bulbPositions,
         new THREE.SphereGeometry(0.09, 8, 6),
-        new THREE.MeshBasicMaterial({ color: 0xffd47a }),
+        nightLighting.festoonBulbMaterial,
       );
       if (bulbs) bulbs.userData.semanticClass = 'festoonBulbs';
 
@@ -1330,6 +1427,7 @@ export async function startWebGLScene(canvas, status) {
       const glow = new THREE.Points(glowGeometry, glowMaterial);
       glow.renderOrder = 9;
       group.add(glow);
+      nightLighting.festoonGlow = glow;
 
       // A small number of actual lights lets the warm festoon glow reach the
       // nearby façades without the cost of one PointLight per bulb.
@@ -1338,6 +1436,7 @@ export async function startWebGLScene(canvas, status) {
         const light = new THREE.PointLight(0xffb95d, 1.15, 11, 2);
         light.position.copy(bulbPositions[index]);
         group.add(light);
+        nightLighting.festoonPointLights.push(light);
       }
       group.userData.festoon = { spans: spans.length, bulbs: bulbPositions.length, facadeAnchors: anchors.length };
       for (const child of group.children.slice(festoonChildStart)) child.userData.maxDistance = 1000;
@@ -1368,6 +1467,7 @@ export async function startWebGLScene(canvas, status) {
   makeStreetFurniture();
 
   const heatGroup = new THREE.Group();
+  const sunDomainGroup = new THREE.Group();
   const windGroup = new THREE.Group();
   const floodGroup = new THREE.Group();
   const mitigationGroup = new THREE.Group();
@@ -1394,12 +1494,14 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, windGroup, floodGroup, mitigationGroup, mitigationDrawingGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
+  scene.add(heatGroup, sunDomainGroup, windGroup, floodGroup, mitigationGroup, mitigationDrawingGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
   const heatDate = document.querySelector('#heat-date');
   const heatTime = document.querySelector('#heat-time');
+  const heatDateControl = document.querySelector('#heat-date-control');
+  const heatTimeControl = document.querySelector('#heat-time-control');
   const heatStatus = document.querySelector('#heat-status');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
@@ -1415,11 +1517,26 @@ export async function startWebGLScene(canvas, status) {
   const sunTimeValue = document.querySelector('#sun-time-value');
   const sunGenerate = document.querySelector('#sun-generate');
   const sunStatus = document.querySelector('#sun-status');
+  const sunModeButtons = [...document.querySelectorAll('[data-sun-mode]')];
+  const sunInstantControl = document.querySelector('#sun-instant-control');
+  const sunWindowControls = document.querySelector('#sun-window-controls');
+  const sunDateTimeHeading = document.querySelector('#sun-date-time-heading');
+  const sunStartTime = document.querySelector('#sun-start-time');
+  const sunEndTime = document.querySelector('#sun-end-time');
+  const sunStepTime = document.querySelector('#sun-step-time');
+  const sunAnalysisSurfaces = document.querySelector('#sun-analysis-surfaces');
+  const sunSurfaceResolution = document.querySelector('#sun-surface-resolution');
+  const sunDomainSize = document.querySelector('#sun-domain-size');
+  const sunMoveDomain = document.querySelector('#sun-move-domain');
+  const sunHoursLegend = document.querySelector('#sun-hours-legend');
+  const sunHoursMin = document.querySelector('#sun-hours-min');
+  const sunHoursMax = document.querySelector('#sun-hours-max');
   const windToggle = document.querySelector('#wind-toggle');
   const windDirection = document.querySelector('#wind-direction');
   const windSeason = document.querySelector('#wind-season');
   const windStability = document.querySelector('#wind-stability');
   const windHeight = document.querySelector('#wind-height');
+  const windResolution = document.querySelector('#wind-resolution');
   const windExceedanceThreshold = document.querySelector('#wind-exceedance-threshold');
   const windForcingMode = document.querySelector('#wind-forcing-mode');
   const windSpeed = document.querySelector('#wind-speed');
@@ -1431,6 +1548,17 @@ export async function startWebGLScene(canvas, status) {
   const windMoveDomain = document.querySelector('#wind-move-domain');
   const windLegendMin = document.querySelector('#wind-legend-min');
   const windLegendMax = document.querySelector('#wind-legend-max');
+  const windLegendLow = document.querySelector('#wind-legend-low');
+  const windLegendHigh = document.querySelector('#wind-legend-high');
+  const windGradient = document.querySelector('.wind-panel .wind-gradient');
+  const windSurfaceVisible = document.querySelector('#wind-surface-visible');
+  const windFlowlinesVisible = document.querySelector('#wind-flowlines-visible');
+  const windFlowlineCount = document.querySelector('#wind-flowline-count');
+  const windAnimationSpeed = document.querySelector('#wind-animation-speed');
+  const windAnimationSpeedValue = document.querySelector('#wind-animation-speed-value');
+  const windLensButtons = [...document.querySelectorAll('[data-wind-lens]')];
+  const windDirectionControls = document.querySelector('[data-wind-direction-controls]');
+  const windDirectionPresets = [...document.querySelectorAll('[data-wind-direction]')];
   const floodToggle = document.querySelector('#flood-toggle');
   const floodRain = document.querySelector('#flood-rain');
   const floodRainValue = document.querySelector('#flood-rain-value');
@@ -1456,6 +1584,7 @@ export async function startWebGLScene(canvas, status) {
   const mitigationRun = document.querySelector('#mitigation-run');
   const mitigationClear = document.querySelector('#mitigation-clear');
   const mitigationCompare = document.querySelector('#mitigation-compare');
+  const mitigationCase = document.querySelector('#mitigation-case');
   const mitigationResults = document.querySelector('#mitigation-results');
   const trafficToggle = document.querySelector('#traffic-toggle');
   const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
@@ -1498,6 +1627,10 @@ export async function startWebGLScene(canvas, status) {
     date: sunDate?.value || '2026-07-27',
     minutes: Number(sunTime?.value) || 720,
     generated: false,
+    mode: 'shadows',
+    center: [0, 0],
+    size: Number(sunDomainSize?.value) || 500,
+    moveMode: false,
   };
   let liveShadowTimer = 0;
   const windState = {
@@ -1508,8 +1641,14 @@ export async function startWebGLScene(canvas, status) {
     season: windSeason?.value || 'annual',
     stability: windStability?.value || 'neutral',
     height: Number(windHeight?.value) || 2,
+    resolution: Number(windResolution?.value) || 5,
     exceedanceThreshold: Number(windExceedanceThreshold?.value) || 6,
     forcingMode: windForcingMode?.value || 'era5_climatology',
+    analysisMode: 'direction',
+    surfaceVisible: Boolean(windSurfaceVisible?.checked),
+    flowlinesVisible: Boolean(windFlowlinesVisible?.checked),
+    particleCount: Number(windFlowlineCount?.value) || 800,
+    animationSpeed: (Number(windAnimationSpeed?.value) || 100) / 100,
     speed: (Number(windSpeed?.value) || 36) / 3.6,
     referenceHeight: 2,
     field: null,
@@ -1538,6 +1677,7 @@ export async function startWebGLScene(canvas, status) {
     points: [],
     interventions: [],
     result: null,
+    baselinePayload: null,
   };
   const trafficState = {
     sceneActive: document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'traffic',
@@ -1567,12 +1707,19 @@ export async function startWebGLScene(canvas, status) {
   const streetViewState = { placing: false, point: null };
   let heatMesh = null;
   let heatRange = null;
+  let heatPayload = null;
+  let analysisGroupMode = null;
+  let heatLoadToken = 0;
+  let sunLoadToken = 0;
   let windHeatMesh = null;
   let windPoints = null;
   let trafficCars = null;
   let windBox = null;
   let windEdges = null;
   let windHandle = null;
+  let sunBox = null;
+  let sunEdges = null;
+  let sunHandle = null;
   let floodWaterMesh = null;
   let floodVelocityLines = null;
   let floodBox = null;
@@ -1580,9 +1727,11 @@ export async function startWebGLScene(canvas, status) {
   let floodHandle = null;
   let floodAnimationFrame = 0;
   let roadsVisibleBeforeFlood = null;
+  let streetLayersVisibleBeforeWind = null;
   const windTrailPoints = 5;
   let drag = null;
   let windDrag = null;
+  let sunDrag = null;
   let floodDrag = null;
   const windBuildingCellSize = 60;
   const windBuildingGrid = new Map();
@@ -1618,6 +1767,38 @@ export async function startWebGLScene(canvas, status) {
     if (roadsVisibleBeforeFlood === null) return;
     layerGroups.roads.visible = roadsVisibleBeforeFlood;
     roadsVisibleBeforeFlood = null;
+    syncLayerControls();
+  }
+
+  // Road and footpath meshes are drawn above the terrain and otherwise cover
+  // the wind surface exactly where street-level interpretation matters most.
+  // Preserve the user's layer choices, hide both overlays only while a
+  // generated wind result is visible, then restore them on clear/hide.
+  function hideStreetLayersForWind() {
+    if (streetLayersVisibleBeforeWind === null) {
+      streetLayersVisibleBeforeWind = {
+        roads: layerGroups.roads.visible,
+        paths: layerGroups.paths.visible,
+      };
+    }
+    layerGroups.roads.visible = false;
+    layerGroups.paths.visible = false;
+    document.querySelectorAll('[data-layer="roads"], [data-layer="paths"]').forEach(input => {
+      input.disabled = true;
+      input.title = 'Hidden while the generated wind surface is visible';
+    });
+    syncLayerControls();
+  }
+
+  function restoreStreetLayersAfterWind() {
+    if (streetLayersVisibleBeforeWind === null) return;
+    layerGroups.roads.visible = streetLayersVisibleBeforeWind.roads;
+    layerGroups.paths.visible = streetLayersVisibleBeforeWind.paths;
+    streetLayersVisibleBeforeWind = null;
+    document.querySelectorAll('[data-layer="roads"], [data-layer="paths"]').forEach(input => {
+      input.disabled = false;
+      input.removeAttribute('title');
+    });
     syncLayerControls();
   }
 
@@ -1677,12 +1858,13 @@ export async function startWebGLScene(canvas, status) {
     const candidates = windBuildingGrid.get(windCellKey(
       Math.floor(x / windBuildingCellSize), Math.floor(z / windBuildingCellSize),
     )) || [];
-    const building = candidates.find(candidate => (
+    const buildingsAtPoint = candidates.filter(candidate => (
       x >= candidate.minX && x <= candidate.maxX
       && z >= candidate.minZ && z <= candidate.maxZ
       && pointInWindRing(x, z, candidate.ring)
     ));
-    return building ? building.roofY + 0.8 : terrainHeightAt(x, z) + 0.48;
+    const roofY = buildingsAtPoint.reduce((highest, building) => Math.max(highest, building.roofY), -Infinity);
+    return Number.isFinite(roofY) ? roofY + 0.08 : terrainHeightAt(x, z) + 0.48;
   }
 
   function nearestWindBoundary(x, z) {
@@ -1857,6 +2039,48 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
+  function fitSunShadowCamera(target) {
+    const shadowCamera = sunLight.shadow.camera;
+    // A fixed world-space square does not cover a rectangular scene after it
+    // rotates into the sun's coordinate system. Fit all eight corners of the
+    // terrain/caster volume in light space instead, so every ground triangle
+    // remains inside the shadow texture at every solar azimuth and altitude.
+    shadowCamera.position.copy(sunLight.position);
+    shadowCamera.up.set(0, 1, 0);
+    shadowCamera.lookAt(target);
+    shadowCamera.updateMatrixWorld(true);
+
+    let minimumX = Infinity;
+    let maximumX = -Infinity;
+    let minimumY = Infinity;
+    let maximumY = -Infinity;
+    let minimumZ = Infinity;
+    let maximumZ = -Infinity;
+    for (const x of [left, right]) {
+      for (const y of [shadowMinimumY, shadowMaximumY]) {
+        for (const z of [minZ, maxZ]) {
+          const point = new THREE.Vector3(x, y, z).applyMatrix4(shadowCamera.matrixWorldInverse);
+          minimumX = Math.min(minimumX, point.x);
+          maximumX = Math.max(maximumX, point.x);
+          minimumY = Math.min(minimumY, point.y);
+          maximumY = Math.max(maximumY, point.y);
+          minimumZ = Math.min(minimumZ, point.z);
+          maximumZ = Math.max(maximumZ, point.z);
+        }
+      }
+    }
+
+    const padding = 24;
+    shadowCamera.left = minimumX - padding;
+    shadowCamera.right = maximumX + padding;
+    shadowCamera.bottom = minimumY - padding;
+    shadowCamera.top = maximumY + padding;
+    // Camera-space points in front of the light camera have negative z.
+    shadowCamera.near = Math.max(1, -maximumZ - padding);
+    shadowCamera.far = Math.max(shadowCamera.near + 1, -minimumZ + padding);
+    shadowCamera.updateProjectionMatrix();
+  }
+
   function queueLiveShadowUpdate() {
     if (!shadowState.enabled) {
       updateSunStatus();
@@ -1882,11 +2106,58 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
+  function setBuildingAnalysisSkin(enabled) {
+    if (buildingMeshes.walls) buildingMeshes.walls.visible = true;
+    // Sun-hour roofs now reuse the detailed roof triangles, so the neutral
+    // roof remains a safe backing surface for any unmapped edge triangles.
+    if (buildingMeshes.roofs) buildingMeshes.roofs.visible = true;
+    if (buildingMeshes.surface) buildingMeshes.surface.visible = true;
+  }
+
+  function updateSunBox() {
+    const visible = shadowState.enabled && shadowState.mode === 'hours';
+    sunDomainGroup.visible = visible;
+    if (!visible) return;
+    if (!sunBox) {
+      const geometry = new THREE.BoxGeometry(1, 3, 1);
+      sunBox = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        color: 0xd6a05d, transparent: true, opacity: 0.08, depthWrite: false,
+      }));
+      sunEdges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry),
+        new THREE.LineBasicMaterial({ color: 0xffe2b5, transparent: true, opacity: 0.9, depthTest: false }),
+      );
+      sunHandle = new THREE.Mesh(
+        new THREE.SphereGeometry(7, 12, 8),
+        new THREE.MeshBasicMaterial({ color: 0xd18a3d, depthTest: false }),
+      );
+      sunHandle.name = 'sun-resize-handle';
+      sunDomainGroup.add(sunBox, sunEdges, sunHandle);
+    }
+    const size = shadowState.size;
+    const y = terrainHeightAt(shadowState.center[0], shadowState.center[1]) + 3;
+    sunBox.scale.set(size, 1, size);
+    sunBox.position.set(shadowState.center[0], y, shadowState.center[1]);
+    sunBox.material.opacity = shadowState.moveMode ? 0.15 : 0.035;
+    sunEdges.scale.copy(sunBox.scale);
+    sunEdges.position.copy(sunBox.position);
+    sunEdges.material.opacity = shadowState.moveMode ? 0.95 : 0.42;
+    sunHandle.position.set(shadowState.center[0] + size / 2, y + 3, shadowState.center[1] + size / 2);
+    sunHandle.visible = shadowState.moveMode;
+    requestRender();
+  }
+
   function setShadowMode(enabled) {
     if (enabled) restoreRoadsAfterFlood();
     const wasInStudyMode = shadowState.enabled || heatGroup.visible;
     if (enabled && !wasInStudyMode) rememberNormalVisibility();
     shadowState.enabled = enabled;
+    if (!enabled) {
+      // A cumulative calculation may still be running when the user leaves
+      // Sunlight. Invalidate it so its late response cannot replace Heat.
+      sunLoadToken += 1;
+      if (sunGenerate) sunGenerate.disabled = false;
+    }
     if (sunToggle) sunToggle.checked = enabled;
     document.body.classList.toggle('sun-mode', enabled);
     if (enabled) {
@@ -1907,12 +2178,14 @@ export async function startWebGLScene(canvas, status) {
       layerGroups.trees.visible = true;
       windGroup.visible = windState.enabled;
     } else {
+      setBuildingAnalysisSkin(false);
       restoreNormalVisibility();
-      heatGroup.visible = Boolean(heatToggle?.checked);
+      heatGroup.visible = Boolean(heatToggle?.checked) && analysisGroupMode === 'heat';
       windState.enabled = Boolean(windToggle?.checked);
       windGroup.visible = windState.enabled;
     }
     setSunMaterials(enabled);
+    updateSunBox();
     syncLayerControls();
     updateSunStatus();
     requestRender();
@@ -1934,19 +2207,12 @@ export async function startWebGLScene(canvas, status) {
       requestRender();
       return;
     }
-    const extent = Math.max(terrainWidth, terrainDepth) * 0.56;
-    const shadowCamera = sunLight.shadow.camera;
-    shadowCamera.left = -extent;
-    shadowCamera.right = extent;
-    shadowCamera.top = extent;
-    shadowCamera.bottom = -extent;
-    shadowCamera.near = 1;
-    shadowCamera.far = 6000;
-    shadowCamera.updateProjectionMatrix();
     const target = new THREE.Vector3((left + right) * 0.5, 20, (minZ + maxZ) * 0.5);
     sunLight.target.position.copy(target);
     sunLight.position.copy(target).addScaledVector(sun.vector, 3000);
     sunLight.target.updateMatrixWorld();
+    sunLight.updateMatrixWorld();
+    fitSunShadowCamera(target);
     shadowState.generated = true;
     sunLight.visible = true;
     shadowCatcher.visible = true;
@@ -1965,10 +2231,12 @@ export async function startWebGLScene(canvas, status) {
     });
   }
 
-  function heatColor(value, minimum, maximum) {
+  function heatColor(value, minimum, maximum, metric = '') {
     const color = new THREE.Color();
     const t = clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
-    const stops = [
+    const stops = metric === 'cumulative_sun_hours' ? [
+      [0, 0x5e2e18], [0.25, 0x9a4b25], [0.5, 0xd47a32], [0.75, 0xf2b44e], [1, 0xffe8a6],
+    ] : [
       [0, 0x2b50be], [0.2, 0x2daede], [0.42, 0x74cf48],
       [0.64, 0xffe241], [0.82, 0xff9619], [1, 0xe03020],
     ];
@@ -1979,12 +2247,160 @@ export async function startWebGLScene(canvas, status) {
     return color.setHex(stops[lower][1]).lerp(new THREE.Color(stops[upper][1]), amount);
   }
 
+  function buildRooftopHeatMesh(payload, range, featureValue = feature => feature.value, geometrySource = detailedRoofGeometrySource) {
+    if (!geometrySource?.positions?.length) return null;
+    const cellSize = 80;
+    const records = [];
+    const grid = new Map();
+    const key = (column, row) => `${column}:${row}`;
+    const addRecord = (rings, value) => {
+      if (!rings?.[0]?.length || value == null) return;
+      const xs = rings[0].map(point => point[0]);
+      const zs = rings[0].map(point => point[1]);
+      const record = { rings, value, minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+      const index = records.push(record) - 1;
+      for (let row = Math.floor(record.minZ / cellSize); row <= Math.floor(record.maxZ / cellSize); row += 1) {
+        for (let column = Math.floor(record.minX / cellSize); column <= Math.floor(record.maxX / cellSize); column += 1) {
+          const cellKey = key(column, row);
+          if (!grid.has(cellKey)) grid.set(cellKey, []);
+          grid.get(cellKey).push(index);
+        }
+      }
+    };
+    for (const feature of payload.features || []) {
+      for (const polygon of geometryPolygons(feature.geometry)) addRecord(polygon, featureValue(feature));
+    }
+    const insideRing = (x, z, ring) => {
+      let inside = false;
+      for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+        const [xi, zi] = ring[index], [xj, zj] = ring[previous];
+        const edgeX = xj - xi, edgeZ = zj - zi;
+        const edgeLengthSquared = edgeX * edgeX + edgeZ * edgeZ;
+        if (edgeLengthSquared > 0) {
+          const along = clamp(((x - xi) * edgeX + (z - zi) * edgeZ) / edgeLengthSquared, 0, 1);
+          if (Math.hypot(x - (xi + edgeX * along), z - (zi + edgeZ * along)) <= 0.02) return true;
+        }
+        if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / ((zj - zi) || 1e-9) + xi) inside = !inside;
+      }
+      return inside;
+    };
+    const valueAt = (x, z) => {
+      for (const recordIndex of grid.get(key(Math.floor(x / cellSize), Math.floor(z / cellSize))) || []) {
+        const record = records[recordIndex];
+        if (x < record.minX || x > record.maxX || z < record.minZ || z > record.maxZ) continue;
+        if (!insideRing(x, z, record.rings[0])) continue;
+        if (record.rings.slice(1).some(ring => insideRing(x, z, ring))) continue;
+        return record.value;
+      }
+      return null;
+    };
+    const positions = [];
+    const colors = [];
+    const meshIndices = [];
+    const vertexMap = new Map();
+    const source = geometrySource.positions;
+    const indices = geometrySource.indices || null;
+    const indexCount = indices?.length || source.length / 3;
+    for (let offset = 0; offset < indexCount; offset += 3) {
+      const a = indices ? indices[offset] : offset;
+      const b = indices ? indices[offset + 1] : offset + 1;
+      const c = indices ? indices[offset + 2] : offset + 2;
+      const x = (source[a * 3] + source[b * 3] + source[c * 3]) / 3;
+      const z = (source[a * 3 + 2] + source[b * 3 + 2] + source[c * 3 + 2]) / 3;
+      const samples = [
+        [x, z],
+        [source[a * 3], source[a * 3 + 2]], [source[b * 3], source[b * 3 + 2]], [source[c * 3], source[c * 3 + 2]],
+        [(source[a * 3] + source[b * 3]) / 2, (source[a * 3 + 2] + source[b * 3 + 2]) / 2],
+        [(source[b * 3] + source[c * 3]) / 2, (source[b * 3 + 2] + source[c * 3 + 2]) / 2],
+        [(source[c * 3] + source[a * 3]) / 2, (source[c * 3 + 2] + source[a * 3 + 2]) / 2],
+      ];
+      const value = samples.map(point => valueAt(point[0], point[1])).find(candidate => candidate != null);
+      if (value == null) continue;
+      for (const vertex of [a, b, c]) {
+        let mapped = vertexMap.get(vertex);
+        if (mapped == null) {
+          mapped = positions.length / 3;
+          vertexMap.set(vertex, mapped);
+          const vertexValue = valueAt(source[vertex * 3], source[vertex * 3 + 2]) ?? value;
+          const color = heatColor(vertexValue, range.min, range.max, payload.metric);
+          positions.push(source[vertex * 3], source[vertex * 3 + 1], source[vertex * 3 + 2]);
+          colors.push(color.r, color.g, color.b);
+        }
+        meshIndices.push(mapped);
+      }
+    }
+    if (!positions.length) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(meshIndices);
+    return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    }));
+  }
+
+  function buildRooftopHeatMeshes(payload, range, featureValue = feature => feature.value) {
+    return [detailedRoofGeometrySource, simplifiedRoofGeometrySource]
+      .map(source => buildRooftopHeatMesh(payload, range, featureValue, source))
+      .filter(Boolean);
+  }
+
+  function buildFacadeSunMesh(payload, range) {
+    if (!buildingWallGeometrySource?.positions?.length) return null;
+    const recordsByEdge = new Map();
+    for (const feature of payload.features || []) {
+      if (feature.surface !== 'facade' || feature.source_id == null || feature.edge_index == null) continue;
+      const recordKey = `${feature.source_id}:${feature.edge_index}`;
+      if (!recordsByEdge.has(recordKey)) recordsByEdge.set(recordKey, []);
+      const ys = (feature.vertices || []).map(vertex => vertex[1]);
+      recordsByEdge.get(recordKey).push({
+        minY: Math.min(...ys) - 0.05, maxY: Math.max(...ys) + 0.05,
+        value: feature.display_value ?? feature.value, area: Number(feature.area_m2) || 1,
+      });
+    }
+    const source = buildingWallGeometrySource.positions;
+    const positions = [], colors = [];
+    for (let offset = 0; offset < source.length; offset += 9) {
+      const triangleIndex = offset / 9;
+      const identity = buildingWallGeometrySource.triangles?.[triangleIndex];
+      if (!identity) continue;
+      const records = recordsByEdge.get(`${identity.sourceId}:${identity.edgeIndex}`) || [];
+      if (!records.length) continue;
+      const y = (source[offset + 1] + source[offset + 4] + source[offset + 7]) / 3;
+      const matching = records.filter(record => y >= record.minY && y <= record.maxY);
+      const selected = matching.length ? matching : records;
+      const totalArea = selected.reduce((sum, record) => sum + record.area, 0);
+      const value = selected.reduce((sum, record) => sum + record.value * record.area, 0) / totalArea;
+      const color = heatColor(value, range.min, range.max, 'cumulative_sun_hours');
+      for (let vertex = 0; vertex < 3; vertex += 1) {
+        positions.push(source[offset + vertex * 3], source[offset + vertex * 3 + 1], source[offset + vertex * 3 + 2]);
+        colors.push(color.r, color.g, color.b);
+      }
+    }
+    if (!positions.length) return null;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.94, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+    }));
+  }
+
   function buildHeatMesh(payload) {
     for (const object of heatGroup.children) disposeObject(object);
     heatGroup.clear();
     heatMesh = null;
+    analysisGroupMode = payload.metric === 'cumulative_sun_hours' ? 'sun' : 'heat';
     const range = payload.color_range || payload.range;
     if (!payload.features?.length || !range) return;
+    if (payload.metric === 'rooftop_temperature_c') {
+      const roofMeshes = buildRooftopHeatMeshes(payload, range);
+      heatMesh = roofMeshes[0] || null;
+      heatGroup.add(...roofMeshes);
+      return;
+    }
     const positions = [];
     const colors = [];
     const toVectorRing = ring => {
@@ -1997,7 +2413,7 @@ export async function startWebGLScene(canvas, status) {
       const polygons = feature.geometry.type === 'Polygon'
         ? [feature.geometry.coordinates]
         : feature.geometry.type === 'MultiPolygon' ? feature.geometry.coordinates : [];
-      const color = heatColor(feature.value, range.min, range.max);
+      const color = heatColor(feature.value, range.min, range.max, payload.metric);
       for (const polygon of polygons) {
         const contour = toVectorRing(polygon[0] || []);
         if (contour.length < 3) continue;
@@ -2007,7 +2423,7 @@ export async function startWebGLScene(canvas, status) {
           for (const index of face) {
             const point = vertices[index];
             const y = payload.metric === 'rooftop_temperature_c'
-              ? rooftopHeightAt(point.x, point.y)
+              ? detailedRoofHeightAt(point.x, point.y, Number(feature.surface_y ?? rooftopHeightAt(point.x, point.y)))
               : terrainHeightAt(point.x, point.y) + 0.48;
             positions.push(point.x, y, point.y);
             colors.push(color.r, color.g, color.b);
@@ -2034,6 +2450,12 @@ export async function startWebGLScene(canvas, status) {
     return `${Number(value).toFixed(decimals)}${metadata.unit || ''}`;
   }
 
+  function syncHeatTemporalControls(metric = heatMetric?.value) {
+    const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
+    if (heatDateControl) heatDateControl.hidden = !temporal;
+    if (heatTimeControl) heatTimeControl.hidden = !temporal;
+  }
+
   function renderHeatSummary(summary, metadata = {}, metricLabel = 'Heat') {
     if (!heatSummary) return;
     const ready = summary?.area_weighted_mean != null && summary?.maximum != null;
@@ -2050,6 +2472,8 @@ export async function startWebGLScene(canvas, status) {
 
   async function loadHeat(metric = heatMetric?.value || 'pedestrian_priority_score') {
     if (!heatStatus) return;
+    const loadToken = ++heatLoadToken;
+    syncHeatTemporalControls(metric);
     heatStatus.textContent = 'Loading heat zones…';
     try {
       const params = new URLSearchParams({
@@ -2060,7 +2484,9 @@ export async function startWebGLScene(canvas, status) {
       const response = await fetch(`${windApi}/heat/zones?${params}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
-      buildHeatMesh(payload);
+      if (loadToken !== heatLoadToken) return;
+      heatPayload = payload;
+      if (heatToggle?.checked && !shadowState.enabled) buildHeatMesh(payload);
       renderHeatSummary(payload.summary, payload.metric_metadata, payload.metric_label);
       const range = payload.color_range || payload.range;
       heatRange = range;
@@ -2078,30 +2504,155 @@ export async function startWebGLScene(canvas, status) {
       const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(payload.metric) ? ` · ${scenarioTime}` : '';
       heatStatus.textContent = `${payload.metric_label}${timeContext} · ${payload.count || payload.features?.length || 0} zones · ${window}`;
     } catch (error) {
+      if (loadToken !== heatLoadToken) return;
       renderHeatSummary(null);
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
     }
     setHeatMode(Boolean(heatToggle?.checked));
   }
 
+  async function generateSunHours() {
+    if (!sunToggle?.checked) sunToggle.checked = true;
+    setShadowMode(true);
+    const loadToken = ++sunLoadToken;
+    sunStatus.textContent = 'Accumulating direct sunlight…';
+    sunGenerate.disabled = true;
+    try {
+      const scenario = {
+        date: sunDate?.value || shadowState.date,
+        start_minutes: sunStartTime?.value || '480', end_minutes: sunEndTime?.value || '1080',
+        step_minutes: sunStepTime?.value || '60',
+      };
+      const surfaces = sunAnalysisSurfaces?.value || 'all';
+      const half = shadowState.size / 2;
+      const domain = {
+        min_x: shadowState.center[0] - half, min_z: shadowState.center[1] - half,
+        max_x: shadowState.center[0] + half, max_z: shadowState.center[1] + half,
+      };
+      const durationHours = (Number(scenario.end_minutes) - Number(scenario.start_minutes)) / 60;
+      const requests = [];
+      if (surfaces !== 'buildings') {
+        requests.push(fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`)
+          .then(async response => {
+            if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
+            return ['ground', await response.json()];
+          }));
+      }
+      if (surfaces !== 'ground') {
+        const buildingParams = new URLSearchParams({ ...scenario, ...domain, resolution_m: sunSurfaceResolution?.value || '5', surfaces: 'all' });
+        requests.push(fetch(`${windApi}/sunlight/building-surfaces?${buildingParams}`)
+          .then(async response => {
+            const body = await response.json();
+            if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
+            return ['buildings', body];
+          }));
+      }
+      const results = Object.fromEntries(await Promise.all(requests));
+      if (loadToken !== sunLoadToken || !shadowState.enabled || shadowState.mode !== 'hours') return;
+      const payload = results.ground || {
+        metric: 'cumulative_sun_hours', features: [], range: { min: 0, max: durationHours },
+        color_range: { min: 0, max: durationHours }, summary: { area_weighted_mean: null, total_area_m2: 0 },
+        scenario: { ...scenario, sample_count: 0 },
+      };
+      payload.color_range = { min: 0, max: durationHours };
+      buildHeatMesh(payload);
+      if (results.buildings) addBuildingSunMesh(results.buildings, payload.color_range);
+      setBuildingAnalysisSkin(Boolean(results.buildings));
+      heatGroup.visible = true;
+      sunLight.visible = false;
+      shadowCatcher.visible = false;
+      const range = payload.color_range || payload.range;
+      if (range) {
+        sunHoursMin.textContent = `${range.min.toFixed(1)} h`;
+        sunHoursMax.textContent = `${range.max.toFixed(1)} h`;
+      }
+      const start = Number(scenario.start_minutes);
+      const end = Number(scenario.end_minutes);
+      const clock = value => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+      const summaries = [payload.summary, results.buildings?.summary].filter(summary => summary?.area_weighted_mean != null);
+      const totalArea = summaries.reduce((sum, summary) => sum + Number(summary.total_area_m2 || 0), 0);
+      const average = totalArea ? summaries.reduce((sum, summary) => sum + summary.area_weighted_mean * summary.total_area_m2, 0) / totalArea : 0;
+      const cellCount = results.buildings?.count ? ` · ${results.buildings.count.toLocaleString()} building cells` : '';
+      sunStatus.textContent = `${average.toFixed(1)} h average direct sun · ${clock(start)}–${clock(end)} · ${shadowState.size} m area${cellCount}.`;
+    } catch (error) {
+      if (loadToken !== sunLoadToken) return;
+      sunStatus.textContent = `Sun-hours analysis unavailable (${error.message})`;
+    } finally {
+      sunGenerate.disabled = false;
+      requestRender();
+    }
+  }
+
+  function addBuildingSunMesh(payload, range) {
+    const roofMeshes = buildRooftopHeatMeshes(
+      { metric: 'cumulative_sun_hours', features: (payload.features || []).filter(feature => feature.surface === 'roof') },
+      range,
+      feature => feature.display_value ?? feature.value,
+    );
+    const facadeMesh = buildFacadeSunMesh(payload, range);
+    for (const mesh of [...roofMeshes, facadeMesh].filter(Boolean)) {
+      mesh.renderOrder = 7;
+      heatGroup.add(mesh);
+    }
+  }
+
+  function setSunAnalysisMode(mode) {
+    shadowState.mode = mode;
+    const cumulative = mode === 'hours';
+    for (const button of sunModeButtons) {
+      const active = button.dataset.sunMode === mode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    if (sunInstantControl) sunInstantControl.hidden = cumulative;
+    if (sunWindowControls) sunWindowControls.hidden = !cumulative;
+    if (sunDateTimeHeading) sunDateTimeHeading.textContent = cumulative ? 'Date & analysis window' : 'Date & time';
+    if (sunHoursLegend) sunHoursLegend.hidden = !cumulative;
+    sunGenerate.textContent = cumulative ? 'Calculate sun hours' : 'Generate shadows';
+    heatGroup.visible = false;
+    setBuildingAnalysisSkin(false);
+    shadowState.generated = false;
+    setSunMaterials(false);
+    sunStatus.textContent = cumulative
+      ? 'Move the analysis area if needed, then calculate cumulative direct sunlight.'
+      : 'Choose a date and time, then generate terrain-aware shadows.';
+    requestRender();
+    updateSunBox();
+  }
+
   function setHeatMode(enabled) {
     if (enabled) restoreRoadsAfterFlood();
+    if (enabled) restoreStreetLayersAfterWind();
     const wasInStudyMode = shadowState.enabled || heatGroup.visible;
     if (enabled && !wasInStudyMode) rememberNormalVisibility();
-    heatGroup.visible = enabled && mitigationCompare?.value !== 'after';
+    if (enabled && shadowState.enabled) {
+      sunLoadToken += 1;
+      if (sunGenerate) sunGenerate.disabled = false;
+    }
+    if (enabled && analysisGroupMode !== 'heat') {
+      if (heatPayload) buildHeatMesh(heatPayload);
+      else {
+        for (const object of heatGroup.children) disposeObject(object);
+        heatGroup.clear();
+        analysisGroupMode = null;
+      }
+    }
+    heatGroup.visible = enabled && analysisGroupMode === 'heat' && mitigationCompare?.value !== 'after';
     mitigationGroup.visible = enabled && mitigationCompare?.value === 'after' && Boolean(mitigationState.result);
     document.body.classList.toggle('heat-mode', enabled);
     if (enabled) {
       shadowState.enabled = false;
       if (sunToggle) sunToggle.checked = false;
       document.body.classList.remove('sun-mode');
-      layerGroups.terrain.visible = false;
-      layerGroups.grass.visible = false;
+      const rooftopContext = heatMetric?.value === 'rooftop_temperature_c'
+        || Boolean(mitigationState.result?.roof_zones?.length);
+      layerGroups.terrain.visible = rooftopContext;
+      layerGroups.grass.visible = rooftopContext;
       layerGroups.railways.visible = false;
       // Keep the walking network faintly legible so priority areas can be
       // interpreted as routes and crossings, not isolated heat polygons.
-      layerGroups.paths.visible = true;
-      layerGroups.roads.visible = true;
+      layerGroups.paths.visible = rooftopContext;
+      layerGroups.roads.visible = rooftopContext;
       layerGroups.buildings.visible = true;
       layerGroups.trees.visible = true;
       windState.enabled = false;
@@ -2153,7 +2704,12 @@ export async function startWebGLScene(canvas, status) {
         for (const face of THREE.ShapeUtils.triangulateShape(contour, holes)) {
           for (const index of face) {
             const point = vertices[index];
-            positions.push(point.x, terrainHeightAt(point.x, point.y) + 0.62, point.y);
+            const fallbackY = Number(feature.surface_y ?? terrainHeightAt(point.x, point.y) + 0.62);
+            positions.push(
+              point.x,
+              feature.surface_y != null ? detailedRoofHeightAt(point.x, point.y, fallbackY) : fallbackY,
+              point.y,
+            );
             colors.push(color.r, color.g, color.b);
           }
         }
@@ -2191,7 +2747,7 @@ export async function startWebGLScene(canvas, status) {
     green_roof: {
       label: 'Green roof', color: 0x6ea64b, parameter: 'substrate_depth_cm',
       parameterLabel: 'soil depth cm', defaultValue: 15, min: 6, max: 60, step: 1,
-      note: 'Only the portion painted over building footprints is eligible; pedestrian relief is not claimed.',
+      note: 'Paint across the intended roofs. The result is clipped to eligible roof surfaces and reports roof-only temperature impact.',
     },
     canopy_protection: {
       label: 'Protect canopy', color: 0x1e6b42, parameter: 'maturity_pct',
@@ -2220,7 +2776,7 @@ export async function startWebGLScene(canvas, status) {
     },
   };
 
-  function flatPolygonMesh(geometry, color, opacity = 0.34) {
+  function flatPolygonMesh(geometry, color, opacity = 0.34, roofOnly = false) {
     const positions = [];
     for (const polygon of geometryPolygons(geometry)) {
       const contour = (polygon[0] || []).map(([x, z]) => new THREE.Vector2(x, z));
@@ -2234,7 +2790,8 @@ export async function startWebGLScene(canvas, status) {
       for (const face of THREE.ShapeUtils.triangulateShape(contour, holes)) {
         for (const index of face) {
           const point = vertices[index];
-          positions.push(point.x, terrainHeightAt(point.x, point.y) + 1.15, point.y);
+          const roofFallback = rooftopHeightAt(point.x, point.y);
+          positions.push(point.x, roofOnly ? detailedRoofHeightAt(point.x, point.y, roofFallback) + 0.12 : terrainHeightAt(point.x, point.y) + 1.15, point.y);
         }
       }
     }
@@ -2249,12 +2806,16 @@ export async function startWebGLScene(canvas, status) {
     mitigationDrawingGroup.clear();
     for (const item of mitigationState.interventions.filter(entry => entry.visible)) {
       const config = mitigationMethods[item.method] || { color: 0xf5b85f };
-      const mesh = flatPolygonMesh(item.geometry, config.color);
+      const roofOnly = ['cool_roof', 'green_roof'].includes(item.method);
+      const mesh = flatPolygonMesh(item.geometry, config.color, 0.34, roofOnly);
       mesh.renderOrder = 12;
       mitigationDrawingGroup.add(mesh);
       for (const polygon of geometryPolygons(item.geometry)) {
         const ring = polygon[0] || [];
-        const linePoints = ring.map(([x, z]) => new THREE.Vector3(x, terrainHeightAt(x, z) + 1.35, z));
+        const linePoints = ring.map(([x, z]) => {
+          const roofFallback = rooftopHeightAt(x, z);
+          return new THREE.Vector3(x, roofOnly ? detailedRoofHeightAt(x, z, roofFallback) + 0.16 : terrainHeightAt(x, z) + 1.35, z);
+        });
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(linePoints),
           new THREE.LineBasicMaterial({ color: config.color, depthTest: false }),
@@ -2302,6 +2863,7 @@ export async function startWebGLScene(canvas, status) {
 
   function invalidateMitigationResult() {
     mitigationState.result = null;
+    mitigationState.baselinePayload = null;
     mitigationGroup.clear();
     mitigationResults.hidden = true;
     mitigationCompare.value = 'before';
@@ -2377,32 +2939,57 @@ export async function startWebGLScene(canvas, status) {
 
   function buildMitigationResult(payload) {
     mitigationGroup.clear();
-    const temperatures = payload.zones.map(zone => zone.baseline_surface_temperature_c).filter(Number.isFinite);
+    const comparisonZones = payload.roof_zones?.length ? payload.roof_zones : payload.zones;
+    const temperatures = comparisonZones.map(zone => zone.baseline_surface_temperature_c).filter(Number.isFinite).sort((a, b) => a - b);
+    const percentile = fraction => {
+      if (!temperatures.length) return null;
+      const position = (temperatures.length - 1) * fraction;
+      const lower = Math.floor(position);
+      const upper = Math.min(lower + 1, temperatures.length - 1);
+      return temperatures[lower] + (temperatures[upper] - temperatures[lower]) * (position - lower);
+    };
     const range = temperatures.length
-      ? { min: Math.min(...temperatures), max: Math.max(...temperatures) }
+      ? { min: percentile(0.10), max: percentile(0.90) }
       : { min: 25, max: 45 };
-    const mesh = polygonMesh(payload.zones, zone => zone.estimates.central.surface_temperature_c, range);
+    mitigationState.baselinePayload = {
+      metric: payload.roof_zones?.length ? 'rooftop_temperature_c' : 'heat_model_lst_c',
+      features: comparisonZones.map(zone => ({
+        geometry: zone.geometry, surface_y: zone.surface_y,
+        value: zone.baseline_surface_temperature_c,
+      })),
+      range, color_range: range,
+    };
+    buildHeatMesh(mitigationState.baselinePayload);
+    const estimateCase = mitigationCase?.value || 'central';
+    const mesh = polygonMesh(comparisonZones, zone => zone.estimates[estimateCase].surface_temperature_c, range);
     mesh.renderOrder = 5;
     mitigationGroup.add(mesh);
     mitigationState.result = payload;
     if (heatSummary) heatSummary.hidden = true;
     heatLegendMin.textContent = `Cooler ≤ ${range.min.toFixed(1)}°C`;
     heatLegendMax.textContent = `Hotter ≥ ${range.max.toFixed(1)}°C`;
-    const central = payload.summary.estimates.central;
+    const central = payload.summary.estimates[estimateCase];
+    const roofCentral = payload.summary.roof_estimates?.[estimateCase];
     mitigationResults.hidden = false;
     const coBenefits = payload.summary.co_benefits || {};
+    const drawnArea = payload.interventions.reduce((sum, item) => sum + Number(item.drawn_area_m2 || 0), 0);
+    const eligibleArea = payload.interventions.reduce((sum, item) => sum + Number(item.treated_area_m2 || 0), 0);
+    const eligiblePercent = drawnArea ? eligibleArea / drawnArea * 100 : 0;
     mitigationResults.innerHTML = `
       <span><b>${Math.round(payload.summary.treated_area_m2).toLocaleString()} m²</b>Treated</span>
-      <span><b>${Math.round(payload.summary.affected_area_m2).toLocaleString()} m²</b>Affected / shaded</span>
-      <span><b>${central.mean_surface_reduction_c.toFixed(1)}°C</b>Mean surface relief</span>
-      <span><b>${central.mean_pedestrian_reduction_c.toFixed(1)}°C</b>Pedestrian relief</span>
+      <span><b>${eligiblePercent.toFixed(0)}%</b>Eligible drawing</span>
+      <span><b>${Math.round(roofCentral?.affected_roof_area_m2 ?? payload.summary.affected_area_m2).toLocaleString()} m²</b>${roofCentral?.affected_roof_area_m2 ? 'Affected roof' : 'Affected / shaded'}</span>
+      <span><b>${(roofCentral?.mean_roof_reduction_c ?? central.mean_surface_reduction_c).toFixed(1)}°C</b>${roofCentral?.affected_roof_area_m2 ? 'Mean roof relief' : 'Mean surface relief'}</span>
+      <span><b>${roofCentral?.mean_after_roof_temperature_c != null ? `${roofCentral.mean_after_roof_temperature_c.toFixed(1)}°C` : `${central.mean_pedestrian_reduction_c.toFixed(1)}°C`}</b>${roofCentral?.affected_roof_area_m2 ? 'Mean roof after' : 'Pedestrian relief'}</span>
       ${coBenefits.conceptual_runoff_capture_m3 > 0
         ? `<span><b>${coBenefits.conceptual_runoff_capture_m3.toFixed(1)} m³</b>Conceptual runoff capture</span>` : ''}
       ${coBenefits.added_canopy_m2 > 0
         ? `<span><b>${Math.round(coBenefits.added_canopy_m2)} m²</b>Added mature canopy</span>` : ''}`;
     mitigationStatus.textContent = payload.warnings.length
       ? payload.warnings.join(' ')
-      : `${payload.summary.affected_zone_count} affected heat zones · ${payload.version}`;
+      : roofCentral?.affected_roof_area_m2
+        ? `${Math.round(roofCentral.affected_roof_area_m2).toLocaleString()} m² eligible roof · rooftop comparison · ${payload.version}`
+        : `${payload.summary.affected_zone_count} source heat zones · exact affected geometry · ${payload.version}`;
     mitigationCompare.value = 'after';
     if (heatToggle) heatToggle.checked = true;
     setHeatMode(true);
@@ -3826,7 +4413,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function fallbackWindField() {
-    const resolution = 5;
+    const resolution = windState.resolution;
     const width = Math.ceil(windState.size / resolution);
     const angle = windState.direction * Math.PI / 180;
     const flowX = -Math.sin(angle);
@@ -4141,6 +4728,7 @@ export async function startWebGLScene(canvas, status) {
     windHeatMesh = null;
     windPoints = null;
     windState.particles = [];
+    restoreStreetLayersAfterWind();
   }
 
   function buildWindHeatmap() {
@@ -4153,8 +4741,10 @@ export async function startWebGLScene(canvas, status) {
       windHeatMesh = null;
       return;
     }
-    const minimum = Math.min(...field.speed);
-    const maximum = Math.max(...field.speed, windState.speed * 0.1, 0.1);
+    const comfortMode = field.analysis_mode === 'comfort' && field.comfort_category?.length;
+    const minimum = comfortMode ? 0 : Math.min(...field.speed);
+    const maximum = comfortMode ? 5 : Math.max(...field.speed, windState.speed * 0.1, 0.1);
+    const comfortColors = [0x287f69, 0x55aa70, 0xa8c84c, 0xe5bd3f, 0xdf8039, 0xc7473f];
     const positions = [];
     const colors = [];
     const indices = [];
@@ -4163,7 +4753,15 @@ export async function startWebGLScene(canvas, status) {
         const x = field.origin[0] + column * field.dx;
         const z = field.origin[1] + row * field.dz;
         const sampled = sampleWind(x, z);
-        const color = windColor(sampled.speed, minimum, maximum);
+        let color;
+        if (comfortMode) {
+          const sourceColumn = clamp(Math.floor((x - field.origin[0]) / field.dx), 0, field.width - 1);
+          const sourceRow = clamp(Math.floor((z - field.origin[1]) / field.dz), 0, field.height - 1);
+          const code = field.comfort_category[sourceRow * field.width + sourceColumn] ?? 5;
+          color = new THREE.Color(comfortColors[code]);
+        } else {
+          color = windColor(sampled.speed, minimum, maximum);
+        }
         positions.push(x, terrainHeightAt(x, z) + 1.05, z);
         colors.push(color.r, color.g, color.b);
       }
@@ -4196,7 +4794,9 @@ export async function startWebGLScene(canvas, status) {
     }));
     windHeatMesh.name = 'wind-speed-heatmap';
     windHeatMesh.renderOrder = 2;
+    windHeatMesh.visible = windState.surfaceVisible;
     windGroup.add(windHeatMesh);
+    if (windState.enabled && windState.surfaceVisible) hideStreetLayersForWind();
   }
 
   function spawnWindParticle(field) {
@@ -4223,7 +4823,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function resetWindParticles() {
-    const count = Math.round(clamp(windState.size * 2, 500, 1200));
+    const count = Math.round(clamp(windState.particleCount, 200, 1600));
     windState.particles = Array.from({ length: count }, () => spawnWindParticle(windState.field));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(count * (windTrailPoints - 1) * 6), 3));
@@ -4241,6 +4841,7 @@ export async function startWebGLScene(canvas, status) {
     }));
     windPoints.name = 'wind-gusts';
     windPoints.renderOrder = 3;
+    windPoints.visible = windState.flowlinesVisible && windState.analysisMode === 'direction';
     windGroup.add(windPoints);
   }
 
@@ -4280,42 +4881,58 @@ export async function startWebGLScene(canvas, status) {
       reference_speed_mps: windState.speed,
       reference_height_m: windState.referenceHeight,
       height_m: windState.height,
-      resolution_m: 5,
+      resolution_m: windState.resolution,
       stability: windState.stability,
       exceedance_threshold_mps: windState.exceedanceThreshold,
       forcing_mode: windState.forcingMode,
     };
     try {
-      const response = await fetch(`${windApi}/wind/preview`, {
+      const endpoint = windState.analysisMode === 'comfort' ? 'comfort' : 'preview';
+      const response = await fetch(`${windApi}/wind/${endpoint}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       windState.field = await response.json();
-      const forcingNote = windState.field.era5_profile
+      const forcingNote = windState.analysisMode === 'comfort'
+        ? `${windState.field.direction_count || 16}-direction ${windState.season} wind rose`
+        : windState.field.era5_profile
         ? `ERA5 ${windState.field.era5_profile.season} ${windState.field.era5_profile.sector.toUpperCase()}`
         : 'manual forcing';
       windStatus.textContent = `${forcingNote} · ${windState.field.polygon_count || 0} zones · preview`;
     } catch (error) {
-      windState.field = fallbackWindField();
-      windStatus.textContent = `Local GPU preview · API unavailable (${error.message})`;
+      if (windState.analysisMode === 'comfort') {
+        windState.field = null;
+        windStatus.textContent = `Comfort study unavailable (${error.message})`;
+      } else {
+        windState.field = fallbackWindField();
+        windStatus.textContent = `Local visual fallback · API unavailable (${error.message})`;
+      }
     }
     windSimulate.disabled = false;
-    windSimulate.textContent = 'Simulate wind';
-    const values = windState.field.speed || [];
-    windLegendMin.textContent = values.length ? Math.min(...values).toFixed(1) : '—';
-    windLegendMax.textContent = values.length ? Math.max(...values).toFixed(1) : '—';
+    windSimulate.textContent = windState.analysisMode === 'comfort' ? 'Run 16-direction comfort study' : 'Run direction study';
+    const values = windState.field?.speed || [];
+    if (windState.field?.analysis_mode === 'comfort') {
+      windGradient?.classList.add('comfort');
+      windLegendLow.innerHTML = '<b>Long sitting</b> · suitable';
+      windLegendHigh.innerHTML = '<b>Uncomfortable</b> · mitigate';
+    } else {
+      windGradient?.classList.remove('comfort');
+      windLegendLow.innerHTML = `<b id="wind-legend-min">${values.length ? Math.min(...values).toFixed(1) : '—'}</b> m/s · low`;
+      windLegendHigh.innerHTML = `<b id="wind-legend-max">${values.length ? Math.max(...values).toFixed(1) : '—'}</b> m/s · high`;
+    }
     windState.lastTime = performance.now();
+    if (!windState.field) return;
     dispatchEvent(new CustomEvent('climate-wind-result', { detail: windState.field }));
     buildWindHeatmap();
-    resetWindParticles();
+    if (windState.analysisMode === 'direction') resetWindParticles();
     requestRender();
   }
 
   function updateWindParticles(now) {
     if (!windState.enabled || !windState.field || !windPoints) return;
-    const elapsed = Math.min(0.06, (now - windState.lastTime) / 1000);
+    const elapsed = Math.min(0.06, (now - windState.lastTime) / 1000) * windState.animationSpeed;
     windState.lastTime = now;
     const half = windState.size * 0.5;
     const positions = windPoints.geometry.attributes.position.array;
@@ -4529,6 +5146,28 @@ export async function startWebGLScene(canvas, status) {
         return;
       }
     }
+    if (shadowState.enabled && shadowState.mode === 'hours' && shadowState.moveMode && event.button === 0) {
+      const point = pointerGround(event);
+      if (point) {
+        const handleScreen = handleScreenPoint(sunHandle);
+        const handleDistance = handleScreen
+          ? Math.hypot(event.clientX - handleScreen.x, event.clientY - handleScreen.y)
+          : Infinity;
+        sunDrag = {
+          mode: handleDistance <= 20 ? 'resize' : 'move',
+          start: point,
+          center: [...shadowState.center],
+          size: shadowState.size,
+        };
+        heatGroup.visible = false;
+        setBuildingAnalysisSkin(false);
+        sunStatus.textContent = sunDrag.mode === 'resize'
+          ? 'Resizing sunlight area · release, then calculate again.'
+          : 'Moving sunlight area · release, then calculate again.';
+        capturePointer(event);
+        return;
+      }
+    }
     if (windState.enabled && windState.moveMode) {
       const point = pointerGround(event);
       if (point) {
@@ -4603,6 +5242,25 @@ export async function startWebGLScene(canvas, status) {
       updateFloodBox();
       return;
     }
+    if (sunDrag) {
+      const point = pointerGround(event);
+      if (!point) return;
+      if (sunDrag.mode === 'resize') {
+        const requested = Math.max(Math.abs(point.x - sunDrag.center[0]), Math.abs(point.z - sunDrag.center[1])) * 2;
+        const maximum = Math.min(1000,
+          2 * (sunDrag.center[0] - left), 2 * (right - sunDrag.center[0]),
+          2 * (sunDrag.center[1] - minZ), 2 * (maxZ - sunDrag.center[1]));
+        shadowState.size = Math.round(clamp(requested, 200, maximum) / 25) * 25;
+        if (sunDomainSize && [...sunDomainSize.options].some(option => Number(option.value) === shadowState.size)) {
+          sunDomainSize.value = String(shadowState.size);
+        }
+      } else {
+        shadowState.center[0] = clamp(sunDrag.center[0] + point.x - sunDrag.start.x, left + shadowState.size / 2, right - shadowState.size / 2);
+        shadowState.center[1] = clamp(sunDrag.center[1] + point.z - sunDrag.start.z, minZ + shadowState.size / 2, maxZ - shadowState.size / 2);
+      }
+      updateSunBox();
+      return;
+    }
     if (windDrag) {
       const point = pointerGround(event);
       if (!point) return;
@@ -4664,6 +5322,10 @@ export async function startWebGLScene(canvas, status) {
         : 'Box moved · click Simulate flood.';
     }
     floodDrag = null;
+    if (sunDrag) {
+      sunStatus.textContent = `Analysis area updated to ${shadowState.size} m · calculate sun hours again.`;
+    }
+    sunDrag = null;
     if (windDrag && windState.moveMode) {
       windStatus.textContent = windDrag.mode === 'resize'
         ? `Domain resized to ${windState.size} m · click Simulate wind.`
@@ -4685,6 +5347,7 @@ export async function startWebGLScene(canvas, status) {
       mitigationState.points = [];
       updateMitigationDrawing();
     }
+    sunDrag = null;
     drag = null;
     windDrag = null;
     floodDrag = null;
@@ -4713,31 +5376,126 @@ export async function startWebGLScene(canvas, status) {
 
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
   heatMetric?.addEventListener('change', event => {
-    invalidateMitigationResult();
     loadHeat(event.target.value);
   });
   heatDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
-    invalidateMitigationResult();
-    mitigationStatus.textContent = 'Design date changed · run the comparison again.';
     loadHeat(heatMetric?.value);
   });
   heatTime?.addEventListener('change', event => {
     shadowState.minutes = Number(event.target.value);
-    invalidateMitigationResult();
-    mitigationStatus.textContent = 'Design time changed · run the comparison again.';
     loadHeat(heatMetric?.value);
   });
   sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
   sunDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
-    queueLiveShadowUpdate();
+    if (shadowState.mode === 'shadows') queueLiveShadowUpdate();
+    else {
+      heatGroup.visible = false;
+      sunStatus.textContent = 'Date changed · calculate sun hours again.';
+      requestRender();
+    }
   });
   sunTime?.addEventListener('input', event => {
     shadowState.minutes = Number(event.target.value);
-    queueLiveShadowUpdate();
+    if (shadowState.mode === 'shadows') queueLiveShadowUpdate();
   });
-  sunGenerate?.addEventListener('click', generateShadows);
+  sunModeButtons.forEach(button => button.addEventListener('click', () => setSunAnalysisMode(button.dataset.sunMode)));
+  sunDomainSize?.addEventListener('change', event => {
+    shadowState.size = Number(event.target.value) || 500;
+    heatGroup.visible = false;
+    setBuildingAnalysisSkin(false);
+    sunStatus.textContent = `Analysis area resized to ${shadowState.size} m · calculate sun hours.`;
+    updateSunBox();
+  });
+  sunMoveDomain?.addEventListener('click', () => {
+    shadowState.moveMode = !shadowState.moveMode;
+    sunMoveDomain.classList.toggle('active', shadowState.moveMode);
+    sunMoveDomain.setAttribute('aria-pressed', String(shadowState.moveMode));
+    sunMoveDomain.textContent = shadowState.moveMode ? 'Done moving' : 'Move / resize analysis area';
+    updateSunBox();
+  });
+  sunGenerate?.addEventListener('click', () => {
+    if (shadowState.mode === 'hours') generateSunHours();
+    else generateShadows();
+  });
+
+  function setWindAnalysisMode(mode) {
+    if (!['direction', 'comfort'].includes(mode)) return;
+    windState.analysisMode = mode;
+    windLensButtons.filter(button => ['direction', 'comfort'].includes(button.dataset.windLens)).forEach(button => {
+      const active = button.dataset.windLens === mode;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    });
+    if (windDirectionControls) windDirectionControls.hidden = mode === 'comfort';
+    if (windFlowlinesVisible) windFlowlinesVisible.disabled = mode === 'comfort';
+    const flowlinesLens = windLensButtons.find(button => button.dataset.windLens === 'flowlines');
+    if (flowlinesLens) flowlinesLens.disabled = mode === 'comfort';
+    windSimulate.textContent = mode === 'comfort' ? 'Run 16-direction comfort study' : 'Run direction study';
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = mode === 'comfort'
+      ? 'Comfort combines 16 directional fields with the selected ERA5 wind rose.'
+      : 'Choose a wind direction, then run the study.';
+    requestRender();
+  }
+
+  windLensButtons.forEach(button => button.addEventListener('click', () => {
+    const lens = button.dataset.windLens;
+    if (lens === 'direction' || lens === 'comfort') {
+      setWindAnalysisMode(lens);
+    } else if (lens === 'surface') {
+      windState.surfaceVisible = !windState.surfaceVisible;
+      if (windSurfaceVisible) windSurfaceVisible.checked = windState.surfaceVisible;
+      button.classList.toggle('active', windState.surfaceVisible);
+      button.setAttribute('aria-pressed', String(windState.surfaceVisible));
+      if (windHeatMesh) windHeatMesh.visible = windState.surfaceVisible;
+      if (windState.field && windState.enabled && windState.surfaceVisible) hideStreetLayersForWind();
+      else restoreStreetLayersAfterWind();
+      requestRender();
+    } else if (lens === 'flowlines') {
+      windState.flowlinesVisible = !windState.flowlinesVisible;
+      if (windFlowlinesVisible) windFlowlinesVisible.checked = windState.flowlinesVisible;
+      button.classList.toggle('active', windState.flowlinesVisible);
+      button.setAttribute('aria-pressed', String(windState.flowlinesVisible));
+      if (windPoints) windPoints.visible = windState.flowlinesVisible && windState.analysisMode === 'direction';
+      requestRender();
+    }
+  }));
+
+  windDirectionPresets.forEach(button => button.addEventListener('click', () => {
+    if (!windDirection) return;
+    windDirection.value = button.dataset.windDirection;
+    windDirection.dispatchEvent(new Event('change', { bubbles: true }));
+  }));
+  windSurfaceVisible?.addEventListener('change', event => {
+    windState.surfaceVisible = event.target.checked;
+    const button = windLensButtons.find(item => item.dataset.windLens === 'surface');
+    button?.classList.toggle('active', windState.surfaceVisible);
+    button?.setAttribute('aria-pressed', String(windState.surfaceVisible));
+    if (windHeatMesh) windHeatMesh.visible = windState.surfaceVisible;
+    if (windState.field && windState.enabled && windState.surfaceVisible) hideStreetLayersForWind();
+    else restoreStreetLayersAfterWind();
+    requestRender();
+  });
+  windFlowlinesVisible?.addEventListener('change', event => {
+    windState.flowlinesVisible = event.target.checked;
+    const button = windLensButtons.find(item => item.dataset.windLens === 'flowlines');
+    button?.classList.toggle('active', windState.flowlinesVisible);
+    button?.setAttribute('aria-pressed', String(windState.flowlinesVisible));
+    if (windPoints) windPoints.visible = windState.flowlinesVisible && windState.analysisMode === 'direction';
+    requestRender();
+  });
+  windFlowlineCount?.addEventListener('change', event => {
+    windState.particleCount = Number(event.target.value) || 800;
+    if (windState.field && windState.analysisMode === 'direction') resetWindParticles();
+    requestRender();
+  });
+  windAnimationSpeed?.addEventListener('input', event => {
+    windState.animationSpeed = Number(event.target.value) / 100;
+    if (windAnimationSpeedValue) windAnimationSpeedValue.textContent = `${event.target.value}%`;
+  });
 
   windToggle?.addEventListener('change', event => {
     if (event.target.checked && heatGroup.visible) {
@@ -4751,6 +5509,9 @@ export async function startWebGLScene(canvas, status) {
       if (floodToggle) floodToggle.checked = false;
       floodGroup.visible = false;
       restoreRoadsAfterFlood();
+      if (windState.field && windState.surfaceVisible) hideStreetLayersForWind();
+    } else {
+      restoreStreetLayersAfterWind();
     }
     windStatus.textContent = windState.enabled
       ? (windState.field ? 'Existing wind heatmap and gusts shown.' : '3D domain ready · position it, then simulate.')
@@ -4763,6 +5524,7 @@ export async function startWebGLScene(canvas, status) {
     windState.field = null;
     clearWindSimulation();
     windStatus.textContent = 'Direction changed · click Simulate wind.';
+    windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
     requestRender();
   });
   windSeason?.addEventListener('change', event => {
@@ -4783,6 +5545,12 @@ export async function startWebGLScene(canvas, status) {
     windState.field = null;
     clearWindSimulation();
     windStatus.textContent = 'Result height changed · click Simulate wind.';
+  });
+  windResolution?.addEventListener('change', event => {
+    windState.resolution = Number(event.target.value) || 5;
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = 'Grid resolution changed · run the study again.';
   });
   windExceedanceThreshold?.addEventListener('change', event => {
     windState.exceedanceThreshold = Number(event.target.value);
@@ -4806,6 +5574,8 @@ export async function startWebGLScene(canvas, status) {
   windSize?.addEventListener('input', event => {
     windState.size = Number(event.target.value);
     windSizeValue.textContent = String(windState.size);
+    const sizeCopy = document.querySelector('#wind-size-value-copy');
+    if (sizeCopy) sizeCopy.textContent = String(windState.size);
     windState.field = null;
     clearWindSimulation();
     windStatus.textContent = 'Domain resized · click Simulate wind.';
@@ -4815,7 +5585,7 @@ export async function startWebGLScene(canvas, status) {
     windState.moveMode = !windState.moveMode;
     windMoveDomain.classList.toggle('active', windState.moveMode);
     windMoveDomain.setAttribute('aria-pressed', String(windState.moveMode));
-    windMoveDomain.textContent = windState.moveMode ? 'Done moving' : 'Move / resize domain';
+    windMoveDomain.title = windState.moveMode ? 'Click when the domain position is set' : 'Move or resize the wind analysis domain';
     updateWindBox();
   });
   windSimulate?.addEventListener('click', simulateWind);
@@ -4837,6 +5607,7 @@ export async function startWebGLScene(canvas, status) {
       windState.enabled = false;
       if (windToggle) windToggle.checked = false;
       windGroup.visible = false;
+      restoreStreetLayersAfterWind();
       hideRoadsForFlood();
     } else {
       restoreRoadsAfterFlood();
@@ -4903,6 +5674,13 @@ export async function startWebGLScene(canvas, status) {
   mitigationMethod?.addEventListener('change', () => {
     const config = mitigationMethods[mitigationMethod.value];
     if (mitigationMethodNote && config) mitigationMethodNote.textContent = config.note;
+    if (['cool_roof', 'green_roof'].includes(mitigationMethod.value) && heatMetric) {
+      heatMetric.value = 'rooftop_temperature_c';
+      loadHeat('rooftop_temperature_c');
+    } else if (heatMetric?.value === 'rooftop_temperature_c') {
+      heatMetric.value = 'heat_model_lst_c';
+      loadHeat('heat_model_lst_c');
+    }
     if (mitigationState.drawing) {
       mitigationStatus.textContent = `Drag on the terrain to paint ${methodLabel(mitigationMethod.value)}; release to finish.`;
     }
@@ -4913,13 +5691,14 @@ export async function startWebGLScene(canvas, status) {
     mitigationState.points = [];
     mitigationState.interventions = [];
     mitigationState.result = null;
+    mitigationState.baselinePayload = null;
     mitigationGroup.clear();
     mitigationDrawingGroup.clear();
     mitigationList.innerHTML = '';
     mitigationResults.hidden = true;
     mitigationRun.disabled = true;
     mitigationCompare.value = 'before';
-    mitigationStatus.textContent = 'Choose a method, then drag on the terrain to paint its area.';
+    mitigationStatus.textContent = 'Choose a method, then draw its intended footprint. Results are clipped to eligible surfaces.';
     canvas.style.cursor = '';
     loadHeat(heatMetric?.value);
   });
@@ -4928,9 +5707,17 @@ export async function startWebGLScene(canvas, status) {
       mitigationCompare.value = 'before';
       mitigationStatus.textContent = 'Run Compare impact before switching to the after map.';
     }
-    if (mitigationCompare.value === 'before') loadHeat(heatMetric?.value);
+    if (mitigationCompare.value === 'before' && mitigationState.baselinePayload) buildHeatMesh(mitigationState.baselinePayload);
+    else if (mitigationCompare.value === 'before') loadHeat(heatMetric?.value);
     else if (mitigationState.result) buildMitigationResult(mitigationState.result);
     if (heatToggle?.checked) setHeatMode(true);
+  });
+  mitigationCase?.addEventListener('change', () => {
+    if (mitigationState.result && mitigationCompare.value === 'after') buildMitigationResult(mitigationState.result);
+    const label = mitigationCase.options[mitigationCase.selectedIndex]?.textContent || 'Estimate';
+    mitigationStatus.textContent = mitigationState.result
+      ? `${label} shown · before geometry and colour scale remain fixed.`
+      : `${label} selected · run Compare impact.`;
   });
   trafficDuration?.addEventListener('input', () => {
     if (trafficDurationValue) trafficDurationValue.textContent = `${trafficDuration.value} min`;
@@ -4972,7 +5759,40 @@ export async function startWebGLScene(canvas, status) {
     }
   });
   addEventListener('climate-menu-change', event => {
-    trafficState.sceneActive = event.detail?.name === 'traffic';
+    const name = event.detail?.name;
+    if (name !== 'sun' && shadowState.enabled) setShadowMode(false);
+    if (name !== 'heat' && heatToggle?.checked) {
+      heatToggle.checked = false;
+      setHeatMode(false);
+    }
+    if (name !== 'wind' && windToggle?.checked) {
+      windToggle.checked = false;
+      windToggle.dispatchEvent(new Event('change'));
+    }
+    if (name !== 'flood' && floodToggle?.checked) {
+      floodToggle.checked = false;
+      floodToggle.dispatchEvent(new Event('change'));
+    }
+    if (name !== 'traffic' && trafficToggle?.checked) {
+      trafficToggle.checked = false;
+      trafficToggle.dispatchEvent(new Event('change'));
+    }
+    if (name === 'heat' && heatToggle && !heatToggle.checked) {
+      heatToggle.checked = true;
+      setHeatMode(true);
+    } else if (name === 'sun' && !shadowState.enabled) {
+      setShadowMode(true);
+    } else if (name === 'wind' && windToggle && !windToggle.checked) {
+      windToggle.checked = true;
+      windToggle.dispatchEvent(new Event('change'));
+    } else if (name === 'flood' && floodToggle && !floodToggle.checked) {
+      floodToggle.checked = true;
+      floodToggle.dispatchEvent(new Event('change'));
+    } else if (name === 'traffic' && trafficToggle && !trafficToggle.checked) {
+      trafficToggle.checked = true;
+      trafficToggle.dispatchEvent(new Event('change'));
+    }
+    trafficState.sceneActive = name === 'traffic';
     if (!trafficState.sceneActive && trafficState.drawing) {
       clearTrafficSelection();
     }

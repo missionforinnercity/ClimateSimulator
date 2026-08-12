@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=25">
+  <link rel="stylesheet" href="style.css?v=28">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -132,7 +132,7 @@
         <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
         <div class="heat-context">
           <span class="estimate-badge">Screening layer</span>
-          <p>Prioritise places where pedestrian exposure, missing shade and nearby activity overlap. This is not a live or clinical heat-risk map.</p>
+          <p>Prioritise hotter surface-temperature zones that also lack mapped shade. This is not a live or clinical heat-risk map.</p>
         </div>
         <div class="heat-control-grid">
           <label>Planning view
@@ -141,10 +141,10 @@
               <option value="pedestrian_heat_exposure_c">Pedestrian thermal exposure</option>
               <option value="shade_deficit_score">Shade deficit at selected time</option>
               <option value="heat_model_lst_c">Surface temperature</option>
-              <option value="rooftop_temperature_c">Rooftop temperature</option>
+              <option value="rooftop_temperature_c">Rooftop surface temperature (modelled)</option>
             </select>
           </label>
-          <label>Design time
+          <label id="heat-time-control">Design time
             <select id="heat-time">
               <option value="540">09:00</option>
               <option value="720" selected>12:00</option>
@@ -153,7 +153,7 @@
             </select>
           </label>
         </div>
-        <label>Design date
+        <label id="heat-date-control">Design date
           <input id="heat-date" type="date" value="2026-01-15">
         </label>
         <p id="heat-status" class="heat-status">Loading heat zones…</p>
@@ -164,34 +164,7 @@
         </div>
         <div class="heat-gradient"></div>
         <div class="heat-legend-labels"><span id="heat-legend-min">Bottom 10%</span><span id="heat-legend-max">Top 10%</span></div>
-        <p class="heat-legend-help"><b>Red areas need investigation first.</b> Priority starts with pedestrian heat, then mapped building/tree shade and anonymous nearby-destination activity adjust it; no business records are displayed.</p>
-        <div class="heat-planning-card heat-workflow-card">
-          <h3>Test a pedestrian intervention</h3>
-          <label>Intervention
-            <select id="mitigation-method">
-              <option value="added_canopy">Trees &amp; vegetation</option>
-              <option value="constructed_shade">Pedestrian shade structure</option>
-              <option value="cool_pavement">Cool pavement</option>
-              <option value="cool_roof">Cool roof</option>
-              <option value="green_roof">Green roof</option>
-            </select>
-          </label>
-          <p id="mitigation-method-note" class="method-note">Tree canopy casts time-dependent shade; maturity scales its estimated benefit.</p>
-          <button id="mitigation-add" type="button" aria-pressed="false">Draw intervention</button>
-          <div id="mitigation-list" class="mitigation-list"></div>
-          <div class="mitigation-actions">
-            <button id="mitigation-run" type="button" disabled>Compare impact</button>
-            <button id="mitigation-clear" class="secondary" type="button">Clear</button>
-          </div>
-          <label>Map comparison
-            <select id="mitigation-compare">
-              <option value="before">Before · current baseline</option>
-              <option value="after">After · intervention estimate</option>
-            </select>
-          </label>
-          <p id="mitigation-status" class="mitigation-status">Choose a method, then drag on the terrain to paint its area.</p>
-          <div id="mitigation-results" class="mitigation-results" hidden></div>
-        </div>
+        <p class="heat-legend-help"><b>Red areas need investigation first.</b> Priority combines the surface-temperature layer (70%) with mapped building/tree shade deficit at the selected time (30%).</p>
         <div class="heat-checklist">
           <b>Before taking a concept forward</b>
           <span>Check clear walking width, universal access, visibility, lighting, services, wind, drainage, irrigation and long-term maintenance.</span>
@@ -199,87 +172,176 @@
         <p class="panel-note">Summer 2025–26 modelled screening evidence. Confirm actual footfall, waiting behaviour, vulnerable users, shade and air temperature on site.</p>
       </section>
       <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
-        <div class="sun-heading"><span>Sunlight &amp; shadows</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
-        <label>Date
-          <input id="sun-date" type="date" value="2026-07-27">
-        </label>
-        <label>Time <span id="sun-time-value">12:00</span>
-          <input id="sun-time" type="range" min="0" max="1430" step="10" value="720">
-        </label>
+        <div class="sun-heading"><span>Sunlight</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
+        <div class="sun-segmented" role="group" aria-label="Sunlight analysis mode">
+          <button type="button" class="active" data-sun-mode="shadows" aria-pressed="true">Shadows</button>
+          <button type="button" data-sun-mode="hours" aria-pressed="false">Sun hours</button>
+        </div>
+        <div class="sun-control-section">
+          <b id="sun-date-time-heading">Date &amp; time</b>
+          <label>Date
+            <input id="sun-date" type="date" value="2026-07-27">
+          </label>
+          <label id="sun-instant-control">Time <span id="sun-time-value">12:00</span>
+            <input id="sun-time" type="range" min="0" max="1430" step="10" value="720">
+          </label>
+          <div id="sun-window-controls" class="sun-window-controls" hidden>
+            <label class="sun-wide-control">Analysis surfaces
+              <select id="sun-analysis-surfaces">
+                <option value="all" selected>Ground + building surfaces</option>
+                <option value="buildings">Building roofs + façades</option>
+                <option value="ground">Ground only</option>
+              </select>
+            </label>
+            <label>From
+              <select id="sun-start-time">
+                <option value="360">06:00</option><option value="420">07:00</option>
+                <option value="480" selected>08:00</option><option value="540">09:00</option>
+                <option value="600">10:00</option><option value="660">11:00</option>
+              </select>
+            </label>
+            <label>To
+              <select id="sun-end-time">
+                <option value="720">12:00</option><option value="780">13:00</option>
+                <option value="840">14:00</option><option value="900">15:00</option><option value="960">16:00</option>
+                <option value="1020">17:00</option><option value="1080" selected>18:00</option>
+                <option value="1140">19:00</option><option value="1200">20:00</option>
+              </select>
+            </label>
+            <label>Time step
+              <select id="sun-step-time">
+                <option value="15">15 min</option><option value="30">30 min</option>
+                <option value="60" selected>60 min</option>
+              </select>
+            </label>
+            <label>Building grid
+              <select id="sun-surface-resolution">
+                <option value="10" selected>10 m · faster</option>
+                <option value="5">5 m · smoother</option>
+              </select>
+            </label>
+            <label>Analysis area
+              <select id="sun-domain-size">
+                <option value="300">300 m · fastest</option>
+                <option value="500" selected>500 m · local</option>
+                <option value="750">750 m · wider</option>
+              </select>
+            </label>
+            <button id="sun-move-domain" class="secondary sun-wide-control" type="button" aria-pressed="false">Move / resize analysis area</button>
+          </div>
+        </div>
         <button id="sun-generate" type="button">Generate shadows</button>
         <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
-        <p class="sun-note">GPU shadow map · exact building geometry · LiDAR terrain</p>
+        <div id="sun-hours-legend" class="sun-hours-legend" hidden>
+          <div class="sun-energy-gradient"></div>
+          <div class="heat-legend-labels"><span id="sun-hours-min">Least sun</span><span id="sun-hours-max">Most sun</span></div>
+        </div>
+        <details class="sun-advanced"><summary>Method &amp; limitations</summary><p>Binary clear-sky 3D rays are cast from ground zones and roof/façade cells inside the selected area toward each sampled sun position. All mapped buildings and canopies remain shadow blockers. Roof results use simplified planes and do not include diffuse or reflected light.</p></details>
+        <p class="sun-note">Planning-grade solar geometry · mapped buildings and canopies</p>
       </section>
       <section id="menu-wind" class="wind-panel menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
-        <div class="wind-heading"><span>Wind explorer <b class="wind-mode-badge">PREVIEW</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
-        <label>Direction
-          <select id="wind-direction">
-            <option value="135">SE · 135°</option>
-            <option value="150">Cape Doctor · 150°</option>
-            <option value="0">N · 0°</option>
-            <option value="45">NE · 45°</option>
-            <option value="90">E · 90°</option>
-            <option value="180">S · 180°</option>
-            <option value="225">SW · 225°</option>
-            <option value="270">W · 270°</option>
-            <option value="315">NW · 315°</option>
-          </select>
-        </label>
-        <label>Season
-          <select id="wind-season">
-            <option value="annual">Annual</option>
-            <option value="summer">Summer</option>
-            <option value="autumn">Autumn</option>
-            <option value="winter">Winter</option>
-            <option value="spring">Spring</option>
-          </select>
-        </label>
-        <label>Atmospheric stability
-          <select id="wind-stability">
-            <option value="unstable">Unstable / convective</option>
-            <option value="neutral" selected>Neutral urban</option>
-            <option value="stable">Stable</option>
-          </select>
-        </label>
-        <label>Result height
-          <select id="wind-height">
-            <option value="1.5">1.5 m · seated/head</option>
-            <option value="2" selected>2.0 m · pedestrian</option>
-            <option value="4">4.0 m · elevated</option>
-          </select>
-        </label>
-        <label>Exceedance threshold
-          <select id="wind-exceedance-threshold">
-            <option value="4">4 m/s · sitting</option>
-            <option value="6" selected>6 m/s · standing</option>
-            <option value="8">8 m/s · strolling</option>
-            <option value="10">10 m/s · walking</option>
-          </select>
-        </label>
-        <label>Forcing source
-          <select id="wind-forcing-mode">
-            <option value="era5_climatology" selected>ERA5 Cape Town profile</option>
-            <option value="manual">Manual mean speed</option>
-          </select>
-        </label>
-        <label>Mean forcing speed <span id="wind-speed-value">36 km/h</span>
-          <input id="wind-speed" type="range" min="0" max="180" step="1" value="36">
-        </label>
-        <label>Domain <span id="wind-size-value">250</span> m
-          <input id="wind-size" type="range" min="100" max="1200" step="25" value="250">
-        </label>
-        <div class="wind-actions">
-          <button id="wind-move-domain" class="secondary" type="button" aria-pressed="false">Move / resize domain</button>
-          <button id="wind-simulate" type="button">Simulate wind</button>
+        <div class="wind-heading"><span>Wind <b class="wind-mode-badge">SCREENING</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
+        <div class="wind-lenses" role="tablist" aria-label="Wind analysis lens">
+          <button class="active" type="button" data-wind-lens="direction" role="tab" aria-selected="true">Direction</button>
+          <button type="button" data-wind-lens="comfort" role="tab" aria-selected="false">Comfort</button>
+          <button class="active" type="button" data-wind-lens="surface" aria-pressed="true">Surface</button>
+          <button class="active" type="button" data-wind-lens="flowlines" aria-pressed="true">Flowlines</button>
         </div>
+
+        <div class="wind-control-section">
+          <b>Geometry</b>
+          <button id="wind-move-domain" class="secondary wind-domain-button" type="button" aria-pressed="false">Domain · <span id="wind-size-value">250</span> × <span id="wind-size-value-copy">250</span> m</button>
+          <div class="wind-control-grid">
+            <label>Result height
+              <select id="wind-height">
+                <option value="1.5">1.5 m · seated/head</option>
+                <option value="2" selected>2.0 m · pedestrian</option>
+                <option value="4">4.0 m · elevated</option>
+              </select>
+            </label>
+            <label>Grid
+              <select id="wind-resolution">
+                <option value="2">2 m · detailed</option>
+                <option value="3">3 m · balanced</option>
+                <option value="5" selected>5 m · preview</option>
+                <option value="10">10 m · fast</option>
+              </select>
+            </label>
+          </div>
+          <label class="wind-size-control">Domain size
+            <input id="wind-size" type="range" min="100" max="1200" step="25" value="250">
+          </label>
+        </div>
+
+        <div class="wind-control-section" data-wind-direction-controls>
+          <b>Direction study</b>
+          <div class="wind-compass-presets" aria-label="Wind direction presets">
+            <button type="button" data-wind-direction="0">N</button><button type="button" data-wind-direction="45">NE</button>
+            <button type="button" data-wind-direction="90">E</button><button class="active" type="button" data-wind-direction="135">SE</button>
+            <button type="button" data-wind-direction="180">S</button><button type="button" data-wind-direction="225">SW</button>
+            <button type="button" data-wind-direction="270">W</button><button type="button" data-wind-direction="315">NW</button>
+          </div>
+          <label>Direction
+            <select id="wind-direction">
+              <option value="0">N · 0°</option><option value="22.5">NNE · 22.5°</option><option value="45">NE · 45°</option><option value="67.5">ENE · 67.5°</option>
+              <option value="90">E · 90°</option><option value="112.5">ESE · 112.5°</option><option value="135" selected>SE · 135°</option><option value="150">Cape Doctor · 150°</option>
+              <option value="157.5">SSE · 157.5°</option><option value="180">S · 180°</option><option value="202.5">SSW · 202.5°</option><option value="225">SW · 225°</option>
+              <option value="247.5">WSW · 247.5°</option><option value="270">W · 270°</option><option value="292.5">WNW · 292.5°</option><option value="315">NW · 315°</option><option value="337.5">NNW · 337.5°</option>
+            </select>
+          </label>
+          <label>Forcing source
+            <select id="wind-forcing-mode">
+              <option value="era5_climatology" selected>ERA5 Cape Town profile</option>
+              <option value="manual">Manual mean speed</option>
+            </select>
+          </label>
+          <label>Mean forcing speed <span id="wind-speed-value">36 km/h</span>
+            <input id="wind-speed" type="range" min="0" max="180" step="1" value="36">
+          </label>
+        </div>
+
+        <div class="wind-control-section">
+          <b>Date &amp; climate</b>
+          <label>Period
+            <select id="wind-season">
+              <option value="annual">Annual</option><option value="summer">Summer</option><option value="autumn">Autumn</option>
+              <option value="winter">Winter</option><option value="spring">Spring</option>
+            </select>
+          </label>
+          <label>Atmospheric stability
+            <select id="wind-stability">
+              <option value="unstable">Unstable / convective</option><option value="neutral" selected>Neutral urban</option><option value="stable">Stable</option>
+            </select>
+          </label>
+          <label>Comfort activity
+            <select id="wind-exceedance-threshold">
+              <option value="2.5">2.5 m/s · long sitting</option><option value="4">4 m/s · short sitting</option>
+              <option value="6" selected>6 m/s · standing</option><option value="8">8 m/s · strolling</option><option value="10">10 m/s · business walking</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="wind-control-section">
+          <b>Appearance</b>
+          <div class="wind-appearance-row"><span>Surface</span><label class="wind-inline-switch"><input id="wind-surface-visible" type="checkbox" checked> Visible</label></div>
+          <div class="wind-appearance-row"><span>Flowlines</span><label class="wind-inline-switch"><input id="wind-flowlines-visible" type="checkbox" checked> Visible</label></div>
+          <label>Flowline count
+            <select id="wind-flowline-count"><option value="500">500</option><option value="800" selected>800</option><option value="1200">1,200</option></select>
+          </label>
+          <label>Animation speed <span id="wind-animation-speed-value">100%</span>
+            <input id="wind-animation-speed" type="range" min="25" max="200" step="25" value="100">
+          </label>
+        </div>
+
+        <button id="wind-simulate" class="wind-run-button" type="button">Run direction study</button>
         <p id="wind-status" class="wind-status">Choose Move / resize domain to reposition the orange box.</p>
         <div id="wind-results" class="wind-results" hidden></div>
         <button id="wind-report" class="wind-report-button secondary" type="button" disabled>Generate detailed wind report</button>
         <div class="wind-legend-scale" aria-label="Wind speed colour scale">
           <div class="wind-gradient"></div>
-          <div class="wind-legend-labels"><span><b id="wind-legend-min">0.0</b> m/s · low</span><span><b id="wind-legend-max">—</b> m/s · high</span></div>
+          <div class="wind-legend-labels"><span id="wind-legend-low"><b id="wind-legend-min">0.0</b> m/s · low</span><span id="wind-legend-high"><b id="wind-legend-max">—</b> m/s · high</span></div>
         </div>
-        <p class="panel-note">ERA5 frequencies are provisional: the attached archive covers 35.4% of possible hours. Validated mode remains locked until independent CFD and measurement benchmarks are installed.</p>
+        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction mode is a terrain/building-aware mass-conserving proxy, not transient CFD. Comfort mode combines 16 direction fields with ERA5 sector frequencies and Weibull exceedance. The archive covers 35.4% of possible hours, so comfort is provisional and not suitable for certification.</p></details>
       </section>
       <section id="menu-flood" class="flood-panel menu-section" data-menu-panel="flood" role="tabpanel" aria-label="Surface flood simulation controls" hidden>
         <div class="flood-heading"><span>Surface flooding</span><label class="flood-switch"><input id="flood-toggle" type="checkbox"> Show</label></div>
@@ -442,6 +504,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-  <script type="module" src="app.js?v=webgl-56"></script>
+    <script type="module" src="app.js?v=webgl-71"></script>
 </body>
 </html>
