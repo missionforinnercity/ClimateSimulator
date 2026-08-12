@@ -702,6 +702,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   background: #3b321d;
 }
 .heat-context p { margin: 6px 0 0; color: #ddd2b2; line-height: 1.45; }
+.heat-control-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, .75fr); gap: 6px; }
 .heat-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .heat-summary span {
   padding: 7px;
@@ -713,6 +714,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .heat-summary span:last-child { grid-column: 1 / -1; }
 .heat-summary b { display: block; margin-bottom: 2px; color: #ffb16f; font-size: 13px; }
+.heat-summary i { font-style: normal; }
 .heat-legend-help { margin: 0; color: #bbb; font-size: 10px; line-height: 1.45; }
 .heat-legend-help b { color: #f1c09b; }
 .heat-planning-card, .section-response {
@@ -724,6 +726,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   line-height: 1.45;
 }
 .heat-planning-card h3 { margin: 0 0 6px; color: #b8e0c5; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.heat-workflow-card { display: grid; gap: 7px; }
+.method-note { margin: 0; color: #aebfb2; font-size: 9px; }
+.heat-checklist { display: grid; gap: 4px; padding: 8px; border-left: 3px solid #d49b45; background: #332f25; color: #cbc5b5; line-height: 1.45; }
+.heat-checklist b { color: #ead7ae; }
 .heat-planning-card ul { margin: 0; padding-left: 17px; }
 .heat-planning-card li + li { margin-top: 5px; }
 .heat-planning-card b, .section-response b { color: #d7eadc; }

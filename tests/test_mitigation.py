@@ -71,6 +71,25 @@ def test_invalid_intervention_polygon_is_rejected(monkeypatch):
         raise AssertionError("non-polygon intervention should fail")
 
 
+def test_self_intersecting_freehand_polygon_is_repaired(monkeypatch):
+    monkeypatch.setattr(mitigation, "_reference_layers", reference_layers)
+    result = mitigation.mitigation_preview({
+        "interventions": [{
+            "method": "constructed_shade",
+            "geometry": {"type": "Polygon", "coordinates": [[[0, 0], [10, 10], [0, 10], [10, 0], [0, 0]]]},
+        }],
+        "sun_date": "2026-01-15",
+        "sun_minutes": 720,
+    })
+    assert result["summary"]["treated_area_m2"] > 0
+
+
+def test_cool_roof_is_clipped_to_building_roof(monkeypatch):
+    result = preview("cool_roof", monkeypatch)
+    assert result["interventions"][0]["treated_area_m2"] == 36
+    assert result["zones"][0]["estimates"]["central"]["pedestrian_reduction_c"] == 0
+
+
 def test_permeable_pavement_reports_conceptual_runoff_capture(monkeypatch):
     result = preview("permeable_pavement", monkeypatch)
     # The eligible 100 m² drawing excludes the 36 m² building footprint.

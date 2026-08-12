@@ -251,6 +251,8 @@ export async function startScene(canvas, status) {
   };
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
+  const heatDate = document.querySelector('#heat-date');
+  const heatTime = document.querySelector('#heat-time');
   const heatStatus = document.querySelector('#heat-status');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
@@ -258,6 +260,8 @@ export async function startScene(canvas, status) {
   const heatAverage = document.querySelector('#heat-average');
   const heatPriorityArea = document.querySelector('#heat-priority-area');
   const heatMaximum = document.querySelector('#heat-maximum');
+  const heatAverageLabel = document.querySelector('#heat-average-label');
+  const heatMaximumLabel = document.querySelector('#heat-maximum-label');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
   const sunTime = document.querySelector('#sun-time');
@@ -275,7 +279,7 @@ export async function startScene(canvas, status) {
   const mitigationResults = document.querySelector('#mitigation-results');
   const heatState = {
     enabled: Boolean(heatToggle?.checked),
-    metric: heatMetric?.value || 'heat_model_lst_c',
+    metric: heatMetric?.value || 'pedestrian_priority_score',
     data: null,
     baselineData: null,
   };
@@ -303,8 +307,9 @@ export async function startScene(canvas, status) {
       visibility.terrain = false;
       visibility.grass = false;
       visibility.railways = false;
-      visibility.paths = false;
-      visibility.roads = false;
+      // Retain route context for pedestrian intervention planning.
+      visibility.paths = true;
+      visibility.roads = true;
       visibility.trees = true;
       visibility.buildings = true;
       windState.enabled = false;
@@ -723,10 +728,16 @@ export async function startScene(canvas, status) {
     return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
   }
 
+  function heatHeightAt(x, z) {
+    if (heatState.metric !== 'rooftop_temperature_c') return terrainHeightAt(x, z) + 0.3;
+    const building = containingBuilding(x, z);
+    return building ? building.ground + building.height + 0.8 : terrainHeightAt(x, z) + 0.3;
+  }
+
   function drawHeatGeometry(geometry, project, value, minimum, maximum) {
     const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.type === 'MultiPolygon' ? geometry.coordinates : [];
     for (const polygon of polygons) {
-      const rings = polygon.map(ring => ring.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.3, z])));
+      const rings = polygon.map(ring => ring.map(([x, z]) => project([x, heatHeightAt(x, z), z])));
       if (!rings.length || rings[0].some(point => !point)) continue;
       context.beginPath();
       for (const ring of rings) {
@@ -749,7 +760,7 @@ export async function startScene(canvas, status) {
     const [left, bottom, right, top] = manifest.bounds;
     const boundary = [[left, terrainHeightAt(left, -top) + 0.25, -top], [right, terrainHeightAt(right, -top) + 0.25, -top], [right, terrainHeightAt(right, -bottom) + 0.25, -bottom], [left, terrainHeightAt(left, -bottom) + 0.25, -bottom]];
     const clipped = projectPolygon(boundary);
-    if (path(clipped)) {
+    if (heatState.metric !== 'rooftop_temperature_c' && path(clipped)) {
       context.clip();
     }
     const paths = Array.from({ length: 64 }, () => new Path2D());
@@ -763,7 +774,7 @@ export async function startScene(canvas, status) {
         : feature.geometry.type === 'MultiPolygon' ? feature.geometry.coordinates : [];
       for (const polygon of polygons) {
         for (const ring of polygon) {
-          const points = ring.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.3, z]));
+          const points = ring.map(([x, z]) => project([x, heatHeightAt(x, z), z]));
           if (points.some(point => !point)) continue;
           pathValue.moveTo(points[0][0], points[0][1]);
           for (let index = 1; index < points.length; index += 1) pathValue.lineTo(points[index][0], points[index][1]);
@@ -785,32 +796,45 @@ export async function startScene(canvas, status) {
     heatState.metric = metric;
     heatStatus.textContent = 'Loading heat zones…';
     try {
-      const response = await fetch(`${windApi}/heat/zones?metric=${encodeURIComponent(metric)}`);
+      const params = new URLSearchParams({
+        metric,
+        date: heatDate?.value || '2026-01-15',
+        minutes: heatTime?.value || '720',
+      });
+      const response = await fetch(`${windApi}/heat/zones?${params}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       heatState.data = await response.json();
       heatState.baselineData = heatState.data;
       const summary = heatState.data.summary;
-      const summaryReady = summary?.area_weighted_mean_c != null && summary?.maximum_c != null;
+      const metadata = heatState.data.metric_metadata || {};
+      const decimals = Number(metadata.decimals ?? 1);
+      const formatValue = value => `${Number(value).toFixed(decimals)}${metadata.unit || ''}`;
+      const summaryReady = summary?.area_weighted_mean != null && summary?.maximum != null;
       if (heatSummary) heatSummary.hidden = !summaryReady;
       if (summaryReady) {
-        heatAverage.textContent = `${Number(summary.area_weighted_mean_c).toFixed(1)}°C`;
-        heatMaximum.textContent = `${Number(summary.maximum_c).toFixed(1)}°C`;
+        heatAverage.textContent = formatValue(summary.area_weighted_mean);
+        heatMaximum.textContent = formatValue(summary.maximum);
+        if (heatAverageLabel) heatAverageLabel.textContent = `Average ${heatState.data.metric_label.toLowerCase()}`;
+        if (heatMaximumLabel) heatMaximumLabel.textContent = `Highest ${heatState.data.metric_label.toLowerCase()}`;
         const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
         heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${Number(summary.hotspot_area_pct || 0).toFixed(0)}%`;
       }
       const range = heatState.data.color_range || heatState.data.range;
       const scale = heatState.data.color_scale || {};
       heatLegendMin.textContent = range
-        ? `${scale.bottom_band_label || 'Bottom 10%'} ≤ ${Number(range.min).toFixed(1)}°C`
+        ? `${scale.bottom_band_label || 'Bottom 10%'} ≤ ${formatValue(range.min)}`
         : 'Bottom 10%';
       heatLegendMax.textContent = range
-        ? `${scale.top_band_label || 'Top 10%'} ≥ ${Number(range.max).toFixed(1)}°C`
+        ? `${scale.top_band_label || 'Top 10%'} ≥ ${formatValue(range.max)}`
         : 'Top 10%';
       const rawWindow = heatState.data.window?.label;
       const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26 baseline' : rawWindow || 'current product';
+      const scenarioMinutes = Number(heatState.data.scenario?.minutes ?? 720);
+      const scenarioTime = `${String(Math.floor(scenarioMinutes / 60)).padStart(2, '0')}:${String(scenarioMinutes % 60).padStart(2, '0')}`;
+      const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(heatState.data.metric) ? ` · ${scenarioTime}` : '';
       heatStatus.textContent = heatState.data.count
-        ? `${heatState.data.count} heat zones · ${window} · percentile colour scale`
-        : 'No surface-temperature values in this product.';
+        ? `${heatState.data.metric_label}${timeContext} · ${heatState.data.count} zones · ${window}`
+        : 'No values in this product.';
     } catch (error) {
       heatState.data = null;
       if (heatSummary) heatSummary.hidden = true;
@@ -1663,7 +1687,7 @@ export async function startScene(canvas, status) {
       if (clipped) context.restore();
       // Render the continuous scalar result on the ground before vertical
       // geometry so buildings and trees correctly occlude the heat layer.
-      drawHeatmap(project, projectPolygon);
+      if (heatState.metric !== 'rooftop_temperature_c') drawHeatmap(project, projectPolygon);
       drawWindHeatmap(project, projectPolygon);
       const visibleBuildings = [];
       const visibleTrees = [];
@@ -1688,6 +1712,9 @@ export async function startScene(canvas, status) {
         else drawBuildingsByDepth(visibleBuildings, project, visibleTrees);
       }
       drawCanopyFootprints(project, forward);
+      // Rooftop heat is painted last so the thermal surface remains visible
+      // above the building roofs instead of being hidden by the massing pass.
+      if (heatState.metric === 'rooftop_temperature_c') drawHeatmap(project, projectPolygon);
     } finally {
       context = mainContext;
     }
@@ -1764,9 +1791,10 @@ export async function startScene(canvas, status) {
   }
 
   const mitigationMethods = {
-    added_canopy: { label: 'Added canopy', color: '#398a55', parameter: 'maturity_pct', parameterLabel: 'maturity %', defaultValue: 100, min: 20, max: 100, step: 5, note: 'Tree canopy casts time-dependent shade; maturity scales its estimated benefit.' },
-    constructed_shade: { label: 'Constructed shade', color: '#d49b45', parameter: 'height_m', parameterLabel: 'height m', defaultValue: 3, min: 1.5, max: 12, step: 0.5, note: 'A canopy or shelter casts shade according to its height, date and time.' },
+    added_canopy: { label: 'Trees & vegetation', color: '#398a55', parameter: 'maturity_pct', parameterLabel: 'maturity %', defaultValue: 100, min: 20, max: 100, step: 5, note: 'Tree canopy casts time-dependent shade; maturity scales its estimated benefit.' },
+    constructed_shade: { label: 'Pedestrian shade structure', color: '#d49b45', parameter: 'height_m', parameterLabel: 'height m', defaultValue: 3, min: 1.5, max: 12, step: 0.5, note: 'A canopy or shelter casts shade according to its height, date and time.' },
     cool_pavement: { label: 'Cool pavement', color: '#86b9cf', parameter: 'target_albedo', parameterLabel: 'target albedo', defaultValue: 0.35, min: 0.25, max: 0.65, step: 0.05, note: 'A more reflective ground finish lowers treated surface temperature.' },
+    cool_roof: { label: 'Cool roof', color: '#e6e2cf', parameter: 'target_albedo', parameterLabel: 'target albedo', defaultValue: 0.65, min: 0.45, max: 0.85, step: 0.05, note: 'Reflective, high-emittance roofing lowers roof heat; verify material, glare, waterproofing and roof condition.' },
     green_roof: { label: 'Green roof', color: '#6ea64b', parameter: 'substrate_depth_cm', parameterLabel: 'soil depth cm', defaultValue: 15, min: 6, max: 60, step: 1, note: 'Only the portion painted over building footprints is eligible; pedestrian relief is not claimed.' },
     canopy_protection: { label: 'Protect canopy', color: '#1e6b42', parameter: 'maturity_pct', parameterLabel: 'retained %', defaultValue: 100, min: 20, max: 100, step: 5, note: 'Only existing mapped canopy is retained and counted.' },
     permeable_pavement: { label: 'Permeable pavement', color: '#5b91a0', parameter: 'runoff_capture_mm', parameterLabel: 'storm capture mm', defaultValue: 25, min: 5, max: 100, step: 5, note: 'Adds modest cooling and records a conceptual stormwater-capture depth.' },
@@ -1857,15 +1885,24 @@ export async function startScene(canvas, status) {
     try {
       const response = await fetch(`${windApi}/mitigations/preview`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ interventions, sun_date: shadowState.date, sun_minutes: shadowState.minutes, baseline_metric: 'heat_model_lst_c' }),
+        body: JSON.stringify({
+          interventions,
+          sun_date: heatDate?.value || shadowState.date,
+          sun_minutes: Number(heatTime?.value ?? shadowState.minutes),
+          baseline_metric: 'heat_model_lst_c',
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
       mitigationState.result = payload;
+      const temperatures = payload.zones.map(zone => zone.baseline_surface_temperature_c).filter(Number.isFinite);
       mitigationState.afterData = {
         ...(heatState.baselineData || {}),
         features: payload.zones.map(zone => ({ geometry: zone.geometry, value: zone.estimates.central.surface_temperature_c })),
         count: payload.zones.length,
+        color_range: temperatures.length ? { min: Math.min(...temperatures), max: Math.max(...temperatures) } : { min: 25, max: 45 },
+        metric_label: 'After-intervention surface temperature',
+        metric_metadata: { unit: '°C', decimals: 1 },
       };
       const central = payload.summary.estimates.central;
       mitigationResults.hidden = false;
@@ -1881,6 +1918,9 @@ export async function startScene(canvas, status) {
       mitigationStatus.textContent = payload.warnings.length ? payload.warnings.join(' ') : `${payload.summary.affected_zone_count} affected heat zones · ${payload.version}`;
       mitigationCompare.value = 'after';
       heatState.data = mitigationState.afterData;
+      if (heatSummary) heatSummary.hidden = true;
+      heatLegendMin.textContent = `Cooler ≤ ${heatState.data.color_range.min.toFixed(1)}°C`;
+      heatLegendMax.textContent = `Hotter ≥ ${heatState.data.color_range.max.toFixed(1)}°C`;
       heatToggle.checked = true;
       setHeatMode(true);
     } catch (error) {
@@ -2120,7 +2160,22 @@ export async function startScene(canvas, status) {
   heatToggle?.addEventListener('change', event => {
     setHeatMode(event.target.checked);
   });
-  heatMetric?.addEventListener('change', event => loadHeat(event.target.value));
+  heatMetric?.addEventListener('change', event => {
+    invalidateMitigationResult();
+    loadHeat(event.target.value);
+  });
+  heatDate?.addEventListener('change', event => {
+    shadowState.date = event.target.value || shadowState.date;
+    invalidateMitigationResult();
+    mitigationStatus.textContent = 'Design date changed · run the comparison again.';
+    loadHeat(heatMetric?.value);
+  });
+  heatTime?.addEventListener('change', event => {
+    shadowState.minutes = Number(event.target.value);
+    invalidateMitigationResult();
+    mitigationStatus.textContent = 'Design time changed · run the comparison again.';
+    loadHeat(heatMetric?.value);
+  });
   sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
   sunDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
@@ -2176,7 +2231,7 @@ export async function startScene(canvas, status) {
     heatState.data = heatState.baselineData;
     mitigationStatus.textContent = 'Choose a method, then drag on the terrain to paint its area.';
     canvas.style.cursor = 'grab';
-    requestRender();
+    loadHeat(heatMetric?.value);
   });
   mitigationCompare?.addEventListener('change', () => {
     if (mitigationCompare.value === 'after' && !mitigationState.afterData) {
@@ -2184,6 +2239,12 @@ export async function startScene(canvas, status) {
       mitigationStatus.textContent = 'Run Compare impact before switching to the after map.';
     }
     heatState.data = mitigationCompare.value === 'after' ? mitigationState.afterData : heatState.baselineData;
+    if (mitigationCompare.value === 'before') loadHeat(heatMetric?.value);
+    else if (heatState.data) {
+      if (heatSummary) heatSummary.hidden = true;
+      heatLegendMin.textContent = `Cooler ≤ ${heatState.data.color_range.min.toFixed(1)}°C`;
+      heatLegendMax.textContent = `Hotter ≥ ${heatState.data.color_range.max.toFixed(1)}°C`;
+    }
     requestRender();
   });
   addEventListener('climate-streetview-mode', event => {

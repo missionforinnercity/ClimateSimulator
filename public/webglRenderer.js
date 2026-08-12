@@ -1397,6 +1397,9 @@ export async function startWebGLScene(canvas, status) {
   scene.add(heatGroup, windGroup, floodGroup, mitigationGroup, mitigationDrawingGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
+  const heatMetric = document.querySelector('#heat-metric');
+  const heatDate = document.querySelector('#heat-date');
+  const heatTime = document.querySelector('#heat-time');
   const heatStatus = document.querySelector('#heat-status');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
@@ -1404,6 +1407,8 @@ export async function startWebGLScene(canvas, status) {
   const heatAverage = document.querySelector('#heat-average');
   const heatPriorityArea = document.querySelector('#heat-priority-area');
   const heatMaximum = document.querySelector('#heat-maximum');
+  const heatAverageLabel = document.querySelector('#heat-average-label');
+  const heatMaximumLabel = document.querySelector('#heat-maximum-label');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
   const sunTime = document.querySelector('#sun-time');
@@ -1634,7 +1639,7 @@ export async function startWebGLScene(canvas, status) {
 
   // Build a coarse spatial index once. Particle collision checks then inspect
   // only nearby footprints instead of all 2,322 buildings every frame.
-  for (const [, , ring] of data.buildings) {
+  for (const [ground, height, ring, , , wallHeight = height] of data.buildings) {
     if (!ring?.length) continue;
     const minX = Math.min(...ring.map(point => point[0]));
     const maxX = Math.max(...ring.map(point => point[0]));
@@ -1643,7 +1648,7 @@ export async function startWebGLScene(canvas, status) {
     const centroid = ring.reduce((sum, [x, z]) => [sum[0] + x, sum[1] + z], [0, 0]);
     centroid[0] /= ring.length;
     centroid[1] /= ring.length;
-    const building = { ring, minX, maxX, minZ, maxZ, centroid };
+    const building = { ring, minX, maxX, minZ, maxZ, centroid, roofY: ground + Math.max(height, wallHeight) };
     const minColumn = Math.floor(minX / windBuildingCellSize);
     const maxColumn = Math.floor(maxX / windBuildingCellSize);
     const minRow = Math.floor(minZ / windBuildingCellSize);
@@ -1666,6 +1671,18 @@ export async function startWebGLScene(canvas, status) {
       && z >= building.minZ && z <= building.maxZ
       && pointInWindRing(x, z, building.ring)
     ));
+  }
+
+  function rooftopHeightAt(x, z) {
+    const candidates = windBuildingGrid.get(windCellKey(
+      Math.floor(x / windBuildingCellSize), Math.floor(z / windBuildingCellSize),
+    )) || [];
+    const building = candidates.find(candidate => (
+      x >= candidate.minX && x <= candidate.maxX
+      && z >= candidate.minZ && z <= candidate.maxZ
+      && pointInWindRing(x, z, candidate.ring)
+    ));
+    return building ? building.roofY + 0.8 : terrainHeightAt(x, z) + 0.48;
   }
 
   function nearestWindBoundary(x, z) {
@@ -1989,7 +2006,10 @@ export async function startWebGLScene(canvas, status) {
         for (const face of THREE.ShapeUtils.triangulateShape(contour, holes)) {
           for (const index of face) {
             const point = vertices[index];
-            positions.push(point.x, terrainHeightAt(point.x, point.y) + 0.48, point.y);
+            const y = payload.metric === 'rooftop_temperature_c'
+              ? rooftopHeightAt(point.x, point.y)
+              : terrainHeightAt(point.x, point.y) + 0.48;
+            positions.push(point.x, y, point.y);
             colors.push(color.r, color.g, color.b);
           }
         }
@@ -2008,39 +2028,55 @@ export async function startWebGLScene(canvas, status) {
     heatGroup.add(heatMesh);
   }
 
-  function renderHeatSummary(summary) {
+  function formatHeatValue(value, metadata = {}) {
+    if (value == null) return '—';
+    const decimals = Number(metadata.decimals ?? 1);
+    return `${Number(value).toFixed(decimals)}${metadata.unit || ''}`;
+  }
+
+  function renderHeatSummary(summary, metadata = {}, metricLabel = 'Heat') {
     if (!heatSummary) return;
-    const ready = summary?.area_weighted_mean_c != null && summary?.maximum_c != null;
+    const ready = summary?.area_weighted_mean != null && summary?.maximum != null;
     heatSummary.hidden = !ready;
     if (!ready) return;
-    heatAverage.textContent = `${Number(summary.area_weighted_mean_c).toFixed(1)}°C`;
-    heatMaximum.textContent = `${Number(summary.maximum_c).toFixed(1)}°C`;
+    heatAverage.textContent = formatHeatValue(summary.area_weighted_mean, metadata);
+    heatMaximum.textContent = formatHeatValue(summary.maximum, metadata);
+    if (heatAverageLabel) heatAverageLabel.textContent = `Average ${metricLabel.toLowerCase()}`;
+    if (heatMaximumLabel) heatMaximumLabel.textContent = `Highest ${metricLabel.toLowerCase()}`;
     const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
     const hotspotPercent = Number(summary.hotspot_area_pct || 0);
     heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${hotspotPercent.toFixed(0)}%`;
   }
 
-  async function loadHeat() {
+  async function loadHeat(metric = heatMetric?.value || 'pedestrian_priority_score') {
     if (!heatStatus) return;
     heatStatus.textContent = 'Loading heat zones…';
     try {
-      const response = await fetch(`${windApi}/heat/zones?metric=heat_model_lst_c`);
+      const params = new URLSearchParams({
+        metric,
+        date: heatDate?.value || '2026-01-15',
+        minutes: heatTime?.value || '720',
+      });
+      const response = await fetch(`${windApi}/heat/zones?${params}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       buildHeatMesh(payload);
-      renderHeatSummary(payload.summary);
+      renderHeatSummary(payload.summary, payload.metric_metadata, payload.metric_label);
       const range = payload.color_range || payload.range;
       heatRange = range;
       const scale = payload.color_scale || {};
       heatLegendMin.textContent = range
-        ? `${scale.bottom_band_label || 'Bottom 10%'} ≤ ${Number(range.min).toFixed(1)}°C`
+        ? `${scale.bottom_band_label || 'Bottom 10%'} ≤ ${formatHeatValue(range.min, payload.metric_metadata)}`
         : 'Bottom 10%';
       heatLegendMax.textContent = range
-        ? `${scale.top_band_label || 'Top 10%'} ≥ ${Number(range.max).toFixed(1)}°C`
+        ? `${scale.top_band_label || 'Top 10%'} ≥ ${formatHeatValue(range.max, payload.metric_metadata)}`
         : 'Top 10%';
       const rawWindow = payload.window?.label;
       const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26 baseline' : rawWindow || 'Summer 2025–26 baseline';
-      heatStatus.textContent = `${payload.count || payload.features?.length || 0} heat zones · ${window}`;
+      const scenarioMinutes = Number(payload.scenario?.minutes ?? 720);
+      const scenarioTime = `${String(Math.floor(scenarioMinutes / 60)).padStart(2, '0')}:${String(scenarioMinutes % 60).padStart(2, '0')}`;
+      const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(payload.metric) ? ` · ${scenarioTime}` : '';
+      heatStatus.textContent = `${payload.metric_label}${timeContext} · ${payload.count || payload.features?.length || 0} zones · ${window}`;
     } catch (error) {
       renderHeatSummary(null);
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
@@ -2062,8 +2098,10 @@ export async function startWebGLScene(canvas, status) {
       layerGroups.terrain.visible = false;
       layerGroups.grass.visible = false;
       layerGroups.railways.visible = false;
-      layerGroups.paths.visible = false;
-      layerGroups.roads.visible = false;
+      // Keep the walking network faintly legible so priority areas can be
+      // interpreted as routes and crossings, not isolated heat polygons.
+      layerGroups.paths.visible = true;
+      layerGroups.roads.visible = true;
       layerGroups.buildings.visible = true;
       layerGroups.trees.visible = true;
       windState.enabled = false;
@@ -2131,12 +2169,12 @@ export async function startWebGLScene(canvas, status) {
 
   const mitigationMethods = {
     added_canopy: {
-      label: 'Added canopy', color: 0x398a55, parameter: 'maturity_pct',
+      label: 'Trees & vegetation', color: 0x398a55, parameter: 'maturity_pct',
       parameterLabel: 'maturity %', defaultValue: 100, min: 20, max: 100, step: 5,
       note: 'Tree canopy casts time-dependent shade; maturity scales its estimated benefit.',
     },
     constructed_shade: {
-      label: 'Constructed shade', color: 0xd49b45, parameter: 'height_m',
+      label: 'Pedestrian shade structure', color: 0xd49b45, parameter: 'height_m',
       parameterLabel: 'height m', defaultValue: 3, min: 1.5, max: 12, step: 0.5,
       note: 'A canopy or shelter casts shade according to its height, date and time.',
     },
@@ -2144,6 +2182,11 @@ export async function startWebGLScene(canvas, status) {
       label: 'Cool pavement', color: 0x86b9cf, parameter: 'target_albedo',
       parameterLabel: 'target albedo', defaultValue: 0.35, min: 0.25, max: 0.65, step: 0.05,
       note: 'A more reflective ground finish lowers treated surface temperature.',
+    },
+    cool_roof: {
+      label: 'Cool roof', color: 0xe6e2cf, parameter: 'target_albedo',
+      parameterLabel: 'target albedo', defaultValue: 0.65, min: 0.45, max: 0.85, step: 0.05,
+      note: 'Reflective, high-emittance roofing lowers roof heat; verify material, glare, waterproofing and roof condition.',
     },
     green_roof: {
       label: 'Green roof', color: 0x6ea64b, parameter: 'substrate_depth_cm',
@@ -2334,11 +2377,17 @@ export async function startWebGLScene(canvas, status) {
 
   function buildMitigationResult(payload) {
     mitigationGroup.clear();
-    const range = heatRange || { min: 25, max: 45 };
+    const temperatures = payload.zones.map(zone => zone.baseline_surface_temperature_c).filter(Number.isFinite);
+    const range = temperatures.length
+      ? { min: Math.min(...temperatures), max: Math.max(...temperatures) }
+      : { min: 25, max: 45 };
     const mesh = polygonMesh(payload.zones, zone => zone.estimates.central.surface_temperature_c, range);
     mesh.renderOrder = 5;
     mitigationGroup.add(mesh);
     mitigationState.result = payload;
+    if (heatSummary) heatSummary.hidden = true;
+    heatLegendMin.textContent = `Cooler ≤ ${range.min.toFixed(1)}°C`;
+    heatLegendMax.textContent = `Hotter ≥ ${range.max.toFixed(1)}°C`;
     const central = payload.summary.estimates.central;
     mitigationResults.hidden = false;
     const coBenefits = payload.summary.co_benefits || {};
@@ -2371,8 +2420,8 @@ export async function startWebGLScene(canvas, status) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           interventions: active,
-          sun_date: shadowState.date,
-          sun_minutes: shadowState.minutes,
+          sun_date: heatDate?.value || shadowState.date,
+          sun_minutes: Number(heatTime?.value ?? shadowState.minutes),
           baseline_metric: 'heat_model_lst_c',
         }),
       });
@@ -4663,6 +4712,22 @@ export async function startWebGLScene(canvas, status) {
   }));
 
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
+  heatMetric?.addEventListener('change', event => {
+    invalidateMitigationResult();
+    loadHeat(event.target.value);
+  });
+  heatDate?.addEventListener('change', event => {
+    shadowState.date = event.target.value || shadowState.date;
+    invalidateMitigationResult();
+    mitigationStatus.textContent = 'Design date changed · run the comparison again.';
+    loadHeat(heatMetric?.value);
+  });
+  heatTime?.addEventListener('change', event => {
+    shadowState.minutes = Number(event.target.value);
+    invalidateMitigationResult();
+    mitigationStatus.textContent = 'Design time changed · run the comparison again.';
+    loadHeat(heatMetric?.value);
+  });
   sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
   sunDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
@@ -4856,13 +4921,15 @@ export async function startWebGLScene(canvas, status) {
     mitigationCompare.value = 'before';
     mitigationStatus.textContent = 'Choose a method, then drag on the terrain to paint its area.';
     canvas.style.cursor = '';
-    if (heatToggle?.checked) setHeatMode(true);
+    loadHeat(heatMetric?.value);
   });
   mitigationCompare?.addEventListener('change', () => {
     if (mitigationCompare.value === 'after' && !mitigationState.result) {
       mitigationCompare.value = 'before';
       mitigationStatus.textContent = 'Run Compare impact before switching to the after map.';
     }
+    if (mitigationCompare.value === 'before') loadHeat(heatMetric?.value);
+    else if (mitigationState.result) buildMitigationResult(mitigationState.result);
     if (heatToggle?.checked) setHeatMode(true);
   });
   trafficDuration?.addEventListener('input', () => {

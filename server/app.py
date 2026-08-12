@@ -25,7 +25,7 @@ from .field import (
     query_polygons,
     request_from_payload,
 )
-from .heat import HEAT_METRICS, heat_zones
+from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, heat_zones
 from .flood import dem_control_summary, flood_preview
 from .mitigation import mitigation_preview
 from .location import streetview_location
@@ -114,7 +114,12 @@ def health() -> dict[str, str]:
 
 @app.get("/api/heat/metrics")
 def heat_metrics() -> dict[str, Any]:
-    return {"metrics": [{"key": key, "label": label} for key, label in HEAT_METRICS.items()]}
+    return {
+        "metrics": [
+            {"key": key, "label": label, **HEAT_METRIC_METADATA[key]}
+            for key, label in HEAT_METRICS.items()
+        ]
+    }
 
 
 @app.get("/api/weather/current")
@@ -134,9 +139,9 @@ def location_streetview(x: float, z: float) -> dict[str, Any]:
 
 
 @app.get("/api/heat/zones")
-def heat_preview(metric: str = "heat_model_lst_c") -> dict[str, Any]:
+def heat_preview(metric: str = "heat_model_lst_c", date: str = "2026-01-15", minutes: int = 720) -> dict[str, Any]:
     try:
-        return heat_zones(metric)
+        return heat_zones(metric, date, minutes)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:

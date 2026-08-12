@@ -9,10 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from pyproj import Transformer
-from shapely.geometry import Polygon, box, mapping, shape
+from shapely import make_valid, set_precision
+from shapely.errors import GEOSException
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 
 from .field import LOCAL_CRS, WEB_CRS, load_viewer_config
+from .solar import cast_shadow, sun_position
 
 HEAT_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "scene_footprint_heat_2026_academic_v3_zones.geojson"
 BUILDING_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "BuildingFootprints2D.geojson"
@@ -22,12 +25,12 @@ CANOPY_ASSET_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / 
 ASSUMPTION_VERSION = "planning-estimates-2026-07-v2"
 ASSUMPTIONS = {
     "added_canopy": {
-        "label": "Added mature canopy", "impact_mode": "cast_shade",
+        "label": "Trees and vegetation", "impact_mode": "cast_shade",
         "relief_c": {"low": 2.0, "central": 5.0, "high": 10.0},
         "parameter": {"key": "maturity_pct", "label": "maturity", "unit": "%", "default": 100.0, "min": 20.0, "max": 100.0},
     },
     "constructed_shade": {
-        "label": "Constructed shade", "impact_mode": "cast_shade",
+        "label": "Pedestrian shade structure", "impact_mode": "cast_shade",
         "relief_c": {"low": 3.0, "central": 6.0, "high": 10.0},
         "parameter": {"key": "height_m", "label": "height", "unit": "m", "default": 3.0, "min": 1.5, "max": 12.0},
     },
@@ -35,6 +38,11 @@ ASSUMPTIONS = {
         "label": "Cool pavement", "impact_mode": "treatment",
         "relief_c": {"low": 5.0, "central": 7.0, "high": 15.0},
         "parameter": {"key": "target_albedo", "label": "albedo", "unit": "", "default": 0.35, "min": 0.25, "max": 0.65},
+    },
+    "cool_roof": {
+        "label": "Cool roof", "impact_mode": "roof_only",
+        "relief_c": {"low": 5.0, "central": 10.0, "high": 18.0},
+        "parameter": {"key": "target_albedo", "label": "albedo", "unit": "", "default": 0.65, "min": 0.45, "max": 0.85},
     },
     "green_roof": {
         "label": "Green roof", "impact_mode": "roof_only",
@@ -70,7 +78,7 @@ ASSUMPTIONS = {
 SHADE_METHODS = {"added_canopy", "constructed_shade", "canopy_protection"}
 PEDESTRIAN_FACTOR = {
     "added_canopy": 0.35, "constructed_shade": 0.35, "cool_pavement": 0.10,
-    "green_roof": 0.0, "canopy_protection": 0.35, "permeable_pavement": 0.08,
+    "green_roof": 0.0, "cool_roof": 0.0, "canopy_protection": 0.35, "permeable_pavement": 0.08,
     "rain_garden": 0.20, "depave_plant": 0.25, "water_feature": 0.18,
 }
 
@@ -101,7 +109,8 @@ def _reference_layers() -> dict[str, Any]:
     heat_source = json.loads(HEAT_PATH.read_text(encoding="utf-8"))
     heat = []
     for feature in heat_source.get("features", []):
-        geometry = _localize(feature["geometry"], WEB_CRS).intersection(scene_clip).simplify(1.0, preserve_topology=True)
+        geometry = _intersection(_clean_geometry(_localize(feature["geometry"], WEB_CRS)), _clean_geometry(scene_clip))
+        geometry = _clean_geometry(geometry.simplify(1.0, preserve_topology=True))
         if geometry.is_empty:
             continue
         properties = feature.get("properties") or {}
@@ -113,7 +122,7 @@ def _reference_layers() -> dict[str, Any]:
             "land_type": properties.get("land_type"),
         })
 
-    buildings = [Polygon(record[2]) for record in scene_source.get("buildings", []) if len(record[2]) >= 3]
+    buildings = [_clean_geometry(Polygon(record[2])) for record in scene_source.get("buildings", []) if len(record[2]) >= 3]
 
     canopy_source = json.loads(CANOPY_ASSET_PATH.read_text(encoding="utf-8"))
     canopies = []
@@ -122,12 +131,12 @@ def _reference_layers() -> dict[str, Any]:
         if rings and len(rings[0]) >= 3:
             geometry = Polygon(rings[0], rings[1:])
             if geometry.is_valid and not geometry.is_empty:
-                canopies.append(geometry)
+                canopies.append(_clean_geometry(geometry))
     return {
         "heat": heat,
-        "buildings": unary_union(buildings),
-        "canopies": unary_union(canopies),
-        "scene": scene_clip,
+        "buildings": _clean_geometry(unary_union(buildings)),
+        "canopies": _clean_geometry(unary_union(canopies)),
+        "scene": _clean_geometry(scene_clip),
     }
 
 
@@ -135,45 +144,39 @@ def _polygon(payload: dict[str, Any]) -> Any:
     geometry = shape(payload)
     if geometry.geom_type not in {"Polygon", "MultiPolygon"} or geometry.is_empty:
         raise ValueError("intervention geometry must be a non-empty Polygon or MultiPolygon")
-    if not geometry.is_valid:
-        geometry = geometry.buffer(0)
+    geometry = make_valid(geometry)
+    if geometry.geom_type == "GeometryCollection":
+        polygons = [part for part in geometry.geoms if part.geom_type in {"Polygon", "MultiPolygon"}]
+        geometry = unary_union(polygons) if polygons else Polygon()
+    try:
+        geometry = set_precision(geometry, 0.05, mode="valid_output")
+    except GEOSException:
+        geometry = make_valid(geometry.buffer(0))
     if geometry.is_empty or not geometry.is_valid or geometry.area < 1.0:
         raise ValueError("intervention geometry must be valid and at least 1 m²")
     return geometry
 
 
-def _sun(date_text: str, minutes: int) -> tuple[float, float, float]:
-    """Return altitude and local east/south horizontal unit components."""
-    from datetime import date
-
-    selected = date.fromisoformat(date_text)
-    day_of_year = selected.timetuple().tm_yday
-    hour = minutes / 60.0
-    gamma = 2 * math.pi / 365 * (day_of_year - 1 + (hour - 12) / 24)
-    equation = 229.18 * (
-        0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma)
-        - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma)
-    )
-    declination = (
-        0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma)
-        - 0.006758 * math.cos(2 * gamma) + 0.000907 * math.sin(2 * gamma)
-        - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma)
-    )
-    latitude = math.radians(-33.9249)
-    solar_minutes = minutes + equation + 4 * 18.4241 - 120
-    hour_angle = math.radians(solar_minutes / 4 - 180)
-    altitude = math.asin(max(-1.0, min(1.0, math.sin(latitude) * math.sin(declination) + math.cos(latitude) * math.cos(declination) * math.cos(hour_angle))))
-    azimuth = (math.atan2(math.sin(hour_angle), math.cos(hour_angle) * math.sin(latitude) - math.tan(declination) * math.cos(latitude)) + math.pi) % (2 * math.pi)
-    return altitude, math.sin(azimuth) * math.cos(altitude), -math.cos(azimuth) * math.cos(altitude)
+def _clean_geometry(geometry: Any) -> Any:
+    geometry = make_valid(geometry)
+    try:
+        return set_precision(geometry, 0.05, mode="valid_output")
+    except GEOSException:
+        return make_valid(geometry.buffer(0))
 
 
-def _translate_shadow(geometry: Any, height: float, altitude: float, sun_x: float, sun_z: float) -> Any:
-    if altitude <= 0.008:
-        return Polygon()
-    distance = height / max(math.tan(altitude), 0.03)
-    length = math.hypot(sun_x, sun_z) or 1.0
-    dx, dz = -sun_x / length * distance, -sun_z / length * distance
-    return transform_geometry(lambda x, y, z=None: (x + dx, y + dz), geometry)
+def _intersection(left: Any, right: Any) -> Any:
+    try:
+        return left.intersection(right)
+    except GEOSException:
+        return _clean_geometry(left).intersection(_clean_geometry(right))
+
+
+def _difference(left: Any, right: Any) -> Any:
+    try:
+        return left.difference(right)
+    except GEOSException:
+        return _clean_geometry(left).difference(_clean_geometry(right))
 
 
 def _parameter_value(item: dict[str, Any], method: str) -> float:
@@ -186,7 +189,7 @@ def _effect_scale(item: dict[str, Any], method: str) -> float:
     value = _parameter_value(item, method)
     if method in {"added_canopy", "canopy_protection"}:
         return value / 100.0
-    if method == "cool_pavement":
+    if method in {"cool_pavement", "cool_roof"}:
         return max(0.25, min(1.75, (value - 0.15) / 0.20))
     if method == "green_roof":
         return max(0.5, min(1.4, value / 15.0))
@@ -203,7 +206,7 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
     minutes = int(payload.get("sun_minutes", 720))
     if minutes < 0 or minutes >= 1440:
         raise ValueError("sun_minutes must be between 0 and 1439")
-    altitude, sun_x, sun_z = _sun(date_text, minutes)
+    altitude, sun_x, sun_z = sun_position(date_text, minutes)
     layers = _reference_layers()
     scene_geometry = layers.get("scene")
     if scene_geometry is None:
@@ -217,24 +220,24 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
         geometry = _polygon(item.get("geometry") or {})
         assumption = ASSUMPTIONS[method]
         height = float(item.get("height_m") or (8.0 if method == "added_canopy" else 3.0))
-        treatment = geometry.intersection(scene_geometry)
-        if method == "green_roof":
-            treatment = geometry.intersection(layers["buildings"])
+        treatment = _intersection(geometry, scene_geometry)
+        if method in {"green_roof", "cool_roof"}:
+            treatment = _intersection(geometry, layers["buildings"])
             if treatment.is_empty:
                 warnings.append(f"Intervention {index + 1} does not intersect an eligible building roof.")
         elif method == "canopy_protection":
-            treatment = geometry.intersection(layers["canopies"])
+            treatment = _intersection(geometry, layers["canopies"])
             if treatment.is_empty:
                 warnings.append(f"Intervention {index + 1} does not intersect existing canopy.")
         elif method not in {"constructed_shade", "cool_pavement"}:
-            treatment = treatment.difference(layers["buildings"])
+            treatment = _difference(treatment, layers["buildings"])
             if treatment.is_empty:
                 warnings.append(f"Intervention {index + 1} falls entirely on building footprints.")
         impact = treatment
         if method in SHADE_METHODS:
-            impact = unary_union([treatment, _translate_shadow(treatment, height, altitude, sun_x, sun_z)])
+            impact = cast_shadow(treatment, height, altitude, sun_x, sun_z, swept=True)
         elif assumption["impact_mode"] == "cooling_buffer":
-            impact = treatment.buffer(_parameter_value(item, method), cap_style=1, join_style=1).intersection(scene_geometry)
+            impact = _intersection(treatment.buffer(_parameter_value(item, method), cap_style=1, join_style=1), scene_geometry)
         normalized.append({
             "id": str(item.get("id") or f"intervention-{index + 1}"),
             "method": method,
@@ -257,7 +260,7 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
             continue
         overlaps = []
         for item in normalized:
-            overlap = zone["geometry"].intersection(item["impact"]).area
+            overlap = _intersection(zone["geometry"], item["impact"]).area
             if overlap > 0:
                 overlaps.append((item, min(1.0, overlap / zone_area)))
         if not overlaps:
@@ -278,7 +281,7 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
                 "estimates": unchanged,
             })
             continue
-        affected = unary_union([zone["geometry"].intersection(item["impact"]) for item, _ in overlaps]).area
+        affected = unary_union([_intersection(zone["geometry"], item["impact"]) for item, _ in overlaps]).area
         affected_zone_count += 1
         affected_area += affected
         baseline_weighted += zone["surface_c"] * affected
@@ -389,7 +392,7 @@ def mitigation_preview(payload: dict[str, Any]) -> dict[str, Any]:
         "notes": [
             "Temperature effects are literature-bounded planning estimates, not local measurements.",
             "Shade effects scale with solar altitude and are zero when the sun is below the horizon.",
-            "Green-roof results describe roof surfaces and do not claim a pedestrian-level air-temperature benefit.",
+            "Cool- and green-roof results describe roof surfaces and do not claim a direct pedestrian-level benefit.",
             "Stormwater capture is a geometric concept estimate; it does not model soils, drainage capacity, or overflow routing.",
             "Water-feature cooling does not include potable-water demand or drought restrictions.",
         ],

@@ -191,10 +191,28 @@ calculate the new domain.
 
 The **Urban heat** layer reads the generated local product in
 `data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a
-the simplified vector `heat_model_lst_c` zones on the scene ground. Heat mode
-focuses the view on white buildings, green trees, and the heat surface; the
+set of simplified vector zones on the scene ground. It defaults to a pedestrian
+intervention-priority view anchored to pedestrian heat. Time-specific shade
+from mapped buildings and tree canopies can modify that signal by up to 25%,
+and anonymous nearby-destination density can modify it by up to 15%. When
+`data/raw/POI_innercity.csv` is installed, its coordinates contribute only to
+the aggregated 60 m activity signal; POI records, categories, names, addresses,
+IDs, and locations are not returned by the heat API or drawn by this viewer.
+Users can switch to pedestrian thermal exposure, shade deficit, the original
+`heat_model_lst_c` surface temperature, or a rooftop-temperature view limited
+to zones with at least 50% mapped building cover. Heat mode keeps routes visible alongside
+white buildings, green trees, and the heat surface; the
 database `climate.heat_zones` table remains a fallback when the local product
 is absent.
+
+The panel also exposes the existing mitigation planner. Its concise planning
+set follows the EPA heat-island strategy families—trees and vegetation, cool
+pavements, cool roofs and green roofs—plus pedestrian shade structures for
+immediate route and waiting-area relief. Users choose a design
+date and time, paint one or more interventions, tune their parameters, and
+compare the baseline with a time-dependent surface-temperature estimate and a
+pedestrian-relief summary. These outputs remain literature-bounded screening
+estimates rather than measured or engineering-grade performance claims.
 
 Wind results include stability-dependent pedestrian-height conversion,
 Lawson-LDDC-style screening categories, conditional threshold exceedance,
