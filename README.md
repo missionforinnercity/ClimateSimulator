@@ -94,6 +94,14 @@ overlapping boxes; their paint is deliberately muted and semi-transparent.
 Parking, crossings, and fine street furniture are distance-culled at district
 scale and return automatically when zooming toward street level.
 
+Mapped OpenStreetMap point amenities round out the public realm with
+lightweight procedural fountains, benches, litter bins, bicycle stands,
+bollards, street clocks, and bus-stop markers. Their positions and tags come
+from OSM; dimensions and unmapped orientations remain explicitly inferred
+rather than being presented as surveyed object-specific models. These details
+are instanced and distance-culled so they do not materially inflate the scene
+or district-scale draw cost.
+
 Municipal road geometry is simplified before export and implausible source
 widths are replaced with lane-derived widths capped at 18 m. The renderer builds
 each centreline segment as an independent terrain-following quad, then closes

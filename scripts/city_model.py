@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ def _source(path: Path, *, role: str, acquired: Any = None) -> dict[str, Any]:
         "role": role,
         "acquired": acquired,
         "fileModifiedAt": modified,
-        "licence": "unknown; confirm before redistribution",
+        "licence": "Open Database License (ODbL) 1.0" if ".osm" in path.name else "unknown; confirm before redistribution",
     }
 
 
@@ -380,6 +381,69 @@ def _add_street_objects(
     return True
 
 
+OSM_POINT_FURNITURE = {
+    ("amenity", "fountain"): ("fountain", "generic mapped fountain; dimensions inferred"),
+    ("amenity", "bench"): ("bench", "generic mapped bench; orientation and dimensions inferred"),
+    ("amenity", "waste_basket"): ("wasteBasket", "generic mapped litter bin; dimensions inferred"),
+    ("amenity", "bicycle_parking"): ("bicycleParking", "generic mapped bicycle stands; capacity may be unknown"),
+    ("amenity", "clock"): ("streetClock", "generic mapped street clock; dimensions inferred"),
+    ("barrier", "bollard"): ("bollard", "generic mapped bollard; dimensions inferred"),
+    ("highway", "bus_stop"): ("busStop", "generic mapped bus-stop marker; not a live vehicle position"),
+}
+
+
+def _add_osm_point_furniture(
+    objects: dict[str, dict[str, Any]],
+    scene: dict[str, Any],
+    manifest: dict[str, Any],
+    osm_path: Path,
+) -> None:
+    """Promote useful OSM point amenities into lightweight CityFurniture.
+
+    OSM describes the presence and position of these objects, not a surveyed
+    3D mesh. The semantic record therefore keeps LoD0 point geometry and marks
+    the renderer representation as generic/inferred.
+    """
+    if not osm_path.exists():
+        return
+    scene_clip = _local_scene_clip(scene)
+    origin_x, origin_y = manifest["origin"]
+    to_local = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
+    root = ET.parse(osm_path).getroot()
+    for node in root.findall("node"):
+        tags = {tag.attrib.get("k"): tag.attrib.get("v") for tag in node.findall("tag")}
+        match = next((value for key, value in OSM_POINT_FURNITURE.items() if tags.get(key[0]) == key[1]), None)
+        if match is None:
+            continue
+        object_class, representation = match
+        try:
+            projected_x, projected_y = to_local.transform(float(node.attrib["lon"]), float(node.attrib["lat"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        point = Point(projected_x - origin_x, -(projected_y - origin_y))
+        if not scene_clip.covers(point):
+            continue
+        coordinates = [round(point.x, 2), round(point.y, 2)]
+        source_id = node.attrib.get("id")
+        identifier, feature_id = _identity(f"osm-{object_class}", source_id, coordinates)
+        attributes = {
+            "class": object_class,
+            "name": tags.get("name"),
+            "representation": representation,
+            "osmId": source_id,
+            "osmTags": tags,
+        }
+        objects[feature_id] = _feature(
+            "CityFurniture",
+            identifier,
+            feature_id,
+            {"lod": "0", "type": "Point", "coordinates": coordinates},
+            attributes=attributes,
+            sources=["osmPointFurniture"],
+            quality=_quality("OpenStreetMap point", "0", confidence="medium", dimensions="inferred"),
+        )
+
+
 def build_city_model(
     scene: dict[str, Any],
     canopy: dict[str, Any],
@@ -453,6 +517,9 @@ def build_city_model(
     street_dir = source_paths.get("street_data")
     if street_dir:
         _add_street_objects(objects, scene, manifest, street_dir)
+    osm_path = source_paths.get("osm")
+    if osm_path:
+        _add_osm_point_furniture(objects, scene, manifest, osm_path)
     # Keep the complete OSM network as the visible representation: its ways
     # are continuous through junctions and its highway classes drive the road
     # hierarchy colours. Municipal centrelines remain authoritative semantic
@@ -532,6 +599,7 @@ def build_city_model(
             "roads": _source(source_paths["roads"], role="transportNetwork"),
             "railways": _source(source_paths["railways"], role="transportNetwork"),
             "green": _source(source_paths["green"], role="landCover"),
+            **({"osmPointFurniture": _source(source_paths["osm"], role="cityFurniture")} if source_paths.get("osm") else {}),
             **({
                 key: _source(path, role=role)
                 for key, (_, path, role) in _street_sources(street_dir).items()

@@ -121,7 +121,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=67');
+    const module = await import('./webglRenderer.js?v=68');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -130,7 +130,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=69');
+      const module = await import('./sceneRenderer.js?v=70');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=28">
+  <link rel="stylesheet" href="style.css?v=30">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -37,15 +37,10 @@
         <span id="traffic-draw-popup-title">Edit road closure</span>
         <kbd>Esc</kbd>
       </div>
-      <p id="traffic-draw-popup-status">Draw one or more freehand strokes over the roads you want to select.</p>
-      <div class="traffic-draw-popup-steps">
-        <span><b>1</b> Left-drag to add</span>
-        <span><b>2</b> Lift and draw again</span>
-        <span><b>3</b> Right-click to remove</span>
-      </div>
-      <div class="traffic-draw-popup-count"><strong id="traffic-draw-popup-count">0</strong><span>road sections selected</span></div>
+      <p id="traffic-draw-popup-status">Drag to add · right-click to remove</p>
+      <div class="traffic-draw-popup-count"><strong id="traffic-draw-popup-count">0</strong><span>sections</span></div>
       <div class="traffic-draw-popup-actions">
-        <button id="traffic-draw-confirm" type="button" disabled>Confirm selection</button>
+        <button id="traffic-draw-confirm" type="button" disabled>Apply</button>
         <button id="traffic-draw-cancel" class="secondary" type="button">Cancel</button>
       </div>
     </div>
@@ -56,17 +51,9 @@
           <p class="place-name">Cape Town CBD</p>
         </div>
         <nav class="menu-tabs" aria-label="Explorer tools" role="tablist">
-          <button class="menu-tab active" type="button" role="tab" aria-selected="true" aria-controls="menu-layers" data-menu-target="layers" title="Layers">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3-9 5 9 5 9-5-9-5Zm-7.5 9L12 16l7.5-4M4.5 16 12 20l7.5-4"/></svg>
-            <span>Layers</span>
-          </button>
-          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-streetview" data-menu-target="streetview" title="Street View">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s6-5.3 6-11a6 6 0 1 0-12 0c0 5.7 6 11 6 11Z"/><circle cx="12" cy="10" r="2"/></svg>
-            <span>Pin</span>
-          </button>
-          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-current" data-menu-target="current" title="Current conditions">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16a4 4 0 0 1 .5-8A5.5 5.5 0 0 1 18 10a3 3 0 0 1 0 6H7Z"/><path d="M8 20h8M10 18.5 9 21m5-2.5 1 2.5"/></svg>
-            <span>Current</span>
+          <button class="menu-tab active" type="button" role="tab" aria-selected="true" aria-controls="menu-tools" data-menu-target="tools" title="Tools">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h7m4 0h5M4 12h2m4 0h10M4 18h9m4 0h3"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="15" cy="18" r="2"/></svg>
+            <span>Tools</span>
           </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-heat" data-menu-target="heat" title="Urban heat">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14.8V5a3 3 0 0 1 6 0v9.8a5 5 0 1 1-6 0Z"/><path d="M12 7v9"/></svg>
@@ -85,91 +72,93 @@
             <span>Flood</span>
           </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-traffic" data-menu-target="traffic" title="Traffic simulation">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="8" width="10" height="6" rx="1.5"/><circle cx="7" cy="16" r="1.6"/><circle cx="12" cy="16" r="1.6"/><path d="M14 10h3.5L20 13v3h-2M16 8V5h-2"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2.2c0-.8.5-1.5 1.3-1.8l1.4-.5 1.6-3.1c.3-.6.9-.9 1.5-.9h5.1c.7 0 1.3.4 1.6 1l1.3 3 1 .3c.7.2 1.2.9 1.2 1.7V14"/><path d="M4 14h16v3H4zM7 9.5h10M7 17v1.5m10-1.5v1.5"/><circle cx="7.5" cy="14" r="1"/><circle cx="16.5" cy="14" r="1"/></svg>
             <span>Traffic</span>
           </button>
         </nav>
       </header>
       <div class="panel-body">
-      <section id="menu-layers" class="controls menu-section menu-active" data-menu-panel="layers" role="tabpanel">
-        <h2>Layers</h2>
-        <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
-        <label><input type="checkbox" data-layer="grass" checked> Grass</label>
-        <label><input type="checkbox" data-layer="railways" checked> Railways</label>
-        <label><input type="checkbox" data-layer="paths" checked> Paths</label>
-        <label><input type="checkbox" data-layer="roads" checked> Roads</label>
-        <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
-        <label><input type="checkbox" data-layer="trees" checked> Trees</label>
-        <label>Building appearance
-          <select id="building-appearance">
-            <option value="neutral" selected>Neutral analysis</option>
-            <option value="elevation">Elevation colour</option>
-          </select>
-        </label>
-        <p class="panel-note">Elevation colour uses mapped building height, not façade material or land use.</p>
-      </section>
-      <section id="menu-streetview" class="streetview-panel menu-section" data-menu-panel="streetview" role="tabpanel" aria-label="Street View location pin" hidden>
-        <div class="streetview-heading"><span>Street View pin</span><span class="pin-badge">Google Maps</span></div>
-        <p id="streetview-status" class="streetview-status">Drop a pin on the terrain to create a Street View link.</p>
-        <div class="streetview-actions">
-          <button id="streetview-drop" class="secondary" type="button" aria-pressed="false">Drop pin</button>
-          <button id="streetview-clear" class="secondary" type="button" disabled>Clear</button>
-        </div>
-        <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open nearest Street View ↗</a>
-        <p class="panel-note">The link opens the panorama nearest to the selected point when Google imagery is available.</p>
-      </section>
-      <section id="menu-current" class="current-panel menu-section" data-menu-panel="current" role="tabpanel" aria-label="Current Cape Town conditions" hidden>
-        <div class="current-heading"><span>Current conditions</span><span id="current-freshness" class="freshness">Not loaded</span></div>
-        <p id="current-status" class="current-status">Modelled Cape Town CBD conditions are available on demand.</p>
-        <div id="current-metrics" class="current-metrics" hidden></div>
-        <div class="current-actions">
-          <button id="current-apply" type="button">Set current values</button>
-          <button id="current-refresh" class="secondary" type="button">Refresh</button>
-        </div>
-        <p class="panel-note">Open-Meteo modelled conditions · not a weather-station observation</p>
+      <section id="menu-tools" class="tools-panel menu-section menu-active" data-menu-panel="tools" role="tabpanel" aria-label="Map tools">
+        <div class="tools-heading"><span>Tools</span></div>
+        <section class="tool-section">
+          <h2>Layers</h2>
+          <div class="controls tool-layer-grid">
+            <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
+            <label><input type="checkbox" data-layer="grass" checked> Grass</label>
+            <label><input type="checkbox" data-layer="railways" checked> Railways</label>
+            <label><input type="checkbox" data-layer="paths" checked> Paths</label>
+            <label><input type="checkbox" data-layer="roads" checked> Roads</label>
+            <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
+            <label><input type="checkbox" data-layer="trees" checked> Trees</label>
+            <label>Buildings
+              <select id="building-appearance">
+                <option value="neutral" selected>Neutral</option>
+                <option value="elevation">Elevation</option>
+              </select>
+            </label>
+          </div>
+        </section>
+        <section class="tool-section streetview-panel">
+          <div class="streetview-heading"><span>Street View</span><span class="pin-badge">Google Maps</span></div>
+          <p id="streetview-status" class="streetview-status">Drop a pin to open Street View.</p>
+          <div class="streetview-actions">
+            <button id="streetview-drop" class="secondary" type="button" aria-pressed="false">Drop pin</button>
+            <button id="streetview-clear" class="secondary" type="button" disabled>Clear</button>
+          </div>
+          <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open Street View ↗</a>
+        </section>
+        <section class="tool-section current-panel">
+          <div class="current-heading"><span>Current conditions</span><span id="current-freshness" class="freshness">Not loaded</span></div>
+          <p id="current-status" class="current-status">Available on demand.</p>
+          <div id="current-metrics" class="current-metrics" hidden></div>
+          <div class="current-actions">
+            <button id="current-apply" type="button">Use current</button>
+            <button id="current-refresh" class="secondary" type="button">Refresh</button>
+          </div>
+        </section>
       </section>
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
-        <div class="heat-heading"><span>Urban heat</span><label class="heat-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
-        <div class="heat-context">
-          <span class="estimate-badge">Screening layer</span>
-          <p>Prioritise hotter surface-temperature zones that also lack mapped shade. This is not a live or clinical heat-risk map.</p>
-        </div>
-        <div class="heat-control-grid">
-          <label>Planning view
+        <div class="heat-heading"><span>Heat</span><label class="heat-switch compact-switch"><input id="heat-toggle" type="checkbox"> Show</label></div>
+        <div class="compact-section">
+          <b>View</b>
+          <label>Layer
             <select id="heat-metric">
               <option value="pedestrian_priority_score" selected>Intervention priority</option>
-              <option value="pedestrian_heat_exposure_c">Pedestrian thermal exposure</option>
-              <option value="shade_deficit_score">Shade deficit at selected time</option>
+              <option value="pedestrian_heat_exposure_c">Pedestrian exposure</option>
+              <option value="shade_deficit_score">Shade deficit</option>
               <option value="heat_model_lst_c">Surface temperature</option>
-              <option value="rooftop_temperature_c">Rooftop surface temperature (modelled)</option>
-            </select>
-          </label>
-          <label id="heat-time-control">Design time
-            <select id="heat-time">
-              <option value="540">09:00</option>
-              <option value="720" selected>12:00</option>
-              <option value="900">15:00</option>
-              <option value="1020">17:00</option>
+              <option value="rooftop_temperature_c">Rooftop temperature</option>
             </select>
           </label>
         </div>
-        <label id="heat-date-control">Design date
-          <input id="heat-date" type="date" value="2026-01-15">
-        </label>
-        <p id="heat-status" class="heat-status">Loading heat zones…</p>
-        <div id="heat-summary" class="heat-summary" aria-label="Heat screening summary" hidden>
-          <span><b id="heat-average">—</b><i id="heat-average-label">Area-weighted average</i></span>
-          <span><b id="heat-priority-area">—</b><i>Top-priority area</i></span>
-          <span><b id="heat-maximum">—</b><i id="heat-maximum-label">Highest value</i></span>
+        <div class="compact-section">
+          <b>Date &amp; time</b>
+          <div class="heat-control-grid">
+            <label id="heat-date-control">Date
+              <input id="heat-date" type="date" value="2026-01-15">
+            </label>
+            <label id="heat-time-control">Time
+              <select id="heat-time">
+                <option value="540">09:00</option>
+                <option value="720" selected>12:00</option>
+                <option value="900">15:00</option>
+                <option value="1020">17:00</option>
+              </select>
+            </label>
+          </div>
         </div>
-        <div class="heat-gradient"></div>
-        <div class="heat-legend-labels"><span id="heat-legend-min">Bottom 10%</span><span id="heat-legend-max">Top 10%</span></div>
-        <p class="heat-legend-help"><b>Red areas need investigation first.</b> Priority combines the surface-temperature layer (70%) with mapped building/tree shade deficit at the selected time (30%).</p>
-        <div class="heat-checklist">
-          <b>Before taking a concept forward</b>
-          <span>Check clear walking width, universal access, visibility, lighting, services, wind, drainage, irrigation and long-term maintenance.</span>
+        <div class="compact-section heat-results-section">
+          <b>Results</b>
+          <p id="heat-status" class="heat-status">Loading heat zones…</p>
+          <div id="heat-summary" class="heat-summary" aria-label="Heat screening summary" hidden>
+            <span><b id="heat-average">—</b><i id="heat-average-label">Average</i></span>
+            <span><b id="heat-priority-area">—</b><i>Priority area</i></span>
+            <span><b id="heat-maximum">—</b><i id="heat-maximum-label">Maximum</i></span>
+          </div>
+          <div class="heat-gradient"></div>
+          <div class="heat-legend-labels"><span id="heat-legend-min">Lower</span><span id="heat-legend-max">Higher</span></div>
         </div>
-        <p class="panel-note">Summer 2025–26 modelled screening evidence. Confirm actual footfall, waiting behaviour, vulnerable users, shade and air temperature on site.</p>
+        <details class="compact-about"><summary>About this layer</summary><p>Modelled summer screening layer. Red marks higher priority; verify conditions on site.</p></details>
       </section>
       <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
         <div class="sun-heading"><span>Sunlight</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
@@ -387,17 +376,17 @@
       </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
         <div class="traffic-heading">
-          <span>Traffic simulation</span>
+          <span>Traffic</span>
           <span class="estimate-badge">Exploratory</span>
         </div>
-        <div class="traffic-view-toggles">
-          <label class="traffic-switch"><input id="traffic-toggle" type="checkbox"> Animated vehicles</label>
-          <label class="traffic-restrictions-switch"><input id="traffic-restrictions-toggle" type="checkbox" checked> Closures and street status</label>
+        <div class="traffic-view-toggles" aria-label="Traffic map display">
+          <label class="traffic-switch"><input id="traffic-toggle" type="checkbox"> Vehicles</label>
+          <label class="traffic-restrictions-switch"><input id="traffic-restrictions-toggle" type="checkbox" checked> Street status</label>
         </div>
 
-        <div class="traffic-card traffic-live-card">
+        <div class="traffic-card traffic-live-card compact-section">
           <div class="traffic-card-heading">
-            <span><b>1</b> Live context</span>
+            <span>Current traffic</span>
             <div class="traffic-live-actions">
               <span id="traffic-freshness" class="freshness">Not loaded</span>
               <button id="traffic-refresh" class="icon-button" type="button" aria-label="Refresh live traffic" title="Refresh live traffic">↻</button>
@@ -407,10 +396,10 @@
           <div id="traffic-live-metrics" class="current-metrics" hidden></div>
         </div>
 
-        <div class="traffic-card">
-          <div class="traffic-card-heading"><span><b>2</b> Scenario assumptions</span></div>
+        <div class="traffic-card compact-section">
+          <div class="traffic-card-heading"><span>Scenario</span></div>
           <div class="traffic-control-grid">
-            <label>Time of day
+            <label>Period
               <select id="traffic-scenario"><option value="am_peak">Morning peak · 07:00–09:00</option></select>
             </label>
             <label>Demand
@@ -421,10 +410,10 @@
               </select>
             </label>
           </div>
-          <label>Junction behaviour
+          <label>Junctions
             <select id="traffic-control-model">
-              <option value="signalized" selected>Mapped traffic signals</option>
-              <option value="priority">Priority right-of-way</option>
+              <option value="signalized" selected>Mapped signals</option>
+              <option value="priority">Priority</option>
             </select>
           </label>
           <label class="traffic-duration-label">Duration <output id="traffic-duration-value" for="traffic-duration">10 min</output>
@@ -432,35 +421,35 @@
           </label>
         </div>
 
-        <div class="traffic-card">
-          <div class="traffic-card-heading"><span><b>3</b> Draw the intervention</span></div>
+        <div class="traffic-card compact-section">
+          <div class="traffic-card-heading"><span>Intervention</span></div>
           <div class="traffic-closure-choice" role="group" aria-label="Choose closure drawing tool">
-            <button id="traffic-draw-lane" class="secondary" type="button" disabled><span>▥</span> Lane closure</button>
-            <button id="traffic-draw-road" class="secondary" type="button" disabled><span>⛔</span> Street closure</button>
+            <button id="traffic-draw-lane" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v18M17 3v18M12 4v3m0 4v3m0 4v2"/></svg><span>Lane closure</span></button>
+            <button id="traffic-draw-road" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M6 12h12"/></svg><span>Street closure</span></button>
           </div>
-          <p id="traffic-selection-status" class="traffic-selection-status">Choose a closure tool. Add one or more freehand strokes, right-click sections to remove them, then confirm the selection in the popup.</p>
+          <p id="traffic-selection-status" class="traffic-selection-status">Choose a tool and draw on the map.</p>
           <div class="traffic-actions">
-            <button id="traffic-run" type="button" disabled>Run comparison</button>
+            <button id="traffic-run" type="button" disabled>Simulate</button>
             <button id="traffic-clear" class="secondary" type="button">Clear</button>
           </div>
-          <p id="traffic-status" class="traffic-status">Draw a closure to begin.</p>
+          <p id="traffic-status" class="traffic-status">Draw a closure to begin</p>
         </div>
 
-        <div class="traffic-card traffic-output-card">
-          <div class="traffic-card-heading"><span><b>4</b> Compare results</span></div>
-          <label>Animated case
+        <div class="traffic-card traffic-output-card compact-section">
+          <div class="traffic-card-heading"><span>Results</span></div>
+          <label>View
             <select id="traffic-compare" disabled>
-              <option value="baseline">Before · road as it is</option>
-              <option value="closure">After · closure active</option>
+              <option value="baseline">Before</option>
+              <option value="closure">With closure</option>
             </select>
           </label>
           <div id="traffic-impact-summary" class="traffic-impact-summary" hidden></div>
           <div id="traffic-results" class="traffic-results" hidden></div>
-          <button id="traffic-report" class="traffic-report-button secondary" type="button" disabled>Generate polished report</button>
+          <button id="traffic-report" class="traffic-report-button secondary" type="button" disabled>Open report</button>
           <div class="traffic-gradient"></div>
           <div class="traffic-legend-labels"><span>Stopped</span><span id="traffic-onscreen">— vehicles</span><span>50 km/h</span></div>
           <details class="traffic-map-key">
-            <summary>Map key</summary>
+            <summary>Legend</summary>
             <div class="road-status-legend" aria-label="Road status legend">
               <span><i class="status-swatch pedestrian"></i>Pedestrian</span>
               <span><i class="status-swatch closure"></i>Closed</span>
@@ -470,7 +459,7 @@
             </div>
           </details>
         </div>
-        <p class="panel-note">City of Cape Town road-centre geometry, lanes and confirmed speed limits enrich the road network. Compare closure options, traffic periods and demand levels above to identify the most workable plan.</p>
+        <details class="compact-about"><summary>About this simulation</summary><p>Synthetic planning comparison using mapped Cape Town roads. Validate preferred options with observed traffic data.</p></details>
       </section>
       </div>
       <footer class="panel-footer">
@@ -504,6 +493,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="app.js?v=webgl-71"></script>
+    <script type="module" src="app.js?v=webgl-72"></script>
 </body>
 </html>

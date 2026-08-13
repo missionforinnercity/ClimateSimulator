@@ -140,6 +140,21 @@ export async function startWebGLScene(canvas, status) {
     return a * (1 - tz) + b * tz;
   }
 
+  // Roads are designed surfaces, so they should not inherit every small DTM
+  // bump or seam. A local median rejects isolated spikes while retaining the
+  // broader street slope and avoids twisting markings across the carriageway.
+  function roadTerrainHeightAt(x, z) {
+    const radius = 4;
+    const samples = [
+      terrainHeightAt(x, z),
+      terrainHeightAt(x - radius, z), terrainHeightAt(x + radius, z),
+      terrainHeightAt(x, z - radius), terrainHeightAt(x, z + radius),
+      terrainHeightAt(x - radius, z - radius), terrainHeightAt(x + radius, z - radius),
+      terrainHeightAt(x - radius, z + radius), terrainHeightAt(x + radius, z + radius),
+    ].sort((a, b) => a - b);
+    return samples[Math.floor(samples.length / 2)];
+  }
+
   // terrainHeightAt clamps to the grid edge, so anything asked about a point
   // beyond the terrain gets the nearest edge height and appears to float over
   // the void. This reports whether a point is actually on rendered ground.
@@ -556,18 +571,19 @@ export async function startWebGLScene(canvas, status) {
       const vertices = [];
       const uvs = [];
       const indices = [];
-      const pushVertex = (x, z, elevationOffset) => {
+      const pushVertex = (x, z, elevationOffset, surfaceY = roadTerrainHeightAt(x, z)) => {
         const index = vertices.length / 3;
-        vertices.push(x, terrainHeightAt(x, z) + elevationOffset, z);
+        vertices.push(x, surfaceY + elevationOffset, z);
         uvs.push(x / 12, z / 12);
         return index;
       };
       const addDisc = (x, z, radius, elevationOffset) => {
-        const center = pushVertex(x, z, elevationOffset);
+        const surfaceY = roadTerrainHeightAt(x, z);
+        const center = pushVertex(x, z, elevationOffset, surfaceY);
         const segments = 12;
         for (let segment = 0; segment < segments; segment += 1) {
           const angle = segment / segments * Math.PI * 2;
-          pushVertex(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius, elevationOffset);
+          pushVertex(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius, elevationOffset, surfaceY);
         }
         for (let segment = 0; segment < segments; segment += 1) {
           indices.push(center, center + 1 + segment, center + 1 + ((segment + 1) % segments));
@@ -601,10 +617,12 @@ export async function startWebGLScene(canvas, status) {
             const sz = z1 + dz * startAmount;
             const ex = x1 + dx * endAmount;
             const ez = z1 + dz * endAmount;
-            const a = pushVertex(sx + nx, sz + nz, elevationOffset);
-            const b = pushVertex(sx - nx, sz - nz, elevationOffset);
-            const c = pushVertex(ex + nx, ez + nz, elevationOffset);
-            const d = pushVertex(ex - nx, ez - nz, elevationOffset);
+            const startY = roadTerrainHeightAt(sx, sz);
+            const endY = roadTerrainHeightAt(ex, ez);
+            const a = pushVertex(sx + nx, sz + nz, elevationOffset, startY);
+            const b = pushVertex(sx - nx, sz - nz, elevationOffset, startY);
+            const c = pushVertex(ex + nx, ez + nz, elevationOffset, endY);
+            const d = pushVertex(ex - nx, ez - nz, elevationOffset, endY);
             indices.push(a, b, c, b, d, c);
             segmentCount += 1;
           }
@@ -807,7 +825,8 @@ export async function startWebGLScene(canvas, status) {
       mesh.userData.semanticClass = semanticClass;
       mesh.userData.maxDistance = ['parkingSpace', 'pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)
         ? 720
-        : semanticClass.startsWith('publicLight') ? 1000 : null;
+        : semanticClass.startsWith('publicLight') ? 1000
+          : ['fountain', 'bench', 'wasteBasket', 'bicycleParking', 'streetClock', 'bollard', 'busStop'].some(value => semanticClass.startsWith(value)) ? 850 : null;
       if (semanticClass === 'parkingSpace') mesh.renderOrder = 6;
       if (['pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)) mesh.renderOrder = 8;
       group.add(mesh);
@@ -1125,7 +1144,8 @@ export async function startWebGLScene(canvas, status) {
           const along = marking.along - marking.halfAlong + marking.halfAlong * 2 * alongIndex / alongDivisions;
           const across = marking.across - marking.halfAcross + marking.halfAcross * 2 * acrossIndex / acrossDivisions;
           const [x, z] = offsetOnRoad(marking.centre, marking.bearing, along, across);
-          return [x, terrainHeightAt(x, z) + (marking.surfaceOffset ?? surfaceOffset), z];
+          const [centreX, centreZ] = offsetOnRoad(marking.centre, marking.bearing, along, 0);
+          return [x, roadTerrainHeightAt(centreX, centreZ) + (marking.surfaceOffset ?? surfaceOffset), z];
         };
         for (let alongIndex = 0; alongIndex < alongDivisions; alongIndex += 1) {
           for (let acrossIndex = 0; acrossIndex < acrossDivisions; acrossIndex += 1) {
@@ -1155,7 +1175,8 @@ export async function startWebGLScene(canvas, status) {
       const positions = [];
       const segments = 12;
       for (const ellipse of ellipses) {
-        const centre = [ellipse.x, terrainHeightAt(ellipse.x, ellipse.z) + surfaceOffset, ellipse.z];
+        const surfaceY = roadTerrainHeightAt(ellipse.x, ellipse.z) + surfaceOffset;
+        const centre = [ellipse.x, surfaceY, ellipse.z];
         const perimeter = [];
         for (let segment = 0; segment < segments; segment += 1) {
           const angle = segment / segments * Math.PI * 2;
@@ -1163,7 +1184,7 @@ export async function startWebGLScene(canvas, status) {
           const localShort = Math.sin(angle) * ellipse.shortRadius;
           const x = ellipse.x + Math.cos(ellipse.rotation) * localLong - Math.sin(ellipse.rotation) * localShort;
           const z = ellipse.z + Math.sin(ellipse.rotation) * localLong + Math.cos(ellipse.rotation) * localShort;
-          perimeter.push([x, terrainHeightAt(x, z) + surfaceOffset, z]);
+          perimeter.push([x, surfaceY, z]);
         }
         for (let segment = 0; segment < segments; segment += 1) {
           positions.push(...centre, ...perimeter[segment], ...perimeter[(segment + 1) % segments]);
@@ -1233,6 +1254,108 @@ export async function startWebGLScene(canvas, status) {
       makeCrossingMesh(zebraMarkings.slice(conventionalZebraCount), 'daisyZebraBands');
     }
 
+    // OSM point amenities carry reliable mapped positions but usually no
+    // dimensions or orientation. Repeated procedural models keep the draw
+    // count low and visibly distinguish each useful street-level class while
+    // the semantic model honestly records the dimensions as inferred.
+    const osmFurniture = data.cityFurniture || [];
+    const deterministicYaw = (x, z) => ((Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1) * Math.PI;
+    const furnitureMaterial = new THREE.MeshLambertMaterial({ color: 0x667477 });
+    const darkFurnitureMaterial = new THREE.MeshLambertMaterial({ color: 0x303a3d });
+    const timberMaterial = new THREE.MeshLambertMaterial({ color: 0x8a6543 });
+
+    const benches = osmFurniture.filter(item => item.class === 'bench' && item.coordinates);
+    const benchSeats = [], benchBacks = [], benchLegs = [];
+    for (const item of benches) {
+      const [x, z] = item.coordinates;
+      const y = terrainHeightAt(x, z) + 0.2;
+      const yaw = deterministicYaw(x, z);
+      const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      benchSeats.push(composeMatrix(new THREE.Vector3(x, y + 0.56, z), quaternion, new THREE.Vector3(1.9, 0.12, 0.55)));
+      benchBacks.push(composeMatrix(
+        new THREE.Vector3(x + Math.sin(yaw) * 0.23, y + 0.98, z - Math.cos(yaw) * 0.23),
+        quaternion,
+        new THREE.Vector3(1.9, 0.68, 0.09),
+      ));
+      for (const dx of [-0.68, 0.68]) benchLegs.push(composeMatrix(
+        new THREE.Vector3(x + Math.cos(yaw) * dx, y + 0.28, z + Math.sin(yaw) * dx),
+        quaternion,
+        new THREE.Vector3(0.1, 0.55, 0.42),
+      ));
+    }
+    makeInstances(new THREE.BoxGeometry(1, 1, 1), timberMaterial, benchSeats, 'benchSeat');
+    makeInstances(new THREE.BoxGeometry(1, 1, 1), timberMaterial, benchBacks, 'benchBack');
+    makeInstances(new THREE.BoxGeometry(1, 1, 1), darkFurnitureMaterial, benchLegs, 'benchLeg');
+
+    const bins = osmFurniture.filter(item => item.class === 'wasteBasket' && item.coordinates);
+    const binMatrices = bins.map(item => {
+      const [x, z] = item.coordinates;
+      return composeMatrix(new THREE.Vector3(x, terrainHeightAt(x, z) + 0.67, z));
+    });
+    makeInstances(new THREE.CylinderGeometry(0.32, 0.27, 0.9, 10), darkFurnitureMaterial, binMatrices, 'wasteBasket');
+
+    const bollards = osmFurniture.filter(item => item.class === 'bollard' && item.coordinates);
+    const bollardMatrices = bollards.map(item => {
+      const [x, z] = item.coordinates;
+      return composeMatrix(new THREE.Vector3(x, terrainHeightAt(x, z) + 0.58, z));
+    });
+    makeInstances(new THREE.CylinderGeometry(0.11, 0.14, 0.8, 10), furnitureMaterial, bollardMatrices, 'bollard');
+
+    const bicycleParking = osmFurniture.filter(item => item.class === 'bicycleParking' && item.coordinates);
+    const bicycleRackMatrices = [];
+    for (const item of bicycleParking) {
+      const [x, z] = item.coordinates;
+      const yaw = deterministicYaw(x, z);
+      const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      for (const offset of [-0.85, 0, 0.85]) {
+        bicycleRackMatrices.push(composeMatrix(
+          new THREE.Vector3(x + Math.cos(yaw) * offset, terrainHeightAt(x, z) + 0.85, z + Math.sin(yaw) * offset),
+          quaternion,
+          new THREE.Vector3(0.72, 1, 1),
+        ));
+      }
+    }
+    makeInstances(new THREE.TorusGeometry(0.56, 0.055, 6, 12), furnitureMaterial, bicycleRackMatrices, 'bicycleParkingRack');
+
+    const fountains = osmFurniture.filter(item => item.class === 'fountain' && item.coordinates);
+    const fountainBases = [], fountainBowls = [], fountainWater = [], fountainJets = [];
+    for (const item of fountains) {
+      const [x, z] = item.coordinates;
+      const y = terrainHeightAt(x, z) + 0.18;
+      fountainBases.push(composeMatrix(new THREE.Vector3(x, y + 0.24, z)));
+      fountainBowls.push(composeMatrix(new THREE.Vector3(x, y + 0.5, z)));
+      fountainWater.push(composeMatrix(new THREE.Vector3(x, y + 0.62, z)));
+      fountainJets.push(composeMatrix(new THREE.Vector3(x, y + 1.02, z)));
+    }
+    makeInstances(new THREE.CylinderGeometry(1.8, 2.05, 0.48, 24), new THREE.MeshLambertMaterial({ color: 0x8b918d }), fountainBases, 'fountainBase');
+    makeInstances(new THREE.CylinderGeometry(1.55, 1.7, 0.24, 24, 1, true), new THREE.MeshLambertMaterial({ color: 0xa1a6a0, side: THREE.DoubleSide }), fountainBowls, 'fountainBowl');
+    makeInstances(new THREE.CylinderGeometry(1.52, 1.52, 0.025, 24), new THREE.MeshLambertMaterial({ color: 0x4d9db3, transparent: true, opacity: 0.72 }), fountainWater, 'fountainWater');
+    makeInstances(new THREE.CylinderGeometry(0.025, 0.045, 0.8, 6), new THREE.MeshBasicMaterial({ color: 0xa9e5f3, transparent: true, opacity: 0.8 }), fountainJets, 'fountainJet');
+
+    const busStops = osmFurniture.filter(item => item.class === 'busStop' && item.coordinates);
+    const busStopPoles = [], busStopSigns = [];
+    for (const item of busStops) {
+      const [x, z] = item.coordinates;
+      const y = terrainHeightAt(x, z) + 0.18;
+      const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), deterministicYaw(x, z));
+      busStopPoles.push(composeMatrix(new THREE.Vector3(x, y + 1.45, z)));
+      busStopSigns.push(composeMatrix(new THREE.Vector3(x, y + 2.55, z), quaternion));
+    }
+    makeInstances(new THREE.CylinderGeometry(0.045, 0.07, 2.9, 7), furnitureMaterial, busStopPoles, 'busStopPole');
+    makeInstances(new THREE.BoxGeometry(0.62, 0.72, 0.08), new THREE.MeshLambertMaterial({ color: 0x2475a9 }), busStopSigns, 'busStopSign');
+
+    const streetClocks = osmFurniture.filter(item => item.class === 'streetClock' && item.coordinates);
+    const clockPoles = [], clockFaces = [];
+    for (const item of streetClocks) {
+      const [x, z] = item.coordinates;
+      const y = terrainHeightAt(x, z) + 0.18;
+      clockPoles.push(composeMatrix(new THREE.Vector3(x, y + 1.5, z)));
+      const faceRotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, deterministicYaw(x, z), 0));
+      clockFaces.push(composeMatrix(new THREE.Vector3(x, y + 3.05, z), faceRotation));
+    }
+    makeInstances(new THREE.CylinderGeometry(0.055, 0.1, 3.0, 8), darkFurnitureMaterial, clockPoles, 'streetClockPole');
+    makeInstances(new THREE.CylinderGeometry(0.48, 0.48, 0.12, 20), new THREE.MeshLambertMaterial({ color: 0xe2ded0 }), clockFaces, 'streetClockFace');
+
     // Public toilets are point inventories, so use a recognizable compact
     // facility model while retaining LoD0 semantics and avoiding false detail.
     const toilets = (data.cityFurniture || []).filter(item => item.class === 'publicToilet' && item.coordinates);
@@ -1269,7 +1392,7 @@ export async function startWebGLScene(canvas, status) {
 
     // Monuments deliberately remain semantic-only until object-specific 3D
     // models are supplied; no generic placeholder is rendered.
-    const pointObjects = [...publicLights, ...(data.crossings || []), ...(data.parking || []), ...toilets];
+    const pointObjects = [...publicLights, ...(data.crossings || []), ...(data.parking || []), ...toilets, ...osmFurniture];
     const festoonItems = (data.cityFurniture || []).filter(entry => entry.class === 'festoonLighting' && entry.centerline);
     const festoonChildStart = group.children.length;
     if (festoonItems.length) {
@@ -2456,15 +2579,15 @@ export async function startWebGLScene(canvas, status) {
     if (heatTimeControl) heatTimeControl.hidden = !temporal;
   }
 
-  function renderHeatSummary(summary, metadata = {}, metricLabel = 'Heat') {
+  function renderHeatSummary(summary, metadata = {}) {
     if (!heatSummary) return;
     const ready = summary?.area_weighted_mean != null && summary?.maximum != null;
     heatSummary.hidden = !ready;
     if (!ready) return;
     heatAverage.textContent = formatHeatValue(summary.area_weighted_mean, metadata);
     heatMaximum.textContent = formatHeatValue(summary.maximum, metadata);
-    if (heatAverageLabel) heatAverageLabel.textContent = `Average ${metricLabel.toLowerCase()}`;
-    if (heatMaximumLabel) heatMaximumLabel.textContent = `Highest ${metricLabel.toLowerCase()}`;
+    if (heatAverageLabel) heatAverageLabel.textContent = 'Average';
+    if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum';
     const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
     const hotspotPercent = Number(summary.hotspot_area_pct || 0);
     heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${hotspotPercent.toFixed(0)}%`;
@@ -2498,11 +2621,11 @@ export async function startWebGLScene(canvas, status) {
         ? `${scale.top_band_label || 'Top 10%'} ≥ ${formatHeatValue(range.max, payload.metric_metadata)}`
         : 'Top 10%';
       const rawWindow = payload.window?.label;
-      const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26 baseline' : rawWindow || 'Summer 2025–26 baseline';
+      const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26' : rawWindow || 'Summer 2025–26';
       const scenarioMinutes = Number(payload.scenario?.minutes ?? 720);
       const scenarioTime = `${String(Math.floor(scenarioMinutes / 60)).padStart(2, '0')}:${String(scenarioMinutes % 60).padStart(2, '0')}`;
-      const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(payload.metric) ? ` · ${scenarioTime}` : '';
-      heatStatus.textContent = `${payload.metric_label}${timeContext} · ${payload.count || payload.features?.length || 0} zones · ${window}`;
+      const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(payload.metric) ? `${scenarioTime} · ` : '';
+      heatStatus.textContent = `${timeContext}${payload.count || payload.features?.length || 0} zones · ${window}`;
     } catch (error) {
       if (loadToken !== heatLoadToken) return;
       renderHeatSummary(null);
@@ -2646,7 +2769,9 @@ export async function startWebGLScene(canvas, status) {
       document.body.classList.remove('sun-mode');
       const rooftopContext = heatMetric?.value === 'rooftop_temperature_c'
         || Boolean(mitigationState.result?.roof_zones?.length);
-      layerGroups.terrain.visible = rooftopContext;
+      // Keep the terrain slab visible beneath the transparent heat surface so
+      // its cut edge reads with the same depth as every other analysis mode.
+      layerGroups.terrain.visible = true;
       layerGroups.grass.visible = rooftopContext;
       layerGroups.railways.visible = false;
       // Keep the walking network faintly legible so priority areas can be
@@ -4336,27 +4461,18 @@ export async function startWebGLScene(canvas, status) {
     buildScenarioRoadStatuses(payload);
     const impact = payload.impact || {};
     const environment = impact.environment || {};
-    const streetActivity = payload.street_activity || {};
     const formatPercent = value => (value === null || value === undefined)
       ? '—'
       : `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
     if (trafficResults) {
       trafficResults.hidden = false;
       trafficResults.innerHTML = `
-        <span><b>${formatPercent(impact.mean_journey_time_change_pct)}</b>Paired mean journey time</span>
-        <span><b>${impact.mean_time_loss_change_s === null || impact.mean_time_loss_change_s === undefined ? '—' : `${impact.mean_time_loss_change_s >= 0 ? '+' : ''}${Number(impact.mean_time_loss_change_s).toFixed(0)} s`}</b>Paired mean time loss</span>
-        <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Paired mean in-network speed</span>
-        <span><b>${impact.mean_route_length_change_m === null || impact.mean_route_length_change_m === undefined ? '—' : `${impact.mean_route_length_change_m >= 0 ? '+' : ''}${Number(impact.mean_route_length_change_m).toFixed(0)} m`}</b>Paired mean route length</span>
-        <span><b>${(impact.mean_queued_vehicle_change ?? 0) >= 0 ? '+' : ''}${Number(impact.mean_queued_vehicle_change ?? 0).toFixed(1)}</b>Mean queued vehicles · corridor</span>
-        <span><b>${impact.max_queue_baseline ?? 0} → ${impact.max_queue_closure ?? 0}</b>Peak queued vehicles · corridor</span>
-        <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>
-        <span><b>${impact.completed_trip_ratio_baseline === null || impact.completed_trip_ratio_baseline === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_baseline * 100)}%`} → ${impact.completed_trip_ratio_closure === null || impact.completed_trip_ratio_closure === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_closure * 100)}%`}</b>Trips completed by scoring horizon</span>
-        <span><b>${Math.round((payload.road_data?.municipal_match_ratio ?? 0) * 100)}%</b>City road-data coverage</span>
-        <span><b>${formatPercent(environment.co2_kg?.change_pct)}</b>Estimated CO₂</span>
-        <span><b>${formatPercent(environment.nox_g?.change_pct)}</b>Estimated NOx</span>
-        <span><b>${(environment.mean_active_edge_noise_db?.change ?? 0) >= 0 ? '+' : ''}${(environment.mean_active_edge_noise_db?.change ?? 0).toFixed(1)} dB</b>Relative edge noise emission</span>
-        <span><b>${streetActivity.parking_spaces ?? 0}</b>Mapped parking spaces nearby</span>
-        <span><b>${streetActivity.pedestrian_crossings ?? 0}</b>Mapped crossings nearby</span>`;
+        <span><b>${formatPercent(impact.mean_journey_time_change_pct)}</b>Journey time</span>
+        <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Mean speed</span>
+        <span><b>${impact.max_queue_baseline ?? 0} → ${impact.max_queue_closure ?? 0}</b>Peak queue</span>
+        <span><b>${impact.completed_trip_ratio_baseline === null || impact.completed_trip_ratio_baseline === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_baseline * 100)}%`} → ${impact.completed_trip_ratio_closure === null || impact.completed_trip_ratio_closure === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_closure * 100)}%`}</b>Trips completed</span>
+        <span><b>${formatPercent(environment.co2_kg?.change_pct)}</b>CO₂</span>
+        <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>`;
     }
     if (trafficImpactSummary) {
       const assessment = trafficImpactAssessment(impact);
@@ -4369,9 +4485,8 @@ export async function startWebGLScene(canvas, status) {
       trafficImpactSummary.hidden = false;
     }
     if (trafficStatus) {
-      trafficStatus.textContent = `${payload.road_name} · ${payload.scenario?.label || ''} · `
-        + `${payload.closure?.description || ''} · ${payload.baseline.trip_count} completed trips before vs `
-        + `${payload.closure_metrics.trip_count} with closure · ${payload.flow_comparison?.length || 0} changed directional road sections shown.`;
+      trafficStatus.textContent = `${payload.road_name} · ${payload.baseline.trip_count} before · `
+        + `${payload.closure_metrics.trip_count} with closure`;
     }
     if (trafficToggle) trafficToggle.checked = true;
     if (trafficCompare) trafficCompare.disabled = false;

@@ -110,6 +110,25 @@ def test_osm_visible_network_retains_continuous_coloured_road_hierarchy():
     assert classes["residential"] > 200
 
 
+def test_osm_point_furniture_is_preserved_with_honest_generic_geometry():
+    model = json.loads((ROOT / "public/assets/city_model.json").read_text(encoding="utf-8"))
+    furniture = [
+        item for item in model["cityObjects"].values()
+        if "osmPointFurniture" in item["sources"]
+    ]
+    classes = Counter(item["attributes"].get("class") for item in furniture)
+
+    assert classes["fountain"] > 0
+    assert classes["bench"] > 0
+    assert classes["wasteBasket"] > 0
+    assert classes["bicycleParking"] > 0
+    assert classes["bollard"] > 0
+    assert classes["busStop"] > 0
+    assert all(item["geometry"]["type"] == "Point" for item in furniture)
+    assert all(item["quality"]["dimensions"] == "inferred" for item in furniture)
+    assert all(item["attributes"].get("osmId") for item in furniture)
+
+
 def test_municipal_lane_count_handles_transition_values():
     assert city_model._road_lane_count("2-3") == 3
     assert city_model._road_lane_count("1,2-3,2") == 3

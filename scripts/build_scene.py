@@ -974,6 +974,7 @@ def main():
     parser.add_argument("--roads", type=Path, default=Path("data/osm_cbd_roads.geojson"))
     parser.add_argument("--railways", type=Path, default=Path("data/osm_cbd_railways.geojson"))
     parser.add_argument("--green", type=Path, default=Path("data/osm_cbd_green_areas.geojson"))
+    parser.add_argument("--osm", type=Path, default=Path("data/osm_cbd.osm.xml"))
     parser.add_argument("--street-data", type=Path, default=Path("data/street_data"))
     parser.add_argument("--scene-footprint", type=Path, default=Path("data/scene_footprint.geojson"))
     parser.add_argument("--out", type=Path, default=Path("public/assets"))
@@ -1046,6 +1047,7 @@ def main():
             "roads": args.roads,
             "railways": args.railways,
             "green": args.green,
+            "osm": args.osm,
             "street_data": args.street_data,
         },
     )

@@ -363,7 +363,8 @@ export async function startScene(canvas, status) {
       Object.assign(savedVisibility, visibility);
       const rooftopContext = heatMetric?.value === 'rooftop_temperature_c'
         || heatState.data?.metric === 'rooftop_temperature_c';
-      visibility.terrain = rooftopContext;
+      // Preserve the solid cut-out terrain beneath the heat overlay.
+      visibility.terrain = true;
       visibility.grass = rooftopContext;
       visibility.railways = false;
       visibility.paths = rooftopContext;
@@ -925,8 +926,8 @@ export async function startScene(canvas, status) {
       if (summaryReady) {
         heatAverage.textContent = formatValue(summary.area_weighted_mean);
         heatMaximum.textContent = formatValue(summary.maximum);
-        if (heatAverageLabel) heatAverageLabel.textContent = `Average ${heatState.data.metric_label.toLowerCase()}`;
-        if (heatMaximumLabel) heatMaximumLabel.textContent = `Highest ${heatState.data.metric_label.toLowerCase()}`;
+        if (heatAverageLabel) heatAverageLabel.textContent = 'Average';
+        if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum';
         const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
         heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${Number(summary.hotspot_area_pct || 0).toFixed(0)}%`;
       }
@@ -939,12 +940,12 @@ export async function startScene(canvas, status) {
         ? `${scale.top_band_label || 'Top 10%'} ≥ ${formatValue(range.max)}`
         : 'Top 10%';
       const rawWindow = heatState.data.window?.label;
-      const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26 baseline' : rawWindow || 'current product';
+      const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26' : rawWindow || 'Current';
       const scenarioMinutes = Number(heatState.data.scenario?.minutes ?? 720);
       const scenarioTime = `${String(Math.floor(scenarioMinutes / 60)).padStart(2, '0')}:${String(scenarioMinutes % 60).padStart(2, '0')}`;
-      const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(heatState.data.metric) ? ` · ${scenarioTime}` : '';
+      const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(heatState.data.metric) ? `${scenarioTime} · ` : '';
       heatStatus.textContent = heatState.data.count
-        ? `${heatState.data.metric_label}${timeContext} · ${heatState.data.count} zones · ${window}`
+        ? `${timeContext}${heatState.data.count} zones · ${window}`
         : 'No values in this product.';
     } catch (error) {
       if (loadToken !== heatLoadToken) return;
@@ -1251,6 +1252,18 @@ export async function startScene(canvas, status) {
     const topValue = at(row, column) * (1 - tx) + at(row, column + 1) * tx;
     const bottomValue = at(row + 1, column) * (1 - tx) + at(row + 1, column + 1) * tx;
     return topValue * (1 - ty) + bottomValue * ty;
+  }
+
+  function roadTerrainHeightAt(x, z) {
+    const radius = 4;
+    const samples = [
+      terrainHeightAt(x, z),
+      terrainHeightAt(x - radius, z), terrainHeightAt(x + radius, z),
+      terrainHeightAt(x, z - radius), terrainHeightAt(x, z + radius),
+      terrainHeightAt(x - radius, z - radius), terrainHeightAt(x + radius, z - radius),
+      terrainHeightAt(x - radius, z + radius), terrainHeightAt(x + radius, z + radius),
+    ].sort((a, b) => a - b);
+    return samples[Math.floor(samples.length / 2)];
   }
 
   function pointInTerrainFootprint(x, z) {
@@ -1819,6 +1832,31 @@ export async function startScene(canvas, status) {
     context.fill();
   }
 
+  function drawTerrainSkirt(projectPolygon) {
+    if (!terrain.footprint?.length) return;
+    const floorY = Math.min(...terrain.heights.filter(Number.isFinite)) - 40;
+    context.fillStyle = COLORS.terrainEdge;
+    context.beginPath();
+    for (const polygon of terrain.footprint) {
+      for (const ring of polygon) {
+        for (let index = 0; index < ring.length; index += 1) {
+          const [x1, z1] = ring[index];
+          const [x2, z2] = ring[(index + 1) % ring.length];
+          const quad = projectPolygon([
+            [x1, terrainHeightAt(x1, z1), z1],
+            [x2, terrainHeightAt(x2, z2), z2],
+            [x2, floorY, z2], [x1, floorY, z1],
+          ]);
+          if (quad.length < 3) continue;
+          context.moveTo(quad[0][0], quad[0][1]);
+          for (let point = 1; point < quad.length; point += 1) context.lineTo(quad[point][0], quad[point][1]);
+          context.closePath();
+        }
+      }
+    }
+    context.fill();
+  }
+
   function drawGrass(projectPolygon, project, focal, simplified) {
     context.fillStyle = COLORS.grass;
     for (const grassArea of grass) {
@@ -1846,7 +1884,7 @@ export async function startScene(canvas, status) {
       if ((road.highway === 'footway' || road.highway === 'path') && camera.distance > 1000 && !shadowState.enabled) continue;
       if (simplified && !['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary'].includes(road.highway)) continue;
       if (!isInView(road.x, terrainHeightAt(road.x, road.z) + 0.22, road.z, road.radius + road.width, project, focal)) continue;
-      const points = road.points.map(([x, z]) => project([x, terrainHeightAt(x, z) + 0.22, z]));
+      const points = road.points.map(([x, z]) => project([x, roadTerrainHeightAt(x, z) + 0.22, z]));
       if (points.length < 2 || points.some(point => !point)) continue;
       const group = groups.get(road.highway) || { roads: [], width: road.width, ...style };
       group.roads.push(points);
@@ -1899,7 +1937,10 @@ export async function startScene(canvas, status) {
       context.fillRect(0, 0, canvas.width, canvas.height);
       const { forward, project, projectPolygon, focal } = cameraProjection();
       const simplified = Boolean(drag) || performance.now() < interactionUntil;
-      if (visibility.terrain) drawTerrain(projectPolygon);
+      if (visibility.terrain) {
+        drawTerrainSkirt(projectPolygon);
+        drawTerrain(projectPolygon);
+      }
       const [left, bottom, right, top] = manifest.bounds;
       const boundary = [[left, terrainHeightAt(left, -top), -top], [right, terrainHeightAt(right, -top), -top], [right, terrainHeightAt(right, -bottom), -bottom], [left, terrainHeightAt(left, -bottom), -bottom]];
       const clippedBoundary = projectPolygon(boundary);

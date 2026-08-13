@@ -233,7 +233,7 @@ button, select, input { font: inherit; }
 .eyebrow { color: var(--ink); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
 .place-name { color: var(--quiet); font-size: 10px; }
 
-.menu-tabs { display: grid; grid-template-columns: repeat(8, 1fr); padding: 0 5px; }
+.menu-tabs { display: grid; grid-template-columns: repeat(6, 1fr); padding: 0 5px; }
 .menu-tab {
   position: relative;
   width: auto;
@@ -300,6 +300,7 @@ button, select, input { font: inherit; }
   font-size: 11px;
 }
 .menu-section h2,
+.tools-heading,
 .streetview-heading,
 .current-heading,
 .heat-heading,
@@ -330,6 +331,23 @@ button, select, input { font: inherit; }
   background: #2e2e2e;
 }
 .controls label:hover { border-color: var(--line-light); background: #343434; }
+
+.tools-panel { gap: 0; }
+.tools-heading { min-height: 28px; margin: 0; padding: 0 1px 8px; }
+.tool-section {
+  display: grid;
+  gap: 7px;
+  padding: 10px 0;
+  border-top: 1px solid #414141;
+}
+.tool-section h2,
+.tool-section .streetview-heading,
+.tool-section .current-heading { min-height: 16px; margin: 0; letter-spacing: .02em; text-transform: none; }
+.tool-layer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.tool-layer-grid label { min-width: 0; }
+.tool-layer-grid select { font-size: 9px; }
+.tool-section .streetview-status,
+.tool-section .current-status { min-height: 0; margin: 0; font-size: 9px; }
 label { display: block; color: #c8c8c5; line-height: 1.35; }
 .controls label, .heat-switch, .sun-switch, .wind-switch { display: flex; gap: 7px; align-items: center; }
 input { accent-color: var(--accent); }
@@ -859,6 +877,190 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .hint, .source { margin: 6px 0 0; color: var(--quiet); font-size: 9px; line-height: 1.4; }
 .source { padding-top: 6px; border-top: 1px solid var(--line); }
 .source a { color: #b8e0d2; }
+
+/* Compact simulation panels, following the flat segmented-control language used by Wind. */
+.heat-panel,
+.traffic-panel { gap: 0; }
+
+.heat-panel > .heat-heading,
+.traffic-panel > .traffic-heading {
+  min-height: 28px;
+  margin: 0;
+  padding: 0 1px 8px;
+}
+
+.compact-section {
+  display: grid;
+  gap: 7px;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid #414141;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.compact-section > b,
+.compact-section > .traffic-card-heading {
+  min-height: 16px;
+  margin: 0;
+  color: #d2d2cf;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+.compact-switch {
+  min-height: 24px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  background: #444;
+}
+.compact-switch:has(input:checked) { background: #654859; color: #f4d9e8; }
+
+.heat-panel label,
+.traffic-panel label { color: #aaa; font-size: 9px; }
+.heat-panel select,
+.heat-panel input[type="date"],
+.traffic-panel select {
+  min-height: 28px;
+  border: 0;
+  border-radius: 3px;
+  background: #505050;
+  color: #d5d5d2;
+  text-align: center;
+}
+.heat-panel select:focus,
+.heat-panel input[type="date"]:focus,
+.traffic-panel select:focus { box-shadow: inset 0 0 0 1px #a8688d; }
+
+.heat-control-grid { grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr); gap: 3px; }
+.heat-results-section { gap: 6px; }
+.heat-status,
+.traffic-status { min-height: 0; margin: 0; font-size: 9px; line-height: 1.35; }
+.heat-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; }
+.heat-summary span,
+.heat-summary span:last-child {
+  grid-column: auto;
+  min-width: 0;
+  padding: 7px 5px;
+  border: 0;
+  background: #3e3e3e;
+  text-align: center;
+}
+.heat-summary b { margin: 0 0 2px; font-size: 12px; }
+.heat-gradient { height: 13px; margin-top: 2px; border-radius: 3px; }
+
+.traffic-view-toggles {
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  margin-bottom: 4px;
+  overflow: hidden;
+  border: 1px solid #555;
+  border-radius: 16px;
+  background: #3d3d3d;
+}
+.traffic-view-toggles label,
+.traffic-restrictions-switch {
+  justify-content: center;
+  min-height: 28px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #aaa;
+  cursor: pointer;
+  text-align: center;
+}
+.traffic-view-toggles label + label { border-left: 1px solid #555; }
+.traffic-view-toggles label:has(input:checked) { background: #654859; color: #f4d9e8; }
+.traffic-view-toggles label:has(input:focus-visible) { box-shadow: inset 0 0 0 2px #d99aba; }
+.traffic-view-toggles input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+.traffic-card { padding: 10px 0; }
+.traffic-live-card,
+.traffic-output-card { border-color: #414141; background: transparent; }
+.traffic-card-heading { font-size: 10px; letter-spacing: .02em; }
+.traffic-live-actions { gap: 6px; }
+.icon-button { border: 0; background: #484848; color: #cfcfcc; }
+.traffic-control-grid { gap: 3px; }
+.traffic-duration-label output { color: #d7d7d3; }
+.traffic-closure-choice { gap: 3px; }
+.traffic-closure-choice button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  border: 0;
+  background: #484848;
+  color: #c7c7c4;
+  font-size: 9px;
+}
+.traffic-closure-choice button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.traffic-closure-choice button span { display: inline; margin: 0; color: inherit; font-size: inherit; }
+.traffic-closure-choice button.active {
+  border: 0;
+  background: #654859;
+  color: #f7e3ef;
+  box-shadow: inset 0 0 0 1px #a8688d;
+}
+.traffic-selection-status {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #aaa;
+  font-size: 9px;
+}
+.traffic-actions { gap: 3px; }
+.traffic-actions button { border: 0; background: #5d4553; }
+.traffic-actions button.secondary { background: #484848; }
+.traffic-report-button { border: 0; background: #484848; color: #d7d7d3; }
+.traffic-gradient { height: 13px; }
+.traffic-impact-summary {
+  padding: 8px;
+  border-width: 0 0 0 3px;
+  background: #393522;
+  font-size: 9px;
+}
+.traffic-results span {
+  padding: 6px;
+  border: 0;
+  background: #3e3926;
+  font-size: 8px;
+}
+.traffic-results b { font-size: 12px; }
+.traffic-map-key summary { font-weight: 600; }
+
+.compact-about {
+  margin-top: 2px;
+  padding: 8px 0 0;
+  border-top: 1px solid #414141;
+  color: #92928f;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.compact-about summary { cursor: pointer; color: #aaa; }
+.compact-about p { margin: 7px 0 0; }
+
+.traffic-draw-popup {
+  width: min(320px, calc(100vw - 390px));
+  padding: 12px;
+  border-color: #666;
+  border-radius: 5px;
+  background: #292929f5;
+}
+.traffic-draw-popup p { margin: 6px 0; color: #bbb; }
+.traffic-draw-popup-count { margin: 8px 0; }
+.traffic-draw-popup-count strong { color: #e0a4ca; font-size: 18px; }
+.traffic-draw-popup-actions { grid-template-columns: 1fr 1fr; gap: 3px; }
 
 @media (max-width: 700px) {
   .panel { top: 8px; right: 8px; bottom: 8px; width: min(326px, calc(100vw - 16px)); }
