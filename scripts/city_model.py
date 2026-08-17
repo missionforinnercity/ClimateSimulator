@@ -465,7 +465,13 @@ def build_city_model(
     )
 
     for index, record in enumerate(scene.get("buildings", [])):
-        ground, height, ring, source_id, height_source, wall_height, detailed, coverage, roof_model, wall_profile, *source_metadata = record
+        ground, height, ring, source_id, height_source, wall_height, detailed, coverage, roof_model, wall_profile, *tail = record
+        # Older compact assets stored acquisition metadata immediately after
+        # wall_profile. New assets insert the numeric vertical clearance first.
+        if tail and isinstance(tail[0], (int, float)):
+            min_height, source_metadata = tail[0], tail[1:]
+        else:
+            min_height, source_metadata = 0.0, tail
         acquisition_method = source_metadata[0] if len(source_metadata) > 0 else None
         acquisition_period = source_metadata[1] if len(source_metadata) > 1 else None
         identifier, feature_id = _identity("building", source_id, ring, index)
@@ -475,12 +481,16 @@ def build_city_model(
             "Building",
             identifier,
             feature_id,
-            {"lod": "1", "type": "Solid", "footprint": ring, "groundElevationM": ground, "heightM": height},
+            {
+                "lod": "1", "type": "Solid", "footprint": ring,
+                "groundElevationM": ground, "heightM": height, "minHeightM": min_height,
+            },
             attributes={
                 "measuredHeightM": height,
                 "heightReference": height_source,
                 "acquisitionMethod": acquisition_method,
                 "acquisitionPeriod": acquisition_period,
+                "minHeightM": min_height,
             },
             sources=["buildings"],
             quality=_quality(

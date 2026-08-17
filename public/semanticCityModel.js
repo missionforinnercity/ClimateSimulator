@@ -18,6 +18,7 @@ export function sceneFromCityModel(model) {
         roofGeometry.eaveHeightM ?? geometry.heightM,
         Boolean(roofGeometry.externalMesh), roof.quality?.rasterCoverage ?? 0,
         roof.attributes?.roofModel || 'height_fallback', roofGeometry.boundaryHeightProfileM || null,
+        geometry.minHeightM || 0,
       ]);
     }
     if ((object.type === 'Road' || object.type === 'TrafficSpace')

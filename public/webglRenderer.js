@@ -356,7 +356,8 @@ export async function startWebGLScene(canvas, status) {
     const roofPositions = [];
     const wallColors = [];
     const roofColors = [];
-    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null], buildingIndex) => {
+    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0], buildingIndex) => {
+      const baseY = ground + Math.max(0, Number(minHeight) || 0);
       const roofY = ground + wallHeight;
       const colour = elevationColour(height);
       for (let index = 0; index < ring.length; index += 1) {
@@ -366,8 +367,8 @@ export async function startWebGLScene(canvas, status) {
         const top1 = ground + (wallProfile?.[index] ?? wallHeight);
         const top2 = ground + (wallProfile?.[next] ?? wallHeight);
         wallPositions.push(
-          x1, ground, z1, x2, ground, z2, x2, top2, z2,
-          x1, ground, z1, x2, top2, z2, x1, top1, z1,
+          x1, baseY, z1, x2, baseY, z2, x2, top2, z2,
+          x1, baseY, z1, x2, top2, z2, x1, top1, z1,
         );
         wallTriangles.push(
           { sourceId: buildingIndex, edgeIndex: index },
@@ -1950,7 +1951,7 @@ export async function startWebGLScene(canvas, status) {
 
   // Build a coarse spatial index once. Particle collision checks then inspect
   // only nearby footprints instead of all 2,322 buildings every frame.
-  for (const [ground, height, ring, , , wallHeight = height] of data.buildings) {
+  for (const [ground, height, ring, , , wallHeight = height, , , , , minHeight = 0] of data.buildings) {
     if (!ring?.length) continue;
     const minX = Math.min(...ring.map(point => point[0]));
     const maxX = Math.max(...ring.map(point => point[0]));
@@ -1959,7 +1960,11 @@ export async function startWebGLScene(canvas, status) {
     const centroid = ring.reduce((sum, [x, z]) => [sum[0] + x, sum[1] + z], [0, 0]);
     centroid[0] /= ring.length;
     centroid[1] /= ring.length;
-    const building = { ring, minX, maxX, minZ, maxZ, centroid, roofY: ground + Math.max(height, wallHeight) };
+    const building = {
+      ring, minX, maxX, minZ, maxZ, centroid,
+      roofY: ground + Math.max(height, wallHeight),
+      minHeight: Math.max(0, Number(minHeight) || 0),
+    };
     const minColumn = Math.floor(minX / windBuildingCellSize);
     const maxColumn = Math.floor(maxX / windBuildingCellSize);
     const minRow = Math.floor(minZ / windBuildingCellSize);
@@ -1978,7 +1983,8 @@ export async function startWebGLScene(canvas, status) {
     const row = Math.floor(z / windBuildingCellSize);
     const candidates = windBuildingGrid.get(windCellKey(column, row)) || [];
     return candidates.some(building => (
-      x >= building.minX && x <= building.maxX
+      building.minHeight <= windState.height
+      && x >= building.minX && x <= building.maxX
       && z >= building.minZ && z <= building.maxZ
       && pointInWindRing(x, z, building.ring)
     ));
@@ -2008,6 +2014,7 @@ export async function startWebGLScene(canvas, status) {
     }
     let nearest = null;
     for (const building of candidates) {
+      if (building.minHeight > windState.height) continue;
       if (x < building.minX - 30 || x > building.maxX + 30 || z < building.minZ - 30 || z > building.maxZ + 30) continue;
       for (let index = 0; index < building.ring.length; index += 1) {
         const [ax, az] = building.ring[index];

@@ -46,6 +46,11 @@ def numeric_metres(value):
     return result if math.isfinite(result) and 2.0 <= result <= 250.0 else None
 
 
+def osm_min_height(tags):
+    """Return an explicitly mapped metric clearance, when one exists."""
+    return numeric_metres(tags.get("min_height"))
+
+
 def load_osm_way_buildings(osm_path, clip):
     root = ElementTree.parse(osm_path).getroot()
     to_local = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
@@ -156,7 +161,8 @@ def build_hybrid(osm_path, municipal_path, scene_footprint_path):
                 "OSM_ID": record["osm_id"],
                 "OSM_PART": record["is_part"],
                 "OSM_LEVELS": tags.get("building:levels"),
-                "OSM_MIN_HEIGHT": tags.get("min_height"),
+                "OSM_MIN_HEIGHT": osm_min_height(tags),
+                "OSM_MIN_LEVEL": tags.get("building:min_level"),
                 "OSM_ROOF": tags.get("roof:shape"),
             },
             "geometry": mapping(transform_geometry(to_web.transform, record["geometry"])),

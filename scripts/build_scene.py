@@ -98,6 +98,22 @@ def fill_nearest(values, valid):
     return values[tuple(indices)]
 
 
+def building_min_height(value, total_height, minimum_level=None, total_levels=None):
+    """Return metric clearance, deriving level-based clearance when needed."""
+    try:
+        clearance = float(value)
+        height = float(total_height)
+    except (TypeError, ValueError):
+        try:
+            height = float(total_height)
+            minimum_level = float(minimum_level)
+            total_levels = float(total_levels)
+            clearance = height * minimum_level / total_levels
+        except (TypeError, ValueError, ZeroDivisionError):
+            return 0.0
+    return clearance if math.isfinite(clearance) and 0 < clearance < height else 0.0
+
+
 def local_roads(roads_path, clip):
     collection = json.loads(roads_path.read_text(encoding="utf-8"))
     transformer = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
@@ -382,6 +398,12 @@ def load_building_records(footprints_path, height_path, dtm_path):
                 "roof_shape_hint": properties.get("OSM_ROOF"),
                 "acquisition_method": properties.get("ACQS_MTHD"),
                 "acquisition_period": properties.get("ACQS_PRD"),
+                # OSM building parts such as bridges and skyways can start
+                # several metres above ground. Preserve that open volume.
+                "min_height": building_min_height(
+                    properties.get("OSM_MIN_HEIGHT"), height,
+                    properties.get("OSM_MIN_LEVEL"), properties.get("OSM_LEVELS"),
+                ),
             }
 
 
@@ -409,6 +431,7 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, roads_path,
                 round(profile["wall_height"], 1), profile["detailed"],
                 round(profile["coverage"], 3), profile["roof_model"],
                 [round(value, 1) for value in (profile.get("wall_profile") or [])] or None,
+                round(metadata.get("min_height") or 0.0, 1),
                 metadata.get("acquisition_method"), metadata.get("acquisition_period"),
             ])
 
@@ -1000,7 +1023,7 @@ def main():
         "crs": "custom Hartbeesthoek94 Lo19 east/north grid",
         "origin": [origin_x, origin_y],
         "bounds": [bounds.left - origin_x, bounds.bottom - origin_y, bounds.right - origin_x, bounds.top - origin_y],
-        "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,acquisition_method,acquisition_period]",
+        "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,min_height,acquisition_method,acquisition_period]",
         "layers": {"terrain": terrain_metadata},
         "assets": {
             "fallback": "fallback.json",

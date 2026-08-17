@@ -126,3 +126,28 @@ def test_field_uses_cbd_building_flow_when_present(monkeypatch):
     # Elsewhere the CBD field's direction (pure +v) should win over the
     # regional field's (pure +u), so v should vary and be nonzero somewhere.
     assert max(field["v"]) > 0
+
+
+def test_elevated_bridge_does_not_apply_blocked_cbd_cells_below_clearance(monkeypatch):
+    import numpy as np
+    from shapely.geometry import Polygon
+    from shapely.strtree import STRtree
+
+    regional = {
+        "u": np.ones((2, 2)), "v": np.zeros((2, 2)),
+        "origin_x": -50.0, "origin_z": -50.0, "dx": 100.0, "dz": 100.0,
+    }
+    blocked_cbd = {
+        "u": np.zeros((2, 2)), "v": np.zeros((2, 2)),
+        "origin_x": -50.0, "origin_z": -50.0, "dx": 100.0, "dz": 100.0,
+    }
+    bridge = {"geometry": Polygon([(-60, -60), (60, -60), (60, 60), (-60, 60)]), "clearance_m": 3.0}
+    monkeypatch.setattr(field_module, "load_regional_field", lambda direction_deg: regional)
+    monkeypatch.setattr(field_module, "load_cbd_field", lambda direction_deg: blocked_cbd)
+    monkeypatch.setattr(field_module, "load_elevated_parts", lambda: ([bridge], STRtree([bridge["geometry"]])))
+    request = request_from_payload({
+        "center_local": [0, 0], "size_m": 100, "height_m": 2,
+        "reference_speed_mps": 10, "resolution_m": 20,
+    }, {"origin": [0, 0]})
+    result = build_field(request, (-50, -50, 50, 50), [])
+    assert min(result["speed"]) > 0

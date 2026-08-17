@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import psycopg2
 from pyproj import Transformer
-from shapely.geometry import Point, box, shape
+from shapely.geometry import Point, Polygon, box, shape
 from shapely.ops import transform as transform_geometry
 from shapely.strtree import STRtree
 
@@ -35,7 +35,7 @@ from server.era5_wind import forcing_profile
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 WEB_CRS = "EPSG:4326"
-FIELD_VERSION = "terrain-buildings-era5-comfort-2026-08-12"
+FIELD_VERSION = "terrain-buildings-elevated-clearance-2026-08-17"
 REGIONAL_FIELD_DIR = Path(__file__).resolve().parents[1] / "data" / "wind_fields" / "regional"
 CBD_FIELD_DIR = Path(__file__).resolve().parents[1] / "data" / "wind_fields" / "cbd"
 VALID_DIRECTIONS = {
@@ -179,6 +179,37 @@ def load_cbd_field(direction_deg: float) -> dict[str, Any] | None:
             "dx": float(data["dx"]),
             "dz": float(data["dz"]),
         }
+
+
+@functools.lru_cache(maxsize=1)
+def load_elevated_parts() -> tuple[list[dict[str, Any]], STRtree | None]:
+    """Load open-below building parts from the shipped semantic city model."""
+    path = Path(__file__).resolve().parents[1] / "public" / "assets" / "city_model.json"
+    if not path.exists():
+        return [], None
+    model = json.loads(path.read_text(encoding="utf-8"))
+    parts = []
+    for obj in model.get("cityObjects", {}).values():
+        geometry = obj.get("geometry") or {}
+        clearance = float(geometry.get("minHeightM") or 0.0)
+        ring = geometry.get("footprint") or []
+        if obj.get("type") != "Building" or clearance <= 0 or len(ring) < 3:
+            continue
+        polygon = Polygon(ring)
+        if polygon.is_valid and not polygon.is_empty:
+            parts.append({"geometry": polygon, "clearance_m": clearance})
+    return parts, STRtree([part["geometry"] for part in parts]) if parts else None
+
+
+def is_below_elevated_part(x: float, z: float, height_m: float, parts, tree) -> bool:
+    if tree is None:
+        return False
+    point = Point(x, z)
+    return any(
+        height_m < parts[int(candidate)]["clearance_m"]
+        and parts[int(candidate)]["geometry"].covers(point)
+        for candidate in tree.query(point)
+    )
 
 
 def sample_terrain_flow(field: dict[str, Any], x: float, z: float) -> tuple[float, float, float]:
@@ -384,6 +415,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
     flow_x, flow_z = -math.sin(angle), math.cos(angle)
     regional_field = load_regional_field(request.direction_deg)
     cbd_field = load_cbd_field(request.direction_deg)
+    elevated_parts, elevated_tree = load_elevated_parts() if cbd_field is not None else ([], None)
     tree = STRtree([feature["local_geometry"] for feature in polygons]) if polygons else None
     # A stability-dependent urban power-law profile converts weather forcing
     # to the requested pedestrian level. Manual requests remain unchanged
@@ -406,7 +438,9 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
             if regional_field is not None:
                 point_flow_x, point_flow_z, regional_factor = sample_terrain_flow(regional_field, x, z)
                 terrain_speed_factor *= min(regional_factor, 2.5)
-            if cbd_field is not None:
+            if cbd_field is not None and not is_below_elevated_part(
+                x, z, request.height_m, elevated_parts, elevated_tree
+            ):
                 # The CBD field is the finer, closer-to-ground layer, so it
                 # wins on direction (buildings channel flow down streets);
                 # its speed effect multiplies with the mountain's rather than

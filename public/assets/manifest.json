@@ -11,7 +11,7 @@
     1040.0,
     902.0
   ],
-  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,acquisition_method,acquisition_period]",
+  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,min_height,acquisition_method,acquisition_period]",
   "layers": {
     "terrain": {
       "source": "data/derived/company_gardens_hybrid_dem_2m.tif",
@@ -47,7 +47,7 @@
       "roads": 2191,
       "railways": 100,
       "grass": 82,
-      "bytes": 1012075
+      "bytes": 1019673
     },
     "canopy": {
       "components": 2659,
@@ -69,7 +69,7 @@
         "PlantCover": 82,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 17161961
+      "bytes": 17225673
     }
   },
   "assets": {

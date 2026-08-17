@@ -29,7 +29,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dtm", type=Path, default=Path("data/raw/LiDAR2025/LiDAR2025_2m_DTM.tif"))
     parser.add_argument("--height", type=Path, default=Path("data/raw/LiDAR2025/Lidar2025_Height_Map_1m.tif"))
-    parser.add_argument("--footprints", type=Path, default=Path("data/raw/BuildingFootprints2D.geojson"))
+    parser.add_argument("--footprints", type=Path, default=Path("data/derived/BuildingFootprintsHybrid.geojson"))
     parser.add_argument("--output-dir", type=Path, default=Path("data/wind_fields/cbd"))
     parser.add_argument("--resolution-m", type=float, default=3.0)
     # A building must rise this many metres above its surrounding
@@ -42,7 +42,8 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     solid_mask, canopy_drag, origin_x, origin_z, dx, dz = load_cbd_obstacle_fields(
-        args.dtm, args.footprints, args.height, Path("public/assets/canopy.json"), args.resolution_m
+        args.dtm, args.footprints, args.height, Path("public/assets/canopy.json"), args.resolution_m,
+        sample_height_m=args.sample_height_m,
     )
     import rasterio
     with rasterio.open(args.dtm) as source:

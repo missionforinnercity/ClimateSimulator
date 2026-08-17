@@ -119,6 +119,7 @@ export async function startScene(canvas, status) {
   const visibility = { terrain: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true };
   const buildings = scene.buildings.map(value => {
     const [ground, height, ring] = value;
+    const minHeight = Math.max(0, Number(value[10]) || 0);
     const x = ring.reduce((sum, point) => sum + point[0], 0) / ring.length;
     const z = ring.reduce((sum, point) => sum + point[1], 0) / ring.length;
     const minX = Math.min(...ring.map(point => point[0]));
@@ -127,7 +128,7 @@ export async function startScene(canvas, status) {
     const maxZ = Math.max(...ring.map(point => point[1]));
     return {
       kind: 'building', value,
-      x, z, ground, height,
+      x, z, ground, height, minHeight,
       radius: Math.max(...ring.map(point => Math.hypot(point[0] - x, point[1] - z))),
       ring, shadowRing: simplifyShadowRing(ring), minX, maxX, minZ, maxZ,
     };
@@ -470,6 +471,22 @@ export async function startScene(canvas, status) {
     return highest;
   }
 
+  function isWindObstacle(building) {
+    return building.minHeight <= windState.height;
+  }
+
+  function containingWindObstacle(x, z) {
+    let highest = null;
+    for (const id of nearbyBuildings(x, z)) {
+      const building = buildings[id];
+      if (!isWindObstacle(building)) continue;
+      if (x < building.minX || x > building.maxX || z < building.minZ || z > building.maxZ) continue;
+      if (pointInPolygon(x, z, building.ring)
+        && (!highest || building.ground + building.height > highest.ground + highest.height)) highest = building;
+    }
+    return highest;
+  }
+
   function spawnParticle(field, distributed = false) {
     const angle = windState.direction * Math.PI / 180;
     // windState.direction is the compass bearing wind blows FROM, so flow
@@ -489,7 +506,7 @@ export async function startScene(canvas, status) {
         x = minX + Math.random() * (maxX - minX);
         z = flowZ > 0 ? minZ + 1 : maxZ - 1;
       }
-      if (!containingBuilding(x, z)) return { x, z, previousX: x, previousZ: z, age: distributed ? Math.random() * 8 : 0, trail: [[x, z]] };
+      if (!containingWindObstacle(x, z)) return { x, z, previousX: x, previousZ: z, age: distributed ? Math.random() * 8 : 0, trail: [[x, z]] };
     }
     const x = field.origin[0], z = field.origin[1];
     return { x, z, previousX: x, previousZ: z, age: 0, trail: [[x, z]] };
@@ -633,6 +650,7 @@ export async function startScene(canvas, status) {
     let steerZ = dz;
     for (const id of nearbyBuildings(lookX, lookZ)) {
       const building = buildings[id];
+      if (!isWindObstacle(building)) continue;
       const inside = pointInPolygon(lookX, lookZ, building.ring);
       const boundary = nearestBoundary(lookX, lookZ, building.ring);
       const influence = 18;
@@ -679,6 +697,7 @@ export async function startScene(canvas, status) {
     // of nearby buildings. Solid collision handling remains below in advection.
     for (const id of nearbyBuildings(x, z)) {
       const building = buildings[id];
+      if (!isWindObstacle(building)) continue;
       const relativeX = x - building.x, relativeZ = z - building.z;
       const downstream = relativeX * steerX + relativeZ * steerZ;
       const crosswind = relativeX * -steerZ + relativeZ * steerX;
@@ -1130,7 +1149,7 @@ export async function startScene(canvas, status) {
       const midpoint = flowVelocity(midX, midZ, now + elapsed * 500);
       const nextX = particle.x + midpoint.u * elapsed * 6.5;
       const nextZ = particle.z + midpoint.v * elapsed * 6.5;
-      if (containingBuilding(nextX, nextZ)) {
+      if (containingWindObstacle(nextX, nextZ)) {
         // Never allow traces to pool inside solid geometry. Steering normally
         // bends them around a facade; a missed corner is recycled somewhere
         // else in the domain (not always back at the inflow edge) so traces
@@ -1541,7 +1560,8 @@ export async function startScene(canvas, status) {
   // geometry into depth buckets, so it does not need one fill per building.
   function drawBuilding(building, project) {
     const [ground, height, ring] = building;
-    const base = ring.map(([x, z]) => project([x, ground, z]));
+    const baseY = ground + Math.max(0, Number(building[10]) || 0);
+    const base = ring.map(([x, z]) => project([x, baseY, z]));
     const roof = ring.map(([x, z]) => project([x, ground + height, z]));
     if (base.some(point => !point) || roof.some(point => !point)) return;
     const screenHeight = Math.max(...base.map((point, index) => Math.abs(point[1] - roof[index][1])));
@@ -1581,10 +1601,11 @@ export async function startScene(canvas, status) {
     const roofRings = [];
     for (const building of buildingList) {
       const [ground, height] = building.value;
+      const baseY = ground + building.minHeight;
       const ring = building.shadowRing || building.value[2];
       const roof = ring.map(([x, z]) => project([x, ground + height, z]));
       if (roof.some(point => !point)) continue;
-      const centerBase = project([building.x, ground, building.z]);
+      const centerBase = project([building.x, baseY, building.z]);
       const centerRoof = project([building.x, ground + height, building.z]);
       if (!centerBase || !centerRoof) continue;
       const screenHeight = Math.abs(centerBase[1] - centerRoof[1]);
@@ -1605,8 +1626,8 @@ export async function startScene(canvas, status) {
           // Back-facing facade quads are completely hidden by the building.
           // Avoid projecting and path-building them in the first place.
           if (normalX * -forward[0] + normalZ * -forward[2] <= 0) continue;
-          base[index] ||= project([ring[index][0], ground, ring[index][1]]);
-          base[next] ||= project([ring[next][0], ground, ring[next][1]]);
+          base[index] ||= project([ring[index][0], baseY, ring[index][1]]);
+          base[next] ||= project([ring[next][0], baseY, ring[next][1]]);
           if (!base[index] || !base[next]) continue;
           const quad = [base[index], base[next], roof[next], roof[index]];
           const direct = Math.max(
@@ -1642,7 +1663,7 @@ export async function startScene(canvas, status) {
     const roofPath = new Path2D();
     for (const building of buildingList) {
       const [ground, height] = building.value;
-      const base = project([building.x, ground, building.z]);
+      const base = project([building.x, ground + building.minHeight, building.z]);
       const roof = project([building.x, ground + height, building.z]);
       if (!base || !roof) continue;
       const halfWidth = clamp(building.radius * canvas.height * 1.18 / roof[2] * 0.72, 1.5, 28);

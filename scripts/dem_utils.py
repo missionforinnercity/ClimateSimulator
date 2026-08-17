@@ -112,7 +112,7 @@ def load_cbd_building_heightfield(dtm_path, footprints_path, height_path, resolu
     return surface.astype(np.float32), west - center_x, -(north - center_y), dx, dz
 
 
-def load_cbd_obstacle_fields(dtm_path, footprints_path, height_path, canopy_path, resolution_m):
+def load_cbd_obstacle_fields(dtm_path, footprints_path, height_path, canopy_path, resolution_m, sample_height_m=2.0):
     """Return explicit solid building and porous canopy layers on the DTM grid."""
     import json
     from shapely.geometry import Polygon
@@ -138,7 +138,12 @@ def load_cbd_obstacle_fields(dtm_path, footprints_path, height_path, canopy_path
         return Polygon([(x + center_x if local else x, center_y - z if local else z) for x, z in ring])
 
     from scripts.build_scene import load_building_records
-    building_shapes = [(raster_polygon(record[2]), 1) for record in load_building_records(footprints_path, height_path, dtm_path)]
+    # Elevated parts do not close the air volume below their mapped clearance.
+    building_shapes = [
+        (raster_polygon(record[2]), 1)
+        for record in load_building_records(footprints_path, height_path, dtm_path)
+        if float(record[3].get("min_height") or 0.0) <= sample_height_m
+    ]
     solid = rasterize(building_shapes, out_shape=(height, width), transform=dst_transform, fill=0, dtype="uint8")
 
     canopy_shapes = []
