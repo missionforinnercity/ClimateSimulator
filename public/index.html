@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=30">
+  <link rel="stylesheet" href="style.css?v=34">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -32,6 +32,7 @@
     <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
+    <div id="transport-stop-card" class="transport-stop-card" role="dialog" aria-label="Stop details" hidden></div>
     <div id="traffic-draw-popup" class="traffic-draw-popup" role="dialog" aria-labelledby="traffic-draw-popup-title" hidden>
       <div class="traffic-draw-popup-heading">
         <span id="traffic-draw-popup-title">Edit road closure</span>
@@ -74,6 +75,10 @@
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-traffic" data-menu-target="traffic" title="Traffic simulation">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2.2c0-.8.5-1.5 1.3-1.8l1.4-.5 1.6-3.1c.3-.6.9-.9 1.5-.9h5.1c.7 0 1.3.4 1.6 1l1.3 3 1 .3c.7.2 1.2.9 1.2 1.7V14"/><path d="M4 14h16v3H4zM7 9.5h10M7 17v1.5m10-1.5v1.5"/><circle cx="7.5" cy="14" r="1"/><circle cx="16.5" cy="14" r="1"/></svg>
             <span>Traffic</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-transport" data-menu-target="transport" title="Public transport">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.5" width="14" height="15" rx="3"/><path d="M8 7h8M7.5 12.5h9M8 18.5l-1 2m9-2 1 2"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/></svg>
+            <span>Transport</span>
           </button>
         </nav>
       </header>
@@ -374,6 +379,76 @@
         </div>
         <p class="panel-note">2D shallow-water model · 2025 LiDAR plus lower-accuracy calibrated SRTM in Company’s Garden · drains and unverified curbs omitted.</p>
       </section>
+      <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
+        <div class="transport-heading">
+          <div><span class="transport-kicker">MOVE CAPE TOWN</span><strong>Public transport</strong></div>
+          <label class="transport-show-switch"><input id="transport-toggle" type="checkbox" checked><span>Network on</span></label>
+        </div>
+        <div class="transport-data-banner"><i aria-hidden="true"></i><span><b>Schedule-powered simulation</b><small id="transport-data-source">Loading PRASA + MyCiTi data…</small></span><em>NOT LIVE</em></div>
+        <div class="transport-mode-tabs" role="group" aria-label="Transport modes">
+          <button class="active" type="button" data-transport-mode="both" aria-pressed="true"><span aria-hidden="true">⌘</span> Network</button>
+          <button type="button" data-transport-mode="bus" aria-pressed="false"><span aria-hidden="true">▰</span> Bus</button>
+          <button type="button" data-transport-mode="train" aria-pressed="false"><span aria-hidden="true">═</span> Rail</button>
+        </div>
+
+        <section class="transport-simulator" aria-labelledby="transport-simulator-title">
+          <div class="transport-section-title"><div><span>01</span><b id="transport-simulator-title">Network simulator</b></div><em id="transport-service-day">Weekday service</em></div>
+          <div class="transport-live-board">
+            <div><small>MODEL TIME</small><strong id="transport-time-value">08:00</strong></div>
+            <div><small>VEHICLES IN VIEW</small><strong id="transport-vehicle-count">0</strong></div>
+            <span class="transport-live-pulse" aria-hidden="true"></span>
+          </div>
+          <label class="transport-timeline"><span><b>00:00</b><b>12:00</b><b>23:59</b></span>
+            <input id="transport-time" type="range" min="0" max="1439" step="1" value="480" aria-label="Model time">
+          </label>
+          <div class="transport-playback">
+            <button id="transport-play" type="button" aria-pressed="true"><span aria-hidden="true">Ⅱ</span> Pause</button>
+            <button id="transport-now" class="secondary" type="button">Now</button>
+            <select id="transport-speed" aria-label="Playback speed"><option value="0.25" selected>¼×</option><option value="1">1×</option><option value="5">5×</option></select>
+            <button id="transport-fit" class="secondary" type="button">Frame</button>
+          </div>
+          <div class="transport-map-controls">
+            <label>Route<select id="transport-route"></select></label>
+            <label class="transport-chip"><input id="transport-routes-toggle" type="checkbox" checked> Lines</label>
+            <label class="transport-chip"><input id="transport-stops-toggle" type="checkbox" checked> Stops</label>
+          </div>
+          <div class="transport-status-row"><p id="transport-status" class="transport-status" aria-live="polite">Loading scheduled services…</p><button id="transport-next-rail" type="button" hidden>Show next train →</button></div>
+        </section>
+
+        <details class="transport-event-planner" open>
+          <summary><span><i>02</i><b>Event access planner</b></span><em>Test last-mile capacity</em></summary>
+          <div class="transport-event-body">
+            <div class="transport-section transport-event-basics">
+              <label>Event name<input id="transport-event-name" type="text" value="Cape Town evening event" maxlength="80"></label>
+              <div class="transport-control-grid">
+                <label>Date<input id="transport-event-date" type="date" value="2026-08-14"></label>
+                <label>Attendance<input id="transport-event-attendance" type="range" min="100" max="20000" step="100" value="2000"><output id="transport-event-attendance-value" for="transport-event-attendance">2,000</output></label>
+              </div>
+              <div class="transport-control-grid">
+                <label>Starts<input id="transport-event-start" type="time" value="18:00"></label>
+                <label>Ends<input id="transport-event-end" type="time" value="22:30"></label>
+              </div>
+            </div>
+            <div class="transport-section">
+              <div class="transport-mini-heading"><b>Venue &amp; assumptions</b><span>Walk shed</span></div>
+              <label>Arrival hub<select id="transport-event-venue"></select></label>
+              <button id="transport-event-pick" class="secondary transport-pick" type="button">⌖ Pick venue on map</button>
+              <p id="transport-event-venue-label" class="transport-venue-label">No venue set</p>
+              <div class="transport-control-grid">
+                <label>Walking network<select id="transport-event-walk"><option value="400">400 m · 5 min</option><option value="800" selected>800 m · 10 min</option><option value="1200">1.2 km · 15 min</option></select></label>
+                <label>Arrive before<select id="transport-event-buffer"><option value="30">30 min</option><option value="60" selected>60 min</option><option value="90">90 min</option></select></label>
+              </div>
+              <div class="transport-control-grid">
+                <label>Dispersal<select id="transport-event-dispersal"><option value="60">60 min</option><option value="90" selected>90 min</option><option value="120">120 min</option></select></label>
+                <label>Mode share <output id="transport-event-share-value" for="transport-event-share">45%</output><input id="transport-event-share" type="range" min="5" max="95" step="5" value="45"></label>
+              </div>
+              <button id="transport-event-analyse" class="transport-analyse" type="button"><span>Run access analysis</span><b aria-hidden="true">→</b></button>
+            </div>
+          </div>
+        </details>
+
+        <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a><details class="compact-about"><summary>Data &amp; accuracy</summary><p>Vehicles interpolate along mapped routes using supplied schedule times. Positions are inferred, not live GPS. Event capacity is a planning proxy and should be verified with operators.</p></details></div>
+      </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
         <div class="traffic-heading">
           <span>Traffic</span>
@@ -472,6 +547,41 @@
         </details>
       </footer>
     </aside>
+    <section id="transport-event-results" class="transport-event-results transport-results-tray" aria-labelledby="transport-results-title" hidden>
+      <header class="transport-results-header">
+        <div><small>EVENT ACCESS ANALYSIS</small><h2 id="transport-results-title">Your transport plan</h2></div>
+        <div class="transport-results-header-actions"><span id="transport-event-grade">—</span><button id="transport-results-close" type="button" aria-label="Close analysis results">×</button></div>
+      </header>
+      <div class="transport-results-grid">
+        <section class="transport-result-overview" aria-label="Overall result">
+          <div class="transport-coverage-chart" id="transport-coverage-chart" style="--coverage:0deg">
+            <div><b id="transport-event-cover">—</b><span>demand covered</span></div>
+          </div>
+          <div id="transport-event-recommendation" class="transport-event-recommendation"></div>
+        </section>
+        <section class="transport-result-supply" aria-label="Service supply">
+          <h3>Service supply</h3>
+          <div class="transport-event-metrics">
+            <span><b id="transport-event-areas">—</b><i>Direct origin areas</i></span>
+            <span><b id="transport-event-arrivals">—</b><i>Arrivals before start</i></span>
+            <span><b id="transport-event-returns">—</b><i>Returns after event</i></span>
+          </div>
+          <div class="transport-supply-chart" aria-label="Arrival and return service comparison">
+            <div><span>Arrivals</span><i><b id="transport-arrival-bar"></b></i></div>
+            <div><span>Returns</span><i><b id="transport-return-bar"></b></i></div>
+          </div>
+          <details class="transport-origin-details"><summary>View connected areas</summary><p id="transport-event-area-list" class="transport-event-area-list"></p></details>
+        </section>
+        <section class="transport-result-actions" aria-label="Recommended actions">
+          <h3>What to do next</h3>
+          <div id="transport-event-actions" class="transport-event-actions"></div>
+        </section>
+      </div>
+      <details class="transport-service-details">
+        <summary>Service-by-service detail</summary>
+        <div id="transport-event-services" class="transport-event-services"></div>
+      </details>
+    </section>
   </main>
   <dialog id="traffic-report-dialog" class="traffic-report-dialog" aria-labelledby="traffic-report-title">
     <div class="traffic-report-toolbar">
@@ -493,6 +603,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="app.js?v=webgl-72"></script>
+    <script type="module" src="app.js?v=webgl-77"></script>
 </body>
 </html>

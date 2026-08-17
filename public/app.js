@@ -37,7 +37,11 @@ function setupMenuNavigation() {
       activate(tabs[next].dataset.menuTarget, true);
     });
   });
-  activate(tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || tabs[0].dataset.menuTarget);
+  const requested = new URLSearchParams(location.search).get('tool');
+  const initial = tabs.some(tab => tab.dataset.menuTarget === requested)
+    ? requested
+    : tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || tabs[0].dataset.menuTarget;
+  activate(initial);
 }
 
 function freshCanvas() {
@@ -121,7 +125,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=68');
+    const module = await import('./webglRenderer.js?v=70');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {

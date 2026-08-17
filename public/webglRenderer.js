@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three.module.min.js';
 import { sceneFromCityModel } from './semanticCityModel.js?v=3';
+import { createTransportLayer } from './transportLayer.js?v=11';
 
 const COLORS = {
   background: 0x1b2125,
@@ -66,6 +67,12 @@ export async function startWebGLScene(canvas, status) {
   };
   let animationFrame = 0;
   let renderRequested = true;
+  let transportLayer = null;
+  // Scene picking shared by overlay layers: a click that did not turn into a
+  // camera drag is offered to each registered handler until one consumes it.
+  let groundPickHandler = null;
+  let clickCandidate = null;
+  const scenePickHandlers = new Set();
   const layerGroups = {
     terrain: new THREE.Group(),
     grass: new THREE.Group(),
@@ -5135,6 +5142,26 @@ export async function startWebGLScene(canvas, status) {
     return raycaster.ray.intersectPlane(plane, point) ? point : null;
   }
 
+  function pointerRaycaster(event) {
+    const rect = canvas.getBoundingClientRect();
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1,
+    ), camera);
+    return raycaster;
+  }
+
+  function requestGroundPick(handler) {
+    groundPickHandler = handler;
+    canvas.style.cursor = handler ? 'crosshair' : '';
+  }
+
+  function addScenePickHandler(handler) {
+    scenePickHandlers.add(handler);
+    return () => scenePickHandlers.delete(handler);
+  }
+
   function appendMitigationPoint(event, force = false) {
     const point = pointerGround(event);
     if (!point) return false;
@@ -5205,6 +5232,18 @@ export async function startWebGLScene(canvas, status) {
     event.preventDefault();
   });
   canvas.addEventListener('pointerdown', event => {
+    clickCandidate = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
+    if (groundPickHandler && event.button === 0) {
+      const point = pointerGround(event);
+      if (point) {
+        const handler = groundPickHandler;
+        requestGroundPick(null);
+        clickCandidate = null;
+        handler(point.x, point.z);
+        requestRender();
+        return;
+      }
+    }
     if (streetViewState.placing && event.button === 0) {
       const point = pointerGround(event);
       if (point) {
@@ -5428,6 +5467,14 @@ export async function startWebGLScene(canvas, status) {
       return;
     }
     drag = null;
+    if (clickCandidate && scenePickHandlers.size
+      && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < 5) {
+      const raycaster = pointerRaycaster(event);
+      for (const handler of scenePickHandlers) {
+        if (handler({ raycaster, event })) break;
+      }
+    }
+    clickCandidate = null;
     if (floodDrag) {
       const width = Math.round(floodState.bounds[2] - floodState.bounds[0]);
       const height = Math.round(floodState.bounds[3] - floodState.bounds[1]);
@@ -5868,13 +5915,22 @@ export async function startWebGLScene(canvas, status) {
     requestRender();
   });
   addEventListener('keydown', event => {
-    if (event.key === 'Escape' && trafficState.drawing) {
+    if (event.key !== 'Escape') return;
+    if (groundPickHandler) {
+      event.preventDefault();
+      const handler = groundPickHandler;
+      requestGroundPick(null);
+      handler(null, null);
+      return;
+    }
+    if (trafficState.drawing) {
       event.preventDefault();
       clearTrafficSelection();
     }
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
+    transportLayer?.setPanelActive(name === 'transport');
     if (name !== 'sun' && shadowState.enabled) setShadowMode(false);
     if (name !== 'heat' && heatToggle?.checked) {
       heatToggle.checked = false;
@@ -5979,6 +6035,7 @@ export async function startWebGLScene(canvas, status) {
     resize();
     updateWindParticles(now);
     updateTrafficCars(now);
+    const transportAnimating = transportLayer?.update(now) || false;
     if (trafficStatusGroup.visible && scenarioStatusGroup.children.length) {
       const pulse = 0.82 + Math.sin(now * 0.004) * 0.18;
       for (const child of scenarioStatusGroup.children) {
@@ -6000,7 +6057,8 @@ export async function startWebGLScene(canvas, status) {
     renderRequested = false;
     if ((windState.enabled && windState.field)
       || (trafficGroup.visible && trafficState.tracks.length)
-      || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)) {
+      || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)
+      || transportAnimating) {
       animationFrame = requestAnimationFrame(render);
     }
   }
@@ -6020,6 +6078,17 @@ export async function startWebGLScene(canvas, status) {
   setHeatMode(Boolean(heatToggle?.checked));
   loadTrafficRoads();
   loadTrafficLive(false);
+  try {
+    transportLayer = await createTransportLayer({
+      THREE, scene, terrainHeightAt, terrainValidAt, requestRender, frameBounds,
+      requestGroundPick, addScenePickHandler,
+    });
+    transportLayer.setPanelActive(document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport');
+  } catch (error) {
+    console.warn('Public transport layer unavailable:', error);
+    const transportStatus = document.querySelector('#transport-status');
+    if (transportStatus) transportStatus.textContent = `Transport layer unavailable (${error.message})`;
+  }
   requestRender();
 
   return { renderer, scene, camera };

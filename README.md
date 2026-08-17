@@ -136,6 +136,29 @@ python -m http.server 8000 -d public
 
 Open http://localhost:8000 in any modern browser.
 
+## Public transport explorer
+
+The Transport tab adds timetable-derived 3D MyCiTi buses and Metrorail trains,
+bold network-map routes, a neutral rail track layer, clickable
+stops and stations, an accelerated service clock, and event-access planning.
+
+Set the event venue either from the hub list or by clicking anywhere on the
+map ("Pick venue on map", Esc to cancel). With a date, time window, walking
+catchment, dispersal window, attendance and public-transport mode share, the
+panel reports connected origin areas, arrival and return service counts, how
+much of the dispersal demand the return services actually cover, and a ranked
+list of interventions: which corridors and route directions to extend and until
+when, how many extra trips that is, and how much capacity is missing. Clicking a
+stop shows the routes calling there and the next modelled departures.
+
+Rail arrivals and departures use `data/transport/prasa_schedules.csv` for
+weekday and weekend service on matched corridors; unmatched service remains
+clearly labelled as an estimate. Vehicle positions are inferred from schedules
+and are not live GPS. Rebuild the
+compact transport asset with
+`python scripts/build_transport_asset.py`. Implementation notes, confidence
+rules, and the next development phase are in `docs/PUBLIC_TRANSPORT.md`.
+
 ## Traffic and street-status explorer
 
 Run the FastAPI application to enable paired SUMO closure previews. The
