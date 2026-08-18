@@ -30,7 +30,7 @@ from shapely.ops import transform as transform_geometry, unary_union
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LIDAR_PATH = PROJECT_ROOT / "data" / "raw" / "LiDAR2025" / "LiDAR2025_2m_DTM.tif"
 DTM_PATH = PROJECT_ROOT / "data" / "derived" / "company_gardens_hybrid_dem_2m.tif"
-BUILDINGS_PATH = PROJECT_ROOT / "data" / "raw" / "BuildingFootprints2D.geojson"
+BUILDINGS_PATH = PROJECT_ROOT / "data" / "derived" / "BuildingFootprintsHybrid.geojson"
 ROADS_PATH = PROJECT_ROOT / "data" / "osm_cbd_roads.geojson"
 GREEN_PATH = PROJECT_ROOT / "data" / "osm_cbd_green_areas.geojson"
 TSM_PATH = PROJECT_ROOT / "Town_Survey_Marks_(TSM).csv"
@@ -337,6 +337,8 @@ def simulate_local_inertial(
     infiltration_mm_h: float,
     manning_n: float | np.ndarray,
     source_rate_mps: np.ndarray | None = None,
+    rainfall_rate_mps: np.ndarray | None = None,
+    infiltration_rate_mps: np.ndarray | None = None,
     closed_boundary: bool | dict[str, bool] = True,
     intensity_at: Callable[[float], float] | None = None,
     snapshot_count: int = 0,
@@ -347,10 +349,13 @@ def simulate_local_inertial(
     rougher vegetation); face friction uses the mean of the two neighbouring
     cells. `closed_boundary` may be a bool applied to all four domain edges
     or a dict with `"west"/"east"/"north"/"south"` bools for per-side control.
-    `intensity_at(fraction)` optionally rescales the rainfall source over the
-    course of the storm (`fraction` runs 0..1); its time-average must be 1 so
-    the total rainfall volume is unchanged, otherwise it defaults to a flat
-    uniform rate.
+    `intensity_at(fraction)` optionally rescales rainfall over the course of
+    the storm (`fraction` runs 0..1); its time-average must be 1 so the total
+    rainfall volume is unchanged. When rainfall and infiltration grids are
+    supplied, infiltration remains a capacity applied *after* the varying
+    rainfall intensity and is limited by water available during that step.
+    `source_rate_mps` remains a backwards-compatible net source for callers
+    that have already performed their own routing.
     """
     bed = np.asarray(bed, dtype=np.float64)
     active = np.asarray(active, dtype=bool)
@@ -384,13 +389,32 @@ def simulate_local_inertial(
     qz = np.zeros((rows + 1, columns), dtype=np.float64)
     rain_rate = rainfall_mm_h / 3_600_000.0
     infiltration_rate = infiltration_mm_h / 3_600_000.0
-    if source_rate_mps is None:
-        source_rate = np.where(active, max(0.0, rain_rate - infiltration_rate), 0.0)
-    else:
+    if source_rate_mps is not None and rainfall_rate_mps is not None:
+        raise ValueError("source_rate_mps and rainfall_rate_mps are mutually exclusive")
+    rainfall_field = None
+    infiltration_field = None
+    if rainfall_rate_mps is not None:
+        rainfall_field = np.asarray(rainfall_rate_mps, dtype=np.float64)
+        if rainfall_field.shape != bed.shape:
+            raise ValueError("rainfall_rate_mps must match the simulation grid")
+        rainfall_field = np.where(active, np.maximum(rainfall_field, 0.0), 0.0)
+        if infiltration_rate_mps is None:
+            infiltration_field = np.full(bed.shape, infiltration_rate)
+        else:
+            infiltration_field = np.asarray(infiltration_rate_mps, dtype=np.float64)
+            if infiltration_field.shape != bed.shape:
+                raise ValueError("infiltration_rate_mps must match the simulation grid")
+        infiltration_field = np.where(active, np.maximum(infiltration_field, 0.0), 0.0)
+        source_rate = None
+    elif source_rate_mps is not None:
         source_rate = np.asarray(source_rate_mps, dtype=np.float64)
         if source_rate.shape != bed.shape:
             raise ValueError("source_rate_mps must match the simulation grid")
         source_rate = np.where(active, np.maximum(source_rate, 0.0), 0.0)
+    else:
+        rainfall_field = np.where(active, rain_rate, 0.0)
+        infiltration_field = np.where(active, infiltration_rate, 0.0)
+        source_rate = None
     elapsed = 0.0
     steps = 0
     boundary_outflow_m3 = 0.0
@@ -398,14 +422,21 @@ def simulate_local_inertial(
     snapshot_times = [0.0] if snapshot_count > 0 else []
     snapshot_interval = duration_s / max(snapshot_count, 1)
     next_snapshot_s = snapshot_interval
+    source_volume_m3 = 0.0
+    cell_area_m2 = dx * dz
 
     while elapsed < duration_s - 1e-9:
         wet_max = float(np.max(depth[active]))
         wave_speed = math.sqrt(GRAVITY * max(wet_max, 0.001))
         dt = min(2.0, 0.45 * min(dx, dz) / wave_speed, duration_s - elapsed)
         intensity_multiplier = 1.0 if intensity_at is None else intensity_at(min(elapsed / duration_s, 1.0))
+        if rainfall_field is not None:
+            step_source_rate = np.maximum(rainfall_field * intensity_multiplier - infiltration_field, 0.0)
+        else:
+            step_source_rate = source_rate * intensity_multiplier
         source_depth = depth.copy()
-        source_depth += source_rate * intensity_multiplier * dt
+        source_depth += step_source_rate * dt
+        source_volume_m3 += float(step_source_rate.sum()) * dt * cell_area_m2
         surface = bed + source_depth
 
         left_active = active[:, :-1]
@@ -503,6 +534,7 @@ def simulate_local_inertial(
         "elapsed_s": elapsed,
         "steps": steps,
         "boundary_outflow_m3": boundary_outflow_m3,
+        "source_volume_m3": source_volume_m3,
         "snapshots": snapshots,
         "snapshot_times_s": snapshot_times,
     }
@@ -653,7 +685,7 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
     green_infiltration_mm_h = min(request.infiltration_mm_h * GREEN_INFILTRATION_MULTIPLIER, GREEN_INFILTRATION_CAP_MM_H)
     infiltration_field_mm_h[terrain["green_mask"]] = max(request.infiltration_mm_h, green_infiltration_mm_h)
     infiltration_field_rate = infiltration_field_mm_h / 3_600_000.0
-    source_rate = np.where(terrain["active"], np.maximum(rain_rate - infiltration_field_rate, 0.0), 0.0)
+    rainfall_field_rate = np.where(terrain["active"], rain_rate, 0.0)
     roof_cells = terrain["buildings"] & terrain["terrain_active"]
     if roof_cells.any():
         nearest_active = distance_transform_edt(
@@ -663,7 +695,7 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
         )
         destination_rows = nearest_active[0][roof_cells]
         destination_columns = nearest_active[1][roof_cells]
-        np.add.at(source_rate, (destination_rows, destination_columns), rain_rate)
+        np.add.at(rainfall_field_rate, (destination_rows, destination_columns), rain_rate)
 
     manning_field = np.full(terrain["bed"].shape, request.manning_n, dtype=np.float64)
     manning_field[terrain["roads_mask"]] = min(request.manning_n, ROAD_MANNING_N)
@@ -681,7 +713,8 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
         duration_s=request.duration_min * 60.0,
         infiltration_mm_h=request.infiltration_mm_h,
         manning_n=manning_field,
-        source_rate_mps=source_rate,
+        rainfall_rate_mps=rainfall_field_rate,
+        infiltration_rate_mps=infiltration_field_rate,
         closed_boundary=closed_sides,
         intensity_at=intensity_at,
         snapshot_count=20,
@@ -691,6 +724,8 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
     columns = terrain["column_slice"]
     active = terrain["active"][rows, columns]
     buildings = terrain["buildings"][rows, columns]
+    roads_mask = terrain["roads_mask"][rows, columns]
+    green_mask = terrain["green_mask"][rows, columns]
     terrain_source = terrain["terrain_source"][rows, columns]
     bed = terrain["bed"][rows, columns]
     depth = result["depth"][rows, columns]
@@ -705,7 +740,7 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
     wet = active & (max_depth >= OUTPUT_WET_DEPTH_M)
     wet_area = float(wet.sum() * terrain["dx"] * terrain["dz"])
     cell_area = terrain["dx"] * terrain["dz"]
-    source_volume = float(source_rate.sum() * request.duration_min * 60.0 * cell_area)
+    source_volume = float(result["source_volume_m3"])
     final_volume = float(result["depth"].sum() * cell_area)
     outflow_volume = float(result.get("boundary_outflow_m3", 0.0))
     accounted_volume = final_volume + outflow_volume
@@ -727,6 +762,7 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "model": {
             "kind": "local_inertial_2d_shallow_water",
+            "scope": "rainfall_accumulation_within_the_drawn_box_not_general_flood_depth_for_the_place_no_upstream_inflow_from_outside_the_box_is_represented",
             "validation_status": "uncalibrated_surface_water_scenario",
             "drainage": "not_modelled_unknown",
             "curbs": "not_modelled_unverified",
@@ -772,6 +808,11 @@ def flood_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "max_speed_mps": round(float(max_speed[active].max(initial=0.0)), 3),
             "valid_terrain_pct": round(float(active.mean() * 100.0), 1),
             "building_cells": int(buildings.sum()),
+            "surface_cells": {
+                "roads": int(roads_mask.sum()),
+                "green_areas": int(green_mask.sum()),
+                "other": int((active & ~roads_mask & ~green_mask).sum()),
+            },
             "coarse_terrain_pct": round(
                 float(((terrain_source == 2) & terrain["terrain_active"][rows, columns]).sum())
                 / max(float(terrain["terrain_active"][rows, columns].sum()), 1.0)

@@ -130,11 +130,41 @@ holes, rather than sampled ellipsoid crowns.
 
 ## Run locally
 
+Python 3.12 is the supported runtime. Direct dependencies are declared in
+`server/requirements.txt`; `requirements.lock` and `requirements-dev.txt` pin
+the complete runtime and test environments for reproducible installs.
+
 ```bash
-python -m http.server 8000 -d public
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m http.server 8000 -d public
 ```
 
 Open http://localhost:8000 in any modern browser.
+
+For the API-backed application, use `.venv/bin/uvicorn server.app:app --port
+8000`. Production deployments can run `docker compose up --build`: Nginx serves
+and compresses the static assets while proxying `/api` to one bounded API
+worker. Versioned scene assets receive immutable cache headers; the manifest
+and viewer shell revalidate so incompatible code and assets are not mixed.
+
+Deployment controls are environment variables:
+
+- `ALLOWED_ORIGINS` is a comma-separated CORS allow-list (local port 8000 only
+  by default).
+- `CLIMATE_EXPLORER_API_KEY`, when set, requires `X-API-Key` on API routes other
+  than the health check.
+- `SIMULATION_RATE_LIMIT` and `SIMULATION_RATE_WINDOW_S` control the per-client
+  expensive-request budget (12 per minute by default).
+- `HEAT_CONCURRENCY`, `SUNLIGHT_CONCURRENCY`, `WIND_CONCURRENCY`,
+  `WIND_COMFORT_CONCURRENCY`, `FLOOD_CONCURRENCY`, and `TRAFFIC_CONCURRENCY`
+  bound CPU-heavy work. Over-capacity requests fail quickly instead of forming
+  an unbounded queue.
+
+`GET /api/health` checks generated assets and model compatibility, the SUMO
+binary/network, and the optional database connection. Request logs are
+structured JSON and include an `X-Request-ID`. `.env` is excluded from both Git
+and the Docker build context.
 
 ## Public transport explorer
 
@@ -146,9 +176,13 @@ Set the event venue either from the hub list or by clicking anywhere on the
 map ("Pick venue on map", Esc to cancel). With a date, time window, walking
 catchment, dispersal window, attendance and public-transport mode share, the
 panel reports connected origin areas, arrival and return service counts, how
-much of the dispersal demand the return services actually cover, and a ranked
-list of interventions: which corridors and route directions to extend and until
-when, how many extra trips that is, and how much capacity is missing. Clicking a
+much of an event-demand proxy the return services' nominal scheduled capacity
+actually covers, and a ranked list of interventions: which corridors and
+route directions to extend and until when, how many extra trips that is, and
+how much nominal capacity is missing. Every capacity figure is a scheduled
+places-per-departure assumption (60 for a bus, 800 for a train), not measured
+or validated real occupancy data, so treat coverage and capacity-gap numbers
+as a planning proxy and verify them with the operator. Clicking a
 stop shows the routes calling there and the next modelled departures.
 
 Rail arrivals and departures use `data/transport/prasa_schedules.csv` for
@@ -225,12 +259,18 @@ study** or **Run 16-direction comfort study** to calculate the new domain.
 The **Urban heat** layer reads the generated local product in
 `data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a
 set of simplified vector zones on the scene ground. It defaults to an
-intervention-priority view anchored directly to modelled surface temperature
-(70%) and time-specific mapped shade deficit (30%). Priority and shade retain
+intervention-priority view combining the fixed Summer 2025-26 surface-temperature
+baseline (70% weight) with a shade deficit computed for the user-selected date
+and time (30% weight). Because the temperature term does not vary with the
+selected date, only the shade term does, this is labelled a "summer thermal
+baseline + selected-date shade scenario" rather than a fully date-specific
+result — a winter date pairs winter shade geometry with the summer-baseline
+temperature. Priority and shade retain
 every surface-temperature zone rather than dropping building-heavy cells, so
 the screening surface remains continuous.
-Users can switch to pedestrian thermal exposure, shade deficit, the original
-`heat_model_lst_c` surface temperature, or a rooftop-temperature view clipped
+Users can switch to pedestrian thermal exposure (a proxy thermal-exposure
+delta, not UTCI/PET or a measured pedestrian temperature), shade deficit, the
+original `heat_model_lst_c` surface temperature, or a rooftop-temperature view clipped
 to mapped building footprints and conformed to the detailed rendered roof
 surface rather than the LiDAR terrain. Ground-level heat views hide roads and
 paths so those layers do not cover the thermal surface; rooftop mode retains
@@ -307,9 +347,15 @@ and grid resolution are editable.
 
 The model deliberately excludes unknown stormwater drains and unverified OSM
 curbs. It therefore represents a conservative above-ground surface-water
-scenario, not a drainage-capacity or engineering flood study. The user drags
-a rectangular analysis box whose perimeter is a closed hydraulic boundary:
-surface water cannot leave it. The API returns 21 physical depth states and
+scenario, not a drainage-capacity or engineering flood study. Results should
+be read as rainfall accumulation within the drawn box, not general flood
+depth for the selected place: there is no represented upstream inflow from
+outside the box. The user drags a rectangular analysis box; most of its
+perimeter is a closed hydraulic boundary, but the solver automatically leaves
+a box edge open for outflow where the terrain slopes downhill through it, so
+water can drain off a downhill edge instead of pooling against a wall that
+does not exist on the ground. The API reports which edges were left open in
+`model.boundary_open_sides`. The API returns 21 physical depth states and
 the WebGL viewer animates the box filling from dry terrain to storm completion.
 The supplied Town Survey Marks are used for LiDAR QA only: 62 valid marks
 overlap the original LiDAR DTM, whose sampled levels are about 0.343 m higher
@@ -320,6 +366,8 @@ lower-accuracy percentage in every flood result.
 Run the FastAPI application, open the **Flood** tool, choose **Draw flood box**,
 and drag between opposite corners on the terrain before simulating. A 4 m grid
 is the practical detailed default; 2 m scenarios are substantially slower.
+The API also enforces a combined cell-count × duration budget; oversized jobs
+must use a smaller box, shorter storm, or coarser grid.
 The complete rectangular flood box must fall inside available terrain
 coverage; the browser marks an invalid box red and the API independently
 rejects it.
@@ -327,7 +375,7 @@ rejects it.
 Install the API dependencies with:
 
 ```bash
-python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 The additive database migration is `migrations/001_wind_fields.sql`. It adds

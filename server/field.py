@@ -193,9 +193,10 @@ def load_elevated_parts() -> tuple[list[dict[str, Any]], STRtree | None]:
         geometry = obj.get("geometry") or {}
         clearance = float(geometry.get("minHeightM") or 0.0)
         ring = geometry.get("footprint") or []
+        holes = geometry.get("interiorRings") or []
         if obj.get("type") != "Building" or clearance <= 0 or len(ring) < 3:
             continue
-        polygon = Polygon(ring)
+        polygon = Polygon(ring, holes)
         if polygon.is_valid and not polygon.is_empty:
             parts.append({"geometry": polygon, "clearance_m": clearance})
     return parts, STRtree([part["geometry"] for part in parts]) if parts else None
@@ -498,18 +499,25 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
 
 
 def build_comfort_field(
-    request: PreviewRequest, bounds: tuple[float, float, float, float], polygons: list[dict[str, Any]],
+    request: PreviewRequest, bounds: tuple[float, float, float, float], config: dict[str, Any],
 ) -> dict[str, Any]:
     """Combine sixteen direction fields with the selected ERA5 wind rose.
 
     This is a climatological screening calculation, not CFD: each directional
     mass-conserving field is retained as-is and its Weibull exceedance is
-    weighted by that direction's observed frequency.
+    weighted by that direction's observed frequency. Each sector queries and
+    projects its own ventilation-polygon layer; reusing one direction's
+    polygons across all sixteen sectors would let, e.g., an SE ventilation
+    classification silently influence the N, W, NW, ... fields.
     """
     direction_fields: list[tuple[float, dict[str, Any]]] = []
+    polygon_cache: dict[str, list[dict[str, Any]]] = {}
     for direction_deg in (index * 22.5 for index in range(16)):
         directional_request = replace(request, direction_deg=direction_deg, forcing_mode="era5_climatology")
-        field = build_field(directional_request, bounds, polygons)
+        table = polygon_table(direction_deg)
+        if table not in polygon_cache:
+            polygon_cache[table] = project_polygons(query_polygons(directional_request, bounds, config), config)
+        field = build_field(directional_request, bounds, polygon_cache[table])
         frequency = float(field["era5_profile"]["frequency_fraction"])
         direction_fields.append((frequency, field))
 

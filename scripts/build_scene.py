@@ -23,12 +23,35 @@ from shapely.geometry import LineString, Point, Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 
 try:
-    from .city_model import build_city_model, write_city_model
+    from .city_model import add_semantic_renderer_context, build_city_model, write_city_model
+    from .osm_extract import load_osm
 except ImportError:  # Direct execution: python scripts/build_scene.py
-    from city_model import build_city_model, write_city_model
+    from city_model import add_semantic_renderer_context, build_city_model, write_city_model
+    from osm_extract import load_osm
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 ROAD_WIDTHS = {"motorway": 15.0, "trunk": 13.0, "primary": 11.0, "secondary": 9.0, "tertiary": 7.0, "residential": 5.5, "unclassified": 5.5, "living_street": 5.0, "service": 4.0, "pedestrian": 4.0, "cycleway": 2.5, "footway": 2.0, "path": 1.5}
+
+
+def source_fingerprint(path: Path) -> dict[str, object]:
+    """Return a reproducible digest for a build input file or directory."""
+    digest = hashlib.sha256()
+    files = sorted(item for item in ([path] if path.is_file() else path.rglob("*")) if item.is_file())
+    total_bytes = 0
+    for item in files:
+        relative = item.name if path.is_file() else item.relative_to(path).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        with item.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(block)
+                total_bytes += len(block)
+    return {
+        "path": str(path),
+        "sha256": digest.hexdigest(),
+        "bytes": total_bytes,
+        "files": len(files),
+    }
 
 
 def valid_lidar_footprint(source, simplify_m=2.0):
@@ -114,39 +137,44 @@ def building_min_height(value, total_height, minimum_level=None, total_levels=No
     return clearance if math.isfinite(clearance) and 0 < clearance < height else 0.0
 
 
-def local_roads(roads_path, clip):
-    collection = json.loads(roads_path.read_text(encoding="utf-8"))
-    transformer = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
-    for feature in collection.get("features", []):
-        coordinates = feature.get("geometry", {}).get("coordinates", [])
-        if len(coordinates) < 2:
+def osm_direction_degrees(value):
+    """Parse OSM numeric or 16-point compass roof directions."""
+    compass = {
+        "N": 0, "NNE": 22.5, "NE": 45, "ENE": 67.5, "E": 90, "ESE": 112.5,
+        "SE": 135, "SSE": 157.5, "S": 180, "SSW": 202.5, "SW": 225,
+        "WSW": 247.5, "W": 270, "WNW": 292.5, "NW": 315, "NNW": 337.5,
+    }
+    text = str(value or "").strip().upper()
+    try:
+        result = float(text)
+    except ValueError:
+        result = compass.get(text, float("nan"))
+    return result % 360 if math.isfinite(result) else None
+
+
+def local_osm_transport(osm_path, clip, keys):
+    """Yield clipped OSM transport lines with their rendering attributes."""
+    extract = load_osm(osm_path)
+    for way in extract.ways.values():
+        feature_class = next((way.tags.get(key) for key in keys if way.tags.get(key)), None)
+        if not feature_class:
             continue
-        properties = feature.get("properties") or {}
-        highway = properties.get("highway", "residential")
-        line = LineString([transformer.transform(x, y) for x, y in coordinates]).intersection(clip)
+        line = extract.way_line(way)
+        if line is None:
+            continue
+        line = line.intersection(clip)
         parts = line.geoms if line.geom_type == "MultiLineString" else (line,)
         for part in parts:
             if not part.is_empty and len(part.coords) >= 2:
-                yield highway, part.simplify(0.35, preserve_topology=False)
-
-
-def local_railways(railways_path, clip):
-    """Yield active rail and tram centre-lines clipped to the scene."""
-    collection = json.loads(railways_path.read_text(encoding="utf-8"))
-    transformer = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
-    for feature in collection.get("features", []):
-        properties = feature.get("properties") or {}
-        railway = properties.get("railway")
-        if railway not in {"rail", "tram", "light_rail"}:
-            continue
-        coordinates = feature.get("geometry", {}).get("coordinates", [])
-        if len(coordinates) < 2:
-            continue
-        line = LineString([transformer.transform(x, y) for x, y in coordinates]).intersection(clip)
-        parts = line.geoms if line.geom_type == "MultiLineString" else (line,)
-        for part in parts:
-            if not part.is_empty and len(part.coords) >= 2:
-                yield railway, part.simplify(0.2, preserve_topology=False)
+                attributes = {
+                    key: value for key, value in way.tags.items()
+                    if key in {
+                        "surface", "sidewalk", "sidewalk:left", "sidewalk:right", "bridge", "tunnel",
+                        "layer", "width", "lanes", "oneway", "lit", "name", "access", "service",
+                    }
+                }
+                attributes["osmId"] = way.identifier
+                yield feature_class, part.simplify(0.35, preserve_topology=False), attributes
 
 
 def local_green_areas(green_path, clip):
@@ -396,6 +424,9 @@ def load_building_records(footprints_path, height_path, dtm_path):
                 "source_id": source_id,
                 "height_source": height_source,
                 "roof_shape_hint": properties.get("OSM_ROOF"),
+                "osm_tags": properties.get("OSM_TAGS") or {},
+                "osm_id": properties.get("OSM_ID"),
+                "osm_type": properties.get("OSM_TYPE"),
                 "acquisition_method": properties.get("ACQS_MTHD"),
                 "acquisition_period": properties.get("ACQS_PRD"),
                 # OSM building parts such as bridges and skyways can start
@@ -407,7 +438,7 @@ def load_building_records(footprints_path, height_path, dtm_path):
             }
 
 
-def build_canvas_fallback(building_records, roof_profiles, dtm_path, roads_path, railways_path, green_path, instances, output, origin_x, origin_y):
+def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, green_path, instances, output, origin_x, origin_y):
     """Write the compact footprint scene the Canvas2D renderer loads."""
     with rasterio.open(dtm_path) as dtm_source:
         dtm_raster = dtm_source.read(1, masked=True)
@@ -421,6 +452,10 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, roads_path,
     for building_index, (ground, height, polygon, metadata) in enumerate(building_records):
         ring = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in list(polygon.exterior.coords)[:-1]]
         if len(ring) >= 3:
+            holes = [
+                [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in list(interior.coords)[:-1]]
+                for interior in polygon.interiors if len(interior.coords) >= 4
+            ]
             profile = roof_profiles[building_index]
             # The first three positions remain backward compatible with the
             # Canvas renderer. Extra metadata lets the WebGL model expose
@@ -433,19 +468,33 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, roads_path,
                 [round(value, 1) for value in (profile.get("wall_profile") or [])] or None,
                 round(metadata.get("min_height") or 0.0, 1),
                 metadata.get("acquisition_method"), metadata.get("acquisition_period"),
+                holes,
+                {
+                    **metadata.get("osm_tags", {}),
+                    "osm:id": metadata.get("osm_id"),
+                    "osm:type": metadata.get("osm_type"),
+                } if metadata.get("osm_tags") else {},
             ])
 
     trees = [[round(float(value), 1) for value in row[:6]] for row in instances]
     roads = []
-    for highway, line in local_roads(roads_path, clip):
+    for highway, line, attributes in local_osm_transport(osm_path, clip, ("highway",)):
         coordinates = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in line.coords]
         if len(coordinates) >= 2:
-            roads.append([ROAD_WIDTHS.get(highway, 4.0), highway, coordinates])
+            try:
+                width = float(str(attributes.get("width", "")).replace("m", "").strip())
+            except ValueError:
+                width = ROAD_WIDTHS.get(highway, 4.0)
+            if not math.isfinite(width) or not 0.5 <= width <= 30:
+                width = ROAD_WIDTHS.get(highway, 4.0)
+            roads.append([width, highway, coordinates, attributes])
     railways = []
-    for railway, line in local_railways(railways_path, clip):
+    for railway, line, attributes in local_osm_transport(osm_path, clip, ("railway",)):
+        if railway not in {"rail", "tram", "light_rail"}:
+            continue
         coordinates = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in line.coords]
         if len(coordinates) >= 2:
-            railways.append([railway, coordinates])
+            railways.append([railway, coordinates, attributes])
     grass = []
     for polygon in local_green_areas(green_path, clip):
         ring = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in list(polygon.simplify(0.6, preserve_topology=True).exterior.coords)[:-1]]
@@ -711,6 +760,17 @@ def build_roof_surface(building_records, height_path, dtm_path, output, origin_x
                 covariance = np.cov(centered, rowvar=False)
                 eigenvalues, eigenvectors = np.linalg.eigh(covariance)
                 long_axis = eigenvectors[:, int(np.argmax(eigenvalues))]
+            osm_tags = record[3].get("osm_tags") or {}
+            mapped_direction = osm_direction_degrees(osm_tags.get("roof:direction"))
+            if mapped_direction is not None:
+                direction_radians = math.radians(mapped_direction)
+                # Raster columns increase east and rows increase south. OSM
+                # roof:direction is the downhill bearing clockwise from north;
+                # the ridge axis is perpendicular to it.
+                short_axis = np.array([math.sin(direction_radians), -math.cos(direction_radians)])
+                long_axis = np.array([-short_axis[1], short_axis[0]])
+            elif str(osm_tags.get("roof:orientation", "")).lower() == "across":
+                long_axis = np.array([-long_axis[1], long_axis[0]])
             short_axis = np.array([-long_axis[1], long_axis[0]])
             long_projection = centered @ long_axis
             short_projection = centered @ short_axis
@@ -751,6 +811,12 @@ def build_roof_surface(building_records, height_path, dtm_path, output, origin_x
                         (selected_factor - factor_mean) * (selected_target - target_mean)
                     ) / variance)
                     maximum_rise = min(8.0, float(record[1]) * 0.35, half_short_m * 0.65)
+                    try:
+                        mapped_rise = float(str(osm_tags.get("roof:height", "")).lower().replace("m", "").strip())
+                    except ValueError:
+                        mapped_rise = float("nan")
+                    if math.isfinite(mapped_rise) and 0 < mapped_rise <= maximum_rise:
+                        rise = mapped_rise
                     rise = max(0.0, min(rise, maximum_rise))
                     base = float(np.mean(selected_target - rise * selected_factor))
                     residual = target - (base + rise * factor_values)
@@ -985,6 +1051,7 @@ def write_canopy_asset(asset, output):
         "components": len(asset["canopies"]),
         "area_drift_pct": asset["area_drift_pct"],
         "bytes": output.stat().st_size,
+        "cache_key": hashlib.sha256(output.read_bytes()).hexdigest()[:16],
     }
 
 
@@ -1023,13 +1090,21 @@ def main():
         "crs": "custom Hartbeesthoek94 Lo19 east/north grid",
         "origin": [origin_x, origin_y],
         "bounds": [bounds.left - origin_x, bounds.bottom - origin_y, bounds.right - origin_x, bounds.top - origin_y],
-        "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,min_height,acquisition_method,acquisition_period]",
+        "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,min_height,acquisition_method,acquisition_period,interior_rings,osm_attributes]",
         "layers": {"terrain": terrain_metadata},
         "assets": {
             "fallback": "fallback.json",
             "city_model": "city_model.json",
             "canopy": "canopy.json",
             "roof_surface": "roof_surface.bin",
+        },
+        "buildInputs": {
+            name: source_fingerprint(path)
+            for name, path in {
+                "terrain": args.dtm, "height": args.height, "buildings": args.footprints,
+                "canopy": args.trees, "roads": args.roads, "railways": args.railways,
+                "green": args.green, "osm": args.osm, "streetData": args.street_data,
+            }.items()
         },
     }
     instances = build_tree_instances(args.trees, args.height, args.dtm, origin_x, origin_y)
@@ -1048,8 +1123,7 @@ def main():
         building_records,
         roof_profiles,
         args.dtm,
-        args.roads,
-        args.railways,
+        args.osm,
         args.green,
         instances,
         args.out / "fallback.json",
@@ -1074,6 +1148,14 @@ def main():
             "street_data": args.street_data,
         },
     )
+    add_semantic_renderer_context(compact_scene, city_model)
+    fallback_path = args.out / "fallback.json"
+    fallback_path.write_text(json.dumps(compact_scene, separators=(",", ":")) + "\n", encoding="utf-8")
+    manifest["layers"]["fallback"].update({
+        "water": len(compact_scene["water"]),
+        "bytes": fallback_path.stat().st_size,
+        "cache_key": hashlib.sha256(fallback_path.read_bytes()).hexdigest()[:16],
+    })
     manifest["layers"]["city_model"] = write_city_model(city_model, args.out / "city_model.json")
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))

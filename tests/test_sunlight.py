@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 from shapely.strtree import STRtree
+import pytest
 
 import server.sunlight as sunlight
 
@@ -52,6 +53,20 @@ def test_building_surface_resolution_is_bounded(monkeypatch):
         raise AssertionError("unsupported full-CBD resolution should be rejected")
 
 
+def test_cancelled_building_sunlight_stops_before_ray_cast(monkeypatch):
+    monkeypatch.setattr(sunlight, "_scene_geometry", simple_scene)
+    analysis_id = "moved-domain"
+    sunlight.cancel_sunlight_analysis(analysis_id)
+    try:
+        with pytest.raises(sunlight.SunlightAnalysisCancelled):
+            sunlight.building_surface_sunlight.__wrapped__(
+                "2026-01-15", 600, 720, 60, 10.0, "all",
+                None, None, None, None, analysis_id,
+            )
+    finally:
+        sunlight.finish_sunlight_analysis(analysis_id)
+
+
 def test_building_surface_domain_clips_analysis_but_keeps_scene_blockers(monkeypatch):
     monkeypatch.setattr(sunlight, "_scene_geometry", simple_scene)
     sunlight.building_surface_sunlight.cache_clear()
@@ -85,3 +100,18 @@ def test_overlapping_building_parts_do_not_remove_modelled_facades():
     assert exposed
     assert min(vertex[1] for cell in exposed for vertex in cell["vertices"]) == 0.0
     assert max(vertex[1] for cell in exposed for vertex in cell["vertices"]) == 10.0
+
+
+def test_courtyard_inner_walls_generate_outward_facing_facade_cells():
+    outer = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    hole = [(3, 3), (7, 3), (7, 7), (3, 7)]
+    building = {
+        "id": 0, "footprint": Polygon(outer, [hole]),
+        "ring": outer, "rings": [outer, hole], "ground": 0.0, "top": 10.0,
+    }
+
+    cells = sunlight._facade_cells([building], 10.0)
+    courtyard_cells = [cell for cell in cells if cell["edge_index"] >= len(outer)]
+
+    assert len(courtyard_cells) == 4
+    assert all(not building["footprint"].covers(Point(cell["sample"][0], cell["sample"][2])) for cell in courtyard_cells)

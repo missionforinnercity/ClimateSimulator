@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=34">
+    <link rel="stylesheet" href="style.css?v=35">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -89,6 +89,7 @@
           <h2>Layers</h2>
           <div class="controls tool-layer-grid">
             <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
+            <label><input type="checkbox" data-layer="water" checked> Water</label>
             <label><input type="checkbox" data-layer="grass" checked> Grass</label>
             <label><input type="checkbox" data-layer="railways" checked> Railways</label>
             <label><input type="checkbox" data-layer="paths" checked> Paths</label>
@@ -128,8 +129,8 @@
           <b>View</b>
           <label>Layer
             <select id="heat-metric">
-              <option value="pedestrian_priority_score" selected>Intervention priority</option>
-              <option value="pedestrian_heat_exposure_c">Pedestrian exposure</option>
+              <option value="pedestrian_priority_score" selected title="Summer thermal baseline + selected-date shade scenario">Intervention priority (summer baseline + selected-date shade)</option>
+              <option value="pedestrian_heat_exposure_c" title="Proxy thermal-exposure delta, not UTCI/PET or measured pedestrian temperature">Pedestrian thermal exposure (proxy)</option>
               <option value="shade_deficit_score">Shade deficit</option>
               <option value="heat_model_lst_c">Surface temperature</option>
               <option value="rooftop_temperature_c">Rooftop temperature</option>
@@ -225,6 +226,7 @@
           </div>
         </div>
         <button id="sun-generate" type="button">Generate shadows</button>
+        <progress id="sun-progress" class="sun-progress" max="100" hidden aria-label="Sun-hours calculation progress"></progress>
         <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
         <div id="sun-hours-legend" class="sun-hours-legend" hidden>
           <div class="sun-energy-gradient"></div>
@@ -372,12 +374,13 @@
         <p id="flood-status" class="flood-status">Choose Move / resize domain to reposition the box.</p>
         <div class="flood-gradient"></div>
         <div class="flood-legend-labels"><span id="flood-time">Dry · 0 min</span><span id="flood-legend-max">— m</span></div>
+        <p class="flood-coverage-note"><i></i>Pale blue-gray cells were calculated and stayed dry; normal building blocks are impermeable and excluded.</p>
         <div id="flood-results" class="flood-results" hidden></div>
         <div class="section-response">
           <b>Planning response</b>
           <span>Use ponding areas to target rain gardens, permeable paving or de-paving, then verify drains, kerbs and underground services on site.</span>
         </div>
-        <p class="panel-note">2D shallow-water model · 2025 LiDAR plus lower-accuracy calibrated SRTM in Company’s Garden · drains and unverified curbs omitted.</p>
+        <p class="panel-note">2D shallow-water model · mapped roads use pavement roughness and zero infiltration; mapped green areas use higher roughness and infiltration; other cells use the selected base values · buildings are impermeable · drains and unverified curbs omitted.</p>
       </section>
       <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
         <div class="transport-heading">
@@ -555,7 +558,7 @@
       <div class="transport-results-grid">
         <section class="transport-result-overview" aria-label="Overall result">
           <div class="transport-coverage-chart" id="transport-coverage-chart" style="--coverage:0deg">
-            <div><b id="transport-event-cover">—</b><span>demand covered</span></div>
+            <div><b id="transport-event-cover">—</b><span>event demand proxy covered</span></div>
           </div>
           <div id="transport-event-recommendation" class="transport-event-recommendation"></div>
         </section>
@@ -603,6 +606,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="app.js?v=webgl-77"></script>
+    <script type="module" src="app.js?v=webgl-85"></script>
 </body>
 </html>

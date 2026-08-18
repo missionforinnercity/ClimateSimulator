@@ -1,0 +1,9 @@
+.git
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+.env
+data/Era5data.grib
+data/transport/*.pdf
+data/transport/*.jpg

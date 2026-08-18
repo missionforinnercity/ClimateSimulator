@@ -5,6 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import functools
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +33,9 @@ HEAT_STITCH_METRES = 1.0
 HEAT_METRICS = {
     "heat_model_lst_c": "Surface temperature",
     "rooftop_temperature_c": "Rooftop temperature",
-    "pedestrian_heat_exposure_c": "Pedestrian thermal exposure",
+    "pedestrian_heat_exposure_c": "Pedestrian thermal exposure delta (proxy, not UTCI/PET)",
     "shade_deficit_score": "Time-specific shade deficit",
-    "pedestrian_priority_score": "Pedestrian intervention priority",
+    "pedestrian_priority_score": "Summer thermal baseline + selected-date shade scenario",
     "cumulative_sun_hours": "Cumulative direct sunlight",
 }
 HEAT_METRIC_METADATA = {
@@ -95,22 +96,20 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[lower] * (1 - amount) + ordered[upper] * amount
 
 
-@functools.lru_cache(maxsize=16)
-def _shadow_surface(date_text: str, minutes: int) -> Any:
-    """Build mapped building and tree-canopy shade for one local solar time."""
-    altitude, sun_x, sun_z = sun_position(date_text, minutes)
-    if altitude <= 0.008:
-        return ()
-    shadows = []
+@functools.lru_cache(maxsize=1)
+def _shadow_blockers() -> tuple[tuple[Any, float, bool], ...]:
+    """Load reusable shadow-caster geometry once per server process."""
+    blockers: list[tuple[Any, float, bool]] = []
     if SCENE_PATH.exists():
         scene = json.loads(SCENE_PATH.read_text(encoding="utf-8"))
         for record in scene.get("buildings", []):
             if len(record) < 3 or len(record[2]) < 3:
                 continue
-            ground, height, ring = record[0], record[1], record[2]
-            footprint = Polygon(ring)
+            _, height, ring = record[0], record[1], record[2]
+            holes = record[13] if len(record) > 13 and isinstance(record[13], list) else []
+            footprint = Polygon(ring, holes)
             if footprint.is_valid and not footprint.is_empty:
-                shadows.append(cast_shadow(footprint, float(height), altitude, sun_x, sun_z, swept=True))
+                blockers.append((footprint, float(height), True))
     if CANOPY_ASSET_PATH.exists():
         canopy = json.loads(CANOPY_ASSET_PATH.read_text(encoding="utf-8"))
         for record in canopy.get("canopies", []):
@@ -120,20 +119,62 @@ def _shadow_surface(date_text: str, minutes: int) -> Any:
             footprint = Polygon(rings[0], rings[1:])
             if footprint.is_valid and not footprint.is_empty:
                 crown_height = max(1.0, (float(crown_base) + float(crown_top)) / 2.0 - float(ground))
-                shadows.append(cast_shadow(footprint, crown_height, altitude, sun_x, sun_z, swept=False))
+                blockers.append((footprint, crown_height, False))
+    return tuple(blockers)
+
+
+@functools.lru_cache(maxsize=48)
+def _shadow_surface(
+    date_text: str, minutes: int,
+    domain_bounds: tuple[float, float, float, float] | None = None,
+) -> Any:
+    """Build mapped shade for one time, prefiltered to the requested domain."""
+    altitude, sun_x, sun_z = sun_position(date_text, minutes)
+    if altitude <= 0.008:
+        return ()
+    shadows = []
+    domain = box(*domain_bounds) if domain_bounds is not None else None
+    horizontal = math.hypot(sun_x, sun_z) or 1.0
+    for footprint, height, swept in _shadow_blockers():
+        distance = min(500.0, height / max(math.tan(altitude), 0.03))
+        dx, dz = -sun_x / horizontal * distance, -sun_z / horizontal * distance
+        min_x, min_z, max_x, max_z = footprint.bounds
+        candidate_bounds = (
+            min_x + (min(0.0, dx) if swept else dx),
+            min_z + (min(0.0, dz) if swept else dz),
+            max_x + (max(0.0, dx) if swept else dx),
+            max_z + (max(0.0, dz) if swept else dz),
+        )
+        if domain is not None and not box(*candidate_bounds).intersects(domain):
+            continue
+        shadow = cast_shadow(footprint, height, altitude, sun_x, sun_z, swept=swept)
+        if domain is not None and not shadow.is_empty:
+            shadow = shadow.intersection(domain)
+        shadows.append(shadow)
     return tuple(shadow for shadow in shadows if not shadow.is_empty)
 
 
 @functools.lru_cache(maxsize=16)
 def _dynamic_shade_deficits(date_text: str, minutes: int) -> tuple[float, ...]:
-    features = _load_heat_zones()["features"]
-    shadows = _shadow_surface(date_text, minutes)
+    geometries = tuple(shape(feature["geometry"]) for feature in _load_heat_zones()["features"])
+    return _shade_deficits_for_geometries(date_text, minutes, geometries)
+
+
+def _shade_deficits_for_geometries(
+    date_text: str, minutes: int, geometries: tuple[Any, ...],
+) -> tuple[float, ...]:
+    domain_bounds = (
+        min(geometry.bounds[0] for geometry in geometries),
+        min(geometry.bounds[1] for geometry in geometries),
+        max(geometry.bounds[2] for geometry in geometries),
+        max(geometry.bounds[3] for geometry in geometries),
+    ) if geometries else None
+    shadows = _shadow_surface(date_text, minutes, domain_bounds)
     if not shadows:
-        return tuple(100.0 for _ in features)
+        return tuple(100.0 for _ in geometries)
     tree = STRtree(shadows)
     deficits: list[float] = []
-    for feature in features:
-        geometry = shape(feature["geometry"])
+    for geometry in geometries:
         candidate_shadows = [shadows[int(index)] for index in tree.query(geometry)]
         if not candidate_shadows or geometry.area <= 0:
             deficits.append(100.0)
@@ -150,7 +191,16 @@ def _dynamic_shade_deficits(date_text: str, minutes: int) -> tuple[float, ...]:
 @functools.lru_cache(maxsize=8)
 def _cumulative_sun_hours(date_text: str, start_minutes: int, end_minutes: int, step_minutes: int) -> tuple[float, ...]:
     """Accumulate direct-sun duration on every heat-zone analysis surface."""
-    totals = [0.0] * len(_load_heat_zones()["features"])
+    geometries = tuple(shape(feature["geometry"]) for feature in _load_heat_zones()["features"])
+    return _cumulative_sun_hours_for_geometries(date_text, start_minutes, end_minutes, step_minutes, geometries)
+
+
+def _cumulative_sun_hours_for_geometries(
+    date_text: str, start_minutes: int, end_minutes: int, step_minutes: int,
+    geometries: tuple[Any, ...],
+) -> tuple[float, ...]:
+    """Accumulate direct sun only for the requested ground geometries."""
+    totals = [0.0] * len(geometries)
     intervals = []
     for start in range(start_minutes, end_minutes, step_minutes):
         duration = min(step_minutes, end_minutes - start)
@@ -163,7 +213,10 @@ def _cumulative_sun_hours(date_text: str, start_minutes: int, end_minutes: int, 
     # samples concurrently keeps an interactive daily study practical without
     # changing its spatial or temporal result.
     with ThreadPoolExecutor(max_workers=min(4, len(intervals) or 1)) as executor:
-        results = executor.map(lambda item: _dynamic_shade_deficits(date_text, item[1]), intervals)
+        results = executor.map(
+            lambda item: _shade_deficits_for_geometries(date_text, item[1], geometries),
+            intervals,
+        )
         for (duration, _), deficits in zip(intervals, results):
             duration_hours = duration / 60.0
             for index, deficit in enumerate(deficits):
@@ -183,7 +236,8 @@ def _roof_surfaces() -> tuple[tuple[Any, float], ...]:
             continue
         ground, height, ring = record[0], record[1], record[2]
         wall_height = record[5] if len(record) > 5 else height
-        footprint = Polygon(ring)
+        holes = record[13] if len(record) > 13 and isinstance(record[13], list) else []
+        footprint = Polygon(ring, holes)
         if footprint.is_valid and not footprint.is_empty:
             candidates.append((footprint, float(ground) + max(float(height), float(wall_height))))
     # Building parts and parent footprints often overlap. Keep the highest
@@ -329,6 +383,7 @@ def _load_heat_zones() -> dict[str, Any]:
     }
 
 
+@functools.lru_cache(maxsize=64)
 def heat_zones(
     metric: str,
     date_text: str = "2026-01-15",
@@ -336,6 +391,7 @@ def heat_zones(
     start_minutes: int = 480,
     end_minutes: int = 1080,
     step_minutes: int = 60,
+    domain_bounds: tuple[float, float, float, float] | None = None,
 ) -> dict[str, Any]:
     if metric not in HEAT_METRICS:
         raise ValueError(f"unsupported heat metric: {metric}")
@@ -347,9 +403,27 @@ def heat_zones(
     if not 10 <= step_minutes <= 120:
         raise ValueError("sunlight time step must be between 10 and 120 minutes")
     source_features = data["features"]
+    if domain_bounds is not None:
+        domain = box(*domain_bounds)
+        source_features = [
+            {**feature, "geometry": mapping(clipped)}
+            for feature in source_features
+            if not (clipped := shape(feature["geometry"]).intersection(domain)).is_empty
+            and clipped.area >= 0.01
+        ]
     dynamic_metric = metric in {"shade_deficit_score", "pedestrian_priority_score"}
     shade_deficits = _dynamic_shade_deficits(date_text, minutes) if dynamic_metric else ()
-    sun_hours = _cumulative_sun_hours(date_text, start_minutes, end_minutes, step_minutes) if metric == "cumulative_sun_hours" else ()
+    if metric == "cumulative_sun_hours":
+        sun_hours = (
+            _cumulative_sun_hours_for_geometries(
+                date_text, start_minutes, end_minutes, step_minutes,
+                tuple(shape(feature["geometry"]) for feature in source_features),
+            )
+            if domain_bounds is not None
+            else _cumulative_sun_hours(date_text, start_minutes, end_minutes, step_minutes)
+        )
+    else:
+        sun_hours = ()
     temperatures = [
         float(feature["properties"]["heat_model_lst_c"])
         for feature in source_features if feature["properties"].get("heat_model_lst_c") is not None
@@ -445,8 +519,8 @@ def heat_zones(
             "shade_sources": ["mapped_buildings", "mapped_tree_canopies"],
         },
         "methodology": {
-            "priority_formula": "70% percentile-normalized surface temperature plus 30% time-specific shade deficit",
-            "priority_use": "Screening rank for site investigation, not a measured health-risk score",
+            "priority_formula": "70% percentile-normalized surface temperature from the fixed summer thermal-baseline product plus 30% shade deficit for the selected date/time",
+            "priority_use": "Screening rank for site investigation, not a measured health-risk score. The surface-temperature term is not re-measured for the selected date; only the shade term varies, so a winter date mixes winter shade geometry with the summer baseline temperature",
             "surface_coverage": "All source-temperature zones are retained so the screening surface remains continuous",
             "shade_method": "Exact zone-area overlap against mapped building and tree-canopy shadows",
         } if metric == "pedestrian_priority_score" else ({

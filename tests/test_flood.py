@@ -4,12 +4,24 @@ import numpy as np
 import pytest
 
 from server.flood import (
+    _building_geometries,
     boundary_closed_sides,
     dem_control_summary,
     flood_preview,
     simulate_local_inertial,
     triangular_hyetograph,
 )
+
+
+def test_flood_obstacles_use_hybrid_buildings_and_keep_courtyards_open():
+    buildings = _building_geometries()
+
+    assert buildings
+    assert any(
+        polygon.interiors
+        for geometry in buildings
+        for polygon in (geometry.geoms if geometry.geom_type == "MultiPolygon" else (geometry,))
+    )
 
 
 def test_flat_grid_conserves_uniform_rainfall_without_open_edge_loss():
@@ -218,6 +230,25 @@ def test_time_varying_intensity_reshapes_filling_but_conserves_total_depth():
     # duration has delivered far less than 10% of the total depth.
     assert result["snapshot_times_s"][1] == pytest.approx(60.0, abs=1.0)
     assert result["snapshots"][1][active].mean() < expected_total * 0.1 * 0.5
+
+
+def test_hyetograph_applies_infiltration_as_a_capacity_after_rainfall_varies():
+    bed = np.zeros((8, 8), dtype=float)
+    active = np.ones_like(bed, dtype=bool)
+    active[[0, -1], :] = False
+    active[:, [0, -1]] = False
+    rainfall = np.where(active, 10 / 3_600_000, 0.0)
+    infiltration = np.where(active, 7 / 3_600_000, 0.0)
+    result = simulate_local_inertial(
+        bed, active, dx=4, dz=4, rainfall_mm_h=10, duration_s=3600,
+        infiltration_mm_h=7, manning_n=0.04,
+        rainfall_rate_mps=rainfall, infiltration_rate_mps=infiltration,
+        intensity_at=triangular_hyetograph(peak_fraction=0.4),
+    )
+    # For a triangular 0..2 multiplier, max(10*m - 7, 0) averages
+    # 4.225 mm/h. Subtracting infiltration before applying the multiplier
+    # would incorrectly produce only 3 mm.
+    assert result["depth"][active].mean() == pytest.approx(0.004225, abs=8e-5)
 
 
 def test_flood_preview_reports_land_cover_and_boundary_metadata():

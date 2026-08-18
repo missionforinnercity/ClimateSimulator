@@ -11,7 +11,7 @@
     1040.0,
     902.0
   ],
-  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,min_height,acquisition_method,acquisition_period]",
+  "building_record": "[ground_y,height,outer_ring,source_id,height_source,wall_height,detailed_roof,coverage,roof_model,wall_profile,min_height,acquisition_method,acquisition_period,interior_rings,osm_attributes]",
   "layers": {
     "terrain": {
       "source": "data/derived/company_gardens_hybrid_dem_2m.tif",
@@ -22,54 +22,60 @@
       "coarse_source": "calibrated_30m_srtm_company_gardens"
     },
     "roof_surface": {
-      "buildings": 1866,
-      "detailed_buildings": 1500,
-      "fallback_buildings": 366,
+      "buildings": 1891,
+      "detailed_buildings": 1515,
+      "fallback_buildings": 376,
       "roof_models": {
-        "height_fallback": 366,
-        "parametric_gable": 77,
+        "regularized_flat": 604,
+        "height_fallback": 376,
+        "dominant_flat": 411,
+        "parametric_gable": 78,
         "flat_plane": 103,
-        "dominant_flat": 405,
-        "regularized_flat": 589,
-        "fitted_plane": 312,
-        "parametric_hip": 14
+        "fitted_plane": 308,
+        "parametric_hip": 11
       },
-      "vertices": 230673,
-      "triangles": 439045,
+      "vertices": 223154,
+      "triangles": 424628,
       "sample_spacing_m": 2,
       "height_semantics": "height_above_dtm",
-      "bytes": 8959316,
-      "cache_key": "f696fc57a686f7f4"
+      "bytes": 8666008,
+      "cache_key": "2e5fb4e9f05ac7fa"
     },
     "fallback": {
-      "buildings": 1866,
+      "buildings": 1891,
       "trees": 2903,
-      "roads": 2191,
+      "roads": 2208,
       "railways": 100,
       "grass": 82,
-      "bytes": 1019673
+      "bytes": 1382630,
+      "water": 16,
+      "cache_key": "bdf03236df36c522"
     },
     "canopy": {
       "components": 2659,
       "area_drift_pct": 1.5351,
-      "bytes": 641734
+      "bytes": 641734,
+      "cache_key": "e217a646f65eb4f3"
     },
     "city_model": {
-      "objects": 17400,
+      "objects": 18042,
       "types": {
         "ReliefFeature": 1,
-        "Building": 1866,
-        "RoofSurface": 1866,
+        "Building": 1891,
+        "RoofSurface": 1891,
         "Road": 1874,
-        "CityFurniture": 3835,
-        "TrafficSpace": 1460,
+        "CityFurniture": 4198,
+        "TrafficSpace": 1477,
         "AuxiliaryTrafficSpace": 3328,
         "GeodeticControlPoint": 85,
+        "BuildingInstallation": 196,
+        "WaterBody": 16,
         "Railway": 100,
         "PlantCover": 82,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 17225673
+      "bytes": 19338118,
+      "cache_key": "29bf8ef4397ffa74"
     }
   },
   "assets": {
@@ -77,5 +83,61 @@
     "city_model": "city_model.json",
     "canopy": "canopy.json",
     "roof_surface": "roof_surface.bin"
+  },
+  "buildInputs": {
+    "terrain": {
+      "path": "data/derived/company_gardens_hybrid_dem_2m.tif",
+      "sha256": "05bd923e047669060ac932dd564fcb6c10d2383e2104995aa13788a2662c03cc",
+      "bytes": 1538282,
+      "files": 1
+    },
+    "height": {
+      "path": "data/raw/LiDAR2025/Lidar2025_Height_Map_1m.tif",
+      "sha256": "6bdb94fd7aa61efd6c445d290ca6b5fc5bc9b8f7a060d63981e2e3374de3fb68",
+      "bytes": 18795050,
+      "files": 1
+    },
+    "buildings": {
+      "path": "data/derived/BuildingFootprintsHybrid.geojson",
+      "sha256": "5f1a102a04ebcb8075de16548bde31fbc6d67ba554e5ba1f92e8e5fd86c3fbed",
+      "bytes": 1609519,
+      "files": 1
+    },
+    "canopy": {
+      "path": "data/raw/tree_canopy.geojson",
+      "sha256": "33cd070e325b735b1a17c9fe6fe309c0379dbc4654b0ee93a592fdd7878a269c",
+      "bytes": 55321694,
+      "files": 1
+    },
+    "roads": {
+      "path": "data/osm_cbd_roads.geojson",
+      "sha256": "0f7469769ef42d10daf1d580d75fffaab614b72a9ef6a1c287344f4cc916765d",
+      "bytes": 792074,
+      "files": 1
+    },
+    "railways": {
+      "path": "data/osm_cbd_railways.geojson",
+      "sha256": "180eaada2ec33fc96dcd4a66114fdd93bf2c51169c4c91a2b780cc0017a6d29a",
+      "bytes": 165001,
+      "files": 1
+    },
+    "green": {
+      "path": "data/osm_cbd_green_areas.geojson",
+      "sha256": "e190f917e6aa63b7818f107ae0c540647af1d8431986d04da5219eb257553932",
+      "bytes": 56862,
+      "files": 1
+    },
+    "osm": {
+      "path": "data/osm_cbd.osm.xml",
+      "sha256": "899ad646ae223bca7935ca18a349a2033511395f75eab9a6e7db7a54c45e355a",
+      "bytes": 12445622,
+      "files": 1
+    },
+    "streetData": {
+      "path": "data/street_data",
+      "sha256": "98472fe1339e4f07d12934271aba1233036e2b72ea0a15b6cc0f3944bf2d35c0",
+      "bytes": 128760376,
+      "files": 9
+    }
   }
 }

@@ -3,7 +3,7 @@
 export function sceneFromCityModel(model) {
   const scene = {
     buildings: [], trees: [], roads: [], railways: [], grass: [], terrain: null,
-    cityFurniture: [], crossings: [], parking: [], surveyMarks: [],
+    cityFurniture: [], crossings: [], parking: [], surveyMarks: [], water: [], installations: [],
   };
   for (const object of Object.values(model?.cityObjects || {})) {
     const geometry = object.geometry || {};
@@ -19,6 +19,19 @@ export function sceneFromCityModel(model) {
         Boolean(roofGeometry.externalMesh), roof.quality?.rasterCoverage ?? 0,
         roof.attributes?.roofModel || 'height_fallback', roofGeometry.boundaryHeightProfileM || null,
         geometry.minHeightM || 0,
+        object.attributes?.acquisitionMethod, object.attributes?.acquisitionPeriod,
+        geometry.interiorRings || [],
+        {
+          ...(object.attributes?.osm || {}),
+          'building:colour': object.attributes?.facadeColour,
+          'building:material': object.attributes?.facadeMaterial,
+          'roof:shape': roof.attributes?.shape,
+          'roof:height': roof.attributes?.height,
+          'roof:direction': roof.attributes?.direction,
+          'roof:orientation': roof.attributes?.orientation,
+          'roof:material': roof.attributes?.material,
+          'roof:colour': roof.attributes?.colour,
+        },
       ]);
     }
     if ((object.type === 'Road' || object.type === 'TrafficSpace')
@@ -29,9 +42,10 @@ export function sceneFromCityModel(model) {
         object.attributes?.renderClass || object.attributes?.class,
         geometry.centerline,
         'osm',
+        object.attributes,
       ]);
     }
-    if (object.type === 'Railway') scene.railways.push([object.attributes?.class, geometry.centerline]);
+    if (object.type === 'Railway') scene.railways.push([object.attributes?.class, geometry.centerline, object.attributes]);
     if (object.type === 'PlantCover') scene.grass.push(geometry.rings?.[0]);
     if (object.type === 'SolitaryVegetationObject') {
       const [x, ground, z] = geometry.referencePoint;
@@ -52,6 +66,14 @@ export function sceneFromCityModel(model) {
     }
     if (object.type === 'GeodeticControlPoint') {
       scene.surveyMarks.push({ identifier: object.identifier, coordinates: geometry.coordinates, attributes: object.attributes });
+    }
+    if (object.type === 'WaterBody') scene.water.push({ rings: geometry.rings || [], attributes: object.attributes });
+    if (object.type === 'BuildingInstallation') {
+      scene.installations.push({
+        identifier: object.identifier, class: object.attributes?.class,
+        coordinates: geometry.coordinates, rings: geometry.rings,
+        attributes: object.attributes,
+      });
     }
   }
   if (!scene.terrain) throw new Error('semantic city model has no ReliefFeature');

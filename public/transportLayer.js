@@ -5,6 +5,10 @@ const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, v
 const WALK_SPEED_M_PER_MIN = 80;       // 4.8 km/h, the usual pedestrian planning speed.
 const BUS_SPEED_M_PER_MIN = 300;       // 18 km/h in mixed CBD traffic.
 const RAIL_SPEED_M_PER_MIN = 667;      // 40 km/h approaching a terminus.
+// Nominal scheduled capacity per departure, not a measured or validated
+// occupancy figure: no real ridership/occupancy data is used anywhere here.
+// Treat every derived "coverage" or "capacity gap" number as an event-demand
+// proxy for planning discussion, and verify it with the operator.
 const BUS_PLACES_PER_DEPARTURE = 60;
 const RAIL_PLACES_PER_DEPARTURE = 800;
 
@@ -287,17 +291,45 @@ export async function createTransportLayer({
       return stop ? { id, ...nearestFraction(route._metric, stop.point) } : null;
     }).filter(item => item && item.distance < 55).sort((a, b) => a.fraction - b.fraction);
   }
+  const sharedRailLine = (data.railTracks || [])
+    .map(points => {
+      const metric = lineMetrics(points);
+      const hubDistance = hubStation ? nearestFraction(metric, hubStation.point).distance : 0;
+      const endpointReach = hubStation
+        ? Math.max(Math.hypot(points[0][0] - hubStation.point[0], points[0][1] - hubStation.point[1]),
+          Math.hypot(points.at(-1)[0] - hubStation.point[0], points.at(-1)[1] - hubStation.point[1]))
+        : metric.length;
+      return { points, metric, hubDistance, endpointReach };
+    })
+    // Reject station-yard loops whose two endpoints stay beside the hub. A
+    // shared service approach must visibly lead away from Cape Town Station.
+    .filter(item => item.hubDistance < 90 && item.endpointReach > 150)
+    .sort((a, b) => b.endpointReach - a.endpointReach || b.metric.length - a.metric.length)[0]?.points || null;
+  const isVisibleServiceApproach = line => {
+    if (!line?.length || !hubStation) return Boolean(line?.length);
+    const metric = lineMetrics(line);
+    const hubDistance = nearestFraction(metric, hubStation.point).distance;
+    const endpointReach = Math.max(
+      Math.hypot(line[0][0] - hubStation.point[0], line[0][1] - hubStation.point[1]),
+      Math.hypot(line.at(-1)[0] - hubStation.point[0], line.at(-1)[1] - hubStation.point[1]),
+    );
+    return hubDistance < 100 && endpointReach > 150;
+  };
   for (const rail of data.rail) {
-    rail._metric = rail.line ? lineMetrics(rail.line) : null;
+    // Use every through-running line that actually reaches the visible hub,
+    // excluding disconnected platform/yard loops carried in the source GIS.
+    rail._movementLines = (rail.lines || []).filter(isVisibleServiceApproach);
+    if (!rail._movementLines.length && sharedRailLine) rail._movementLines = [sharedRailLine];
+    rail._metrics = rail._movementLines.map(lineMetrics);
+    rail._metric = rail._metrics[0] || null;
     rail._departures = rail.departures || rail.trips.map(trip => trip[0]);
-    rail._duration = rail._metric ? Math.max(0.8, rail._metric.length / RAIL_SPEED_M_PER_MIN) : 1;
+    // A kilometre-scale CBD approach otherwise flashes past in under a minute.
+    // Four minutes retains the published departure time while keeping the
+    // timetable-derived train legible at normal playback speed.
+    rail._duration = rail._metric ? Math.max(4, rail._metric.length / RAIL_SPEED_M_PER_MIN) : 1;
     rail._label = `Rail · ${rail.name}`;
     rail._color = rail.color;
   }
-  const sharedRailLine = (data.railTracks || [])
-    .map(points => ({ points, metric: lineMetrics(points), hubDistance: hubStation ? nearestFraction(lineMetrics(points), hubStation.point).distance : 0 }))
-    .filter(item => item.hubDistance < 90)
-    .sort((a, b) => b.metric.length - a.metric.length)[0]?.points || null;
 
   // Which route directions call at a given stop, for the stop info card.
   const routesByStop = new Map();
@@ -320,9 +352,26 @@ export async function createTransportLayer({
   }
 
   function addRibbon(points, color, width = 2.6, opacity = 0.9, elevation = 0.82, target = routeGroup, lateralOffset = 0) {
+    // Source route geometry can contain very long segments. Densify before
+    // draping so a route cannot pass through a terrain ridge or disappear
+    // beneath the road between two source vertices.
+    const draped = [];
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index], end = points[index + 1];
+      const length = Math.hypot(end[0] - start[0], end[1] - start[1]);
+      const sections = Math.max(1, Math.ceil(length / 4));
+      for (let section = 0; section < sections; section += 1) {
+        const amount = section / sections;
+        draped.push([
+          start[0] + (end[0] - start[0]) * amount,
+          start[1] + (end[1] - start[1]) * amount,
+        ]);
+      }
+    }
+    if (points.length) draped.push(points.at(-1));
     const runs = [];
     let run = [];
-    for (const point of points) {
+    for (const point of draped) {
       if (terrainValidAt(...point)) run.push(point);
       else if (run.length) { if (run.length > 1) runs.push(run); run = []; }
     }
@@ -347,7 +396,13 @@ export async function createTransportLayer({
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
       geometry.setIndex(indices);
-      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: true, depthWrite: false, side: THREE.DoubleSide }));
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        color, transparent: true, opacity, depthTest: true, depthWrite: false,
+        side: THREE.DoubleSide,
+        // Bias overlays toward the camera only within their existing depth.
+        // Buildings still occlude routes, while coplanar roads cannot erase them.
+        polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
+      }));
       mesh.renderOrder = target === trackGroup ? 18 : 20;
       target.add(mesh);
     }
@@ -433,15 +488,15 @@ export async function createTransportLayer({
         const railRoutes = state.mode === 'train' ? data.rail : activeRail();
         railRoutes.forEach((rail, index) => {
           const featured = !state.eventRailIds.size || state.eventRailIds.has(rail.id);
-          const usesSharedApproach = !rail.line && sharedRailLine;
-          const line = rail.line || sharedRailLine;
-          if (!line) return;
+          const usesSharedApproach = !(rail.lines || []).length && sharedRailLine;
+          const lines = rail._movementLines || [];
+          if (!lines.length) return;
           // Corridors without unique geometry share the Cape Town approach.
           // Parallel offsets keep each service colour readable instead of
           // stacking nine colours on exactly the same pixels.
           const offset = usesSharedApproach ? (index - (railRoutes.length - 1) / 2) * 2.25 : 0;
-          const width = state.mode === 'train' ? (usesSharedApproach ? 1.8 : 4.2) : (featured ? 6.0 : 3.0);
-          addRibbon(line, rail.color, width, featured ? 0.94 : 0.24, 1.02, routeGroup, offset);
+          const width = state.mode === 'train' ? (usesSharedApproach ? 1.8 : 3.2) : (featured ? 5.0 : 2.6);
+          for (const line of lines) addRibbon(line, rail.color, width, featured ? 0.94 : 0.24, 1.02, routeGroup, offset);
         });
       }
     }
@@ -470,7 +525,7 @@ export async function createTransportLayer({
   // Vehicles are pooled: a service shows one mesh per departure currently
   // inside the modelled view, so a 10-minute headway visibly differs from a
   // 40-minute one instead of every route showing exactly one crawling vehicle.
-  function activeProgress(service, minute, reverse = false, serviceTimes = service._departures, kind = 'bus') {
+  function activeProgress(service, minute, reverse = false, serviceTimes = service._departures, kind = 'bus', duration = service._duration) {
     const progress = [];
     for (const serviceTime of serviceTimes) {
       for (const shiftedTime of [serviceTime - 1440, serviceTime, serviceTime + 1440]) {
@@ -478,8 +533,8 @@ export async function createTransportLayer({
         // terminus without inventing an extra movement.
         if (kind === 'train' && !reverse && minute >= shiftedTime - 3 && minute < shiftedTime) progress.push(0);
         if (kind === 'train' && reverse && minute > shiftedTime && minute <= shiftedTime + 3) progress.push(1);
-        const base = reverse ? shiftedTime - service._duration : shiftedTime;
-        const amount = (minute - base) / service._duration;
+        const base = reverse ? shiftedTime - duration : shiftedTime;
+        const amount = (minute - base) / duration;
         if (amount >= 0 && amount <= 1) progress.push(amount);
       }
     }
@@ -491,10 +546,16 @@ export async function createTransportLayer({
       ...(state.mode === 'train' ? [] : selectedRoutes().map(route => ({ service: route, kind: 'bus' }))),
       ...activeRail().flatMap(rail => {
         const times = scheduledRailTimes(rail, state.serviceDate);
-        return [
-          { service: rail, kind: 'train', reverse: false, serviceTimes: times.outbound },
-          { service: rail, kind: 'train', reverse: true, serviceTimes: times.inbound },
-        ];
+        return rail._metrics.flatMap((metric, metricIndex) => {
+          const count = rail._metrics.length;
+          const outbound = times.outbound.filter((_, index) => index % count === metricIndex);
+          const inbound = times.inbound.filter((_, index) => index % count === metricIndex);
+          const duration = Math.max(4, metric.length / RAIL_SPEED_M_PER_MIN);
+          return [
+            { service: rail, kind: 'train', reverse: false, serviceTimes: outbound, movementMetric: metric, movementDuration: duration },
+            { service: rail, kind: 'train', reverse: true, serviceTimes: inbound, movementMetric: metric, movementDuration: duration },
+          ];
+        });
       }),
     ];
     updateVehicles();
@@ -507,10 +568,10 @@ export async function createTransportLayer({
   function updateVehicles() {
     const used = { bus: 0, train: 0 };
     let visible = 0;
-    for (const { service, kind, reverse, serviceTimes } of state.services || []) {
-      const metric = service._metric;
+    for (const { service, kind, reverse, serviceTimes, movementMetric, movementDuration } of state.services || []) {
+      const metric = movementMetric || service._metric;
       if (!metric) continue;
-      for (let raw of activeProgress(service, state.minute, reverse, serviceTimes, kind)) {
+      for (let raw of activeProgress(service, state.minute, reverse, serviceTimes, kind, movementDuration || service._duration)) {
         let amount = reverse ? 1 - raw : raw;
         if (kind === 'bus' && service._stopFractions.length) {
           const nearest = service._stopFractions.reduce(
@@ -788,18 +849,20 @@ export async function createTransportLayer({
     }
     if (capacityGap > 0) actions.push({
       priority: capacityGap > publicTransportTrips * 0.4 ? 'high' : 'medium',
-      title: `Add capacity for about ${capacityGap.toLocaleString('en-ZA')} outbound trips`,
+      title: `Nominal scheduled capacity is short by about ${capacityGap.toLocaleString('en-ZA')} outbound trips`,
       body: `Return services in the ${dispersal}-minute dispersal window supply roughly `
-        + `${returnPlaces.toLocaleString('en-ZA')} places against ${publicTransportTrips.toLocaleString('en-ZA')} `
-        + `public-transport trips (${Math.round(modeShare * 100)}% of ${attendance.toLocaleString('en-ZA')} attendees). `
-        + `That is ${Math.ceil(capacityGap / RAIL_PLACES_PER_DEPARTURE)} extra train sets or `
-        + `${Math.ceil(capacityGap / BUS_PLACES_PER_DEPARTURE)} extra bus departures.`,
+        + `${returnPlaces.toLocaleString('en-ZA')} nominal scheduled places against an event-demand proxy of `
+        + `${publicTransportTrips.toLocaleString('en-ZA')} public-transport trips (${Math.round(modeShare * 100)}% of `
+        + `${attendance.toLocaleString('en-ZA')} attendees). No real occupancy or ridership data is used; verify with `
+        + `the operator before committing resources. That is ${Math.ceil(capacityGap / RAIL_PLACES_PER_DEPARTURE)} extra `
+        + `train sets or ${Math.ceil(capacityGap / BUS_PLACES_PER_DEPARTURE)} extra bus departures at nominal capacity.`,
     });
     if (arrivalPlaces < publicTransportTrips) actions.push({
       priority: 'medium',
       title: 'Arrival window is tighter than the crowd',
-      body: `The ${buffer}-minute pre-event window supplies about ${arrivalPlaces.toLocaleString('en-ZA')} places. `
-        + `Open doors earlier or advertise a longer arrival spread so demand is not concentrated in the last 30 minutes.`,
+      body: `The ${buffer}-minute pre-event window supplies about ${arrivalPlaces.toLocaleString('en-ZA')} nominal `
+        + `scheduled places. Open doors earlier or advertise a longer arrival spread so demand is not concentrated `
+        + `in the last 30 minutes.`,
     });
     if (!railInCatchment && hubStation) actions.push({
       priority: 'medium',
@@ -824,8 +887,9 @@ export async function createTransportLayer({
     if (!actions.length) actions.push({
       priority: 'good',
       title: 'No intervention indicated by the modelled supply',
-      body: `Scheduled operations cover arrival and the ${dispersal}-minute dispersal window, and the capacity proxy `
-        + 'clears expected public-transport demand. Capacity remains an uncalibrated planning proxy, not an allocation.',
+      body: `Scheduled operations cover arrival and the ${dispersal}-minute dispersal window, and nominal scheduled `
+        + 'capacity clears the event-demand proxy. This is an uncalibrated planning proxy, not a real occupancy '
+        + 'measurement or an allocation guarantee — confirm with the operator.',
     });
 
     const grade = !services.length ? 'Limited'
@@ -851,9 +915,9 @@ export async function createTransportLayer({
       ? `No scheduled service was found within ${radius} m along the walking network in the selected windows. `
         + 'Plan dedicated shuttles from the nearest served hub and verify transfer options before publishing travel advice.'
       : `${services.length} service direction${services.length === 1 ? '' : 's'} reach this venue, connecting `
-        + `${connectedAreas.size} named origin areas. Return supply covers ${Math.round(coverage * 100)}% of the `
-        + `modelled ${publicTransportTrips.toLocaleString('en-ZA')} public-transport trips in the `
-        + `${dispersal}-minute dispersal window.`;
+        + `${connectedAreas.size} named origin areas. Nominal scheduled return capacity covers ${Math.round(coverage * 100)}% `
+        + `of the event-demand proxy of ${publicTransportTrips.toLocaleString('en-ZA')} public-transport trips in the `
+        + `${dispersal}-minute dispersal window. This is a planning proxy, not measured occupancy — verify with the operator.`;
 
     elements['transport-event-actions'].innerHTML = actions.map(action => `
       <div class="transport-action" data-priority="${action.priority}">

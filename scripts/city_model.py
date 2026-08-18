@@ -21,6 +21,11 @@ from shapely.geometry import Point, Polygon, box, shape
 from shapely.ops import transform as transform_geometry, unary_union
 from shapely.strtree import STRtree
 
+try:
+    from .osm_extract import load_osm, polygon_parts
+except ImportError:
+    from osm_extract import load_osm, polygon_parts
+
 
 MODEL_VERSION = "1.0"
 ID_NAMESPACE = "za.capetown.climate-explorer"
@@ -36,6 +41,39 @@ def _road_lane_count(value: Any) -> int:
     """
     counts = [int(match) for match in re.findall(r"\d+", str(value or ""))]
     return max(1, min(8, max(counts, default=1)))
+
+
+def _osm_vertical_semantics(attributes: dict[str, Any]) -> dict[str, Any]:
+    """Translate OSM ordering tags into an explicitly inferred deck offset.
+
+    OSM layer/bridge/tunnel tags establish ordering, not surveyed elevation.
+    The offset is therefore only a renderer-safe visualization estimate and
+    is kept out of analytical terrain and flood/wind obstruction geometry.
+    """
+    try:
+        layer = max(-5, min(5, int(float(attributes.get("layer") or 0))))
+    except (TypeError, ValueError):
+        layer = 0
+    bridge = str(attributes.get("bridge") or "").lower() not in {"", "no"}
+    tunnel = str(attributes.get("tunnel") or "").lower() not in {"", "no"}
+    if bridge:
+        offset = max(4.5, max(layer, 1) * 3.0)
+        method = "inferred_bridge_clearance"
+    elif tunnel:
+        offset = -max(3.0, abs(min(layer, -1)) * 3.0)
+        method = "inferred_tunnel_depth"
+    elif layer:
+        offset = layer * 0.35
+        method = "ordering_only_layer_offset"
+    else:
+        offset = 0.0
+        method = "terrain_draped"
+    has_vertical_tag = any(attributes.get(key) is not None for key in ("layer", "bridge", "tunnel"))
+    return {
+        "inferredVerticalOffsetM": offset,
+        "verticalPlacementMethod": method,
+        "verticalPlacementConfidence": "low" if has_vertical_tag else "medium",
+    }
 
 
 def _digest(value: Any) -> str:
@@ -444,6 +482,164 @@ def _add_osm_point_furniture(
         )
 
 
+def _add_osm_context(
+    objects: dict[str, dict[str, Any]],
+    scene: dict[str, Any],
+    manifest: dict[str, Any],
+    osm_path: Path,
+) -> dict[str, int]:
+    """Add mapped building installations, barriers and water geometries."""
+    counts = {"entrances": 0, "barriers": 0, "solar": 0, "waterBodies": 0}
+    if not osm_path.exists():
+        return counts
+    extract = load_osm(osm_path)
+    all_tags = [node.tags for node in extract.nodes.values()] + [way.tags for way in extract.ways.values()] + [relation.tags for relation in extract.relations]
+    counts["sourceInventory"] = {
+        "roofShape": sum("roof:shape" in tags for tags in all_tags),
+        "roofHeight": sum("roof:height" in tags for tags in all_tags),
+        "roofDirection": sum("roof:direction" in tags for tags in all_tags),
+        "roofOrientation": sum("roof:orientation" in tags for tags in all_tags),
+        "roofMaterial": sum("roof:material" in tags for tags in all_tags),
+        "roofColour": sum("roof:colour" in tags for tags in all_tags),
+        "facadeColour": sum("building:colour" in tags for tags in all_tags),
+        "bridge": sum("bridge" in tags for tags in all_tags),
+        "tunnel": sum("tunnel" in tags for tags in all_tags),
+        "layer": sum("layer" in tags for tags in all_tags),
+        "entrance": sum("entrance" in tags for tags in all_tags),
+        "barrier": sum("barrier" in tags for tags in all_tags),
+        "photovoltaic": sum(tags.get("generator:source") == "solar" or tags.get("power") == "solar_panel" for tags in all_tags),
+        "surface": sum("surface" in tags for tags in all_tags),
+        "sidewalk": sum("sidewalk" in tags for tags in all_tags),
+    }
+    origin_x, origin_y = manifest["origin"]
+    clip = _local_scene_clip(scene)
+
+    def local_point(x, y):
+        return Point(x - origin_x, -(y - origin_y))
+
+    def local_geometry(geometry):
+        return transform_geometry(lambda x, y, z=None: (x - origin_x, -(y - origin_y)), geometry)
+
+    def compact_tags(tags):
+        return {key: value for key, value in tags.items() if key not in {"source"}}
+
+    for node in extract.nodes.values():
+        point = local_point(node.x, node.y)
+        if not clip.covers(point):
+            continue
+        coordinates = [round(point.x, 2), round(point.y, 2)]
+        if node.tags.get("entrance") and node.tags.get("entrance") != "no":
+            identifier, feature_id = _identity("osm-entrance", node.identifier, coordinates)
+            objects[feature_id] = _feature(
+                "BuildingInstallation", identifier, feature_id,
+                {"lod": "0", "type": "Point", "coordinates": coordinates},
+                attributes={"class": "buildingEntrance", "osmId": node.identifier, "osmTags": compact_tags(node.tags)},
+                sources=["osmDetails"],
+                quality=_quality("OpenStreetMap entrance node", "0", confidence="medium", dimensions="inferred"),
+            )
+            counts["entrances"] += 1
+        solar = node.tags.get("generator:source") == "solar" or node.tags.get("power") == "solar_panel"
+        if solar:
+            identifier, feature_id = _identity("osm-solar", node.identifier, coordinates)
+            objects[feature_id] = _feature(
+                "BuildingInstallation", identifier, feature_id,
+                {"lod": "0", "type": "Point", "coordinates": coordinates},
+                attributes={"class": "roofSolarPanel", "osmId": node.identifier, "osmTags": compact_tags(node.tags)},
+                sources=["osmDetails"],
+                quality=_quality("OpenStreetMap photovoltaic object", "0", confidence="medium", elevation="drapedToRoof"),
+            )
+            counts["solar"] += 1
+        barrier = node.tags.get("barrier")
+        if barrier and barrier != "no" and barrier != "bollard":
+            identifier, feature_id = _identity("osm-barrier", node.identifier, coordinates)
+            objects[feature_id] = _feature(
+                "CityFurniture", identifier, feature_id,
+                {"lod": "0", "type": "Point", "coordinates": coordinates},
+                attributes={"class": f"barrier:{barrier}", "osmId": node.identifier, "osmTags": compact_tags(node.tags)},
+                sources=["osmDetails"], quality=_quality("OpenStreetMap barrier node", "0", confidence="medium", dimensions="inferred"),
+            )
+            counts["barriers"] += 1
+
+    water_relation_members = set()
+    for relation in extract.relations:
+        tags = relation.tags
+        is_water = tags.get("natural") == "water" or tags.get("waterway") == "riverbank" or tags.get("landuse") in {"reservoir", "basin"}
+        if not is_water:
+            continue
+        water_relation_members.update(reference for kind, reference, _ in relation.members if kind == "way")
+        for part_index, polygon in enumerate(extract.relation_polygons(relation)):
+            polygon = local_geometry(polygon).intersection(clip)
+            for local_index, part in enumerate(polygon_parts(polygon)):
+                if part.area < 2:
+                    continue
+                rings = [[[round(x, 2), round(y, 2)] for x, y in list(ring.coords)[:-1]] for ring in (part.exterior, *part.interiors)]
+                identifier, feature_id = _identity("osm-water", relation.identifier, rings, part_index + local_index)
+                objects[feature_id] = _feature(
+                    "WaterBody", identifier, feature_id,
+                    {"lod": "0", "type": "MultiSurface", "rings": rings},
+                    attributes={"class": tags.get("water") or tags.get("natural") or tags.get("landuse"), "osmId": relation.identifier, "osmTags": compact_tags(tags)},
+                    sources=["osmDetails"], quality=_quality("OpenStreetMap water multipolygon", "0", confidence="medium"),
+                )
+                counts["waterBodies"] += 1
+
+    for way in extract.ways.values():
+        tags = way.tags
+        line = extract.way_line(way)
+        if line is None:
+            continue
+        local_line = local_geometry(line).intersection(clip)
+        barrier = tags.get("barrier")
+        if barrier and barrier != "no" and not local_line.is_empty:
+            parts = local_line.geoms if local_line.geom_type == "MultiLineString" else (local_line,)
+            for part_index, part in enumerate(parts):
+                if part.geom_type != "LineString" or len(part.coords) < 2:
+                    continue
+                points = [[round(x, 2), round(y, 2)] for x, y in part.coords]
+                identifier, feature_id = _identity("osm-barrier", way.identifier, points, part_index)
+                objects[feature_id] = _feature(
+                    "CityFurniture", identifier, feature_id,
+                    {"lod": "0", "type": "MultiCurve", "centerline": points},
+                    attributes={"class": f"barrier:{barrier}", "osmId": way.identifier, "osmTags": compact_tags(tags)},
+                    sources=["osmDetails"], quality=_quality("OpenStreetMap barrier way", "0", confidence="medium", dimensions="inferred"),
+                )
+                counts["barriers"] += 1
+        solar = tags.get("generator:source") == "solar" or tags.get("power") == "solar_panel"
+        if solar:
+            geometry = extract.way_polygon(way)
+            if geometry is None:
+                continue
+            for part_index, part in enumerate(polygon_parts(local_geometry(geometry).intersection(clip))):
+                rings = [[[round(x, 2), round(y, 2)] for x, y in list(ring.coords)[:-1]] for ring in (part.exterior, *part.interiors)]
+                identifier, feature_id = _identity("osm-solar", way.identifier, rings, part_index)
+                objects[feature_id] = _feature(
+                    "BuildingInstallation", identifier, feature_id,
+                    {"lod": "0", "type": "MultiSurface", "rings": rings},
+                    attributes={"class": "roofSolarPanel", "osmId": way.identifier, "osmTags": compact_tags(tags)},
+                    sources=["osmDetails"], quality=_quality("OpenStreetMap photovoltaic polygon", "0", confidence="medium", elevation="drapedToRoof"),
+                )
+                counts["solar"] += 1
+        is_water = way.identifier not in water_relation_members and (
+            tags.get("natural") == "water" or tags.get("waterway") == "riverbank" or tags.get("landuse") in {"reservoir", "basin"}
+        )
+        if is_water:
+            geometry = extract.way_polygon(way)
+            if geometry is None:
+                continue
+            for part_index, part in enumerate(polygon_parts(local_geometry(geometry).intersection(clip))):
+                if part.area < 2:
+                    continue
+                rings = [[[round(x, 2), round(y, 2)] for x, y in list(ring.coords)[:-1]] for ring in (part.exterior, *part.interiors)]
+                identifier, feature_id = _identity("osm-water", way.identifier, rings, part_index)
+                objects[feature_id] = _feature(
+                    "WaterBody", identifier, feature_id,
+                    {"lod": "0", "type": "MultiSurface", "rings": rings},
+                    attributes={"class": tags.get("water") or tags.get("natural") or tags.get("landuse"), "osmId": way.identifier, "osmTags": compact_tags(tags)},
+                    sources=["osmDetails"], quality=_quality("OpenStreetMap water polygon", "0", confidence="medium"),
+                )
+                counts["waterBodies"] += 1
+    return counts
+
+
 def build_city_model(
     scene: dict[str, Any],
     canopy: dict[str, Any],
@@ -474,6 +670,14 @@ def build_city_model(
             min_height, source_metadata = 0.0, tail
         acquisition_method = source_metadata[0] if len(source_metadata) > 0 else None
         acquisition_period = source_metadata[1] if len(source_metadata) > 1 else None
+        interior_rings = source_metadata[2] if len(source_metadata) > 2 and isinstance(source_metadata[2], list) else []
+        osm_attributes = source_metadata[3] if len(source_metadata) > 3 and isinstance(source_metadata[3], dict) else {}
+        height_class = {
+            "survey_height": "observed",
+            "osm_height": "observed",
+            "lidar_surface_fallback": "derived",
+            "lidar_2025": "derived",
+        }.get(height_source, "inferred")
         identifier, feature_id = _identity("building", source_id, ring, index)
         roof_identifier = f"{identifier}:roof"
         roof_feature_id = f"{feature_id}:roof"
@@ -482,15 +686,28 @@ def build_city_model(
             identifier,
             feature_id,
             {
-                "lod": "1", "type": "Solid", "footprint": ring,
+                "lod": "1", "type": "Solid", "footprint": ring, "interiorRings": interior_rings,
                 "groundElevationM": ground, "heightM": height, "minHeightM": min_height,
             },
             attributes={
-                "measuredHeightM": height,
+                f"{height_class}HeightM": height,
                 "heightReference": height_source,
+                "heightProvenance": {
+                    "classification": height_class,
+                    "sourceTag": height_source,
+                    "acquisitionMethod": acquisition_method,
+                    "acquisitionPeriod": acquisition_period,
+                    **({"osmHeightTag": osm_attributes["height"]} if osm_attributes.get("height") else {}),
+                },
                 "acquisitionMethod": acquisition_method,
                 "acquisitionPeriod": acquisition_period,
                 "minHeightM": min_height,
+                "class": osm_attributes.get("building") or osm_attributes.get("building:part"),
+                "name": osm_attributes.get("name"),
+                "levels": osm_attributes.get("building:levels"),
+                "facadeMaterial": osm_attributes.get("building:material"),
+                "facadeColour": osm_attributes.get("building:colour"),
+                "osm": osm_attributes,
             },
             sources=["buildings"],
             quality=_quality(
@@ -508,12 +725,20 @@ def build_city_model(
             {
                 "lod": "2" if detailed else "1",
                 "type": "MultiSurface",
-                "footprint": ring,
+                "footprint": ring, "interiorRings": interior_rings,
                 "eaveHeightM": wall_height,
                 "boundaryHeightProfileM": wall_profile,
                 "externalMesh": "roof_surface.bin" if detailed else None,
             },
-            attributes={"roofModel": roof_model},
+            attributes={
+                "roofModel": roof_model,
+                "shape": osm_attributes.get("roof:shape"),
+                "height": osm_attributes.get("roof:height"),
+                "direction": osm_attributes.get("roof:direction"),
+                "orientation": osm_attributes.get("roof:orientation"),
+                "material": osm_attributes.get("roof:material"),
+                "colour": osm_attributes.get("roof:colour"),
+            },
             sources=["height", "buildings"],
             quality=_quality(
                 "regularised 1 m normalized LiDAR height raster" if detailed else "building height extrusion",
@@ -530,12 +755,17 @@ def build_city_model(
     osm_path = source_paths.get("osm")
     if osm_path:
         _add_osm_point_furniture(objects, scene, manifest, osm_path)
+        osm_detail_counts = _add_osm_context(objects, scene, manifest, osm_path)
+    else:
+        osm_detail_counts = {"entrances": 0, "barriers": 0, "solar": 0, "waterBodies": 0, "sourceInventory": {}}
     # Keep the complete OSM network as the visible representation: its ways
     # are continuous through junctions and its highway classes drive the road
     # hierarchy colours. Municipal centrelines remain authoritative semantic
     # records for street furniture, widths, crossings and traffic enrichment,
     # but rendering both products would double the asphalt and cause z-fights.
-    for index, (width, highway, points) in enumerate(scene.get("roads", [])):
+    for index, record in enumerate(scene.get("roads", [])):
+        width, highway, points, *tail = record
+        osm_attributes = tail[0] if tail and isinstance(tail[0], dict) else {}
         identifier, feature_id = _identity("transport", None, [highway, points], index)
         pedestrian = highway == "pedestrian" or highway in {"footway", "path", "cycleway", "steps", "corridor", "elevator"}
         objects[feature_id] = _feature(
@@ -543,19 +773,30 @@ def build_city_model(
             identifier,
             feature_id,
             {"lod": "0", "type": "MultiCurve", "centerline": points, "nominalWidthM": width},
-            attributes={"class": highway, "renderClass": highway, "usage": "pedestrian" if pedestrian else "vehicular"},
+            attributes={
+                "class": highway, "renderClass": highway, "usage": "pedestrian" if pedestrian else "vehicular",
+                "surface": osm_attributes.get("surface"), "sidewalk": osm_attributes.get("sidewalk"),
+                "sidewalkLeft": osm_attributes.get("sidewalk:left"), "sidewalkRight": osm_attributes.get("sidewalk:right"),
+                "bridge": osm_attributes.get("bridge"), "tunnel": osm_attributes.get("tunnel"),
+                "layer": osm_attributes.get("layer"), "lanes": osm_attributes.get("lanes"),
+                "oneway": osm_attributes.get("oneway"), "lit": osm_attributes.get("lit"),
+                "name": osm_attributes.get("name"), "osmId": osm_attributes.get("osmId"),
+                **_osm_vertical_semantics(osm_attributes),
+            },
             sources=["roads"],
             quality=_quality("OSM centreline with class-derived width", "0", confidence="medium"),
         )
 
-    for index, (railway, points) in enumerate(scene.get("railways", [])):
+    for index, record in enumerate(scene.get("railways", [])):
+        railway, points, *tail = record
+        osm_attributes = tail[0] if tail and isinstance(tail[0], dict) else {}
         identifier, feature_id = _identity("railway", None, [railway, points], index)
         objects[feature_id] = _feature(
             "Railway",
             identifier,
             feature_id,
             {"lod": "0", "type": "MultiCurve", "centerline": points},
-            attributes={"class": railway},
+            attributes={"class": railway, **osm_attributes, **_osm_vertical_semantics(osm_attributes)},
             sources=["railways"],
             quality=_quality("OSM centreline", "0", confidence="medium"),
         )
@@ -597,8 +838,9 @@ def build_city_model(
             "bounds": manifest["bounds"],
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "objectCount": len(objects),
-            "availableModules": ["Core", "Building", "Transportation", "Vegetation", "Relief", "CityFurniture", "Dynamizer", "Versioning", "Generics"],
-            "emptyModules": ["WaterBody"],
+            "osmDetailCounts": osm_detail_counts,
+            "availableModules": ["Core", "Building", "Transportation", "Vegetation", "Relief", "WaterBody", "CityFurniture", "Dynamizer", "Versioning", "Generics"],
+            "emptyModules": [] if osm_detail_counts["waterBodies"] else ["WaterBody"],
             "lodPolicy": {"0": "2D/2.5D thematic geometry", "1": "volumetric massing or implicit object", "2": "thematic boundary surfaces"},
         },
         "sources": {
@@ -609,7 +851,10 @@ def build_city_model(
             "roads": _source(source_paths["roads"], role="transportNetwork"),
             "railways": _source(source_paths["railways"], role="transportNetwork"),
             "green": _source(source_paths["green"], role="landCover"),
-            **({"osmPointFurniture": _source(source_paths["osm"], role="cityFurniture")} if source_paths.get("osm") else {}),
+            **({
+                "osmPointFurniture": _source(source_paths["osm"], role="cityFurniture"),
+                "osmDetails": _source(source_paths["osm"], role="buildingAndSurfaceDetail"),
+            } if source_paths.get("osm") else {}),
             **({
                 key: _source(path, role=role)
                 for key, (_, path, role) in _street_sources(street_dir).items()
@@ -628,4 +873,24 @@ def write_city_model(model: dict[str, Any], output: Path) -> dict[str, Any]:
     counts: dict[str, int] = {}
     for feature in model["cityObjects"].values():
         counts[feature["type"]] = counts.get(feature["type"], 0) + 1
-    return {"objects": len(model["cityObjects"]), "types": counts, "bytes": output.stat().st_size}
+    return {
+        "objects": len(model["cityObjects"]), "types": counts, "bytes": output.stat().st_size,
+        "cache_key": hashlib.sha256(output.read_bytes()).hexdigest()[:16],
+    }
+
+
+def add_semantic_renderer_context(scene: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
+    """Copy water into the compact interactive asset.
+
+    The full semantic model retains installations and city furniture for
+    analysis. Keeping those thousands of records out of the browser's compact
+    scene preserves interactive performance.
+    """
+    scene["water"] = []
+    for item in model.get("cityObjects", {}).values():
+        geometry = item.get("geometry") or {}
+        attributes = item.get("attributes") or {}
+        item_type = item.get("type")
+        if item_type == "WaterBody":
+            scene["water"].append({"rings": geometry.get("rings") or [], "attributes": attributes})
+    return scene

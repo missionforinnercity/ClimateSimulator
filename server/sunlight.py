@@ -7,10 +7,10 @@ import functools
 import json
 import math
 from pathlib import Path
+import threading
 from typing import Any
 
 from shapely import get_coordinates
-from shapely.affinity import translate
 from shapely.geometry import LineString, Point, Polygon, box, mapping
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
@@ -21,6 +21,33 @@ from .solar import sun_position
 SCENE_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "fallback.json"
 CANOPY_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "canopy.json"
 MAX_ANALYSIS_CELLS = 60_000
+_CANCELLED_ANALYSES: set[str] = set()
+_CANCEL_LOCK = threading.Lock()
+
+
+class SunlightAnalysisCancelled(RuntimeError):
+    """Raised cooperatively when a moved/resized browser study is obsolete."""
+
+
+def cancel_sunlight_analysis(analysis_id: str) -> None:
+    if not analysis_id:
+        return
+    with _CANCEL_LOCK:
+        _CANCELLED_ANALYSES.add(analysis_id)
+
+
+def finish_sunlight_analysis(analysis_id: str | None) -> None:
+    if not analysis_id:
+        return
+    with _CANCEL_LOCK:
+        _CANCELLED_ANALYSES.discard(analysis_id)
+
+
+def _analysis_cancelled(analysis_id: str | None) -> bool:
+    if not analysis_id:
+        return False
+    with _CANCEL_LOCK:
+        return analysis_id in _CANCELLED_ANALYSES
 
 
 def _polygon_parts(geometry: Any) -> tuple[Any, ...]:
@@ -42,11 +69,12 @@ def _scene_geometry() -> dict[str, Any]:
             continue
         ground, height, ring = float(record[0]), float(record[1]), record[2]
         wall_height = float(record[5]) if len(record) > 5 else height
-        footprint = Polygon(ring)
+        holes = record[13] if len(record) > 13 and isinstance(record[13], list) else []
+        footprint = Polygon(ring, holes)
         if not footprint.is_valid or footprint.is_empty:
             continue
         buildings.append({
-            "id": index, "footprint": footprint, "ring": ring,
+            "id": index, "footprint": footprint, "ring": ring, "rings": [ring, *holes],
             "ground": ground, "top": ground + max(height, wall_height),
         })
 
@@ -125,62 +153,64 @@ def _facade_cells(
 ) -> list[dict[str, Any]]:
     cells = []
     for building in buildings:
-        centroid = building["footprint"].centroid
-        ring = building["ring"]
         height = building["top"] - building["ground"]
-        for edge_index in range(len(ring)):
-            raw_edge = LineString([ring[edge_index], ring[(edge_index + 1) % len(ring)]])
-            if domain is None:
-                edge_parts = (raw_edge,)
-            else:
-                clipped_edge = raw_edge.intersection(domain)
-                edge_parts = tuple(
-                    part for part in getattr(clipped_edge, "geoms", (clipped_edge,))
-                    if part.geom_type == "LineString" and part.length >= 0.1
-                )
-            for edge_part in edge_parts:
-                coordinates = list(edge_part.coords)
-                x1, z1 = coordinates[0]
-                x2, z2 = coordinates[-1]
-                dx, dz = x2 - x1, z2 - z1
-                length = math.hypot(dx, dz)
-                if length < 0.1 or height < 0.5:
-                    continue
-                nx, nz = -dz / length, dx / length
-                midpoint_x, midpoint_z = (x1 + x2) / 2, (z1 + z2) / 2
-                if nx * (midpoint_x - centroid.x) + nz * (midpoint_z - centroid.y) < 0:
-                    nx, nz = -nx, -nz
-                # Generate cells for every wall carried by the rendered city
-                # model. Footprint overlap is not a reliable visibility test
-                # for stepped/compound buildings; it previously removed real
-                # exposed sides. Occlusion is handled by the 3D ray test and
-                # hidden wall geometry remains hidden by the depth buffer.
-                visible_ground = building["ground"]
-                visible_height = height
-                horizontal_steps = max(1, math.ceil(length / resolution))
-                vertical_steps = max(1, math.ceil(visible_height / resolution))
-                for column in range(horizontal_steps):
-                    a0, a1 = column / horizontal_steps, (column + 1) / horizontal_steps
-                    ax, az = x1 + dx * a0, z1 + dz * a0
-                    bx, bz = x1 + dx * a1, z1 + dz * a1
-                    for row in range(vertical_steps):
-                        y0 = visible_ground + visible_height * row / vertical_steps
-                        y1 = visible_ground + visible_height * (row + 1) / vertical_steps
-                        sample_x = (ax + bx) / 2 + nx * 0.12
-                        sample_z = (az + bz) / 2 + nz * 0.12
-                        cells.append({
-                            "surface": "facade", "source_id": building["id"],
-                            "edge_index": edge_index,
-                            "sample": (sample_x, (y0 + y1) / 2, sample_z),
-                            "normal": (nx, 0.0, nz),
-                            "area_m2": math.hypot(bx - ax, bz - az) * (y1 - y0),
-                            "vertices": [
-                                [ax + nx * 0.08, y0, az + nz * 0.08],
-                                [bx + nx * 0.08, y0, bz + nz * 0.08],
-                                [bx + nx * 0.08, y1, bz + nz * 0.08],
-                                [ax + nx * 0.08, y1, az + nz * 0.08],
-                            ],
-                        })
+        edge_offset = 0
+        for ring in building.get("rings", [building["ring"]]):
+            for ring_edge_index in range(len(ring)):
+                edge_index = edge_offset + ring_edge_index
+                raw_edge = LineString([ring[ring_edge_index], ring[(ring_edge_index + 1) % len(ring)]])
+                if domain is None:
+                    edge_parts = (raw_edge,)
+                else:
+                    clipped_edge = raw_edge.intersection(domain)
+                    edge_parts = tuple(
+                        part for part in getattr(clipped_edge, "geoms", (clipped_edge,))
+                        if part.geom_type == "LineString" and part.length >= 0.1
+                    )
+                for edge_part in edge_parts:
+                    coordinates = list(edge_part.coords)
+                    x1, z1 = coordinates[0]
+                    x2, z2 = coordinates[-1]
+                    dx, dz = x2 - x1, z2 - z1
+                    length = math.hypot(dx, dz)
+                    if length < 0.1 or height < 0.5:
+                        continue
+                    nx, nz = -dz / length, dx / length
+                    midpoint_x, midpoint_z = (x1 + x2) / 2, (z1 + z2) / 2
+                    # The facade normal points out of the solid footprint. This
+                    # also handles inner rings, where "out" points into the open
+                    # courtyard rather than away from the building centroid.
+                    if building["footprint"].covers(Point(midpoint_x + nx * 0.08, midpoint_z + nz * 0.08)):
+                        nx, nz = -nx, -nz
+                    # Generate cells for every wall carried by the rendered city
+                    # model. Occlusion is handled by the 3D ray test.
+                    visible_ground = building["ground"]
+                    visible_height = height
+                    horizontal_steps = max(1, math.ceil(length / resolution))
+                    vertical_steps = max(1, math.ceil(visible_height / resolution))
+                    for column in range(horizontal_steps):
+                        a0, a1 = column / horizontal_steps, (column + 1) / horizontal_steps
+                        ax, az = x1 + dx * a0, z1 + dz * a0
+                        bx, bz = x1 + dx * a1, z1 + dz * a1
+                        for row in range(vertical_steps):
+                            y0 = visible_ground + visible_height * row / vertical_steps
+                            y1 = visible_ground + visible_height * (row + 1) / vertical_steps
+                            sample_x = (ax + bx) / 2 + nx * 0.12
+                            sample_z = (az + bz) / 2 + nz * 0.12
+                            cells.append({
+                                "surface": "facade", "source_id": building["id"],
+                                "edge_index": edge_index,
+                                "sample": (sample_x, (y0 + y1) / 2, sample_z),
+                                "normal": (nx, 0.0, nz),
+                                "area_m2": math.hypot(bx - ax, bz - az) * (y1 - y0),
+                                "vertices": [
+                                    [ax + nx * 0.08, y0, az + nz * 0.08],
+                                    [bx + nx * 0.08, y0, bz + nz * 0.08],
+                                    [bx + nx * 0.08, y1, bz + nz * 0.08],
+                                    [ax + nx * 0.08, y1, az + nz * 0.08],
+                                ],
+                            })
+            edge_offset += len(ring)
     return cells
 
 
@@ -208,7 +238,32 @@ def _intersection_distance(line: Any, geometry: Any, origin_x: float, origin_z: 
     return min(positive) if positive else None
 
 
-def _sun_hours_for_cells(cells: list[dict[str, Any]], sun_states: list[tuple[float, float, float, float]]) -> list[float]:
+def _ray_box_interval(
+    x: float, z: float, ux: float, uz: float,
+    bounds: tuple[float, float, float, float], max_distance: float,
+) -> tuple[float, float] | None:
+    """Cheap exact ray/AABB filter before a costly polygon intersection."""
+    minimum, maximum = 0.05, max_distance
+    for origin, direction, lower, upper in (
+        (x, ux, bounds[0], bounds[2]), (z, uz, bounds[1], bounds[3]),
+    ):
+        if abs(direction) < 1e-12:
+            if origin < lower or origin > upper:
+                return None
+            continue
+        first = (lower - origin) / direction
+        second = (upper - origin) / direction
+        minimum = max(minimum, min(first, second))
+        maximum = min(maximum, max(first, second))
+        if maximum < minimum:
+            return None
+    return minimum, maximum
+
+
+def _sun_hours_for_cells(
+    cells: list[dict[str, Any]], sun_states: list[tuple[float, float, float, float]],
+    analysis_id: str | None = None,
+) -> list[float]:
     scene = _scene_geometry()
     blockers = scene["blockers"]
     diagonal = math.hypot(scene["bounds"][2] - scene["bounds"][0], scene["bounds"][3] - scene["bounds"][1])
@@ -236,19 +291,25 @@ def _sun_hours_for_cells(cells: list[dict[str, Any]], sun_states: list[tuple[flo
             if (swept_bounds[2] < analysis_bounds[0] or swept_bounds[0] > analysis_bounds[2]
                     or swept_bounds[3] < analysis_bounds[1] or swept_bounds[1] > analysis_bounds[3]):
                 continue
-            shifted = translate(blocker["footprint"], xoff=-ux * distance, yoff=-uz * distance)
-            shadows.append(unary_union([blocker["footprint"], shifted]).convex_hull)
+            # This geometry is only a conservative STRtree prefilter. The
+            # actual occlusion decision below is an exact 3D ray intersection
+            # against the concave, hole-aware footprint, so a swept bounding
+            # box is both faster and guaranteed not to create false negatives.
+            shadows.append(box(*swept_bounds))
             state_blockers.append(blocker)
-        indexed_states.append((altitude, ux, uz, duration_hours, state_blockers, shadows, STRtree(shadows)))
+        blocker_bounds = [blocker["footprint"].bounds for blocker in state_blockers]
+        indexed_states.append((altitude, ux, uz, duration_hours, state_blockers, blocker_bounds, shadows, STRtree(shadows)))
 
     def analyse_chunk(chunk: list[dict[str, Any]]) -> list[float]:
         totals = []
-        for cell in chunk:
+        for cell_index, cell in enumerate(chunk):
+            if cell_index % 16 == 0 and _analysis_cancelled(analysis_id):
+                raise SunlightAnalysisCancelled("sunlight analysis cancelled")
             x, y, z = cell["sample"]
             nx, ny, nz = cell["normal"]
             total = 0.0
             sample_point = Point(x, z)
-            for altitude, ux, uz, duration_hours, state_blockers, shadows, shadow_tree in indexed_states:
+            for altitude, ux, uz, duration_hours, state_blockers, blocker_bounds, shadows, shadow_tree in indexed_states:
                 horizontal_cosine = math.cos(altitude)
                 if nx * ux * horizontal_cosine + ny * math.sin(altitude) + nz * uz * horizontal_cosine <= 1e-8:
                     continue
@@ -259,16 +320,31 @@ def _sun_hours_for_cells(cells: list[dict[str, Any]], sun_states: list[tuple[flo
                 max_distance = min(diagonal, max(1.0, (scene["max_top"] - y + 1.0) / max(math.tan(altitude), 0.01)))
                 line = LineString([(x + ux * 0.08, z + uz * 0.08), (x + ux * max_distance, z + uz * max_distance)])
                 blocked = False
+                tangent = math.tan(altitude)
+                plausible = []
                 for candidate in candidates:
                     blocker = state_blockers[int(candidate)]
                     if blocker["id"] == cell["source_id"]:
                         continue
                     if not shadows[int(candidate)].covers(sample_point):
                         continue
+                    interval = _ray_box_interval(x, z, ux, uz, blocker_bounds[int(candidate)], max_distance)
+                    if interval is None:
+                        continue
+                    # The solar ray only rises. If it is already above the
+                    # blocker on entry, or still below it on exit, the exact
+                    # footprint intersection cannot possibly cast shade.
+                    if y + interval[0] * tangent > blocker["top"] + 0.05:
+                        continue
+                    if y + interval[1] * tangent < blocker["ground"] - 0.05:
+                        continue
+                    plausible.append((interval[0], int(candidate)))
+                for _, candidate in sorted(plausible):
+                    blocker = state_blockers[candidate]
                     distance = _intersection_distance(line, blocker["footprint"], x, z, ux, uz)
                     if distance is None:
                         continue
-                    ray_y = y + distance * math.tan(altitude)
+                    ray_y = y + distance * tangent
                     if blocker["ground"] - 0.05 <= ray_y <= blocker["top"] + 0.05:
                         blocked = True
                         break
@@ -317,6 +393,7 @@ def building_surface_sunlight(
     step_minutes: int = 60, resolution_m: float = 10.0, surfaces: str = "all",
     min_x: float | None = None, min_z: float | None = None,
     max_x: float | None = None, max_z: float | None = None,
+    analysis_id: str | None = None,
 ) -> dict[str, Any]:
     if not 0 <= start_minutes < end_minutes <= 1440:
         raise ValueError("sunlight window must satisfy 0 <= start < end <= 1440")
@@ -351,7 +428,9 @@ def building_surface_sunlight(
         altitude, sun_x, sun_z = sun_position(date_text, start + duration // 2)
         if altitude > 0.008:
             sun_states.append((altitude, sun_x, sun_z, duration / 60.0))
-    values = _sun_hours_for_cells(cells, sun_states)
+    if _analysis_cancelled(analysis_id):
+        raise SunlightAnalysisCancelled("sunlight analysis cancelled")
+    values = _sun_hours_for_cells(cells, sun_states, analysis_id)
     display_values = _display_values(cells, values, resolution_m)
     features = []
     for cell, value, display_value in zip(cells, values, display_values):

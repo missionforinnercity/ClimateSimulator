@@ -1,6 +1,5 @@
 import * as THREE from './vendor/three.module.min.js';
-import { sceneFromCityModel } from './semanticCityModel.js?v=3';
-import { createTransportLayer } from './transportLayer.js?v=11';
+import { createTransportLayer } from './transportLayer.js?v=13';
 
 const COLORS = {
   background: 0x1b2125,
@@ -9,6 +8,7 @@ const COLORS = {
   terrainEdge: 0x363d40,
   terrainEdgeDeep: 0x1c2124,
   grass: 0x50745a,
+  water: 0x2f86a6,
   wall: 0x657076,
   wallSun: 0xffffff,
   roof: 0xaeb5b8,
@@ -24,7 +24,11 @@ const COLORS = {
   sleeper: 0x3f4545,
 };
 
-const ROAD_CLASS_OFFSETS = [0.34, 0.42, 0.38, 0.30, 0.33];
+// Surface height and draw priority are separate concerns. The small physical
+// offsets prevent z-fighting with the terrain; renderOrder below decides which
+// carriageway owns a junction instead of asking the depth buffer to arbitrate
+// between nearly coplanar road meshes.
+const ROAD_CLASS_OFFSETS = [0.26, 0.34, 0.30, 0.16, 0.18];
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
@@ -45,19 +49,32 @@ export async function startWebGLScene(canvas, status) {
   renderer.shadowMap.autoUpdate = false;
 
   const manifest = await fetch('assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
+  const loadRendererScene = async () => {
+    // The compact scene is intentionally the normal interactive asset. The
+    // full semantic model and dense roof mesh remain available for analysis,
+    // but parsing them here adds substantial startup and rendering overhead.
+    const expectedWater = manifest.layers?.fallback?.water || 0;
+    const fallbackResponse = await fetch(
+      `assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`,
+    );
+    if (!fallbackResponse.ok) throw new Error(`compact scene HTTP ${fallbackResponse.status}`);
+    const fallback = await fallbackResponse.json();
+    if (expectedWater && (fallback.water || []).length !== expectedWater) {
+      throw new Error(`compact scene contains ${(fallback.water || []).length}/${expectedWater} water bodies`);
+    }
+    return fallback;
+  };
   const [data, canopyAsset, roofSurfaceBuffer] = await Promise.all([
-    fetch(`assets/${manifest.assets?.city_model || 'city_model.json'}?v=${manifest.layers?.city_model?.bytes || 0}`)
-      .then(async response => response.ok
-        ? sceneFromCityModel(await response.json())
-        : fetch(`assets/fallback.json?v=${manifest.layers?.fallback?.bytes || 0}`).then(fallback => fallback.json())),
-    fetch(`assets/canopy.json?v=${manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
-    fetch(`assets/${manifest.assets?.roof_surface || 'roof_surface.bin'}?v=${manifest.layers?.roof_surface?.cache_key || manifest.layers?.roof_surface?.bytes || 0}`)
-      .then(response => response.ok ? response.arrayBuffer() : null)
-      .catch(() => null),
+    loadRendererScene(),
+    fetch(`assets/canopy.json?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
+    Promise.resolve(null),
   ]);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(COLORS.background);
+  // Soft distance fog gives the model atmospheric depth at city-wide zoom
+  // without hiding anything at typical street/building inspection distances.
+  scene.fog = new THREE.Fog(COLORS.background, 1900, 4600);
   const camera = new THREE.PerspectiveCamera(46, 1, 1, 12000);
   const cameraState = {
     azimuth: 0.75,
@@ -75,6 +92,7 @@ export async function startWebGLScene(canvas, status) {
   const scenePickHandlers = new Set();
   const layerGroups = {
     terrain: new THREE.Group(),
+    water: new THREE.Group(),
     grass: new THREE.Group(),
     railways: new THREE.Group(),
     paths: new THREE.Group(),
@@ -335,9 +353,57 @@ export async function startWebGLScene(canvas, status) {
     return { mesh, shadowCatcher };
   }
 
+  function triangulateRings(outer, holes = []) {
+    const rings = [outer, ...holes.filter(ring => ring?.length >= 3)];
+    const vertices = rings.flat();
+    const contour = outer.map(([x, z]) => new THREE.Vector2(x, z));
+    const holeVectors = rings.slice(1).map(ring => ring.map(([x, z]) => new THREE.Vector2(x, z)));
+    return { vertices, faces: THREE.ShapeUtils.triangulateShape(contour, holeVectors) };
+  }
+
   function triangulateRing(ring) {
-    const contour = ring.map(([x, z]) => new THREE.Vector2(x, z));
-    return THREE.ShapeUtils.triangulateShape(contour, []);
+    return triangulateRings(ring).faces;
+  }
+
+  function osmColour(value, fallback) {
+    if (!value) return new THREE.Color(fallback);
+    let text = String(value).split(';', 1)[0].trim().toLowerCase().replaceAll('_', '');
+    if (/^[0-9a-f]{6}$/i.test(text)) text = `#${text}`;
+    const palette = {
+      cream: '#fffdd0', darkbrown: '#5b3a29', lightbrown: '#b58b68',
+      ochre: '#b7791f', turquoise: '#40a9a3', cyan: '#36a7b7', magenta: '#a94986',
+      violet: '#74558f', salmon: '#c97968', anthracite: '#3d4548', transparent: '#aeb5b8',
+    };
+    if (palette[text]) return new THREE.Color(palette[text]);
+    const names = new Set([
+      'black', 'white', 'gray', 'grey', 'red', 'brown', 'green', 'blue', 'yellow',
+      'orange', 'beige', 'maroon', 'silver', 'gold', 'tan', 'pink', 'purple',
+      'lightgray', 'lightgrey', 'darkgray', 'darkgrey', 'darkred', 'darkgreen', 'darkblue',
+    ]);
+    if (!/^#[0-9a-f]{3,8}$/i.test(text) && !names.has(text)) return new THREE.Color(fallback);
+    if (text === 'grey') text = 'gray';
+    if (text === 'lightgrey') text = 'lightgray';
+    if (text === 'darkgrey') text = 'darkgray';
+    return new THREE.Color(text);
+  }
+
+  function materialColour(material, fallback, roof = false) {
+    const value = String(material || '').toLowerCase();
+    if (value.includes('glass')) return 0x64858d;
+    if (value.includes('brick')) return 0x8a5948;
+    if (value.includes('limestone')) return 0xc7b997;
+    if (value.includes('stone')) return 0x8b8578;
+    if (value.includes('granite')) return 0x777a78;
+    if (value.includes('wood')) return 0x876a4e;
+    if (value.includes('grass')) return 0x567b51;
+    if (value.includes('copper')) return 0x608274;
+    if (value.includes('zinc')) return 0x8f999d;
+    if (value.includes('slate')) return 0x4e5960;
+    if (value.includes('paving')) return 0x8a8175;
+    if (value.includes('tile')) return roof ? 0x8b5145 : 0x82756b;
+    if (value.includes('metal')) return 0x879196;
+    if (value.includes('concrete')) return 0x858a88;
+    return fallback;
   }
 
   function elevationColour(height) {
@@ -356,36 +422,50 @@ export async function startWebGLScene(canvas, status) {
     const roofPositions = [];
     const wallColors = [];
     const roofColors = [];
-    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0], buildingIndex) => {
+    const wallElevationColors = [];
+    const roofElevationColors = [];
+    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0, , , holes = [], attributes = {}], buildingIndex) => {
       const baseY = ground + Math.max(0, Number(minHeight) || 0);
-      const roofY = ground + wallHeight;
+      const simpleWallHeight = roofSurfaceBuffer ? wallHeight : height;
+      const roofY = ground + simpleWallHeight;
       const colour = elevationColour(height);
-      for (let index = 0; index < ring.length; index += 1) {
-        const next = (index + 1) % ring.length;
-        const [x1, z1] = ring[index];
-        const [x2, z2] = ring[next];
-        const top1 = ground + (wallProfile?.[index] ?? wallHeight);
-        const top2 = ground + (wallProfile?.[next] ?? wallHeight);
-        wallPositions.push(
-          x1, baseY, z1, x2, baseY, z2, x2, top2, z2,
-          x1, baseY, z1, x2, top2, z2, x1, top1, z1,
-        );
-        wallTriangles.push(
-          { sourceId: buildingIndex, edgeIndex: index },
-          { sourceId: buildingIndex, edgeIndex: index },
-        );
-        for (let vertex = 0; vertex < 6; vertex += 1) wallColors.push(colour.r, colour.g, colour.b);
+      const facadeColour = new THREE.Color(COLORS.wall);
+      const roofColour = new THREE.Color(COLORS.roof);
+      for (const [ringIndex, wallRing] of [ring, ...holes].entries()) {
+        for (let index = 0; index < wallRing.length; index += 1) {
+          const next = (index + 1) % wallRing.length;
+          const [x1, z1] = wallRing[index];
+          const [x2, z2] = wallRing[next];
+          const top1 = ground + (roofSurfaceBuffer && ringIndex === 0 ? (wallProfile?.[index] ?? wallHeight) : simpleWallHeight);
+          const top2 = ground + (roofSurfaceBuffer && ringIndex === 0 ? (wallProfile?.[next] ?? wallHeight) : simpleWallHeight);
+          wallPositions.push(
+            x1, baseY, z1, x2, baseY, z2, x2, top2, z2,
+            x1, baseY, z1, x2, top2, z2, x1, top1, z1,
+          );
+          wallTriangles.push(
+            { sourceId: buildingIndex, edgeIndex: index, ringIndex },
+            { sourceId: buildingIndex, edgeIndex: index, ringIndex },
+          );
+          for (let vertex = 0; vertex < 6; vertex += 1) {
+            wallColors.push(facadeColour.r, facadeColour.g, facadeColour.b);
+            wallElevationColors.push(colour.r, colour.g, colour.b);
+          }
+        }
       }
       // LiDAR-covered buildings receive their own simplified surface mesh.
       // Only uncovered buildings retain this authoritative height extrusion.
-      if (!detailedRoof) {
-        for (const face of triangulateRing(ring)) {
-          const a = ring[face[0]];
-          let b = ring[face[1]], c = ring[face[2]];
+      if (!detailedRoof || !roofSurfaceBuffer) {
+        const triangulated = triangulateRings(ring, holes);
+        for (const face of triangulated.faces) {
+          const a = triangulated.vertices[face[0]];
+          let b = triangulated.vertices[face[1]], c = triangulated.vertices[face[2]];
           const normalY = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]);
           if (normalY < 0) [b, c] = [c, b];
           roofPositions.push(a[0], roofY, a[1], b[0], roofY, b[1], c[0], roofY, c[1]);
-          for (let vertex = 0; vertex < 3; vertex += 1) roofColors.push(colour.r, colour.g, colour.b);
+          for (let vertex = 0; vertex < 3; vertex += 1) {
+            roofColors.push(roofColour.r, roofColour.g, roofColour.b);
+            roofElevationColors.push(colour.r, colour.g, colour.b);
+          }
         }
       }
     });
@@ -394,10 +474,14 @@ export async function startWebGLScene(canvas, status) {
     simplifiedRoofGeometrySource = { positions: new Float32Array(roofPositions) };
     wallGeometry.setAttribute('position', new THREE.Float32BufferAttribute(wallPositions, 3));
     wallGeometry.setAttribute('color', new THREE.Float32BufferAttribute(wallColors, 3));
+    wallGeometry.userData.appearanceColors = new Float32Array(wallColors);
+    wallGeometry.userData.elevationColors = new Float32Array(wallElevationColors);
     wallGeometry.computeVertexNormals();
     const roofGeometry = new THREE.BufferGeometry();
     roofGeometry.setAttribute('position', new THREE.Float32BufferAttribute(roofPositions, 3));
     roofGeometry.setAttribute('color', new THREE.Float32BufferAttribute(roofColors, 3));
+    roofGeometry.userData.appearanceColors = new Float32Array(roofColors);
+    roofGeometry.userData.elevationColors = new Float32Array(roofElevationColors);
     roofGeometry.computeVertexNormals();
     const wallMaterial = new THREE.MeshLambertMaterial({ color: COLORS.wall, vertexColors: true, side: THREE.DoubleSide });
     const roofMaterial = new THREE.MeshLambertMaterial({
@@ -457,14 +541,46 @@ export async function startWebGLScene(canvas, status) {
     const indices = new Uint32Array(roofSurfaceBuffer, indexOffset, indexCount);
     detailedRoofGeometrySource = { positions, indices };
     const colours = new Float32Array(vertexCount * 3);
+    const elevationColours = new Float32Array(vertexCount * 3);
+    const roofColourCellSize = 50;
+    const roofColourGrid = new Map();
+    for (const building of data.buildings || []) {
+      if (!building[6] || !building[2]?.length) continue;
+      const ring = building[2];
+      const bounds = [
+        Math.min(...ring.map(point => point[0])), Math.min(...ring.map(point => point[1])),
+        Math.max(...ring.map(point => point[0])), Math.max(...ring.map(point => point[1])),
+      ];
+      const roofAttributes = building[14] || {};
+      const item = {
+        ring, holes: building[13] || [],
+        colour: osmColour(roofAttributes['roof:colour'], materialColour(roofAttributes['roof:material'], COLORS.roof, true)),
+      };
+      for (let row = Math.floor(bounds[1] / roofColourCellSize); row <= Math.floor(bounds[3] / roofColourCellSize); row += 1) {
+        for (let column = Math.floor(bounds[0] / roofColourCellSize); column <= Math.floor(bounds[2] / roofColourCellSize); column += 1) {
+          const key = `${column}:${row}`;
+          if (!roofColourGrid.has(key)) roofColourGrid.set(key, []);
+          roofColourGrid.get(key).push(item);
+        }
+      }
+    }
+    const mappedRoofColourAt = (x, z) => {
+      const candidates = roofColourGrid.get(`${Math.floor(x / roofColourCellSize)}:${Math.floor(z / roofColourCellSize)}`) || [];
+      const building = candidates.find(item => pointInRing(x, z, item.ring) && !item.holes.some(hole => pointInRing(x, z, hole)));
+      return building?.colour || new THREE.Color(COLORS.roof);
+    };
     for (let index = 0; index < vertexCount; index += 1) {
       const colour = elevationColour(heights[index]);
-      colours[index * 3] = colour.r;
-      colours[index * 3 + 1] = colour.g;
-      colours[index * 3 + 2] = colour.b;
       const x = positions[index * 3];
       const y = positions[index * 3 + 1];
       const z = positions[index * 3 + 2];
+      const mappedColour = mappedRoofColourAt(x, z);
+      colours[index * 3] = mappedColour.r;
+      colours[index * 3 + 1] = mappedColour.g;
+      colours[index * 3 + 2] = mappedColour.b;
+      elevationColours[index * 3] = colour.r;
+      elevationColours[index * 3 + 1] = colour.g;
+      elevationColours[index * 3 + 2] = colour.b;
       const key = detailedRoofCellKey(Math.floor(x / detailedRoofHeightCellSize), Math.floor(z / detailedRoofHeightCellSize));
       if (!detailedRoofHeightGrid.has(key)) detailedRoofHeightGrid.set(key, []);
       detailedRoofHeightGrid.get(key).push([x, y, z]);
@@ -473,12 +589,14 @@ export async function startWebGLScene(canvas, status) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+    geometry.userData.appearanceColors = colours;
+    geometry.userData.elevationColors = elevationColours;
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     const material = new THREE.MeshLambertMaterial({
       color: COLORS.roof,
-      vertexColors: false,
+      vertexColors: true,
       side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -517,6 +635,277 @@ export async function startWebGLScene(canvas, status) {
     const weights = nearest.map(([distance]) => 1 / Math.max(distance, 0.35) ** 2);
     return nearest.reduce((sum, item, index) => sum + item[1] * weights[index], 0)
       / weights.reduce((sum, weight) => sum + weight, 0) + 0.08;
+  }
+
+  function buildingRoofHeightAt(x, z) {
+    for (const building of data.buildings || []) {
+      const ring = building[2] || [];
+      const holes = building[13] || [];
+      if (ring.length >= 3 && pointInRing(x, z, ring) && !holes.some(hole => pointInRing(x, z, hole))) {
+        return Number(building[0]) + Number(building[1]);
+      }
+    }
+    return terrainHeightAt(x, z) + 4;
+  }
+
+  function makeWaterAndOsmDetails() {
+    const waterPositions = [];
+    // Boundary-only triangulation can bridge over small terrain undulations
+    // and bury the middle of a pond. Subdivide each face so the visual water
+    // surface follows the same terrain sampler as the rest of the scene.
+    const pushDrapedWaterTriangle = (a, b, c, depth = 0) => {
+      const longest = Math.max(
+        Math.hypot(a[0] - b[0], a[1] - b[1]),
+        Math.hypot(b[0] - c[0], b[1] - c[1]),
+        Math.hypot(c[0] - a[0], c[1] - a[1]),
+      );
+      if (longest > 6 && depth < 7) {
+        const ab = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+        const bc = [(b[0] + c[0]) * 0.5, (b[1] + c[1]) * 0.5];
+        const ca = [(c[0] + a[0]) * 0.5, (c[1] + a[1]) * 0.5];
+        pushDrapedWaterTriangle(a, ab, ca, depth + 1);
+        pushDrapedWaterTriangle(ab, b, bc, depth + 1);
+        pushDrapedWaterTriangle(ca, bc, c, depth + 1);
+        pushDrapedWaterTriangle(ab, bc, ca, depth + 1);
+        return;
+      }
+      for (const [x, z] of [a, b, c]) waterPositions.push(x, terrainHeightAt(x, z) + 0.32, z);
+    };
+    for (const water of data.water || []) {
+      const [outer, ...holes] = water.rings || [];
+      if (!outer?.length) continue;
+      const triangulated = triangulateRings(outer, holes);
+      for (const face of triangulated.faces) {
+        pushDrapedWaterTriangle(...face.map(index => triangulated.vertices[index]));
+      }
+    }
+    if (waterPositions.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(waterPositions, 3));
+      geometry.computeVertexNormals();
+      // Keep mapped water legible under every sun/ambient-light state. This is
+      // an unlit surface treatment, not a heat-map overlay; buildings and
+      // terrain still occlude it normally through the depth buffer.
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        color: COLORS.water,
+        transparent: true, opacity: 0.94, side: THREE.DoubleSide, depthWrite: true,
+        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      }));
+      mesh.receiveShadow = true;
+      mesh.renderOrder = 4;
+      layerGroups.water.add(mesh);
+    }
+
+    const solarPositions = [];
+    const solarFramePositions = [];
+    const pushSolarVertex = (x, z) => {
+      const fallback = buildingRoofHeightAt(x, z);
+      solarPositions.push(x, detailedRoofHeightAt(x, z, fallback) + 0.14, z);
+    };
+    const pushSolarFrame = ring => {
+      for (let index = 0; index < ring.length; index += 1) {
+        const [x1, z1] = ring[index], [x2, z2] = ring[(index + 1) % ring.length];
+        const y1 = detailedRoofHeightAt(x1, z1, buildingRoofHeightAt(x1, z1)) + 0.18;
+        const y2 = detailedRoofHeightAt(x2, z2, buildingRoofHeightAt(x2, z2)) + 0.18;
+        solarFramePositions.push(x1, y1, z1, x2, y2, z2);
+      }
+    };
+    for (const item of (data.installations || []).filter(entry => entry.class === 'roofSolarPanel')) {
+      if (item.rings?.[0]?.length >= 3) {
+        const [outer, ...holes] = item.rings;
+        pushSolarFrame(outer);
+        const triangulated = triangulateRings(outer, holes);
+        for (const face of triangulated.faces) for (const index of face) {
+          const [x, z] = triangulated.vertices[index];
+          pushSolarVertex(x, z);
+        }
+      } else if (item.coordinates) {
+        const [x, z] = item.coordinates;
+        const ring = [[x - 0.8, z - 0.5], [x + 0.8, z - 0.5], [x + 0.8, z + 0.5], [x - 0.8, z + 0.5]];
+        pushSolarFrame(ring);
+        for (const [dx, dz] of [[-0.8, -0.5], [0.8, -0.5], [0.8, 0.5], [-0.8, -0.5], [0.8, 0.5], [-0.8, 0.5]]) {
+          pushSolarVertex(x + dx, z + dz);
+        }
+      }
+    }
+    if (solarPositions.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(solarPositions, 3));
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
+        color: 0x245b78, specular: 0xa8cbd5, shininess: 115, side: THREE.DoubleSide,
+      }));
+      mesh.castShadow = true;
+      mesh.userData.semanticClass = 'roofSolarPanel';
+      layerGroups.buildings.add(mesh);
+      if (solarFramePositions.length) {
+        const frameGeometry = new THREE.BufferGeometry();
+        frameGeometry.setAttribute('position', new THREE.Float32BufferAttribute(solarFramePositions, 3));
+        const frames = new THREE.LineSegments(frameGeometry, new THREE.LineBasicMaterial({ color: 0xaab8bb }));
+        frames.userData.semanticClass = 'roofSolarPanelFrame';
+        layerGroups.buildings.add(frames);
+      }
+    }
+
+    const facadeBuildings = (data.buildings || []).map(building => {
+      const ring = building[2] || [];
+      return {
+        ring,
+        bounds: ring.length ? [
+          Math.min(...ring.map(point => point[0])), Math.min(...ring.map(point => point[1])),
+          Math.max(...ring.map(point => point[0])), Math.max(...ring.map(point => point[1])),
+        ] : [0, 0, 0, 0],
+        center: ring.length
+          ? ring.reduce((sum, point) => [sum[0] + point[0] / ring.length, sum[1] + point[1] / ring.length], [0, 0])
+          : [0, 0],
+      };
+    });
+    const nearestFacade = (x, z, maximumDistance = 6) => {
+      let nearest = null;
+      let nearestDistanceSq = maximumDistance * maximumDistance;
+      for (const building of facadeBuildings) {
+        const { ring, bounds, center } = building;
+        if (ring.length < 2) continue;
+        if (x < bounds[0] - maximumDistance || x > bounds[2] + maximumDistance
+          || z < bounds[1] - maximumDistance || z > bounds[3] + maximumDistance) continue;
+        for (let index = 0; index < ring.length; index += 1) {
+          const [x1, z1] = ring[index], [x2, z2] = ring[(index + 1) % ring.length];
+          const dx = x2 - x1, dz = z2 - z1, lengthSq = dx * dx + dz * dz;
+          if (lengthSq < 0.01) continue;
+          const amount = clamp(((x - x1) * dx + (z - z1) * dz) / lengthSq, 0, 1);
+          const px = x1 + dx * amount, pz = z1 + dz * amount;
+          const distanceSq = (x - px) ** 2 + (z - pz) ** 2;
+          if (distanceSq >= nearestDistanceSq) continue;
+          const length = Math.sqrt(lengthSq);
+          let nx = -dz / length, nz = dx / length;
+          if (nx * (px - center[0]) + nz * (pz - center[1]) < 0) [nx, nz] = [-nx, -nz];
+          nearestDistanceSq = distanceSq;
+          nearest = { x: px, z: pz, nx, nz, yaw: -Math.atan2(dz, dx) };
+        }
+      }
+      return nearest;
+    };
+    const entranceFrameMatrices = [];
+    const entranceDoorMatrices = [];
+    const entranceLightMatrices = [];
+    for (const item of (data.installations || []).filter(entry => entry.class === 'buildingEntrance' && entry.coordinates)) {
+      const [x, z] = item.coordinates;
+      const facade = nearestFacade(x, z);
+      const px = facade?.x ?? x, pz = facade?.z ?? z;
+      const nx = facade?.nx ?? 0, nz = facade?.nz ?? 1;
+      const quaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), facade?.yaw ?? 0);
+      const baseY = terrainHeightAt(px, pz) + 0.16;
+      entranceFrameMatrices.push(new THREE.Matrix4().compose(
+        new THREE.Vector3(px + nx * 0.08, baseY + 1.3, pz + nz * 0.08),
+        quaternion, new THREE.Vector3(1.45, 2.6, 0.18),
+      ));
+      entranceDoorMatrices.push(new THREE.Matrix4().compose(
+        new THREE.Vector3(px + nx * 0.15, baseY + 1.15, pz + nz * 0.15),
+        quaternion, new THREE.Vector3(1.08, 2.2, 0.12),
+      ));
+      entranceLightMatrices.push(new THREE.Matrix4().compose(
+        new THREE.Vector3(px + nx * 0.20, baseY + 2.5, pz + nz * 0.20),
+        quaternion, new THREE.Vector3(0.28, 0.12, 0.16),
+      ));
+    }
+    const addEntranceInstances = (matrices, material, semanticClass) => {
+      if (!matrices.length) return;
+      const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), material, matrices.length);
+      matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.userData = { semanticClass, maxDistance: 3000 };
+      layerGroups.cityFurniture.add(mesh);
+    };
+    addEntranceInstances(entranceFrameMatrices, new THREE.MeshLambertMaterial({ color: 0x77746d }), 'buildingEntranceFrame');
+    addEntranceInstances(entranceDoorMatrices, new THREE.MeshPhongMaterial({ color: 0x26343a, specular: 0x78909a, shininess: 70 }), 'buildingEntranceDoor');
+    addEntranceInstances(entranceLightMatrices, new THREE.MeshBasicMaterial({ color: 0xe5cf9d }), 'buildingEntranceLight');
+
+    const wallMatrices = [];
+    const fencePostMatrices = [];
+    const fenceRailMatrices = [];
+    const kerbMatrices = [];
+    const segmentMatrix = (start, end, height, thickness, lift = 0) => {
+      const [x1, z1] = start, [x2, z2] = end;
+      const length = Math.hypot(x2 - x1, z2 - z1);
+      const baseY = (terrainHeightAt(x1, z1) + terrainHeightAt(x2, z2)) * 0.5 + 0.16;
+      return new THREE.Matrix4().compose(
+        new THREE.Vector3((x1 + x2) * 0.5, baseY + lift + height * 0.5, (z1 + z2) * 0.5),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -Math.atan2(z2 - z1, x2 - x1)),
+        new THREE.Vector3(length, height, thickness),
+      );
+    };
+    for (const item of (data.cityFurniture || []).filter(entry => entry.class?.startsWith('barrier:') && entry.centerline)) {
+      const barrier = item.class.slice(8);
+      const taggedHeight = Number.parseFloat(item.attributes?.osmTags?.height);
+      const height = Number.isFinite(taggedHeight) ? clamp(taggedHeight, 0.1, 8) : (barrier === 'kerb' ? 0.15 : barrier === 'wall' ? 1.8 : 1.35);
+      const points = item.centerline;
+      for (let index = 0; index < points.length - 1; index += 1) {
+        const [x1, z1] = points[index], [x2, z2] = points[index + 1];
+        const length = Math.hypot(x2 - x1, z2 - z1);
+        const subdivisions = Math.max(1, Math.ceil(length / 4));
+        for (let section = 0; section < subdivisions; section += 1) {
+          const startAmount = section / subdivisions, endAmount = (section + 1) / subdivisions;
+          const start = [x1 + (x2 - x1) * startAmount, z1 + (z2 - z1) * startAmount];
+          const end = [x1 + (x2 - x1) * endAmount, z1 + (z2 - z1) * endAmount];
+          if (['fence', 'guard_rail', 'chain', 'gate', 'lift_gate', 'entrance'].includes(barrier)) {
+            const railHeight = barrier === 'guard_rail' ? 0.75 : height;
+            if (barrier !== 'lift_gate') fenceRailMatrices.push(segmentMatrix(start, end, 0.055, 0.055, railHeight * 0.35));
+            fenceRailMatrices.push(segmentMatrix(start, end, 0.055, 0.055, railHeight * 0.82));
+            const baseY = terrainHeightAt(start[0], start[1]) + 0.16;
+            fencePostMatrices.push(new THREE.Matrix4().compose(
+              new THREE.Vector3(start[0], baseY + railHeight * 0.5, start[1]),
+              new THREE.Quaternion(), new THREE.Vector3(1, railHeight, 1),
+            ));
+            if (section === subdivisions - 1) {
+              const endBaseY = terrainHeightAt(end[0], end[1]) + 0.16;
+              fencePostMatrices.push(new THREE.Matrix4().compose(
+                new THREE.Vector3(end[0], endBaseY + railHeight * 0.5, end[1]),
+                new THREE.Quaternion(), new THREE.Vector3(1, railHeight, 1),
+              ));
+            }
+          } else if (barrier === 'kerb') {
+            kerbMatrices.push(segmentMatrix(start, end, height, 0.18));
+          } else {
+            const thickness = barrier === 'wall' || barrier === 'retaining_wall' ? 0.24 : 0.16;
+            wallMatrices.push(segmentMatrix(start, end, height, thickness));
+          }
+        }
+      }
+    }
+    const addBarrierInstances = (geometry, material, matrices, semanticClass) => {
+      if (!matrices.length) return;
+      const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
+      matrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData = { semanticClass, maxDistance: 3000 };
+      layerGroups.cityFurniture.add(mesh);
+    };
+    addBarrierInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x777873 }), wallMatrices, 'mappedBarrierWall');
+    addBarrierInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x777b79 }), kerbMatrices, 'mappedBarrierKerb');
+    addBarrierInstances(new THREE.CylinderGeometry(0.045, 0.055, 1, 6), new THREE.MeshPhongMaterial({ color: 0x545b5b, shininess: 45 }), fencePostMatrices, 'mappedFencePost');
+    addBarrierInstances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshPhongMaterial({ color: 0x5b6261, shininess: 45 }), fenceRailMatrices, 'mappedFenceRail');
+    const barrierPointMatrices = [];
+    for (const item of (data.cityFurniture || []).filter(entry => entry.class?.startsWith('barrier:') && entry.coordinates)) {
+      const [x, z] = item.coordinates;
+      const barrier = item.class.slice(8);
+      const isGate = barrier.includes('gate');
+      barrierPointMatrices.push(new THREE.Matrix4().compose(
+        new THREE.Vector3(x, terrainHeightAt(x, z) + (isGate ? 0.7 : 0.6), z),
+        new THREE.Quaternion(), isGate ? new THREE.Vector3(0.22, 1.4, 0.22) : new THREE.Vector3(0.18, 1.2, 0.18),
+      ));
+    }
+    if (barrierPointMatrices.length) {
+      const mesh = new THREE.InstancedMesh(
+        new THREE.BoxGeometry(1, 1, 1), new THREE.MeshPhongMaterial({ color: 0x59605f, shininess: 45 }), barrierPointMatrices.length,
+      );
+      barrierPointMatrices.forEach((matrix, index) => mesh.setMatrixAt(index, matrix));
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.userData = { semanticClass: 'mappedBarrierPoint', maxDistance: 3000 };
+      layerGroups.cityFurniture.add(mesh);
+    }
   }
 
   function makeGrass() {
@@ -558,24 +947,64 @@ export async function startWebGLScene(canvas, status) {
     asphaltTexture.colorSpace = THREE.SRGBColorSpace;
     asphaltTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
     asphaltTexture.needsUpdate = true;
-    const positionsByStyle = [[], [], [], [], []];
+    const positionsByStyle = [[], [], [], [], [], [], [], []];
     const major = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link']);
     const secondary = new Set(['secondary', 'secondary_link', 'tertiary']);
     const paths = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator']);
-    for (const [mappedWidth, highway, points] of data.roads || []) {
-      const styleIndex = highway === 'pedestrian' ? 4 : paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
+    const offsetPolyline = (points, offset) => points.map(([x, z], index) => {
+      const previous = points[Math.max(0, index - 1)], next = points[Math.min(points.length - 1, index + 1)];
+      const dx = next[0] - previous[0], dz = next[1] - previous[1];
+      const length = Math.hypot(dx, dz) || 1;
+      return [x - dz / length * offset, z + dx / length * offset];
+    });
+    const inferredVerticalOffset = attributes => {
+      const explicit = Number(attributes?.inferredVerticalOffsetM);
+      if (Number.isFinite(explicit)) return explicit;
+      const layer = clamp(Number.parseInt(attributes?.layer || '0', 10) || 0, -5, 5);
+      const bridge = attributes?.bridge && attributes.bridge !== 'no';
+      const tunnel = attributes?.tunnel && attributes.tunnel !== 'no';
+      if (bridge) return Math.max(4.5, Math.max(layer, 1) * 3);
+      if (tunnel) return -Math.max(3, Math.abs(Math.min(layer, -1)) * 3);
+      return layer * 0.35;
+    };
+    for (const record of data.roads || []) {
+      const [mappedWidth, highway, points] = record;
+      // fallback.json stores attributes at index 3; the semantic adapter also
+      // carries a source marker and stores them at index 4.
+      const attributes = (record[4] && typeof record[4] === 'object')
+        ? record[4] : ((record[3] && typeof record[3] === 'object') ? record[3] : {});
+      const surface = String(attributes.surface || '').toLowerCase();
+      const unsealed = new Set(['unpaved', 'gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'sand', 'compacted']);
+      const pavedUnits = new Set(['paving_stones', 'sett', 'cobblestone', 'unhewn_cobblestone', 'bricks']);
+      const baseStyle = highway === 'pedestrian' ? 4 : paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
+      const styleIndex = baseStyle >= 3 ? baseStyle : unsealed.has(surface) ? 5 : pavedUnits.has(surface) ? 6 : surface === 'concrete' || surface === 'concrete:plates' ? 7 : baseStyle;
       if (points.length > 1) {
+        const verticalOffset = inferredVerticalOffset(attributes);
         positionsByStyle[styleIndex].push({
           points,
           width: clamp(Number(mappedWidth) || 4, paths.has(highway) ? 0.8 : 2.5, 18),
+          verticalOffset,
+          surfaceOffset: ROAD_CLASS_OFFSETS[baseStyle] ?? ROAD_CLASS_OFFSETS[0],
+          // Paths < local streets < secondary streets < primary/trunk roads.
+          // Keep this even when surface material changes the colour bucket.
+          priority: baseStyle >= 3 ? 0 : baseStyle === 1 ? 3 : baseStyle === 2 ? 2 : 1,
         });
+        if (!paths.has(highway) && highway !== 'pedestrian') {
+          const width = clamp(Number(mappedWidth) || 4, 2.5, 18);
+          const sidewalk = String(attributes.sidewalk || '').toLowerCase();
+          const left = ['yes', 'both', 'left', 'separate'].includes(sidewalk) || ['yes', 'separate'].includes(String(attributes.sidewalkLeft || '').toLowerCase());
+          const right = ['yes', 'both', 'right', 'separate'].includes(sidewalk) || ['yes', 'separate'].includes(String(attributes.sidewalkRight || '').toLowerCase());
+          const separation = width * 0.5 + 1.05;
+          if (left) positionsByStyle[3].push({ points: offsetPolyline(points, separation), width: 1.55, verticalOffset: verticalOffset + 0.02, priority: 0 });
+          if (right) positionsByStyle[3].push({ points: offsetPolyline(points, -separation), width: 1.55, verticalOffset: verticalOffset + 0.02, priority: 0 });
+        }
       }
     }
-    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian];
+    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian, 0x716b5e, 0x77756e, 0x747a7a];
     // Higher-priority carriageways sit a few centimetres above lower classes
     // at overlaps. Footways remain contextual and below carriageways so they
     // cannot slice a visible road into disconnected pieces at junctions.
-    const buildRibbon = (roads, styleIndex, outer = false) => {
+    const buildRibbon = (roads, styleIndex, priority, gradeSeparated, outer = false) => {
       const vertices = [];
       const uvs = [];
       const indices = [];
@@ -599,7 +1028,8 @@ export async function startWebGLScene(canvas, status) {
       };
       for (const road of roads) {
         const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.24 : 0.48) : 0);
-        const elevationOffset = ROAD_CLASS_OFFSETS[styleIndex] + (outer ? -0.10 : 0);
+        const elevationOffset = (road.surfaceOffset ?? ROAD_CLASS_OFFSETS[styleIndex] ?? 0.26)
+          + (road.verticalOffset || 0) + (outer ? -0.10 : 0);
         const cleanPoints = road.points.filter(([x, z], index, points) => (
           Number.isFinite(x) && Number.isFinite(z)
           && (!index || Math.hypot(x - points[index - 1][0], z - points[index - 1][1]) > 0.05)
@@ -653,21 +1083,33 @@ export async function startWebGLScene(canvas, status) {
         map: !outer && styleIndex <= 2 ? asphaltTexture : null,
         transparent: false,
         opacity: 1,
-        depthWrite: true,
+        // At-grade road classes use the explicit painter hierarchy and do not
+        // mask one another. Bridges keep depth writes so their real elevation
+        // still wins over any higher-priority street passing underneath.
+        depthWrite: gradeSeparated,
         side: THREE.DoubleSide,
         polygonOffset: true,
         polygonOffsetFactor: outer ? -1 : -3,
         polygonOffsetUnits: outer ? -1 : -3,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.renderOrder = outer ? 1 : 2;
+      // Stay below mapped parking/crossing paint (orders 6 and 8) while still
+      // preserving fine-grained ordering among the four network tiers.
+      mesh.renderOrder = 2 + priority * 0.2 + (outer ? 0 : 0.1);
       return mesh;
     };
     positionsByStyle.forEach((roads, index) => {
       if (!roads.length) return;
       const target = index === 3 || index === 4 ? layerGroups.paths : layerGroups.roads;
-      target.add(buildRibbon(roads, index, true));
-      target.add(buildRibbon(roads, index, false));
+      for (let priority = 0; priority <= 3; priority += 1) {
+        const tier = roads.filter(road => road.priority === priority);
+        for (const gradeSeparated of [false, true]) {
+          const grade = tier.filter(road => (Math.abs(road.verticalOffset || 0) > 1) === gradeSeparated);
+          if (!grade.length) continue;
+          target.add(buildRibbon(grade, index, priority, gradeSeparated, true));
+          target.add(buildRibbon(grade, index, priority, gradeSeparated, false));
+        }
+      }
     });
   }
 
@@ -677,7 +1119,16 @@ export async function startWebGLScene(canvas, status) {
     const gaugeHalfWidth = 0.62;
     const sleeperHalfWidth = 1.08;
     const sleeperSpacing = 4.8;
-    for (const [, points] of data.railways || []) {
+    for (const record of data.railways || []) {
+      const [, points, attributes = {}] = record;
+      const explicitOffset = Number(attributes.inferredVerticalOffsetM);
+      const layer = clamp(Number.parseInt(attributes.layer || '0', 10) || 0, -5, 5);
+      const bridge = attributes.bridge && attributes.bridge !== 'no';
+      const tunnel = attributes.tunnel && attributes.tunnel !== 'no';
+      const verticalOffset = Number.isFinite(explicitOffset)
+        ? explicitOffset
+        : bridge ? Math.max(4.5, Math.max(layer, 1) * 3)
+          : tunnel ? -Math.max(3, Math.abs(Math.min(layer, -1)) * 3) : layer * 0.35;
       for (let index = 0; index < points.length - 1; index += 1) {
         const [x1, z1] = points[index];
         const [x2, z2] = points[index + 1];
@@ -693,8 +1144,8 @@ export async function startWebGLScene(canvas, status) {
           const railX2 = x2 + nx * offset;
           const railZ2 = z2 + nz * offset;
           railPositions.push(
-            railX1, terrainHeightAt(railX1, railZ1) + 0.20, railZ1,
-            railX2, terrainHeightAt(railX2, railZ2) + 0.20, railZ2,
+            railX1, terrainHeightAt(railX1, railZ1) + verticalOffset + 0.20, railZ1,
+            railX2, terrainHeightAt(railX2, railZ2) + verticalOffset + 0.20, railZ2,
           );
         }
         const sleeperCount = Math.floor(length / sleeperSpacing);
@@ -707,8 +1158,8 @@ export async function startWebGLScene(canvas, status) {
           const rightX = x + nx * sleeperHalfWidth;
           const rightZ = z + nz * sleeperHalfWidth;
           sleeperPositions.push(
-            leftX, terrainHeightAt(leftX, leftZ) + 0.15, leftZ,
-            rightX, terrainHeightAt(rightX, rightZ) + 0.15, rightZ,
+            leftX, terrainHeightAt(leftX, leftZ) + verticalOffset + 0.15, leftZ,
+            rightX, terrainHeightAt(rightX, rightZ) + verticalOffset + 0.15, rightZ,
           );
         }
       }
@@ -1583,8 +2034,10 @@ export async function startWebGLScene(canvas, status) {
   function setBuildingAppearance(mode) {
     const coloured = mode === 'elevation';
     for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
-      mesh.material.vertexColors = coloured;
-      mesh.material.color.setHex(coloured ? 0xffffff : (mesh === buildingMeshes.walls ? COLORS.wall : COLORS.roof));
+      const values = coloured ? mesh.geometry.userData.elevationColors : mesh.geometry.userData.appearanceColors;
+      if (values) mesh.geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
+      mesh.material.vertexColors = Boolean(values);
+      mesh.material.color.setHex(values ? 0xffffff : (mesh === buildingMeshes.walls ? COLORS.wall : COLORS.roof));
       mesh.material.needsUpdate = true;
     }
     requestRender();
@@ -1592,6 +2045,7 @@ export async function startWebGLScene(canvas, status) {
   buildingAppearance?.addEventListener('change', event => setBuildingAppearance(event.target.value));
   setBuildingAppearance(buildingAppearance?.value || 'neutral');
   makeGrass();
+  makeWaterAndOsmDetails();
   const railwayCount = makeRailways();
   makeRoads();
   const canopyCount = makeCanopies();
@@ -1601,8 +2055,6 @@ export async function startWebGLScene(canvas, status) {
   const sunDomainGroup = new THREE.Group();
   const windGroup = new THREE.Group();
   const floodGroup = new THREE.Group();
-  const mitigationGroup = new THREE.Group();
-  const mitigationDrawingGroup = new THREE.Group();
   const trafficGroup = new THREE.Group();
   const trafficStatusGroup = new THREE.Group();
   const trafficDrawingGroup = new THREE.Group();
@@ -1625,7 +2077,7 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, sunDomainGroup, windGroup, floodGroup, mitigationGroup, mitigationDrawingGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
+  scene.add(heatGroup, sunDomainGroup, windGroup, floodGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
@@ -1647,6 +2099,7 @@ export async function startWebGLScene(canvas, status) {
   const sunTime = document.querySelector('#sun-time');
   const sunTimeValue = document.querySelector('#sun-time-value');
   const sunGenerate = document.querySelector('#sun-generate');
+  const sunProgress = document.querySelector('#sun-progress');
   const sunStatus = document.querySelector('#sun-status');
   const sunModeButtons = [...document.querySelectorAll('[data-sun-mode]')];
   const sunInstantControl = document.querySelector('#sun-instant-control');
@@ -1707,16 +2160,6 @@ export async function startWebGLScene(canvas, status) {
   const floodLegendMax = document.querySelector('#flood-legend-max');
   const floodTime = document.querySelector('#flood-time');
   const floodResults = document.querySelector('#flood-results');
-  const mitigationMethod = document.querySelector('#mitigation-method');
-  const mitigationMethodNote = document.querySelector('#mitigation-method-note');
-  const mitigationAdd = document.querySelector('#mitigation-add');
-  const mitigationStatus = document.querySelector('#mitigation-status');
-  const mitigationList = document.querySelector('#mitigation-list');
-  const mitigationRun = document.querySelector('#mitigation-run');
-  const mitigationClear = document.querySelector('#mitigation-clear');
-  const mitigationCompare = document.querySelector('#mitigation-compare');
-  const mitigationCase = document.querySelector('#mitigation-case');
-  const mitigationResults = document.querySelector('#mitigation-results');
   const trafficToggle = document.querySelector('#traffic-toggle');
   const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
   const trafficFreshness = document.querySelector('#traffic-freshness');
@@ -1800,16 +2243,6 @@ export async function startWebGLScene(canvas, status) {
     -floodState.size / 2, -floodState.size / 2,
     floodState.size / 2, floodState.size / 2,
   ];
-  const mitigationState = {
-    drawing: false,
-    stroking: false,
-    pointerId: null,
-    lastScreen: null,
-    points: [],
-    interventions: [],
-    result: null,
-    baselinePayload: null,
-  };
   const trafficState = {
     sceneActive: document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'traffic',
     enabled: Boolean(trafficToggle?.checked),
@@ -1842,6 +2275,8 @@ export async function startWebGLScene(canvas, status) {
   let analysisGroupMode = null;
   let heatLoadToken = 0;
   let sunLoadToken = 0;
+  let sunAbortController = null;
+  let sunAnalysisId = null;
   let windHeatMesh = null;
   let windPoints = null;
   let trafficCars = null;
@@ -1853,6 +2288,7 @@ export async function startWebGLScene(canvas, status) {
   let sunHandle = null;
   let floodWaterMesh = null;
   let floodVelocityLines = null;
+  let floodDomainMesh = null;
   let floodBox = null;
   let floodBoxEdges = null;
   let floodHandle = null;
@@ -1951,7 +2387,7 @@ export async function startWebGLScene(canvas, status) {
 
   // Build a coarse spatial index once. Particle collision checks then inspect
   // only nearby footprints instead of all 2,322 buildings every frame.
-  for (const [ground, height, ring, , , wallHeight = height, , , , , minHeight = 0] of data.buildings) {
+  for (const [ground, height, ring, , , wallHeight = height, , , , , minHeight = 0, , , holes = []] of data.buildings) {
     if (!ring?.length) continue;
     const minX = Math.min(...ring.map(point => point[0]));
     const maxX = Math.max(...ring.map(point => point[0]));
@@ -1961,7 +2397,7 @@ export async function startWebGLScene(canvas, status) {
     centroid[0] /= ring.length;
     centroid[1] /= ring.length;
     const building = {
-      ring, minX, maxX, minZ, maxZ, centroid,
+      ring, holes, rings: [ring, ...holes], minX, maxX, minZ, maxZ, centroid,
       roofY: ground + Math.max(height, wallHeight),
       minHeight: Math.max(0, Number(minHeight) || 0),
     };
@@ -1987,6 +2423,7 @@ export async function startWebGLScene(canvas, status) {
       && x >= building.minX && x <= building.maxX
       && z >= building.minZ && z <= building.maxZ
       && pointInWindRing(x, z, building.ring)
+      && !building.holes.some(hole => pointInWindRing(x, z, hole))
     ));
   }
 
@@ -1998,6 +2435,7 @@ export async function startWebGLScene(canvas, status) {
       x >= candidate.minX && x <= candidate.maxX
       && z >= candidate.minZ && z <= candidate.maxZ
       && pointInWindRing(x, z, candidate.ring)
+      && !candidate.holes.some(hole => pointInWindRing(x, z, hole))
     ));
     const roofY = buildingsAtPoint.reduce((highest, building) => Math.max(highest, building.roofY), -Infinity);
     return Number.isFinite(roofY) ? roofY + 0.08 : terrainHeightAt(x, z) + 0.48;
@@ -2016,9 +2454,10 @@ export async function startWebGLScene(canvas, status) {
     for (const building of candidates) {
       if (building.minHeight > windState.height) continue;
       if (x < building.minX - 30 || x > building.maxX + 30 || z < building.minZ - 30 || z > building.maxZ + 30) continue;
-      for (let index = 0; index < building.ring.length; index += 1) {
-        const [ax, az] = building.ring[index];
-        const [bx, bz] = building.ring[(index + 1) % building.ring.length];
+      for (const boundaryRing of building.rings) {
+       for (let index = 0; index < boundaryRing.length; index += 1) {
+        const [ax, az] = boundaryRing[index];
+        const [bx, bz] = boundaryRing[(index + 1) % boundaryRing.length];
         const edgeX = bx - ax;
         const edgeZ = bz - az;
         const lengthSquared = edgeX * edgeX + edgeZ * edgeZ || 1;
@@ -2029,6 +2468,7 @@ export async function startWebGLScene(canvas, status) {
         if (!nearest || distance < nearest.distance) {
           nearest = { building, pointX, pointZ, edgeX, edgeZ, distance };
         }
+       }
       }
     }
     return nearest;
@@ -2251,6 +2691,32 @@ export async function startWebGLScene(canvas, status) {
     if (buildingMeshes.surface) buildingMeshes.surface.visible = true;
   }
 
+  function cancelSunHours(message = '', clearResult = true) {
+    sunLoadToken += 1;
+    if (sunAnalysisId) {
+      fetch(`${windApi}/sunlight/cancel?${new URLSearchParams({ analysis_id: sunAnalysisId })}`, {
+        method: 'POST', keepalive: true,
+      }).catch(() => {});
+      sunAnalysisId = null;
+    }
+    sunAbortController?.abort();
+    sunAbortController = null;
+    if (sunProgress) {
+      sunProgress.hidden = true;
+      sunProgress.removeAttribute('value');
+    }
+    if (sunGenerate) {
+      sunGenerate.disabled = false;
+      if (shadowState.mode === 'hours') sunGenerate.textContent = 'Calculate sun hours';
+    }
+    if (clearResult) {
+      heatGroup.visible = false;
+      setBuildingAnalysisSkin(false);
+    }
+    if (message && sunStatus) sunStatus.textContent = message;
+    requestRender();
+  }
+
   function updateSunBox() {
     const visible = shadowState.enabled && shadowState.mode === 'hours';
     sunDomainGroup.visible = visible;
@@ -2292,8 +2758,7 @@ export async function startWebGLScene(canvas, status) {
     if (!enabled) {
       // A cumulative calculation may still be running when the user leaves
       // Sunlight. Invalidate it so its late response cannot replace Heat.
-      sunLoadToken += 1;
-      if (sunGenerate) sunGenerate.disabled = false;
+      cancelSunHours('', false);
     }
     if (sunToggle) sunToggle.checked = enabled;
     document.body.classList.toggle('sun-mode', enabled);
@@ -2651,9 +3116,18 @@ export async function startWebGLScene(canvas, status) {
   async function generateSunHours() {
     if (!sunToggle?.checked) sunToggle.checked = true;
     setShadowMode(true);
+    cancelSunHours('', false);
     const loadToken = ++sunLoadToken;
+    const controller = new AbortController();
+    sunAbortController = controller;
+    sunAnalysisId = crypto.randomUUID();
     sunStatus.textContent = 'Accumulating direct sunlight…';
     sunGenerate.disabled = true;
+    sunGenerate.textContent = 'Calculating…';
+    if (sunProgress) {
+      sunProgress.hidden = false;
+      sunProgress.removeAttribute('value');
+    }
     try {
       const scenario = {
         date: sunDate?.value || shadowState.date,
@@ -2667,23 +3141,37 @@ export async function startWebGLScene(canvas, status) {
         max_x: shadowState.center[0] + half, max_z: shadowState.center[1] + half,
       };
       const durationHours = (Number(scenario.end_minutes) - Number(scenario.start_minutes)) / 60;
-      const requests = [];
+      const requestFactories = [];
       if (surfaces !== 'buildings') {
-        requests.push(fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`)
+        requestFactories.push(() => fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`, { signal: controller.signal })
           .then(async response => {
             if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
             return ['ground', await response.json()];
           }));
       }
       if (surfaces !== 'ground') {
-        const buildingParams = new URLSearchParams({ ...scenario, ...domain, resolution_m: sunSurfaceResolution?.value || '5', surfaces: 'all' });
-        requests.push(fetch(`${windApi}/sunlight/building-surfaces?${buildingParams}`)
+        const buildingParams = new URLSearchParams({
+          ...scenario, ...domain, resolution_m: sunSurfaceResolution?.value || '5',
+          surfaces: 'all', analysis_id: sunAnalysisId,
+        });
+        requestFactories.push(() => fetch(`${windApi}/sunlight/building-surfaces?${buildingParams}`, { signal: controller.signal })
           .then(async response => {
             const body = await response.json();
             if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
             return ['buildings', body];
           }));
       }
+      let completed = 0;
+      const requests = requestFactories.map(factory => factory().then(result => {
+        completed += 1;
+        if (loadToken === sunLoadToken && sunProgress) {
+          sunProgress.value = completed / requestFactories.length * 100;
+          sunStatus.textContent = completed < requestFactories.length
+            ? `Sunlight surfaces ${completed}/${requestFactories.length} ready…`
+            : 'Building the sunlight map…';
+        }
+        return result;
+      }));
       const results = Object.fromEntries(await Promise.all(requests));
       if (loadToken !== sunLoadToken || !shadowState.enabled || shadowState.mode !== 'hours') return;
       const payload = results.ground || {
@@ -2713,27 +3201,64 @@ export async function startWebGLScene(canvas, status) {
       sunStatus.textContent = `${average.toFixed(1)} h average direct sun · ${clock(start)}–${clock(end)} · ${shadowState.size} m area${cellCount}.`;
     } catch (error) {
       if (loadToken !== sunLoadToken) return;
+      if (error.name === 'AbortError') return;
       sunStatus.textContent = `Sun-hours analysis unavailable (${error.message})`;
     } finally {
-      sunGenerate.disabled = false;
-      requestRender();
+      if (loadToken === sunLoadToken) {
+        sunAbortController = null;
+        sunAnalysisId = null;
+        sunGenerate.disabled = false;
+        sunGenerate.textContent = 'Calculate sun hours';
+        if (sunProgress) {
+          sunProgress.hidden = true;
+          sunProgress.removeAttribute('value');
+        }
+        requestRender();
+      }
     }
   }
 
   function addBuildingSunMesh(payload, range) {
-    const roofMeshes = buildRooftopHeatMeshes(
-      { metric: 'cumulative_sun_hours', features: (payload.features || []).filter(feature => feature.surface === 'roof') },
-      range,
-      feature => feature.display_value ?? feature.value,
-    );
-    const facadeMesh = buildFacadeSunMesh(payload, range);
-    for (const mesh of [...roofMeshes, facadeMesh].filter(Boolean)) {
-      mesh.renderOrder = 7;
-      heatGroup.add(mesh);
+    const positions = [];
+    const colors = [];
+    const pushTriangle = (a, b, c, color) => {
+      positions.push(...a, ...b, ...c);
+      for (let vertex = 0; vertex < 3; vertex += 1) colors.push(color.r, color.g, color.b);
+    };
+    for (const feature of payload.features || []) {
+      const value = feature.display_value ?? feature.value;
+      if (value == null) continue;
+      const color = heatColor(value, range.min, range.max, 'cumulative_sun_hours');
+      if (feature.surface === 'roof') {
+        const y = Number(feature.surface_y) + 0.08;
+        for (const polygon of geometryPolygons(feature.geometry)) {
+          const contour = polygon[0].map(([x, z]) => new THREE.Vector2(x, z));
+          const holes = polygon.slice(1).map(ring => ring.map(([x, z]) => new THREE.Vector2(x, z)));
+          const vertices = contour.concat(...holes);
+          for (const [a, b, c] of THREE.ShapeUtils.triangulateShape(contour, holes)) {
+            pushTriangle([vertices[a].x, y, vertices[a].y], [vertices[b].x, y, vertices[b].y], [vertices[c].x, y, vertices[c].y], color);
+          }
+        }
+      } else if (feature.surface === 'facade' && feature.vertices?.length >= 4) {
+        const vertices = feature.vertices.map(([x, y, z]) => [x, y, z]);
+        pushTriangle(vertices[0], vertices[1], vertices[2], color);
+        pushTriangle(vertices[0], vertices[2], vertices[3], color);
+      }
     }
+    if (!positions.length) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.94, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3,
+    }));
+    mesh.renderOrder = 7;
+    heatGroup.add(mesh);
   }
 
   function setSunAnalysisMode(mode) {
+    cancelSunHours('', true);
     shadowState.mode = mode;
     const cumulative = mode === 'hours';
     for (const button of sunModeButtons) {
@@ -2763,8 +3288,7 @@ export async function startWebGLScene(canvas, status) {
     const wasInStudyMode = shadowState.enabled || heatGroup.visible;
     if (enabled && !wasInStudyMode) rememberNormalVisibility();
     if (enabled && shadowState.enabled) {
-      sunLoadToken += 1;
-      if (sunGenerate) sunGenerate.disabled = false;
+      cancelSunHours('', false);
     }
     if (enabled && analysisGroupMode !== 'heat') {
       if (heatPayload) buildHeatMesh(heatPayload);
@@ -2774,15 +3298,13 @@ export async function startWebGLScene(canvas, status) {
         analysisGroupMode = null;
       }
     }
-    heatGroup.visible = enabled && analysisGroupMode === 'heat' && mitigationCompare?.value !== 'after';
-    mitigationGroup.visible = enabled && mitigationCompare?.value === 'after' && Boolean(mitigationState.result);
+    heatGroup.visible = enabled && analysisGroupMode === 'heat';
     document.body.classList.toggle('heat-mode', enabled);
     if (enabled) {
       shadowState.enabled = false;
       if (sunToggle) sunToggle.checked = false;
       document.body.classList.remove('sun-mode');
-      const rooftopContext = heatMetric?.value === 'rooftop_temperature_c'
-        || Boolean(mitigationState.result?.roof_zones?.length);
+      const rooftopContext = heatMetric?.value === 'rooftop_temperature_c';
       // Keep the terrain slab visible beneath the transparent heat surface so
       // its cut edge reads with the same depth as every other analysis mode.
       layerGroups.terrain.visible = true;
@@ -2860,306 +3382,6 @@ export async function startWebGLScene(canvas, status) {
     return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
       vertexColors: true, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
     }));
-  }
-
-  const mitigationMethods = {
-    added_canopy: {
-      label: 'Trees & vegetation', color: 0x398a55, parameter: 'maturity_pct',
-      parameterLabel: 'maturity %', defaultValue: 100, min: 20, max: 100, step: 5,
-      note: 'Tree canopy casts time-dependent shade; maturity scales its estimated benefit.',
-    },
-    constructed_shade: {
-      label: 'Pedestrian shade structure', color: 0xd49b45, parameter: 'height_m',
-      parameterLabel: 'height m', defaultValue: 3, min: 1.5, max: 12, step: 0.5,
-      note: 'A canopy or shelter casts shade according to its height, date and time.',
-    },
-    cool_pavement: {
-      label: 'Cool pavement', color: 0x86b9cf, parameter: 'target_albedo',
-      parameterLabel: 'target albedo', defaultValue: 0.35, min: 0.25, max: 0.65, step: 0.05,
-      note: 'A more reflective ground finish lowers treated surface temperature.',
-    },
-    cool_roof: {
-      label: 'Cool roof', color: 0xe6e2cf, parameter: 'target_albedo',
-      parameterLabel: 'target albedo', defaultValue: 0.65, min: 0.45, max: 0.85, step: 0.05,
-      note: 'Reflective, high-emittance roofing lowers roof heat; verify material, glare, waterproofing and roof condition.',
-    },
-    green_roof: {
-      label: 'Green roof', color: 0x6ea64b, parameter: 'substrate_depth_cm',
-      parameterLabel: 'soil depth cm', defaultValue: 15, min: 6, max: 60, step: 1,
-      note: 'Paint across the intended roofs. The result is clipped to eligible roof surfaces and reports roof-only temperature impact.',
-    },
-    canopy_protection: {
-      label: 'Protect canopy', color: 0x1e6b42, parameter: 'maturity_pct',
-      parameterLabel: 'retained %', defaultValue: 100, min: 20, max: 100, step: 5,
-      note: 'Only existing mapped canopy is retained and counted.',
-    },
-    permeable_pavement: {
-      label: 'Permeable pavement', color: 0x5b91a0, parameter: 'runoff_capture_mm',
-      parameterLabel: 'storm capture mm', defaultValue: 25, min: 5, max: 100, step: 5,
-      note: 'Adds modest cooling and records a conceptual stormwater-capture depth.',
-    },
-    rain_garden: {
-      label: 'Rain garden / bioswale', color: 0x3f8f78, parameter: 'influence_m',
-      parameterLabel: 'cooling reach m', defaultValue: 6, min: 2, max: 20, step: 1,
-      note: 'A planted drainage area cools its footprint and a configurable nearby buffer.',
-    },
-    depave_plant: {
-      label: 'De-pave and plant', color: 0x78a84f, parameter: 'influence_m',
-      parameterLabel: 'cooling reach m', defaultValue: 4, min: 1, max: 15, step: 1,
-      note: 'Replaces hard ground with planting and extends cooling beyond the treated footprint.',
-    },
-    water_feature: {
-      label: 'Water feature', color: 0x3d9ac4, parameter: 'influence_m',
-      parameterLabel: 'cooling reach m', defaultValue: 8, min: 2, max: 25, step: 1,
-      note: 'Models localized evaporative cooling; water demand still needs a separate feasibility check.',
-    },
-  };
-
-  function flatPolygonMesh(geometry, color, opacity = 0.34, roofOnly = false) {
-    const positions = [];
-    for (const polygon of geometryPolygons(geometry)) {
-      const contour = (polygon[0] || []).map(([x, z]) => new THREE.Vector2(x, z));
-      if (contour.length > 1 && contour[0].equals(contour.at(-1))) contour.pop();
-      const holes = polygon.slice(1).map(ring => {
-        const points = ring.map(([x, z]) => new THREE.Vector2(x, z));
-        if (points.length > 1 && points[0].equals(points.at(-1))) points.pop();
-        return points;
-      });
-      const vertices = contour.concat(...holes);
-      for (const face of THREE.ShapeUtils.triangulateShape(contour, holes)) {
-        for (const index of face) {
-          const point = vertices[index];
-          const roofFallback = rooftopHeightAt(point.x, point.y);
-          positions.push(point.x, roofOnly ? detailedRoofHeightAt(point.x, point.y, roofFallback) + 0.12 : terrainHeightAt(point.x, point.y) + 1.15, point.y);
-        }
-      }
-    }
-    const geometryBuffer = new THREE.BufferGeometry();
-    geometryBuffer.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    return new THREE.Mesh(geometryBuffer, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false, depthTest: false,
-    }));
-  }
-
-  function updateMitigationDrawing() {
-    mitigationDrawingGroup.clear();
-    for (const item of mitigationState.interventions.filter(entry => entry.visible)) {
-      const config = mitigationMethods[item.method] || { color: 0xf5b85f };
-      const roofOnly = ['cool_roof', 'green_roof'].includes(item.method);
-      const mesh = flatPolygonMesh(item.geometry, config.color, 0.34, roofOnly);
-      mesh.renderOrder = 12;
-      mitigationDrawingGroup.add(mesh);
-      for (const polygon of geometryPolygons(item.geometry)) {
-        const ring = polygon[0] || [];
-        const linePoints = ring.map(([x, z]) => {
-          const roofFallback = rooftopHeightAt(x, z);
-          return new THREE.Vector3(x, roofOnly ? detailedRoofHeightAt(x, z, roofFallback) + 0.16 : terrainHeightAt(x, z) + 1.35, z);
-        });
-        const line = new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints(linePoints),
-          new THREE.LineBasicMaterial({ color: config.color, depthTest: false }),
-        );
-        line.renderOrder = 13;
-        mitigationDrawingGroup.add(line);
-      }
-    }
-    if (!mitigationState.points.length) {
-      requestRender();
-      return;
-    }
-    const points = mitigationState.points.map(([x, z]) => new THREE.Vector3(x, terrainHeightAt(x, z) + 1.0, z));
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    mitigationDrawingGroup.add(new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xf5b85f, depthTest: false })));
-    if (mitigationState.points.length >= 3) {
-      const ring = [...mitigationState.points, mitigationState.points[0]];
-      const preview = flatPolygonMesh({ type: 'Polygon', coordinates: [ring] }, 0xf5b85f, 0.22);
-      preview.renderOrder = 14;
-      mitigationDrawingGroup.add(preview);
-    }
-    requestRender();
-  }
-
-  function methodLabel(method) {
-    return mitigationMethods[method]?.label || method;
-  }
-
-  function newInterventionIdentity() {
-    const uuid = globalThis.crypto?.randomUUID?.()
-      || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const identifier = `urn:za.capetown.climate-explorer:proposed-intervention:${uuid}`;
-    return {
-      id: identifier,
-      identifier,
-      featureId: `${identifier}:draft`,
-      objectType: 'ProposedIntervention',
-      lifecycleStatus: 'proposed',
-      lod: '0',
-      createdAt: new Date().toISOString(),
-      source: { role: 'user-authored', application: 'Climate Explorer' },
-      geometryQuality: { topologyValidated: false, horizontalAccuracyM: null },
-    };
-  }
-
-  function invalidateMitigationResult() {
-    mitigationState.result = null;
-    mitigationState.baselinePayload = null;
-    mitigationGroup.clear();
-    mitigationResults.hidden = true;
-    mitigationCompare.value = 'before';
-    if (heatToggle?.checked) setHeatMode(true);
-  }
-
-  function renderMitigationInterventions() {
-    mitigationList.innerHTML = '';
-    mitigationState.interventions.forEach((item, index) => {
-      const row = document.createElement('div');
-      row.className = 'mitigation-item';
-      const config = mitigationMethods[item.method] || mitigationMethods.cool_pavement;
-      const parameterValue = item[config.parameter] ?? config.defaultValue;
-      row.innerHTML = `
-        <span><label><input type="checkbox" data-action="visible" ${item.visible ? 'checked' : ''}> ${methodLabel(item.method)}</label></span>
-        <input type="number" data-action="parameter" aria-label="${config.parameterLabel}" title="${config.parameterLabel}"
-          min="${config.min}" max="${config.max}" step="${config.step}" value="${parameterValue}">
-        <span><button type="button" data-action="duplicate" title="Duplicate">＋</button><button type="button" data-action="remove" title="Remove">×</button></span>`;
-      row.addEventListener('change', event => {
-        if (event.target.dataset.action === 'visible') item.visible = event.target.checked;
-        if (event.target.dataset.action === 'parameter') {
-          item[config.parameter] = Number(event.target.value);
-        }
-        invalidateMitigationResult();
-        mitigationRun.disabled = !mitigationState.interventions.some(entry => entry.visible);
-        updateMitigationDrawing();
-      });
-      row.addEventListener('click', event => {
-        if (event.target.dataset.action === 'remove') mitigationState.interventions.splice(index, 1);
-        if (event.target.dataset.action === 'duplicate') {
-          mitigationState.interventions.splice(index + 1, 0, {
-            ...item, ...newInterventionIdentity(), geometry: JSON.parse(JSON.stringify(item.geometry)),
-          });
-        }
-        invalidateMitigationResult();
-        renderMitigationInterventions();
-        updateMitigationDrawing();
-      });
-      mitigationList.append(row);
-    });
-    mitigationRun.disabled = !mitigationState.interventions.some(item => item.visible);
-  }
-
-  function finishMitigationDrawing() {
-    if (mitigationState.points.length < 3) {
-      mitigationStatus.textContent = 'Add at least three points before closing the intervention.';
-      return;
-    }
-    const ring = [...mitigationState.points, mitigationState.points[0]];
-    const method = mitigationMethod.value;
-    const config = mitigationMethods[method] || mitigationMethods.cool_pavement;
-    mitigationState.interventions.push({
-      ...newInterventionIdentity(),
-      method,
-      [config.parameter]: config.defaultValue,
-      height_m: method === 'added_canopy' ? 8 : method === 'constructed_shade' ? config.defaultValue : 0,
-      visible: true,
-      geometry: { type: 'Polygon', coordinates: [ring] },
-    });
-    invalidateMitigationResult();
-    mitigationState.drawing = false;
-    mitigationState.stroking = false;
-    mitigationState.pointerId = null;
-    mitigationState.points = [];
-    mitigationAdd.classList.remove('active');
-    mitigationAdd.setAttribute('aria-pressed', 'false');
-    mitigationAdd.textContent = 'Draw intervention';
-    canvas.style.cursor = '';
-    mitigationStatus.textContent = `${methodLabel(method)} added · draw another or compare impact.`;
-    updateMitigationDrawing();
-    renderMitigationInterventions();
-  }
-
-  function buildMitigationResult(payload) {
-    mitigationGroup.clear();
-    const comparisonZones = payload.roof_zones?.length ? payload.roof_zones : payload.zones;
-    const temperatures = comparisonZones.map(zone => zone.baseline_surface_temperature_c).filter(Number.isFinite).sort((a, b) => a - b);
-    const percentile = fraction => {
-      if (!temperatures.length) return null;
-      const position = (temperatures.length - 1) * fraction;
-      const lower = Math.floor(position);
-      const upper = Math.min(lower + 1, temperatures.length - 1);
-      return temperatures[lower] + (temperatures[upper] - temperatures[lower]) * (position - lower);
-    };
-    const range = temperatures.length
-      ? { min: percentile(0.10), max: percentile(0.90) }
-      : { min: 25, max: 45 };
-    mitigationState.baselinePayload = {
-      metric: payload.roof_zones?.length ? 'rooftop_temperature_c' : 'heat_model_lst_c',
-      features: comparisonZones.map(zone => ({
-        geometry: zone.geometry, surface_y: zone.surface_y,
-        value: zone.baseline_surface_temperature_c,
-      })),
-      range, color_range: range,
-    };
-    buildHeatMesh(mitigationState.baselinePayload);
-    const estimateCase = mitigationCase?.value || 'central';
-    const mesh = polygonMesh(comparisonZones, zone => zone.estimates[estimateCase].surface_temperature_c, range);
-    mesh.renderOrder = 5;
-    mitigationGroup.add(mesh);
-    mitigationState.result = payload;
-    if (heatSummary) heatSummary.hidden = true;
-    heatLegendMin.textContent = `Cooler ≤ ${range.min.toFixed(1)}°C`;
-    heatLegendMax.textContent = `Hotter ≥ ${range.max.toFixed(1)}°C`;
-    const central = payload.summary.estimates[estimateCase];
-    const roofCentral = payload.summary.roof_estimates?.[estimateCase];
-    mitigationResults.hidden = false;
-    const coBenefits = payload.summary.co_benefits || {};
-    const drawnArea = payload.interventions.reduce((sum, item) => sum + Number(item.drawn_area_m2 || 0), 0);
-    const eligibleArea = payload.interventions.reduce((sum, item) => sum + Number(item.treated_area_m2 || 0), 0);
-    const eligiblePercent = drawnArea ? eligibleArea / drawnArea * 100 : 0;
-    mitigationResults.innerHTML = `
-      <span><b>${Math.round(payload.summary.treated_area_m2).toLocaleString()} m²</b>Treated</span>
-      <span><b>${eligiblePercent.toFixed(0)}%</b>Eligible drawing</span>
-      <span><b>${Math.round(roofCentral?.affected_roof_area_m2 ?? payload.summary.affected_area_m2).toLocaleString()} m²</b>${roofCentral?.affected_roof_area_m2 ? 'Affected roof' : 'Affected / shaded'}</span>
-      <span><b>${(roofCentral?.mean_roof_reduction_c ?? central.mean_surface_reduction_c).toFixed(1)}°C</b>${roofCentral?.affected_roof_area_m2 ? 'Mean roof relief' : 'Mean surface relief'}</span>
-      <span><b>${roofCentral?.mean_after_roof_temperature_c != null ? `${roofCentral.mean_after_roof_temperature_c.toFixed(1)}°C` : `${central.mean_pedestrian_reduction_c.toFixed(1)}°C`}</b>${roofCentral?.affected_roof_area_m2 ? 'Mean roof after' : 'Pedestrian relief'}</span>
-      ${coBenefits.conceptual_runoff_capture_m3 > 0
-        ? `<span><b>${coBenefits.conceptual_runoff_capture_m3.toFixed(1)} m³</b>Conceptual runoff capture</span>` : ''}
-      ${coBenefits.added_canopy_m2 > 0
-        ? `<span><b>${Math.round(coBenefits.added_canopy_m2)} m²</b>Added mature canopy</span>` : ''}`;
-    mitigationStatus.textContent = payload.warnings.length
-      ? payload.warnings.join(' ')
-      : roofCentral?.affected_roof_area_m2
-        ? `${Math.round(roofCentral.affected_roof_area_m2).toLocaleString()} m² eligible roof · rooftop comparison · ${payload.version}`
-        : `${payload.summary.affected_zone_count} source heat zones · exact affected geometry · ${payload.version}`;
-    mitigationCompare.value = 'after';
-    if (heatToggle) heatToggle.checked = true;
-    setHeatMode(true);
-  }
-
-  async function runMitigationPreview() {
-    const active = mitigationState.interventions.filter(item => item.visible);
-    if (!active.length) return;
-    mitigationRun.disabled = true;
-    mitigationRun.textContent = 'Estimating…';
-    mitigationStatus.textContent = 'Intersecting interventions with heat, canopy, and roof geometry…';
-    try {
-      const response = await fetch(`${windApi}/mitigations/preview`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          interventions: active,
-          sun_date: heatDate?.value || shadowState.date,
-          sun_minutes: Number(heatTime?.value ?? shadowState.minutes),
-          baseline_metric: 'heat_model_lst_c',
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      buildMitigationResult(payload);
-    } catch (error) {
-      mitigationStatus.textContent = `Impact estimate unavailable (${error.message})`;
-    } finally {
-      mitigationRun.disabled = false;
-      mitigationRun.textContent = 'Compare impact';
-    }
   }
 
   const trafficPlaybackSpeed = 10; // simulated seconds advanced per real second
@@ -3841,10 +4063,6 @@ export async function startWebGLScene(canvas, status) {
 
   function beginTrafficDrawing(mode) {
     clearTrafficSelection();
-    mitigationState.drawing = false;
-    mitigationState.stroking = false;
-    mitigationState.points = [];
-    updateMitigationDrawing();
     streetViewState.placing = false;
     floodState.moveMode = false;
     windState.moveMode = false;
@@ -4668,16 +4886,51 @@ export async function startWebGLScene(canvas, status) {
 
   function clearFloodSimulation() {
     stopFloodAnimation();
-    for (const object of [floodWaterMesh, floodVelocityLines]) {
+    for (const object of [floodWaterMesh, floodVelocityLines, floodDomainMesh]) {
       if (!object) continue;
       floodGroup.remove(object);
       disposeObject(object);
     }
     floodWaterMesh = null;
     floodVelocityLines = null;
+    floodDomainMesh = null;
     floodState.field = null;
     if (floodResults) floodResults.hidden = true;
     if (floodTime) floodTime.textContent = 'Dry · 0 min';
+  }
+
+  function buildFloodCoverage() {
+    const field = floodState.field;
+    if (!field?.active?.length) return;
+    if (floodDomainMesh) {
+      floodGroup.remove(floodDomainMesh);
+      disposeObject(floodDomainMesh);
+    }
+    const positions = [];
+    for (let row = 0; row < field.height; row += 1) {
+      for (let column = 0; column < field.width; column += 1) {
+        const index = row * field.width + column;
+        if (!field.active[index] || field.buildings[index]) continue;
+        const x0 = field.origin[0] + column * field.dx;
+        const z0 = field.origin[1] + row * field.dz;
+        const x1 = x0 + field.dx;
+        const z1 = z0 + field.dz;
+        const y = field.bed[index] + 0.09;
+        positions.push(
+          x0, y, z0, x0, y, z1, x1, y, z0,
+          x1, y, z0, x0, y, z1, x1, y, z1,
+        );
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    floodDomainMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: 0x38535e, transparent: true, opacity: 0.34, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    }));
+    floodDomainMesh.name = 'calculated-flood-domain';
+    floodDomainMesh.renderOrder = 4;
+    floodGroup.add(floodDomainMesh);
   }
 
   function buildFloodSurface(depthValues = null, showVelocity = false) {
@@ -4800,7 +5053,7 @@ export async function startWebGLScene(canvas, status) {
     }
     floodSimulate.disabled = true;
     floodSimulate.textContent = 'Solving…';
-    floodStatus.textContent = 'Solving the closed 2D box; water cannot cross its boundary…';
+    floodStatus.textContent = 'Solving rainfall accumulation within the drawn box (most edges closed; downhill edges may drain)…';
     clearFloodSimulation();
     try {
       const response = await fetch(`${windApi}/flood/preview`, {
@@ -4824,12 +5077,13 @@ export async function startWebGLScene(canvas, status) {
       floodGroup.visible = true;
       if (floodToggle) floodToggle.checked = true;
       hideRoadsForFlood();
+      buildFloodCoverage();
       playFloodAnimation();
       const summary = payload.summary;
       const openSides = payload.model?.boundary_open_sides || [];
       floodLegendMax.textContent = `${summary.max_depth_m.toFixed(2)} m`;
       floodResults.innerHTML = `
-        <span><b>${summary.max_depth_m.toFixed(2)} m</b>Maximum depth</span>
+        <span><b>${summary.max_depth_m.toFixed(2)} m</b>Maximum rainfall accumulation depth</span>
         <span><b>${summary.max_speed_mps.toFixed(2)} m/s</b>Maximum velocity</span>
         <span><b>${Math.round(summary.wet_area_m2).toLocaleString()} m²</b>Area ≥ 1 cm</span>
         <span><b>${summary.retained_water_m3.toFixed(1)} m³</b>Water retained</span>
@@ -4838,7 +5092,7 @@ export async function startWebGLScene(canvas, status) {
       floodResults.hidden = false;
       const control = payload.model?.dem_control;
       const boundaryNote = openSides.length ? ` · open to outflow: ${openSides.join(', ')}` : ' · closed box';
-      floodStatus.textContent = `${payload.width} × ${payload.height} cells${boundaryNote} · ${summary.coarse_terrain_pct.toFixed(0)}% coarse terrain · ${control?.usable_marks || 0} survey marks checked`;
+      floodStatus.textContent = `Rainfall accumulation within the drawn box (no upstream inflow from outside it) · ${payload.width} × ${payload.height} cells${boundaryNote} · pale grid calculated dry · buildings impermeable · mapped road/green material classes applied · ${summary.coarse_terrain_pct.toFixed(0)}% coarse terrain · ${control?.usable_marks || 0} survey marks checked`;
     } catch (error) {
       floodStatus.textContent = `Flood simulation unavailable (${error.message})`;
     } finally {
@@ -5169,22 +5423,6 @@ export async function startWebGLScene(canvas, status) {
     return () => scenePickHandlers.delete(handler);
   }
 
-  function appendMitigationPoint(event, force = false) {
-    const point = pointerGround(event);
-    if (!point) return false;
-    const screen = [event.clientX, event.clientY];
-    if (!force && mitigationState.lastScreen
-      && Math.hypot(screen[0] - mitigationState.lastScreen[0], screen[1] - mitigationState.lastScreen[1]) < 5) return false;
-    const next = [Number(point.x.toFixed(2)), Number(point.z.toFixed(2))];
-    const previous = mitigationState.points.at(-1);
-    if (previous && Math.hypot(next[0] - previous[0], next[1] - previous[1]) < 0.35) return false;
-    mitigationState.points.push(next);
-    mitigationState.lastScreen = screen;
-    mitigationStatus.textContent = `Painting ${methodLabel(mitigationMethod.value)} · release to finish.`;
-    updateMitigationDrawing();
-    return true;
-  }
-
   function appendTrafficClosurePoint(event, force = false) {
     const point = pointerGround(event);
     if (!point) return false;
@@ -5276,15 +5514,6 @@ export async function startWebGLScene(canvas, status) {
       return;
     }
     if (event.button === 2 && removeTrafficSelectionAt(event)) return;
-    if (mitigationState.drawing && event.button === 0) {
-      mitigationState.points = [];
-      mitigationState.stroking = true;
-      mitigationState.pointerId = event.pointerId;
-      mitigationState.lastScreen = null;
-      appendMitigationPoint(event, true);
-      capturePointer(event);
-      return;
-    }
     if (floodState.enabled && floodState.moveMode && event.button === 0) {
       const point = pointerGround(event);
       if (point) {
@@ -5320,8 +5549,7 @@ export async function startWebGLScene(canvas, status) {
           center: [...shadowState.center],
           size: shadowState.size,
         };
-        heatGroup.visible = false;
-        setBuildingAnalysisSkin(false);
+        cancelSunHours('', true);
         sunStatus.textContent = sunDrag.mode === 'resize'
           ? 'Resizing sunlight area · release, then calculate again.'
           : 'Moving sunlight area · release, then calculate again.';
@@ -5366,10 +5594,6 @@ export async function startWebGLScene(canvas, status) {
   canvas.addEventListener('pointermove', event => {
     if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
       appendTrafficClosurePoint(event);
-      return;
-    }
-    if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
-      appendMitigationPoint(event);
       return;
     }
     if (floodDrag) {
@@ -5461,18 +5685,6 @@ export async function startWebGLScene(canvas, status) {
       commitTrafficStroke();
       return;
     }
-    if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
-      appendMitigationPoint(event, true);
-      mitigationState.stroking = false;
-      mitigationState.pointerId = null;
-      if (mitigationState.points.length >= 3) finishMitigationDrawing();
-      else {
-        mitigationState.points = [];
-        mitigationStatus.textContent = 'Drag across the terrain to paint an area; a click is too small.';
-        updateMitigationDrawing();
-      }
-      return;
-    }
     drag = null;
     if (clickCandidate && scenePickHandlers.size
       && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < 5) {
@@ -5510,12 +5722,6 @@ export async function startWebGLScene(canvas, status) {
       updateTrafficDrawPopup('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');
       updateTrafficDrawing();
     }
-    if (event.pointerId === mitigationState.pointerId) {
-      mitigationState.stroking = false;
-      mitigationState.pointerId = null;
-      mitigationState.points = [];
-      updateMitigationDrawing();
-    }
     sunDrag = null;
     drag = null;
     windDrag = null;
@@ -5527,7 +5733,7 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   }, { passive: false });
   canvas.addEventListener('dblclick', event => {
-    if (trafficState.drawing || mitigationState.drawing || floodState.moveMode) {
+    if (trafficState.drawing || floodState.moveMode) {
       event.preventDefault();
     } else {
       fitScene();
@@ -5560,9 +5766,7 @@ export async function startWebGLScene(canvas, status) {
     shadowState.date = event.target.value || shadowState.date;
     if (shadowState.mode === 'shadows') queueLiveShadowUpdate();
     else {
-      heatGroup.visible = false;
-      sunStatus.textContent = 'Date changed · calculate sun hours again.';
-      requestRender();
+      cancelSunHours('Date changed · calculate sun hours again.');
     }
   });
   sunTime?.addEventListener('input', event => {
@@ -5572,11 +5776,12 @@ export async function startWebGLScene(canvas, status) {
   sunModeButtons.forEach(button => button.addEventListener('click', () => setSunAnalysisMode(button.dataset.sunMode)));
   sunDomainSize?.addEventListener('change', event => {
     shadowState.size = Number(event.target.value) || 500;
-    heatGroup.visible = false;
-    setBuildingAnalysisSkin(false);
-    sunStatus.textContent = `Analysis area resized to ${shadowState.size} m · calculate sun hours.`;
+    cancelSunHours(`Analysis area resized to ${shadowState.size} m · calculate sun hours.`);
     updateSunBox();
   });
+  for (const control of [sunStartTime, sunEndTime, sunStepTime, sunAnalysisSurfaces, sunSurfaceResolution]) {
+    control?.addEventListener('change', () => cancelSunHours('Sun-hours settings changed · calculate again.'));
+  }
   sunMoveDomain?.addEventListener('click', () => {
     shadowState.moveMode = !shadowState.moveMode;
     sunMoveDomain.classList.toggle('active', shadowState.moveMode);
@@ -5828,66 +6033,6 @@ export async function startWebGLScene(canvas, status) {
     updateFloodBox();
   });
   floodSimulate?.addEventListener('click', simulateFlood);
-  mitigationAdd?.addEventListener('click', () => {
-    mitigationState.drawing = !mitigationState.drawing;
-    mitigationState.points = [];
-    mitigationAdd.classList.toggle('active', mitigationState.drawing);
-    mitigationAdd.setAttribute('aria-pressed', String(mitigationState.drawing));
-    mitigationAdd.textContent = mitigationState.drawing ? 'Cancel drawing' : 'Draw intervention';
-    mitigationStatus.textContent = mitigationState.drawing
-      ? `Drag on the terrain to paint ${methodLabel(mitigationMethod.value)}; release to finish.`
-      : 'Drawing cancelled.';
-    canvas.style.cursor = mitigationState.drawing ? 'crosshair' : '';
-    updateMitigationDrawing();
-  });
-  mitigationMethod?.addEventListener('change', () => {
-    const config = mitigationMethods[mitigationMethod.value];
-    if (mitigationMethodNote && config) mitigationMethodNote.textContent = config.note;
-    if (['cool_roof', 'green_roof'].includes(mitigationMethod.value) && heatMetric) {
-      heatMetric.value = 'rooftop_temperature_c';
-      loadHeat('rooftop_temperature_c');
-    } else if (heatMetric?.value === 'rooftop_temperature_c') {
-      heatMetric.value = 'heat_model_lst_c';
-      loadHeat('heat_model_lst_c');
-    }
-    if (mitigationState.drawing) {
-      mitigationStatus.textContent = `Drag on the terrain to paint ${methodLabel(mitigationMethod.value)}; release to finish.`;
-    }
-  });
-  mitigationRun?.addEventListener('click', runMitigationPreview);
-  mitigationClear?.addEventListener('click', () => {
-    mitigationState.drawing = false;
-    mitigationState.points = [];
-    mitigationState.interventions = [];
-    mitigationState.result = null;
-    mitigationState.baselinePayload = null;
-    mitigationGroup.clear();
-    mitigationDrawingGroup.clear();
-    mitigationList.innerHTML = '';
-    mitigationResults.hidden = true;
-    mitigationRun.disabled = true;
-    mitigationCompare.value = 'before';
-    mitigationStatus.textContent = 'Choose a method, then draw its intended footprint. Results are clipped to eligible surfaces.';
-    canvas.style.cursor = '';
-    loadHeat(heatMetric?.value);
-  });
-  mitigationCompare?.addEventListener('change', () => {
-    if (mitigationCompare.value === 'after' && !mitigationState.result) {
-      mitigationCompare.value = 'before';
-      mitigationStatus.textContent = 'Run Compare impact before switching to the after map.';
-    }
-    if (mitigationCompare.value === 'before' && mitigationState.baselinePayload) buildHeatMesh(mitigationState.baselinePayload);
-    else if (mitigationCompare.value === 'before') loadHeat(heatMetric?.value);
-    else if (mitigationState.result) buildMitigationResult(mitigationState.result);
-    if (heatToggle?.checked) setHeatMode(true);
-  });
-  mitigationCase?.addEventListener('change', () => {
-    if (mitigationState.result && mitigationCompare.value === 'after') buildMitigationResult(mitigationState.result);
-    const label = mitigationCase.options[mitigationCase.selectedIndex]?.textContent || 'Estimate';
-    mitigationStatus.textContent = mitigationState.result
-      ? `${label} shown · before geometry and colour scale remain fixed.`
-      : `${label} selected · run Compare impact.`;
-  });
   trafficDuration?.addEventListener('input', () => {
     if (trafficDurationValue) trafficDurationValue.textContent = `${trafficDuration.value} min`;
     invalidateTrafficResult('Duration changed · run the comparison again.');
@@ -5979,14 +6124,6 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-streetview-mode', event => {
     streetViewState.placing = Boolean(event.detail?.enabled);
-    if (streetViewState.placing && mitigationState.drawing) {
-      mitigationState.drawing = false;
-      mitigationState.points = [];
-      mitigationAdd.classList.remove('active');
-      mitigationAdd.setAttribute('aria-pressed', 'false');
-      mitigationAdd.textContent = 'Draw intervention';
-      updateMitigationDrawing();
-    }
     canvas.style.cursor = streetViewState.placing ? 'crosshair' : '';
   });
   addEventListener('climate-streetview-clear', () => {
@@ -6078,8 +6215,8 @@ export async function startWebGLScene(canvas, status) {
   floodState.validBox = boxInLidarFootprint(floodState.bounds);
   updateFloodBox();
   syncTrafficSceneVisibility();
-  const roofTriangles = manifest.layers?.roof_surface?.triangles;
-  status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
+  const roofTriangles = roofSurfaceBuffer ? manifest.layers?.roof_surface?.triangles : 0;
+  status.textContent = `${data.buildings.length} buildings · ${(data.water || []).length} water bodies · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
   updateSunStatus();
   loadHeat();
   setHeatMode(Boolean(heatToggle?.checked));

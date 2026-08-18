@@ -52,7 +52,9 @@ def test_municipal_street_data_is_clipped_and_semantically_typed():
     assert classes["monument"] > 40
     assert classes["publicToilet"] > 0
     assert classes["surveyMark"] > 50
-    assert classes["festoonLighting"] == 5
+    # All eight alignments in the checked-in municipal source are inside the
+    # current scene footprint.
+    assert classes["festoonLighting"] == 8
     municipal_roads = [item for item in objects if "municipalRoads" in item["sources"]]
     assert municipal_roads
     assert sum(":RCL" in item["identifier"] for item in municipal_roads) > 700
@@ -127,6 +129,73 @@ def test_osm_point_furniture_is_preserved_with_honest_generic_geometry():
     assert all(item["geometry"]["type"] == "Point" for item in furniture)
     assert all(item["quality"]["dimensions"] == "inferred" for item in furniture)
     assert all(item["attributes"].get("osmId") for item in furniture)
+
+
+def test_osm_building_and_public_realm_detail_is_preserved():
+    model = json.loads((ROOT / "public/assets/city_model.json").read_text(encoding="utf-8"))
+    objects = list(model["cityObjects"].values())
+    buildings = [item for item in objects if item["type"] == "Building"]
+    roofs = [item for item in objects if item["type"] == "RoofSurface"]
+    osm_roads = [item for item in objects if "roads" in item["sources"]]
+
+    assert sum(bool(item["geometry"].get("interiorRings")) for item in buildings) > 0
+    assert sum(bool(item["attributes"].get("facadeColour")) for item in buildings) > 0
+    assert sum(bool(item["attributes"].get("shape")) for item in roofs) > 0
+    assert sum(bool(item["attributes"].get("material")) for item in roofs) > 0
+    assert sum(item["attributes"].get("surface") is not None for item in osm_roads) > 1000
+    assert sum(item["attributes"].get("sidewalk") is not None for item in osm_roads) > 100
+    assert sum(item["attributes"].get("bridge") is not None for item in osm_roads) > 0
+    assert sum(item["attributes"].get("tunnel") is not None for item in osm_roads) > 0
+    assert sum(item["attributes"].get("layer") is not None for item in osm_roads) > 0
+    assert any(item["type"] == "WaterBody" for item in objects)
+    assert any(item["attributes"].get("class") == "buildingEntrance" for item in objects)
+    assert any(item["attributes"].get("class") == "roofSolarPanel" for item in objects)
+    assert any(str(item["attributes"].get("class", "")).startswith("barrier:") for item in objects)
+    assert model["metadata"]["osmDetailCounts"]["sourceInventory"] == {
+        "roofShape": 218, "roofHeight": 113, "roofDirection": 127, "roofOrientation": 73,
+        "roofMaterial": 130, "roofColour": 80, "facadeColour": 103,
+        "bridge": 140, "tunnel": 35, "layer": 432, "entrance": 162,
+        "barrier": 549, "photovoltaic": 146, "surface": 2738, "sidewalk": 379,
+    }
+
+
+def test_height_and_vertical_placement_provenance_is_explicit():
+    model = json.loads((ROOT / "public/assets/city_model.json").read_text(encoding="utf-8"))
+    buildings = [item for item in model["cityObjects"].values() if item["type"] == "Building"]
+    transport = [
+        item for item in model["cityObjects"].values()
+        if item["type"] in {"Road", "Railway"} and "roads" in item["sources"] or item["type"] == "Railway"
+    ]
+
+    assert all("measuredHeightM" not in item["attributes"] for item in buildings)
+    assert all(item["attributes"]["heightProvenance"]["sourceTag"] for item in buildings)
+    assert {item["attributes"]["heightProvenance"]["classification"] for item in buildings} >= {"observed", "derived"}
+    assert all(
+        any(key in item["attributes"] for key in ("observedHeightM", "derivedHeightM", "inferredHeightM"))
+        for item in buildings
+    )
+    vertically_ordered = [item for item in transport if item["attributes"].get("layer") or item["attributes"].get("bridge") or item["attributes"].get("tunnel")]
+    assert vertically_ordered
+    assert all("inferredVerticalOffsetM" in item["attributes"] for item in vertically_ordered)
+    assert all(item["attributes"]["verticalPlacementConfidence"] == "low" for item in vertically_ordered)
+
+
+def test_manifest_records_reproducible_input_hashes_and_asset_cache_keys():
+    manifest = json.loads((ROOT / "public/assets/manifest.json").read_text(encoding="utf-8"))
+    assert {"terrain", "height", "buildings", "canopy", "roads", "railways", "green", "osm", "streetData"} <= manifest["buildInputs"].keys()
+    assert all(len(item["sha256"]) == 64 and item["bytes"] > 0 for item in manifest["buildInputs"].values())
+    assert all(
+        manifest["layers"][name].get("cache_key")
+        for name in ("fallback", "canopy", "roof_surface", "city_model")
+    )
+
+
+def test_compact_scene_retains_only_semantic_water_context():
+    fallback = json.loads((ROOT / "public/assets/fallback.json").read_text(encoding="utf-8"))
+
+    assert len(fallback["water"]) == 16
+    assert "installations" not in fallback
+    assert "cityFurniture" not in fallback
 
 
 def test_municipal_lane_count_handles_transition_values():

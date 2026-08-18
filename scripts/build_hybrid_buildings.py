@@ -14,12 +14,15 @@ import argparse
 import json
 import math
 from pathlib import Path
-from xml.etree import ElementTree
-
 from pyproj import Transformer
 from shapely.geometry import Polygon, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 from shapely.strtree import STRtree
+
+try:
+    from .osm_extract import load_osm
+except ImportError:
+    from osm_extract import load_osm
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
@@ -52,34 +55,52 @@ def osm_min_height(tags):
 
 
 def load_osm_way_buildings(osm_path, clip):
-    root = ElementTree.parse(osm_path).getroot()
-    to_local = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
-    nodes = {
-        node.attrib["id"]: to_local.transform(float(node.attrib["lon"]), float(node.attrib["lat"]))
-        for node in root.findall("node")
-    }
+    extract = load_osm(osm_path)
     records = []
-    for way in root.findall("way"):
-        tags = {tag.attrib["k"]: tag.attrib["v"] for tag in way.findall("tag")}
+    consumed_ways = set()
+    for relation in extract.relations:
+        member_tags = {}
+        for member_type, reference, role in relation.members:
+            if member_type == "way" and role in {"", "outer", "outline"} and reference in extract.ways:
+                member_tags.update(extract.ways[reference].tags)
+        tags = {**member_tags, **relation.tags}
+        if relation.tags.get("type") == "building":
+            tags.setdefault("building", "yes")
         if "building" not in tags and "building:part" not in tags:
             continue
-        coordinates = [nodes[ref.attrib["ref"]] for ref in way.findall("nd") if ref.attrib["ref"] in nodes]
-        if len(coordinates) < 4 or coordinates[0] != coordinates[-1]:
+        if tags.get("type") not in {"multipolygon", "building"}:
             continue
-        geometry = Polygon(coordinates)
-        if not geometry.is_valid:
-            geometry = geometry.buffer(0)
-        geometry = geometry.intersection(clip)
-        for part_index, polygon in enumerate(polygon_parts(geometry)):
+        polygons = extract.relation_polygons(relation)
+        if not polygons:
+            continue
+        consumed_ways.update(
+            reference for member_type, reference, role in relation.members
+            if member_type == "way" and role in {"", "outer", "outline", "inner"}
+        )
+        for part_index, polygon in enumerate(polygon_parts(unary_union(polygons).intersection(clip))):
             if polygon.area < 2.0:
                 continue
             records.append({
                 "geometry": polygon,
-                "osm_id": way.attrib["id"],
+                "osm_id": relation.identifier,
+                "osm_type": "relation",
                 "part_index": part_index,
                 "tags": tags,
                 "is_part": "building:part" in tags,
             })
+    for way in extract.ways.values():
+        tags = way.tags
+        if way.identifier in consumed_ways or ("building" not in tags and "building:part" not in tags):
+            continue
+        geometry = extract.way_polygon(way)
+        if geometry is None:
+            continue
+        for part_index, polygon in enumerate(polygon_parts(geometry.intersection(clip))):
+            if polygon.area >= 2.0:
+                records.append({
+                    "geometry": polygon, "osm_id": way.identifier, "osm_type": "way",
+                    "part_index": part_index, "tags": tags, "is_part": "building:part" in tags,
+                })
     return records
 
 
@@ -153,17 +174,27 @@ def build_hybrid(osm_path, municipal_path, scene_footprint_path):
         features.append({
             "type": "Feature",
             "properties": {
-                "fid": f"osm-way-{record['osm_id']}-{record['part_index']}",
+                "fid": f"osm-{record['osm_type']}-{record['osm_id']}-{record['part_index']}",
                 "BLD_HGT": explicit_height,
                 "HEIGHT_SRC": "osm_height" if explicit_height is not None else "lidar_2025",
                 "ACQS_MTHD": "OpenStreetMap building part" if record["is_part"] else "OpenStreetMap outline",
                 "ACQS_PRD": 2026,
                 "OSM_ID": record["osm_id"],
+                "OSM_TYPE": record["osm_type"],
                 "OSM_PART": record["is_part"],
                 "OSM_LEVELS": tags.get("building:levels"),
                 "OSM_MIN_HEIGHT": osm_min_height(tags),
                 "OSM_MIN_LEVEL": tags.get("building:min_level"),
                 "OSM_ROOF": tags.get("roof:shape"),
+                "OSM_TAGS": {
+                    key: value for key, value in tags.items()
+                    if key in {
+                        "building", "building:part", "building:levels", "building:min_level",
+                        "building:material", "building:colour", "height", "min_height", "name",
+                        "roof:shape", "roof:height", "roof:direction", "roof:orientation",
+                        "roof:material", "roof:colour", "roof:levels",
+                    }
+                },
             },
             "geometry": mapping(transform_geometry(to_web.transform, record["geometry"])),
         })

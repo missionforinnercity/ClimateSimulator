@@ -1,5 +1,3 @@
-import { sceneFromCityModel } from './semanticCityModel.js?v=3';
-
 const COLORS = {
   background: '#1b2125',
   terrain: '#424a4d',
@@ -107,16 +105,13 @@ export async function startScene(canvas, status) {
   asphaltContext.putImageData(asphaltPixels, 0, 0);
   const asphaltPattern = sceneContext.createPattern(asphaltTile, 'repeat');
 
-  const [manifest, scene, canopyAsset] = await Promise.all([
-    fetch('assets/manifest.json').then(response => response.json()),
-    fetch('assets/city_model.json')
-      .then(async response => response.ok
-        ? sceneFromCityModel(await response.json())
-        : fetch('assets/fallback.json').then(fallback => fallback.json())),
-    fetch('assets/canopy.json').then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
+  const manifest = await fetch('assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
+  const [scene, canopyAsset] = await Promise.all([
+    fetch(`assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`).then(response => response.json()),
+    fetch(`assets/${manifest.assets?.canopy || 'canopy.json'}?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };
-  const visibility = { terrain: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true };
+  const visibility = { terrain: true, water: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true };
   const buildings = scene.buildings.map(value => {
     const [ground, height, ring] = value;
     const minHeight = Math.max(0, Number(value[10]) || 0);
@@ -130,7 +125,7 @@ export async function startScene(canvas, status) {
       kind: 'building', value,
       x, z, ground, height, minHeight,
       radius: Math.max(...ring.map(point => Math.hypot(point[0] - x, point[1] - z))),
-      ring, shadowRing: simplifyShadowRing(ring), minX, maxX, minZ, maxZ,
+      ring, holes: value[13] || [], attributes: value[14] || {}, shadowRing: simplifyShadowRing(ring), minX, maxX, minZ, maxZ,
     };
   });
   const buildingGridSize = 80;
@@ -192,7 +187,7 @@ export async function startScene(canvas, status) {
     const maxZ = Math.max(...points.map(point => point[1]));
     const x = (minX + maxX) * 0.5;
     const z = (minZ + maxZ) * 0.5;
-    return { width: value[0], highway: value[1], points, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
+    return { width: value[0], highway: value[1], points, attributes: value[4] || {}, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
   });
   const railways = (scene.railways || []).map(value => ({
     railway: value[0],
@@ -207,6 +202,7 @@ export async function startScene(canvas, status) {
     const z = (minZ + maxZ) * 0.5;
     return { points, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
   });
+  const water = (scene.water || []).map(item => item.rings || []).filter(rings => rings[0]?.length >= 3);
   const terrain = scene.terrain;
   let drag = null;
   let dirty = true;
@@ -286,16 +282,6 @@ export async function startScene(canvas, status) {
   const sunHoursLegend = document.querySelector('#sun-hours-legend');
   const sunHoursMin = document.querySelector('#sun-hours-min');
   const sunHoursMax = document.querySelector('#sun-hours-max');
-  const mitigationMethod = document.querySelector('#mitigation-method');
-  const mitigationMethodNote = document.querySelector('#mitigation-method-note');
-  const mitigationAdd = document.querySelector('#mitigation-add');
-  const mitigationStatus = document.querySelector('#mitigation-status');
-  const mitigationList = document.querySelector('#mitigation-list');
-  const mitigationRun = document.querySelector('#mitigation-run');
-  const mitigationClear = document.querySelector('#mitigation-clear');
-  const mitigationCompare = document.querySelector('#mitigation-compare');
-  const mitigationCase = document.querySelector('#mitigation-case');
-  const mitigationResults = document.querySelector('#mitigation-results');
   const heatState = {
     enabled: Boolean(heatToggle?.checked),
     metric: heatMetric?.value || 'pedestrian_priority_score',
@@ -303,10 +289,6 @@ export async function startScene(canvas, status) {
     baselineData: null,
   };
   let heatLoadToken = 0;
-  const mitigationState = {
-    drawing: false, stroking: false, pointerId: null, lastScreen: null,
-    points: [], interventions: [], result: null, afterData: null,
-  };
   const streetViewState = { placing: false, point: null };
   const shadowState = {
     enabled: Boolean(sunToggle?.checked),
@@ -465,7 +447,7 @@ export async function startScene(canvas, status) {
     for (const id of nearbyBuildings(x, z)) {
       const building = buildings[id];
       if (x < building.minX || x > building.maxX || z < building.minZ || z > building.maxZ) continue;
-      if (pointInPolygon(x, z, building.ring)
+      if (pointInPolygon(x, z, building.ring) && !building.holes.some(hole => pointInPolygon(x, z, hole))
         && (!highest || building.ground + building.height > highest.ground + highest.height)) highest = building;
     }
     return highest;
@@ -481,7 +463,7 @@ export async function startScene(canvas, status) {
       const building = buildings[id];
       if (!isWindObstacle(building)) continue;
       if (x < building.minX || x > building.maxX || z < building.minZ || z > building.maxZ) continue;
-      if (pointInPolygon(x, z, building.ring)
+      if (pointInPolygon(x, z, building.ring) && !building.holes.some(hole => pointInPolygon(x, z, hole))
         && (!highest || building.ground + building.height > highest.ground + highest.height)) highest = building;
     }
     return highest;
@@ -651,8 +633,11 @@ export async function startScene(canvas, status) {
     for (const id of nearbyBuildings(lookX, lookZ)) {
       const building = buildings[id];
       if (!isWindObstacle(building)) continue;
-      const inside = pointInPolygon(lookX, lookZ, building.ring);
-      const boundary = nearestBoundary(lookX, lookZ, building.ring);
+      const inside = pointInPolygon(lookX, lookZ, building.ring)
+        && !building.holes.some(hole => pointInPolygon(lookX, lookZ, hole));
+      const boundary = [building.ring, ...building.holes]
+        .map(ring => nearestBoundary(lookX, lookZ, ring))
+        .reduce((nearest, candidate) => candidate.distance < nearest.distance ? candidate : nearest);
       const influence = 18;
       if (!inside && boundary.distance >= influence) continue;
       let outwardX = inside ? boundary.x - lookX : lookX - boundary.x;
@@ -1887,18 +1872,35 @@ export async function startScene(canvas, status) {
     }
   }
 
+  function drawWater(projectPolygon) {
+    context.fillStyle = 'rgba(47, 134, 166, 0.94)';
+    for (const rings of water) {
+      const waterPath = new Path2D();
+      for (const ring of rings) {
+        const projected = projectPolygon(ring.map(([x, z]) => [x, terrainHeightAt(x, z) + 0.32, z]));
+        if (projected.length < 3) continue;
+        waterPath.moveTo(projected[0][0], projected[0][1]);
+        for (let index = 1; index < projected.length; index += 1) waterPath.lineTo(projected[index][0], projected[index][1]);
+        waterPath.closePath();
+      }
+      context.fill(waterPath, 'evenodd');
+    }
+  }
+
   function roadStyle(highway) {
     const major = ['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link'];
     const secondary = ['secondary', 'secondary_link', 'tertiary'];
-    const paths = ['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator'];
+    const paths = ['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator', 'pedestrian'];
+    const path = paths.includes(highway);
     return {
-      color: paths.includes(highway) ? '#858f90' : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road,
-      path: paths.includes(highway),
+      color: path ? '#858f90' : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road,
+      path,
+      priority: path ? 0 : major.includes(highway) ? 3 : secondary.includes(highway) ? 2 : 1,
     };
   }
 
   function drawRoads(project, focal, simplified) {
-    const groups = new Map();
+    const visibleRoads = [];
     for (const road of roads) {
       const style = roadStyle(road.highway);
       if ((style.path && !visibility.paths) || (!style.path && !visibility.roads)) continue;
@@ -1907,28 +1909,29 @@ export async function startScene(canvas, status) {
       if (!isInView(road.x, terrainHeightAt(road.x, road.z) + 0.22, road.z, road.radius + road.width, project, focal)) continue;
       const points = road.points.map(([x, z]) => project([x, roadTerrainHeightAt(x, z) + 0.22, z]));
       if (points.length < 2 || points.some(point => !point)) continue;
-      const group = groups.get(road.highway) || { roads: [], width: road.width, ...style };
-      group.roads.push(points);
-      groups.set(road.highway, group);
+      visibleRoads.push({ points, width: clamp(road.width * focal / camera.distance, 0.7, 12), ...style });
     }
     context.lineJoin = 'round';
     context.lineCap = 'round';
-    for (const group of groups.values()) {
-      const width = clamp(group.width * focal / camera.distance, 0.7, 12);
+    const strokeRoad = (road, width, style) => {
+      const { points } = road;
       context.beginPath();
-      for (const points of group.roads) {
-        context.moveTo(points[0][0], points[0][1]);
-        for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
-      }
-      context.lineWidth = width + 1.3;
-      context.strokeStyle = '#2c2f2e';
-      context.stroke();
+      context.moveTo(points[0][0], points[0][1]);
+      for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
       context.lineWidth = width;
-      context.strokeStyle = group.color;
+      context.strokeStyle = style;
       context.stroke();
-      if (!group.path && asphaltPattern) {
-        context.strokeStyle = asphaltPattern;
-        context.stroke();
+    };
+    // Finish every border in a tier before painting its surfaces, then move
+    // from paths to local, secondary and major roads. Source feature order can
+    // no longer cut dark outlines through a crossing or T-junction.
+    for (let priority = 0; priority <= 3; priority += 1) {
+      const tier = visibleRoads.filter(road => road.priority === priority);
+      for (const road of tier) strokeRoad(road, road.width + 1.3, '#2c2f2e');
+      for (const road of tier) strokeRoad(road, road.width, road.color);
+      if (asphaltPattern) for (const road of tier) {
+        if (road.path) continue;
+        strokeRoad(road, road.width, asphaltPattern);
       }
     }
   }
@@ -1968,6 +1971,7 @@ export async function startScene(canvas, status) {
       const clipped = path(clippedBoundary);
       if (clipped) context.save();
       if (clipped) context.clip();
+      if (visibility.water) drawWater(projectPolygon);
       if (visibility.grass) drawGrass(projectPolygon, project, focal, simplified);
       if (visibility.railways) drawRailways(project, focal, simplified);
       if (visibility.roads || visibility.paths) {
@@ -2031,40 +2035,6 @@ export async function startScene(canvas, status) {
     drawWindDirection(project);
     drawWindBox(project, projectPolygon);
     drawSunDomain(project, projectPolygon);
-    for (const item of mitigationState.interventions.filter(entry => entry.visible)) {
-      const color = mitigationMethods[item.method]?.color || '#f5b85f';
-      for (const polygon of item.geometry.coordinates || []) {
-        const points = polygon.map(([x, z]) => project([x, terrainHeightAt(x, z) + 1.2, z])).filter(Boolean);
-        if (points.length < 3) continue;
-        mainContext.beginPath();
-        points.forEach((point, index) => index
-          ? mainContext.lineTo(point[0], point[1])
-          : mainContext.moveTo(point[0], point[1]));
-        mainContext.closePath();
-        mainContext.globalAlpha = 0.34;
-        mainContext.fillStyle = color;
-        mainContext.fill();
-        mainContext.globalAlpha = 1;
-        mainContext.strokeStyle = color;
-        mainContext.lineWidth = 2;
-        mainContext.stroke();
-      }
-    }
-    if (mitigationState.drawing && mitigationState.points.length) {
-      const points = mitigationState.points.map(([x, z]) => project([x, terrainHeightAt(x, z) + 1, z])).filter(Boolean);
-      mainContext.strokeStyle = '#f5b85f';
-      mainContext.fillStyle = '#ffd28f';
-      mainContext.lineWidth = 2;
-      mainContext.beginPath();
-      points.forEach((point, index) => index ? mainContext.lineTo(point[0], point[1]) : mainContext.moveTo(point[0], point[1]));
-      if (points.length >= 3) {
-        mainContext.closePath();
-        mainContext.globalAlpha = 0.2;
-        mainContext.fill();
-        mainContext.globalAlpha = 1;
-      }
-      mainContext.stroke();
-    }
     if (streetViewState.point) {
       const [x, z] = streetViewState.point;
       const base = project([x, terrainHeightAt(x, z) + 0.8, z]);
@@ -2087,193 +2057,6 @@ export async function startScene(canvas, status) {
     }
   }
 
-  const mitigationMethods = {
-    added_canopy: { label: 'Trees & vegetation', color: '#398a55', parameter: 'maturity_pct', parameterLabel: 'maturity %', defaultValue: 100, min: 20, max: 100, step: 5, note: 'Tree canopy casts time-dependent shade; maturity scales its estimated benefit.' },
-    constructed_shade: { label: 'Pedestrian shade structure', color: '#d49b45', parameter: 'height_m', parameterLabel: 'height m', defaultValue: 3, min: 1.5, max: 12, step: 0.5, note: 'A canopy or shelter casts shade according to its height, date and time.' },
-    cool_pavement: { label: 'Cool pavement', color: '#86b9cf', parameter: 'target_albedo', parameterLabel: 'target albedo', defaultValue: 0.35, min: 0.25, max: 0.65, step: 0.05, note: 'A more reflective ground finish lowers treated surface temperature.' },
-    cool_roof: { label: 'Cool roof', color: '#e6e2cf', parameter: 'target_albedo', parameterLabel: 'target albedo', defaultValue: 0.65, min: 0.45, max: 0.85, step: 0.05, note: 'Reflective, high-emittance roofing lowers roof heat; verify material, glare, waterproofing and roof condition.' },
-    green_roof: { label: 'Green roof', color: '#6ea64b', parameter: 'substrate_depth_cm', parameterLabel: 'soil depth cm', defaultValue: 15, min: 6, max: 60, step: 1, note: 'Paint across the intended roofs. The result is clipped to eligible roof surfaces and reports roof-only temperature impact.' },
-    canopy_protection: { label: 'Protect canopy', color: '#1e6b42', parameter: 'maturity_pct', parameterLabel: 'retained %', defaultValue: 100, min: 20, max: 100, step: 5, note: 'Only existing mapped canopy is retained and counted.' },
-    permeable_pavement: { label: 'Permeable pavement', color: '#5b91a0', parameter: 'runoff_capture_mm', parameterLabel: 'storm capture mm', defaultValue: 25, min: 5, max: 100, step: 5, note: 'Adds modest cooling and records a conceptual stormwater-capture depth.' },
-    rain_garden: { label: 'Rain garden / bioswale', color: '#3f8f78', parameter: 'influence_m', parameterLabel: 'cooling reach m', defaultValue: 6, min: 2, max: 20, step: 1, note: 'A planted drainage area cools its footprint and a configurable nearby buffer.' },
-    depave_plant: { label: 'De-pave and plant', color: '#78a84f', parameter: 'influence_m', parameterLabel: 'cooling reach m', defaultValue: 4, min: 1, max: 15, step: 1, note: 'Replaces hard ground with planting and extends cooling beyond the treated footprint.' },
-    water_feature: { label: 'Water feature', color: '#3d9ac4', parameter: 'influence_m', parameterLabel: 'cooling reach m', defaultValue: 8, min: 2, max: 25, step: 1, note: 'Models localized evaporative cooling; water demand still needs a separate feasibility check.' },
-  };
-  const mitigationLabel = method => mitigationMethods[method]?.label || method;
-
-  function invalidateMitigationResult() {
-    mitigationState.result = null;
-    mitigationState.afterData = null;
-    mitigationResults.hidden = true;
-    mitigationCompare.value = 'before';
-    heatState.data = heatState.baselineData;
-  }
-
-  function renderMitigationList() {
-    mitigationList.innerHTML = '';
-    mitigationState.interventions.forEach((item, index) => {
-      const row = document.createElement('div');
-      row.className = 'mitigation-item';
-      const config = mitigationMethods[item.method] || mitigationMethods.cool_pavement;
-      const value = item[config.parameter] ?? config.defaultValue;
-      row.innerHTML = `<span><label><input type="checkbox" ${item.visible ? 'checked' : ''}> ${mitigationLabel(item.method)}</label></span>
-        <input type="number" aria-label="${config.parameterLabel}" title="${config.parameterLabel}"
-          min="${config.min}" max="${config.max}" step="${config.step}" value="${value}">
-        <span><button type="button" data-action="duplicate">＋</button><button type="button" data-action="remove">×</button></span>`;
-      const checkbox = row.querySelector('input[type="checkbox"]');
-      const number = row.querySelector('input[type="number"]');
-      checkbox.addEventListener('change', () => {
-        item.visible = checkbox.checked;
-        invalidateMitigationResult();
-        mitigationRun.disabled = !mitigationState.interventions.some(entry => entry.visible);
-        requestRender();
-      });
-      number.addEventListener('change', () => {
-        item[config.parameter] = Number(number.value);
-        invalidateMitigationResult();
-        requestRender();
-      });
-      row.addEventListener('click', event => {
-        if (event.target.dataset.action === 'remove') mitigationState.interventions.splice(index, 1);
-        if (event.target.dataset.action === 'duplicate') mitigationState.interventions.splice(index + 1, 0, {
-          ...item, id: `intervention-${Date.now()}`, geometry: JSON.parse(JSON.stringify(item.geometry)),
-        });
-        invalidateMitigationResult();
-        renderMitigationList();
-        requestRender();
-      });
-      mitigationList.append(row);
-    });
-    mitigationRun.disabled = !mitigationState.interventions.some(item => item.visible);
-  }
-
-  function finishMitigationDrawing() {
-    if (mitigationState.points.length < 3) {
-      mitigationStatus.textContent = 'Add at least three points before closing.';
-      return;
-    }
-    const method = mitigationMethod.value;
-    const config = mitigationMethods[method] || mitigationMethods.cool_pavement;
-    mitigationState.interventions.push({
-      id: `intervention-${Date.now()}`, method, visible: true,
-      [config.parameter]: config.defaultValue,
-      height_m: method === 'added_canopy' ? 8 : method === 'constructed_shade' ? config.defaultValue : 0,
-      geometry: { type: 'Polygon', coordinates: [[...mitigationState.points, mitigationState.points[0]]] },
-    });
-    invalidateMitigationResult();
-    mitigationState.drawing = false;
-    mitigationState.stroking = false;
-    mitigationState.pointerId = null;
-    mitigationState.points = [];
-    mitigationAdd.classList.remove('active');
-    mitigationAdd.setAttribute('aria-pressed', 'false');
-    mitigationAdd.textContent = 'Draw intervention';
-    canvas.style.cursor = 'grab';
-    mitigationStatus.textContent = `${mitigationLabel(method)} added · compare when ready.`;
-    renderMitigationList();
-    requestRender();
-  }
-
-  async function runMitigationPreview() {
-    const interventions = mitigationState.interventions.filter(item => item.visible);
-    if (!interventions.length) return;
-    mitigationRun.disabled = true;
-    mitigationRun.textContent = 'Estimating…';
-    try {
-      const response = await fetch(`${windApi}/mitigations/preview`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          interventions,
-          sun_date: heatDate?.value || shadowState.date,
-          sun_minutes: Number(heatTime?.value ?? shadowState.minutes),
-          baseline_metric: 'heat_model_lst_c',
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      mitigationState.result = payload;
-      const comparisonZones = payload.roof_zones?.length ? payload.roof_zones : payload.zones;
-      const estimateCase = mitigationCase?.value || 'central';
-      const temperatures = comparisonZones.map(zone => zone.baseline_surface_temperature_c).filter(Number.isFinite).sort((a, b) => a - b);
-      const percentile = fraction => {
-        if (!temperatures.length) return null;
-        const position = (temperatures.length - 1) * fraction;
-        const lower = Math.floor(position);
-        const upper = Math.min(lower + 1, temperatures.length - 1);
-        return temperatures[lower] + (temperatures[upper] - temperatures[lower]) * (position - lower);
-      };
-      const range = temperatures.length ? { min: percentile(0.10), max: percentile(0.90) } : { min: 25, max: 45 };
-      heatState.baselineData = {
-        metric: payload.roof_zones?.length ? 'rooftop_temperature_c' : 'heat_model_lst_c',
-        metric_label: payload.roof_zones?.length ? 'Before-intervention rooftop temperature' : 'Before-intervention surface temperature',
-        metric_metadata: { unit: '°C', decimals: 1 }, color_range: range, range,
-        features: comparisonZones.map(zone => ({
-          geometry: zone.geometry, surface_y: zone.surface_y,
-          value: zone.baseline_surface_temperature_c,
-        })),
-      };
-      mitigationState.afterData = {
-        ...heatState.baselineData,
-        features: comparisonZones.map(zone => ({
-          geometry: zone.geometry, surface_y: zone.surface_y,
-          value: zone.estimates[estimateCase].surface_temperature_c,
-        })),
-        count: comparisonZones.length,
-        metric_label: payload.roof_zones?.length ? 'After-intervention rooftop temperature' : 'After-intervention surface temperature',
-        metric_metadata: { unit: '°C', decimals: 1 },
-      };
-      const central = payload.summary.estimates[estimateCase];
-      const roofCentral = payload.summary.roof_estimates?.[estimateCase];
-      mitigationResults.hidden = false;
-      const coBenefits = payload.summary.co_benefits || {};
-      const drawnArea = payload.interventions.reduce((sum, item) => sum + Number(item.drawn_area_m2 || 0), 0);
-      const eligibleArea = payload.interventions.reduce((sum, item) => sum + Number(item.treated_area_m2 || 0), 0);
-      const eligiblePercent = drawnArea ? eligibleArea / drawnArea * 100 : 0;
-      mitigationResults.innerHTML = `<span><b>${Math.round(payload.summary.treated_area_m2).toLocaleString()} m²</b>Treated</span>
-        <span><b>${eligiblePercent.toFixed(0)}%</b>Eligible drawing</span>
-        <span><b>${Math.round(roofCentral?.affected_roof_area_m2 ?? payload.summary.affected_area_m2).toLocaleString()} m²</b>${roofCentral?.affected_roof_area_m2 ? 'Affected roof' : 'Affected'}</span>
-        <span><b>${(roofCentral?.mean_roof_reduction_c ?? central.mean_surface_reduction_c).toFixed(1)}°C</b>${roofCentral?.affected_roof_area_m2 ? 'Roof relief' : 'Surface relief'}</span>
-        <span><b>${roofCentral?.mean_after_roof_temperature_c != null ? `${roofCentral.mean_after_roof_temperature_c.toFixed(1)}°C` : `${central.mean_pedestrian_reduction_c.toFixed(1)}°C`}</b>${roofCentral?.affected_roof_area_m2 ? 'Mean roof after' : 'Pedestrian relief'}</span>
-        ${coBenefits.conceptual_runoff_capture_m3 > 0
-          ? `<span><b>${coBenefits.conceptual_runoff_capture_m3.toFixed(1)} m³</b>Conceptual runoff capture</span>` : ''}
-        ${coBenefits.added_canopy_m2 > 0
-          ? `<span><b>${Math.round(coBenefits.added_canopy_m2)} m²</b>Added mature canopy</span>` : ''}`;
-      mitigationStatus.textContent = payload.warnings.length ? payload.warnings.join(' ')
-        : roofCentral?.affected_roof_area_m2
-          ? `${Math.round(roofCentral.affected_roof_area_m2).toLocaleString()} m² eligible roof · rooftop comparison · ${payload.version}`
-          : `${payload.summary.affected_zone_count} source heat zones · exact affected geometry · ${payload.version}`;
-      mitigationCompare.value = 'after';
-      heatState.data = mitigationState.afterData;
-      if (heatSummary) heatSummary.hidden = true;
-      heatLegendMin.textContent = `Cooler ≤ ${heatState.data.color_range.min.toFixed(1)}°C`;
-      heatLegendMax.textContent = `Hotter ≥ ${heatState.data.color_range.max.toFixed(1)}°C`;
-      heatToggle.checked = true;
-      setHeatMode(true);
-    } catch (error) {
-      mitigationStatus.textContent = `Impact estimate unavailable (${error.message})`;
-    } finally {
-      mitigationRun.disabled = false;
-      mitigationRun.textContent = 'Compare impact';
-    }
-  }
-
-  function appendMitigationPoint(event, force = false) {
-    const { screenToTerrain } = cameraProjection();
-    const ground = screenToTerrain(event.clientX, event.clientY);
-    if (!ground) return false;
-    const screen = [event.clientX, event.clientY];
-    if (!force && mitigationState.lastScreen
-      && Math.hypot(screen[0] - mitigationState.lastScreen[0], screen[1] - mitigationState.lastScreen[1]) < 5) return false;
-    const next = [Number(ground[0].toFixed(2)), Number(ground[1].toFixed(2))];
-    const previous = mitigationState.points.at(-1);
-    if (previous && Math.hypot(next[0] - previous[0], next[1] - previous[1]) < 0.35) return false;
-    mitigationState.points.push(next);
-    mitigationState.lastScreen = screen;
-    mitigationStatus.textContent = `Painting ${mitigationLabel(mitigationMethod.value)} · release to finish.`;
-    requestRender();
-    return true;
-  }
-
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('pointerdown', event => {
     if (streetViewState.placing && event.button === 0) {
@@ -2287,15 +2070,6 @@ export async function startScene(canvas, status) {
         }));
         requestRender();
       }
-      return;
-    }
-    if (mitigationState.drawing && event.button === 0) {
-      mitigationState.points = [];
-      mitigationState.stroking = true;
-      mitigationState.pointerId = event.pointerId;
-      mitigationState.lastScreen = null;
-      appendMitigationPoint(event, true);
-      canvas.setPointerCapture(event.pointerId);
       return;
     }
     if (shadowState.enabled && shadowState.mode === 'hours' && shadowState.moveMode && event.button === 0) {
@@ -2353,10 +2127,6 @@ export async function startScene(canvas, status) {
     markInteraction();
   });
   canvas.addEventListener('pointermove', event => {
-    if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
-      appendMitigationPoint(event);
-      return;
-    }
     if (sunDrag) {
       const { screenToPlane } = cameraProjection();
       const ground = screenToPlane(event.clientX, event.clientY, sunDrag.planeY);
@@ -2409,18 +2179,6 @@ export async function startScene(canvas, status) {
     requestRender();
   });
   canvas.addEventListener('pointerup', event => {
-    if (mitigationState.drawing && mitigationState.stroking && event.pointerId === mitigationState.pointerId) {
-      appendMitigationPoint(event, true);
-      mitigationState.stroking = false;
-      mitigationState.pointerId = null;
-      if (mitigationState.points.length >= 3) finishMitigationDrawing();
-      else {
-        mitigationState.points = [];
-        mitigationStatus.textContent = 'Drag across the terrain to paint an area; a click is too small.';
-        requestRender();
-      }
-      return;
-    }
     if (sunDrag) sunStatus.textContent = `Analysis area updated to ${shadowState.size} m · calculate sun hours again.`;
     if (windDrag) windStatus.textContent = `Domain updated · click Simulate wind for the ${windState.size} m domain.`;
     drag = null;
@@ -2429,12 +2187,7 @@ export async function startScene(canvas, status) {
     interactionUntil = 0;
     requestRender();
   });
-  canvas.addEventListener('pointercancel', event => {
-    if (event.pointerId === mitigationState.pointerId) {
-      mitigationState.stroking = false;
-      mitigationState.pointerId = null;
-      mitigationState.points = [];
-    }
+  canvas.addEventListener('pointercancel', () => {
     drag = null;
     windDrag = null;
     sunDrag = null;
@@ -2447,13 +2200,7 @@ export async function startScene(canvas, status) {
     markInteraction();
     requestRender();
   }, { passive: false });
-  canvas.addEventListener('dblclick', event => {
-    if (mitigationState.drawing) {
-      event.preventDefault();
-    } else {
-      fitScene();
-    }
-  });
+  canvas.addEventListener('dblclick', fitScene);
   document.querySelector('#fit').addEventListener('click', fitScene);
   document.querySelectorAll('[data-layer]').forEach(input => input.addEventListener('change', event => {
     visibility[event.target.dataset.layer] = event.target.checked;
@@ -2588,74 +2335,8 @@ export async function startScene(canvas, status) {
     if (shadowState.mode === 'hours') generateSunHours();
     else generateShadows();
   });
-  mitigationAdd?.addEventListener('click', () => {
-    mitigationState.drawing = !mitigationState.drawing;
-    mitigationState.points = [];
-    mitigationAdd.classList.toggle('active', mitigationState.drawing);
-    mitigationAdd.setAttribute('aria-pressed', String(mitigationState.drawing));
-    mitigationAdd.textContent = mitigationState.drawing ? 'Cancel drawing' : 'Draw intervention';
-    mitigationStatus.textContent = mitigationState.drawing
-      ? `Drag on the terrain to paint ${mitigationLabel(mitigationMethod.value)}; release to finish.`
-      : 'Drawing cancelled.';
-    canvas.style.cursor = mitigationState.drawing ? 'crosshair' : 'grab';
-    requestRender();
-  });
-  mitigationMethod?.addEventListener('change', () => {
-    const config = mitigationMethods[mitigationMethod.value];
-    if (mitigationMethodNote && config) mitigationMethodNote.textContent = config.note;
-    if (['cool_roof', 'green_roof'].includes(mitigationMethod.value) && heatMetric) {
-      heatMetric.value = 'rooftop_temperature_c';
-      loadHeat('rooftop_temperature_c');
-    } else if (heatMetric?.value === 'rooftop_temperature_c') {
-      heatMetric.value = 'heat_model_lst_c';
-      loadHeat('heat_model_lst_c');
-    }
-    if (mitigationState.drawing) {
-      mitigationStatus.textContent = `Drag on the terrain to paint ${mitigationLabel(mitigationMethod.value)}; release to finish.`;
-    }
-  });
-  mitigationRun?.addEventListener('click', runMitigationPreview);
-  mitigationClear?.addEventListener('click', () => {
-    mitigationState.drawing = false;
-    mitigationState.points = [];
-    mitigationState.interventions = [];
-    mitigationState.result = null;
-    mitigationState.afterData = null;
-    mitigationList.innerHTML = '';
-    mitigationResults.hidden = true;
-    mitigationRun.disabled = true;
-    mitigationCompare.value = 'before';
-    heatState.data = heatState.baselineData;
-    mitigationStatus.textContent = 'Choose a method, then draw its intended footprint. Results are clipped to eligible surfaces.';
-    canvas.style.cursor = 'grab';
-    loadHeat(heatMetric?.value);
-  });
-  mitigationCompare?.addEventListener('change', () => {
-    if (mitigationCompare.value === 'after' && !mitigationState.afterData) {
-      mitigationCompare.value = 'before';
-      mitigationStatus.textContent = 'Run Compare impact before switching to the after map.';
-    }
-    heatState.data = mitigationCompare.value === 'after' ? mitigationState.afterData : heatState.baselineData;
-    if (heatState.data) {
-      if (heatSummary) heatSummary.hidden = true;
-      heatLegendMin.textContent = `Cooler ≤ ${heatState.data.color_range.min.toFixed(1)}°C`;
-      heatLegendMax.textContent = `Hotter ≥ ${heatState.data.color_range.max.toFixed(1)}°C`;
-    }
-    requestRender();
-  });
-  mitigationCase?.addEventListener('change', () => {
-    if (mitigationState.result) runMitigationPreview();
-    else mitigationStatus.textContent = `${mitigationCase.options[mitigationCase.selectedIndex]?.textContent || 'Estimate'} selected · run Compare impact.`;
-  });
   addEventListener('climate-streetview-mode', event => {
     streetViewState.placing = Boolean(event.detail?.enabled);
-    if (streetViewState.placing && mitigationState.drawing) {
-      mitigationState.drawing = false;
-      mitigationState.points = [];
-      mitigationAdd.classList.remove('active');
-      mitigationAdd.setAttribute('aria-pressed', 'false');
-      mitigationAdd.textContent = 'Draw intervention';
-    }
     canvas.style.cursor = streetViewState.placing ? 'crosshair' : 'grab';
     requestRender();
   });
@@ -2727,7 +2408,7 @@ export async function startScene(canvas, status) {
 
   fitScene();
   applyViewFromUrl();
-  status.textContent = `${scene.buildings.length} buildings · ${railways.length} railway lines · ${canopies.length} canopy footprints · ${roads.length} OSM roads · Canvas 2D compatibility`;
+  status.textContent = `${scene.buildings.length} buildings · ${water.length} water bodies · ${railways.length} railway lines · ${canopies.length} canopy footprints · ${roads.length} OSM roads · Canvas 2D compatibility`;
   windStatus.textContent = windState.enabled
     ? 'Choose Move / resize domain to position the orange box.'
     : 'Wind display hidden.';
