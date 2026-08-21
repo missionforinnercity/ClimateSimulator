@@ -21,6 +21,11 @@ from .solar import sun_position
 SCENE_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "fallback.json"
 CANOPY_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "canopy.json"
 MAX_ANALYSIS_CELLS = 60_000
+# Below this a "sliver" is floating-point noise from a polygon clip, not real
+# roof area worth rendering. Kept small (not the old 0.25 m^2) so that real
+# roof slivers along occlusion boundaries and grid-cell edges still get a
+# cell instead of leaving a visible unlit gap in the sun-hours overlay.
+MIN_CELL_AREA_M2 = 0.02
 _CANCELLED_ANALYSES: set[str] = set()
 _CANCEL_LOCK = threading.Lock()
 
@@ -110,7 +115,7 @@ def _visible_roofs(buildings: list[dict[str, Any]]) -> list[dict[str, Any]]:
         higher = [ordered[int(candidate)]["footprint"] for candidate in tree.query(building["footprint"]) if int(candidate) < index]
         visible = building["footprint"].difference(unary_union(higher)) if higher else building["footprint"]
         for part in _polygon_parts(visible):
-            if part.area >= 0.25:
+            if part.area >= MIN_CELL_AREA_M2:
                 roofs.append({**building, "footprint": part})
     return roofs
 
@@ -134,7 +139,7 @@ def _roof_cells(
             while z < max_z:
                 clipped = footprint.intersection(box(x, z, x + resolution, z + resolution))
                 for part in _polygon_parts(clipped):
-                    if part.area < 0.25:
+                    if part.area < MIN_CELL_AREA_M2:
                         continue
                     point = part.representative_point()
                     cells.append({
@@ -425,7 +430,7 @@ def building_surface_sunlight(
     sun_states = []
     for start in range(start_minutes, end_minutes, step_minutes):
         duration = min(step_minutes, end_minutes - start)
-        altitude, sun_x, sun_z = sun_position(date_text, start + duration // 2)
+        altitude, sun_x, sun_z = sun_position(date_text, start + duration / 2)
         if altitude > 0.008:
             sun_states.append((altitude, sun_x, sun_z, duration / 60.0))
     if _analysis_cancelled(analysis_id):

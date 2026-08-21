@@ -291,7 +291,14 @@ export async function createTransportLayer({
       return stop ? { id, ...nearestFraction(route._metric, stop.point) } : null;
     }).filter(item => item && item.distance < 55).sort((a, b) => a.fraction - b.fraction);
   }
-  const sharedRailLine = (data.railTracks || [])
+  // Corridors whose own mapped geometry never enters the modelled CBD extent
+  // (they leave the scene almost immediately) still need a physical track to
+  // run on. Instead of every one of them collapsing onto a single shared
+  // line -- which piles half the fleet onto one alignment and reads as
+  // z-fighting where colours overlap -- collect every distinct physical
+  // approach into the hub and hand them out round-robin, so unmapped
+  // corridors spread across the real track fan instead of stacking.
+  const serviceApproaches = (data.railTracks || [])
     .map(points => {
       const metric = lineMetrics(points);
       const hubDistance = hubStation ? nearestFraction(metric, hubStation.point).distance : 0;
@@ -304,7 +311,9 @@ export async function createTransportLayer({
     // Reject station-yard loops whose two endpoints stay beside the hub. A
     // shared service approach must visibly lead away from Cape Town Station.
     .filter(item => item.hubDistance < 90 && item.endpointReach > 150)
-    .sort((a, b) => b.endpointReach - a.endpointReach || b.metric.length - a.metric.length)[0]?.points || null;
+    .sort((a, b) => b.endpointReach - a.endpointReach || b.metric.length - a.metric.length)
+    .map(item => item.points);
+  const sharedRailLine = serviceApproaches[0] || null;
   const isVisibleServiceApproach = line => {
     if (!line?.length || !hubStation) return Boolean(line?.length);
     const metric = lineMetrics(line);
@@ -315,11 +324,15 @@ export async function createTransportLayer({
     );
     return hubDistance < 100 && endpointReach > 150;
   };
+  let unmappedCorridorIndex = 0;
   for (const rail of data.rail) {
     // Use every through-running line that actually reaches the visible hub,
     // excluding disconnected platform/yard loops carried in the source GIS.
     rail._movementLines = (rail.lines || []).filter(isVisibleServiceApproach);
-    if (!rail._movementLines.length && sharedRailLine) rail._movementLines = [sharedRailLine];
+    if (!rail._movementLines.length && serviceApproaches.length) {
+      rail._movementLines = [serviceApproaches[unmappedCorridorIndex % serviceApproaches.length]];
+      unmappedCorridorIndex += 1;
+    }
     rail._metrics = rail._movementLines.map(lineMetrics);
     rail._metric = rail._metrics[0] || null;
     rail._departures = rail.departures || rail.trips.map(trip => trip[0]);
@@ -486,17 +499,34 @@ export async function createTransportLayer({
       });
       if (state.mode !== 'bus') {
         const railRoutes = state.mode === 'train' ? data.rail : activeRail();
-        railRoutes.forEach((rail, index) => {
+        // Several corridors can end up pointing at the exact same physical
+        // approach track (there are more corridors than distinct mapped
+        // tracks). Only those literal duplicates need a parallel offset and
+        // an elevation stagger -- corridors already running on their own
+        // geometry, or on a track nobody else is using, stay put so they
+        // aren't nudged off the real alignment.
+        const usersOfLine = new Map();
+        for (const rail of railRoutes) for (const line of rail._movementLines || []) {
+          usersOfLine.set(line, (usersOfLine.get(line) || 0) + 1);
+        }
+        const seenForLine = new Map();
+        railRoutes.forEach(rail => {
           const featured = !state.eventRailIds.size || state.eventRailIds.has(rail.id);
-          const usesSharedApproach = !(rail.lines || []).length && sharedRailLine;
           const lines = rail._movementLines || [];
           if (!lines.length) return;
-          // Corridors without unique geometry share the Cape Town approach.
-          // Parallel offsets keep each service colour readable instead of
-          // stacking nine colours on exactly the same pixels.
-          const offset = usesSharedApproach ? (index - (railRoutes.length - 1) / 2) * 2.25 : 0;
-          const width = state.mode === 'train' ? (usesSharedApproach ? 1.8 : 3.2) : (featured ? 5.0 : 2.6);
-          for (const line of lines) addRibbon(line, rail.color, width, featured ? 0.94 : 0.24, 1.02, routeGroup, offset);
+          for (const line of lines) {
+            const shareCount = usersOfLine.get(line) || 1;
+            const shared = shareCount > 1;
+            const seen = seenForLine.get(line) || 0;
+            seenForLine.set(line, seen + 1);
+            // Parallel horizontal offset plus a small elevation stagger keeps
+            // each service colour on its own pixels instead of z-fighting
+            // where several corridors share one mapped track.
+            const offset = shared ? (seen - (shareCount - 1) / 2) * 2.4 : 0;
+            const elevation = 1.02 + (shared ? seen * 0.018 : 0);
+            const width = state.mode === 'train' ? (shared ? 1.8 : 3.2) : (featured ? 5.0 : 2.6);
+            addRibbon(line, rail.color, width, featured ? 0.94 : 0.24, elevation, routeGroup, offset);
+          }
         });
       }
     }
@@ -525,20 +555,23 @@ export async function createTransportLayer({
   // Vehicles are pooled: a service shows one mesh per departure currently
   // inside the modelled view, so a 10-minute headway visibly differs from a
   // 40-minute one instead of every route showing exactly one crawling vehicle.
+  // Metrorail sets hold at the platform to load and unload before departing,
+  // rather than appearing already moving. Dwelling this long means several
+  // sets can be waiting or arriving on one corridor at once, which is why
+  // the pool below spreads them out sideways instead of stacking them.
+  const PLATFORM_DWELL_MINUTES = 15;
   function activeProgress(service, minute, reverse = false, serviceTimes = service._departures, kind = 'bus', duration = service._duration) {
     const progress = [];
     for (const serviceTime of serviceTimes) {
       for (const shiftedTime of [serviceTime - 1440, serviceTime, serviceTime + 1440]) {
-        // A short platform dwell makes scheduled trains visible at the
-        // terminus without inventing an extra movement.
-        if (kind === 'train' && !reverse && minute >= shiftedTime - 3 && minute < shiftedTime) progress.push(0);
-        if (kind === 'train' && reverse && minute > shiftedTime && minute <= shiftedTime + 3) progress.push(1);
+        if (kind === 'train' && !reverse && minute >= shiftedTime - PLATFORM_DWELL_MINUTES && minute < shiftedTime) progress.push(0);
+        if (kind === 'train' && reverse && minute > shiftedTime && minute <= shiftedTime + PLATFORM_DWELL_MINUTES) progress.push(1);
         const base = reverse ? shiftedTime - duration : shiftedTime;
         const amount = (minute - base) / duration;
         if (amount >= 0 && amount <= 1) progress.push(amount);
       }
     }
-    return progress.slice(0, 3);
+    return progress.slice(0, 6);
   }
 
   function rebuildVehicles() {
@@ -568,6 +601,12 @@ export async function createTransportLayer({
   function updateVehicles() {
     const used = { bus: 0, train: 0 };
     let visible = 0;
+    // Several sets can dwell at the same platform end at once (see
+    // PLATFORM_DWELL_MINUTES). Without a per-berth offset they would render
+    // as one flickering mesh; this counts repeats of the same
+    // service+direction+terminus this frame and fans them out sideways,
+    // like trains standing on adjacent platform roads.
+    const platformOccupancy = new Map();
     for (const { service, kind, reverse, serviceTimes, movementMetric, movementDuration } of state.services || []) {
       const metric = movementMetric || service._metric;
       if (!metric) continue;
@@ -580,6 +619,13 @@ export async function createTransportLayer({
         }
         const point = sampleLine(metric, amount);
         if (!terrainValidAt(point.x, point.z)) continue;
+        let berthOffset = 0;
+        if (kind === 'train' && (raw === 0 || raw === 1)) {
+          const berthKey = `${service.id}|${reverse}|${raw}`;
+          const berth = platformOccupancy.get(berthKey) || 0;
+          platformOccupancy.set(berthKey, berth + 1);
+          berthOffset = berth * 4.4;
+        }
         const pool = poolFor(kind);
         let vehicle = pool[used[kind]];
         if (!vehicle) {
@@ -592,7 +638,10 @@ export async function createTransportLayer({
         vehicle.visible = true;
         vehicle.userData.service = service;
         vehicle.userData.beaconMaterial?.color.set(service._color || service.color || (kind === 'bus' ? 0xff73c7 : 0xffce62));
-        vehicle.position.set(point.x, terrainHeightAt(point.x, point.z) + 0.32, point.z);
+        const length = Math.hypot(point.dx, point.dz) || 1;
+        const normalX = -point.dz / length, normalZ = point.dx / length;
+        const px = point.x + normalX * berthOffset, pz = point.z + normalZ * berthOffset;
+        vehicle.position.set(px, terrainHeightAt(px, pz) + 0.32, pz);
         vehicle.rotation.y = -Math.atan2(point.dz, point.dx) + (reverse ? Math.PI : 0);
         if (vehicle.userData.beacon) {
           const pulse = 1 + Math.sin(performance.now() / 320 + used[kind]) * 0.1;

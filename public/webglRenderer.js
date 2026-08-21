@@ -2044,6 +2044,21 @@ export async function startWebGLScene(canvas, status) {
   }
   buildingAppearance?.addEventListener('change', event => setBuildingAppearance(event.target.value));
   setBuildingAppearance(buildingAppearance?.value || 'neutral');
+  function setBuildingDrawTransparency(enabled) {
+    // A closure stroke is aimed at ground-level road geometry, but roofs
+    // (including LiDAR-covered structures like parking garages) can fully
+    // occlude a narrow street or driveway from the default aerial-ish
+    // camera angle, leaving nothing visible to aim at even though the road
+    // is perfectly selectable underneath. Fade buildings while the closure
+    // drawing tool is active so the user can see what they are drawing over.
+    for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
+      mesh.material.transparent = enabled;
+      mesh.material.opacity = enabled ? 0.22 : 1;
+      mesh.material.depthWrite = !enabled;
+      mesh.material.needsUpdate = true;
+    }
+    requestRender();
+  }
   makeGrass();
   makeWaterAndOsmDetails();
   const railwayCount = makeRailways();
@@ -2172,6 +2187,7 @@ export async function startWebGLScene(canvas, status) {
   const trafficDemand = document.querySelector('#traffic-demand');
   const trafficDrawLane = document.querySelector('#traffic-draw-lane');
   const trafficDrawRoad = document.querySelector('#traffic-draw-road');
+  const trafficDrawOneWay = document.querySelector('#traffic-draw-oneway');
   const trafficDrawPopup = document.querySelector('#traffic-draw-popup');
   const trafficDrawPopupTitle = document.querySelector('#traffic-draw-popup-title');
   const trafficDrawPopupStatus = document.querySelector('#traffic-draw-popup-status');
@@ -2180,6 +2196,9 @@ export async function startWebGLScene(canvas, status) {
   const trafficDrawCancel = document.querySelector('#traffic-draw-cancel');
   const trafficSelectionStatus = document.querySelector('#traffic-selection-status');
   const trafficControlModel = document.querySelector('#traffic-control-model');
+  const trafficOneWayRow = document.querySelector('#traffic-oneway-row');
+  const trafficOneWayToggle = document.querySelector('#traffic-oneway');
+  const trafficFlipDirection = document.querySelector('#traffic-flip-direction');
   const trafficRun = document.querySelector('#traffic-run');
   const trafficClear = document.querySelector('#traffic-clear');
   const trafficStatus = document.querySelector('#traffic-status');
@@ -2261,6 +2280,13 @@ export async function startWebGLScene(canvas, status) {
     snapCellSize: 45,
     snapRadius: 24,
     closureMode: 'lane',
+    oneWay: false,
+    // True when the user picked the dedicated "One-way" tool rather than
+    // plain "Street" -- both submit closure_mode: "full" underneath (a
+    // one-way conversion on a single-lane-per-direction road *is* a full
+    // closure of one directional edge), this only changes the UI framing
+    // and which flip-button copy is shown.
+    oneWayIntent: false,
     drawing: false,
     stroking: false,
     pointerId: null,
@@ -3723,6 +3749,19 @@ export async function startWebGLScene(canvas, status) {
     }
     addClosureFurniture(closureLines, payload?.closure_mode, payload?.road_name);
 
+    // Derived from the actual closed-edge topology, not the `one_way`
+    // request flag -- covers the dedicated "one-way" drawing tool too,
+    // which submits a plain full closure with no such flag.
+    const remainingOpenLines = (payload?.closure?.remaining_open_geometry_local || [])
+      .flatMap(points => visiblePolyline(points))
+      .filter(points => points.length >= 2);
+    for (const points of remainingOpenLines) {
+      const halo = statusRibbon(points, 8, 0x2f6bff, 0.22, 0.68, true);
+      const open = statusRibbon(points, 5, 0x4f8bff, 0.9, 0.74, true);
+      if (halo) scenarioStatusGroup.add(halo);
+      if (open) scenarioStatusGroup.add(open);
+    }
+
     for (const segment of payload?.flow_comparison || []) {
       const delta = Number(segment.vehicle_delta) || 0;
       const halted = Number(segment.closure_halted) || 0;
@@ -3803,6 +3842,37 @@ export async function startWebGLScene(canvas, status) {
     return nearest && nearest.distance <= trafficState.snapRadius ? nearest : null;
   }
 
+  function nearbyFullOnlyRoad(points, radius = trafficState.snapRadius) {
+    // Lane mode has no snap candidates on a single-lane-per-direction edge
+    // (removing its only lane would sever the road, not narrow it) -- this
+    // covers most of the unsealed/paved-surface minor streets and access
+    // lanes in the network, not just one specific road. Finding the nearest
+    // such road along a lane-mode stroke lets the status message say why it
+    // can't be selected here, instead of leaving the user guessing -- or
+    // worse, silently landing on a different, unrelated road instead (see
+    // the caller in commitTrafficStroke).
+    const cellSize = trafficState.snapCellSize;
+    let nearest = null;
+    for (const [x, z] of points) {
+      const column = Math.floor(x / cellSize), row = Math.floor(z / cellSize);
+      const candidates = trafficState.snapGrid.get(`${column}:${row}`) || [];
+      for (const candidate of candidates) {
+        if (candidate.mode !== 'full' || Number(candidate.edge.lane_count) >= 2) continue;
+        const dx = candidate.b[0] - candidate.a[0];
+        const dz = candidate.b[1] - candidate.a[1];
+        const denominator = dx * dx + dz * dz || 1;
+        const ratio = clamp(((x - candidate.a[0]) * dx + (z - candidate.a[1]) * dz) / denominator, 0, 1);
+        const snappedX = candidate.a[0] + dx * ratio;
+        const snappedZ = candidate.a[1] + dz * ratio;
+        const distance = Math.hypot(x - snappedX, z - snappedZ);
+        if (distance <= radius && (!nearest || distance < nearest.distance)) {
+          nearest = { distance, edge: candidate.edge };
+        }
+      }
+    }
+    return nearest;
+  }
+
   function snapToSelectedTrafficRoad(x, z) {
     const selected = new Set(trafficState.selectedEdgeIds);
     if (!selected.size) return null;
@@ -3856,6 +3926,7 @@ export async function startWebGLScene(canvas, status) {
       ? 'Section removed. Continue drawing or confirm the selection.'
       : 'Selection is empty. Draw another freehand stroke to continue.');
     if (trafficState.drawing && trafficRun) trafficRun.disabled = true;
+    updateTrafficInterventionControls();
     return true;
   }
 
@@ -3903,6 +3974,26 @@ export async function startWebGLScene(canvas, status) {
     const skipped = edges.length - narrowed;
     return `${narrowed} kerbside ${narrowed === 1 ? 'lane' : 'lanes'} closed across ${narrowed} directional ${narrowed === 1 ? 'section' : 'sections'}`
       + (skipped ? ` · ${skipped} single-lane ${skipped === 1 ? 'section is' : 'sections are'} not closable in lane mode` : '');
+  }
+
+  function trafficSelectionReverseIds() {
+    // Only offers a flip when every selected section has a real
+    // opposite-direction sibling to swap onto -- an ordinary two-way street
+    // (one lane each way, like most residential blocks) is modelled as two
+    // such edges, so this is how the user picks which way stays open.
+    if (!trafficState.selectedEdgeIds.length) return null;
+    const reverseIds = trafficState.selectedEdgeIds.map(edgeId => trafficState.edgesById.get(edgeId)?.reverse_edge_id);
+    return reverseIds.every(Boolean) ? reverseIds : null;
+  }
+
+  function updateTrafficInterventionControls() {
+    if (trafficOneWayRow) trafficOneWayRow.hidden = trafficState.closureMode !== 'lane';
+    if (trafficFlipDirection) {
+      trafficFlipDirection.hidden = !trafficSelectionReverseIds();
+      trafficFlipDirection.textContent = trafficState.oneWayIntent
+        ? '⇄ Reverse which way traffic flows'
+        : '⇄ Close the other direction instead';
+    }
   }
 
   function trafficJunctionBridges(edges, maximumGap = 48) {
@@ -4021,16 +4112,19 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function resetTrafficToolLabels() {
-    if (trafficDrawLane) trafficDrawLane.innerHTML = '<span>▥</span> Lane closure';
-    if (trafficDrawRoad) trafficDrawRoad.innerHTML = '<span>⛔</span> Street closure';
+    if (trafficDrawLane) trafficDrawLane.innerHTML = '<span>▥</span> Lane';
+    if (trafficDrawRoad) trafficDrawRoad.innerHTML = '<span>⛔</span> Street';
+    if (trafficDrawOneWay) trafficDrawOneWay.innerHTML = '<span>➜</span> One-way';
   }
 
   function updateTrafficDrawPopup(message = null) {
     const count = trafficState.selectedEdgeIds.length;
     if (trafficDrawPopupTitle) {
-      trafficDrawPopupTitle.textContent = trafficState.closureMode === 'full'
-        ? 'Edit street closure'
-        : 'Edit lane closure';
+      trafficDrawPopupTitle.textContent = trafficState.oneWayIntent
+        ? 'Edit one-way conversion'
+        : trafficState.closureMode === 'full'
+          ? 'Edit street closure'
+          : 'Edit lane closure';
     }
     if (trafficDrawPopupCount) trafficDrawPopupCount.textContent = String(count);
     if (trafficDrawPopupCount?.nextElementSibling) {
@@ -4053,33 +4147,53 @@ export async function startWebGLScene(canvas, status) {
     clearStatusGroup(selectedRoadDirectionGroup);
     trafficDrawLane?.classList.remove('active');
     trafficDrawRoad?.classList.remove('active');
+    trafficDrawOneWay?.classList.remove('active');
+    trafficState.oneWayIntent = false;
     resetTrafficToolLabels();
     if (trafficRun) trafficRun.disabled = true;
     if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'Choose a closure tool. Add one or more freehand strokes, right-click sections to remove them, then confirm in the popup.';
     if (trafficStatus) trafficStatus.textContent = 'Draw a closure to begin.';
+    updateTrafficInterventionControls();
+    setBuildingDrawTransparency(false);
     canvas.style.cursor = '';
     requestRender();
   }
 
   function beginTrafficDrawing(mode) {
     clearTrafficSelection();
+    setBuildingDrawTransparency(true);
     streetViewState.placing = false;
     floodState.moveMode = false;
     windState.moveMode = false;
     floodMoveDomain?.classList.remove('active');
     windMoveDomain?.classList.remove('active');
-    trafficState.closureMode = mode;
+    // "One-way" submits the same closure_mode: "full" as "Street" -- a
+    // one-way conversion on the (typical) single-lane-per-direction road is
+    // mechanically a full closure of just one directional edge. The
+    // distinct tool exists so the flip-direction choice is front and
+    // centre instead of buried behind a plain "Street closure" label.
+    trafficState.closureMode = mode === 'lane' ? 'lane' : 'full';
+    trafficState.oneWayIntent = mode === 'oneway';
     trafficState.drawing = true;
+    if (trafficState.closureMode === 'full' && trafficOneWayToggle) {
+      // A full closure already shuts the selected direction entirely --
+      // also closing its reverse would silently pedestrianise both
+      // directions, so this flag only applies to lane closures.
+      trafficOneWayToggle.checked = false;
+      trafficState.oneWay = false;
+    }
+    updateTrafficInterventionControls();
     if (trafficDrawPopup) trafficDrawPopup.hidden = false;
     if (trafficDrawPopupStatus) {
       trafficDrawPopupStatus.textContent = 'Draw a freehand stroke, lift your pointer, then draw again anywhere. Confirm when the selection is complete.';
     }
     updateTrafficDrawPopup();
-    const button = mode === 'full' ? trafficDrawRoad : trafficDrawLane;
+    const button = mode === 'full' ? trafficDrawRoad : mode === 'oneway' ? trafficDrawOneWay : trafficDrawLane;
     button?.classList.add('active');
-    if (button) button.textContent = mode === 'full' ? 'Drawing street…' : 'Drawing lane…';
+    if (button) button.textContent = mode === 'full' ? 'Drawing street…' : mode === 'oneway' ? 'Drawing one-way…' : 'Drawing lane…';
     if (trafficSelectionStatus) {
-      trafficSelectionStatus.textContent = `Freehand ${mode === 'full' ? 'street closure' : 'lane closure'} · draw over the road, then release to snap.`;
+      const kind = mode === 'full' ? 'street closure' : mode === 'oneway' ? 'one-way conversion' : 'lane closure';
+      trafficSelectionStatus.textContent = `Freehand ${kind} · draw over the road, then release to snap.`;
     }
     canvas.style.cursor = 'crosshair';
   }
@@ -4120,17 +4234,38 @@ export async function startWebGLScene(canvas, status) {
     }
     const count = trafficState.selectedEdgeIds.length;
     const added = count - countBefore;
+    let missReason = null;
+    if (trafficState.closureMode === 'lane') {
+      // A single-lane-per-direction road (most unsealed/paved-surface minor
+      // streets and access lanes in this network) has no lane-mode geometry
+      // at all -- so a stroke drawn along one can silently snap to whatever
+      // *other* narrowable road happens to be nearby instead, with no error.
+      // Surface that explicitly rather than leaving an unrelated road
+      // selected with no explanation.
+      const newlyAddedIds = trafficState.selectedEdgeIds.slice(countBefore);
+      const nearFull = nearbyFullOnlyRoad(trafficState.strokePoints);
+      if (nearFull && !newlyAddedIds.includes(nearFull.edge.id)) {
+        const lanes = Number(nearFull.edge.lane_count) || 1;
+        const nearName = trafficEdgeName(nearFull.edge);
+        const insteadText = newlyAddedIds.length
+          ? ` ${trafficEdgeName(trafficState.edgesById.get(newlyAddedIds[0]))} was selected instead because it is the nearest road that can be narrowed here.`
+          : '';
+        missReason = `${nearName} has only ${lanes} ${lanes === 1 ? 'lane' : 'lanes'} in this direction, so narrowing it would sever the road rather than close one lane.${insteadText} Use Street closure for ${nearName} instead — the other direction stays open as one-way, or use ⇄ Close the other direction instead to flip which side closes.`;
+      }
+    }
     trafficState.strokePoints = [];
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = added
-      ? `${added} ${added === 1 ? 'section' : 'sections'} added · ${count} total selected. Draw another stroke, right-click to remove, or confirm.`
-      : 'That stroke did not add a new road section. Draw closer to a road centreline or confirm the current selection.';
+    if (trafficSelectionStatus) {
+      trafficSelectionStatus.textContent = missReason || (added
+        ? `${added} ${added === 1 ? 'section' : 'sections'} added · ${count} total selected. Draw another stroke, right-click to remove, or confirm.`
+        : 'That stroke did not add a new road section. Draw closer to a road centreline or confirm the current selection.');
+    }
     if (trafficStatus) trafficStatus.textContent = count
       ? `Editing ${trafficSelectionLabel()} · selection is not confirmed yet.`
       : 'Draw at least one road section, then confirm the selection.';
     if (trafficRun) trafficRun.disabled = true;
-    updateTrafficDrawPopup(added
+    updateTrafficDrawPopup(missReason || (added
       ? `${added} ${added === 1 ? 'section was' : 'sections were'} added. You can lift and draw another stroke anywhere.`
-      : 'No new section was added. Try another stroke or confirm the current selection.');
+      : 'No new section was added. Try another stroke or confirm the current selection.'));
     updateTrafficDrawing();
   }
 
@@ -4143,15 +4278,35 @@ export async function startWebGLScene(canvas, status) {
     trafficState.strokePoints = [];
     trafficDrawLane?.classList.remove('active');
     trafficDrawRoad?.classList.remove('active');
+    trafficDrawOneWay?.classList.remove('active');
     resetTrafficToolLabels();
     if (trafficDrawPopup) trafficDrawPopup.hidden = true;
+    setBuildingDrawTransparency(false);
     canvas.style.cursor = '';
     const count = trafficState.selectedEdgeIds.length;
     const label = trafficSelectionLabel();
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${trafficSelectionEffect()} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.`;
+    const directionHint = trafficState.oneWayIntent && trafficSelectionReverseIds()
+      ? ' Traffic stays open in the drawn direction — use ⇄ below to reverse it.'
+      : '';
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${trafficSelectionEffect()} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.${directionHint}`;
     if (trafficStatus) trafficStatus.textContent = `${label} confirmed · adjust the scenario or run the comparison.`;
     if (trafficRun) trafficRun.disabled = false;
     updateTrafficDrawing();
+    updateTrafficInterventionControls();
+  }
+
+  function flipTrafficDirection() {
+    const reverseIds = trafficSelectionReverseIds();
+    if (!reverseIds) return;
+    trafficState.selectedEdgeIds = reverseIds;
+    updateTrafficDrawing();
+    if (trafficState.result) invalidateTrafficResult('Direction changed · run the comparison again.');
+    const label = trafficSelectionLabel();
+    const closingWhat = trafficState.closureMode === 'full'
+      ? `${trafficSelectionEffect()} · the other direction now stays open, one-way`
+      : `${trafficSelectionEffect()} · now narrowing the opposite direction`;
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${closingWhat} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.`;
+    if (trafficStatus) trafficStatus.textContent = `${label} confirmed (direction flipped) · adjust the scenario or run the comparison.`;
   }
 
   async function loadTrafficRoads() {
@@ -4175,6 +4330,7 @@ export async function startWebGLScene(canvas, status) {
       }
       if (trafficDrawLane) trafficDrawLane.disabled = !trafficState.networkEdges.length;
       if (trafficDrawRoad) trafficDrawRoad.disabled = !trafficState.networkEdges.length;
+      if (trafficDrawOneWay) trafficDrawOneWay.disabled = !trafficState.networkEdges.length;
       if (trafficState.networkEdges.length && trafficStatus) {
         const matched = payload.road_data?.municipal_matched_edges || 0;
         trafficStatus.textContent = `${trafficState.networkEdges.length} road sections ready · ${matched} matched to City road-centre data.`;
@@ -4473,18 +4629,44 @@ export async function startWebGLScene(canvas, status) {
     return `<span class="${className}">${sign}${reportNumber(numeric, digits, unit)}</span>`;
   }
 
+  function niceScaleMetres(approxMetres) {
+    const steps = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+    return steps.reduce((best, step) => (
+      Math.abs(step - approxMetres) < Math.abs(best - approxMetres) ? step : best
+    ), steps[0]);
+  }
+
   function trafficReportMap(payload) {
     const flows = (payload.flow_comparison || []).slice(0, 100);
     const closures = payload.closure?.geometry_local || [];
-    const lines = [...flows.map(item => item.points), ...closures].filter(points => points?.length >= 2);
+    // Derived from the actual closed-edge topology (see server/traffic.py's
+    // `_remaining_open_direction`), not the `one_way` request flag -- so
+    // this draws correctly for the dedicated "one-way" drawing tool, which
+    // submits a plain full closure with no such flag.
+    const openDirection = payload.closure?.remaining_open_geometry_local || [];
+    const lines = [...flows.map(item => item.points), ...closures, ...openDirection].filter(points => points?.length >= 2);
     const allPoints = lines.flat();
     if (!allPoints.length) return '<div class="report-note">No road geometry was available for the report diagram.</div>';
     const xs = allPoints.map(point => Number(point[0]));
     const zs = allPoints.map(point => Number(point[1]));
     const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
-    const width = 820, height = 300, padding = 24;
-    const scale = Math.min((width - padding * 2) / Math.max(maxX - minX, 1), (height - padding * 2) / Math.max(maxZ - minZ, 1));
-    const project = point => `${(padding + (point[0] - minX) * scale).toFixed(1)},${(height - padding - (point[1] - minZ) * scale).toFixed(1)}`;
+    const padding = 40;
+    // Fit the canvas to the content's own aspect ratio (clamped to a sane
+    // range) instead of a fixed 900x340 box -- a mostly straight corridor
+    // used to leave most of that fixed box empty, with the drawing pinned
+    // to the top-left corner.
+    const spanX = Math.max(maxX - minX, 1), spanZ = Math.max(maxZ - minZ, 1);
+    const width = 900;
+    const height = Math.round(clamp(width * (spanZ / spanX), 320, 640));
+    const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanZ);
+    // Centre the drawing within the padded canvas on both axes, rather than
+    // anchoring it to the top-left padding corner.
+    const offsetX = padding + ((width - padding * 2) - spanX * scale) / 2;
+    const offsetY = padding + ((height - padding * 2) - spanZ * scale) / 2;
+    // Local z runs southward (see server/traffic.py's _edge_index projection),
+    // so increasing z must move *down* the SVG for the sheet to read north-up.
+    const projectXY = point => [offsetX + (point[0] - minX) * scale, offsetY + (point[1] - minZ) * scale];
+    const project = point => projectXY(point).map(n => n.toFixed(1)).join(',');
     const flowLines = flows.map(segment => {
       const delta = Number(segment.vehicle_delta) || 0;
       const color = delta >= 0 ? '#ef9b38' : '#4fc5ed';
@@ -4492,17 +4674,280 @@ export async function startWebGLScene(canvas, status) {
       return `<polyline points="${segment.points.map(project).join(' ')}" fill="none" stroke="${color}" stroke-width="${lineWidth.toFixed(1)}" stroke-linecap="round" stroke-linejoin="round" opacity=".82"/>`;
     }).join('');
     const closureLines = closures.map(points => `<polyline points="${points.map(project).join(' ')}" fill="none" stroke="#ff5149" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${points.map(project).join(' ')}" fill="none" stroke="#fff3d5" stroke-width="2" stroke-dasharray="5 5"/>`).join('');
+    const openDirectionLines = openDirection.map(points => `<polyline points="${points.map(project).join(' ')}" fill="none" stroke="#2be0ad" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/><polyline points="${points.map(project).join(' ')}" fill="none" stroke="#d8fff2" stroke-width="2" stroke-dasharray="4 6"/>`).join('');
+    // Arrow follows the open edge's own direction of travel -- this is the
+    // side that stays driveable, not the closed side.
+    const openDirectionArrows = openDirection.filter(points => points.length >= 2).map(points => {
+      const start = projectXY(points[0]);
+      const end = projectXY(points[points.length - 1]);
+      const midX = (start[0] + end[0]) / 2, midY = (start[1] + end[1]) / 2;
+      const angle = Math.atan2(end[1] - start[1], end[0] - start[0]) * 180 / Math.PI;
+      return `<g transform="translate(${midX.toFixed(1)},${midY.toFixed(1)}) rotate(${angle.toFixed(1)})">
+        <path d="M -16 0 L 12 0 M 3 -8 L 12 0 L 3 8" stroke="#0f6b4f" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>`;
+    }).join('');
+    const scaleMetres = niceScaleMetres((width - padding * 2) / scale / 4);
+    const scaleWidthPx = scaleMetres * scale;
+    const scaleBarX = width - padding - scaleWidthPx;
+    const scaleBarY = height - 18;
+    // Label the closed road and the handful of nearby streets already
+    // called out in the "Most affected nearby roads" list below, so the
+    // reader can tell *which* street each coloured line is without cross
+    // referencing the list by eye. One label per street, placed on its
+    // longest drawn segment so it doesn't collide with a short stub.
+    const streetHalo = (x, y, text, color) => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="10" font-weight="700" fill="${color}" stroke="#17201d" stroke-width="3" paint-order="stroke" stroke-linejoin="round">${reportEscape(text)}</text>`;
+    const byStreetName = new Map();
+    for (const segment of flows) {
+      const name = segment.name;
+      if (!name || name === 'Unnamed road') continue;
+      if (!byStreetName.has(name)) byStreetName.set(name, []);
+      byStreetName.get(name).push(segment.points);
+    }
+    const labelledNames = (payload.street_flow_summary || [])
+      .filter(street => street.name !== payload.road_name)
+      .slice(0, 5).map(street => street.name);
+    const streetLabelMarks = labelledNames
+      .filter(name => byStreetName.has(name))
+      .map(name => {
+        const linePx = longestPolyline(byStreetName.get(name)).map(projectXY);
+        const [x, y] = linePx[Math.floor(linePx.length / 2)];
+        return streetHalo(x, y - 6, name, '#dfe7e3');
+      }).join('');
+    const closedRoadLabel = closures.length
+      ? (() => {
+        const linePx = longestPolyline(closures).map(projectXY);
+        const [x, y] = linePx[Math.floor(linePx.length / 2)];
+        return streetHalo(x, y - 6, payload.road_name, '#ffb4ae');
+      })()
+      : '';
     return `<div class="report-map">
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Road closure and changed traffic flow diagram">
         <rect width="${width}" height="${height}" rx="4" fill="#17201d"/>
-        <g>${flowLines}${closureLines}</g>
+        <g>${flowLines}${closureLines}${openDirectionLines}${openDirectionArrows}</g>
+        <g>${streetLabelMarks}${closedRoadLabel}</g>
+        <g stroke="#c8d6d1" stroke-width="1.4">
+          <line x1="${scaleBarX.toFixed(1)}" y1="${scaleBarY}" x2="${(scaleBarX + scaleWidthPx).toFixed(1)}" y2="${scaleBarY}"/>
+          <line x1="${scaleBarX.toFixed(1)}" y1="${scaleBarY - 4}" x2="${scaleBarX.toFixed(1)}" y2="${scaleBarY + 4}"/>
+          <line x1="${(scaleBarX + scaleWidthPx).toFixed(1)}" y1="${scaleBarY - 4}" x2="${(scaleBarX + scaleWidthPx).toFixed(1)}" y2="${scaleBarY + 4}"/>
+        </g>
+        <text x="${(scaleBarX + scaleWidthPx / 2).toFixed(1)}" y="${scaleBarY - 8}" fill="#c8d6d1" font-size="10" text-anchor="middle">${scaleMetres} m</text>
+        <g transform="translate(${padding + 12},${padding + 8})" stroke="#c8d6d1" stroke-width="1.6" fill="none">
+          <line x1="0" y1="22" x2="0" y2="0"/>
+          <path d="M -5 6 L 0 0 L 5 6" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+        <text x="${padding + 12}" y="${padding + 40}" fill="#c8d6d1" font-size="10" text-anchor="middle">N</text>
       </svg>
       <div class="report-map-caption">
-        <span><i style="background:#ff5149"></i>Closure</span>
+        <span><i style="background:#ff5149"></i>Closed to vehicles${payload.closure?.functions_as_one_way ? ' (reallocated to pedestrians)' : ''}</span>
+        ${openDirection.length ? '<span><i style="background:#2be0ad"></i>Stays open, one-way (arrow = travel direction)</span>' : ''}
         <span><i style="background:#ef9b38"></i>More traffic</span>
         <span><i style="background:#4fc5ed"></i>Less traffic</span>
       </div>
     </div>`;
+  }
+
+  function ribbonPolygonPoints(pointsPx, widthPx) {
+    if (pointsPx.length < 2) return null;
+    const left = [], right = [];
+    for (let index = 0; index < pointsPx.length; index += 1) {
+      const prev = pointsPx[Math.max(0, index - 1)];
+      const next = pointsPx[Math.min(pointsPx.length - 1, index + 1)];
+      const dx = next[0] - prev[0], dy = next[1] - prev[1];
+      const length = Math.hypot(dx, dy) || 1;
+      const nx = -dy / length, ny = dx / length;
+      left.push([pointsPx[index][0] + nx * widthPx / 2, pointsPx[index][1] + ny * widthPx / 2]);
+      right.push([pointsPx[index][0] - nx * widthPx / 2, pointsPx[index][1] - ny * widthPx / 2]);
+    }
+    return [...left, ...right.reverse()].map(point => point.map(n => n.toFixed(1)).join(',')).join(' ');
+  }
+
+  function longestPolyline(lines) {
+    let best = null, bestLength = -1;
+    for (const points of lines) {
+      let length = 0;
+      for (let index = 1; index < points.length; index += 1) {
+        length += Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]);
+      }
+      if (length > bestLength) { best = points; bestLength = length; }
+    }
+    return best;
+  }
+
+  function trafficClosureSchematic(payload) {
+    // A scaled, top-down engineering-style plan of just the closed section
+    // -- which lane closes (green, reallocated to pedestrians), which lane
+    // stays open and which way it flows (grey, with a direction arrow) --
+    // rather than the wider corridor diversion pattern (see
+    // `trafficReportMap`, shown separately further down the report).
+    const closure = payload.closure || {};
+    const closedLines = (closure.geometry_local || []).filter(points => points?.length >= 2);
+    const openLines = (closure.remaining_open_geometry_local || []).filter(points => points?.length >= 2);
+    if (!closedLines.length) return '';
+    const closedLine = longestPolyline(closedLines);
+    const openLine = openLines.length ? longestPolyline(openLines) : null;
+    const allPoints = [...closedLine, ...(openLine || [])];
+    const xs = allPoints.map(point => Number(point[0]));
+    const zs = allPoints.map(point => Number(point[1]));
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    const padding = 96;
+    const spanX = Math.max(maxX - minX, 6), spanZ = Math.max(maxZ - minZ, 6);
+    // Same fit-to-content-aspect-ratio + centring fix as `trafficReportMap`:
+    // a straight, mostly-one-axis segment used to leave the fixed 860x360
+    // canvas mostly blank with the ribbon hugging the top-left padding.
+    const width = 860;
+    const height = Math.round(clamp(width * (spanZ / spanX), 260, 520));
+    const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanZ);
+    const offsetX = padding + ((width - padding * 2) - spanX * scale) / 2;
+    const offsetY = padding + ((height - padding * 2) - spanZ * scale) / 2;
+    const projectXY = ([x, z]) => [offsetX + (x - minX) * scale, offsetY + (z - minZ) * scale];
+    const laneWidthM = 3.2;
+    const laneWidthPx = Math.max(20, laneWidthM * scale);
+    const closedPx = closedLine.map(projectXY);
+    const openPx = openLine ? openLine.map(projectXY) : null;
+    const closedRibbon = ribbonPolygonPoints(closedPx, laneWidthPx);
+    const openRibbon = openPx ? ribbonPolygonPoints(openPx, laneWidthPx) : null;
+    const pointAt = (points, ratio) => points[Math.min(points.length - 1, Math.round((points.length - 1) * ratio))];
+    // Offset the two label anchors to different points along their lines
+    // (rather than both at the exact midpoint) so they stay legible on a
+    // short or steeply-angled segment instead of colliding in the middle.
+    const closedMid = pointAt(closedPx, 0.32);
+    const openMid = openPx ? pointAt(openPx, 0.68) : null;
+    const kerbLine = `<polyline points="${closedPx.map(point => point.map(n => n.toFixed(1)).join(',')).join(' ')}" fill="none" stroke="#3c4842" stroke-width="1.6" stroke-dasharray="7 5"/>`;
+    const arrow = openPx ? (() => {
+      const start = openPx[0], end = openPx[openPx.length - 1];
+      const angle = Math.atan2(end[1] - start[1], end[0] - start[0]) * 180 / Math.PI;
+      const midX = (start[0] + end[0]) / 2, midY = (start[1] + end[1]) / 2;
+      return `<g transform="translate(${midX.toFixed(1)},${midY.toFixed(1)}) rotate(${angle.toFixed(1)})">
+        <path d="M -24 0 L 18 0 M 4 -11 L 18 0 L 4 11" stroke="#17403a" stroke-width="4.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>`;
+    })() : '';
+    const closedLabelY = closedMid[1] - laneWidthPx / 2 - 16;
+    const openLabelY = openMid ? openMid[1] + laneWidthPx / 2 + 24 : 0;
+    const haloText = (x, y, size, weight, color, text) => `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="${size}" font-weight="${weight}" text-anchor="middle" fill="${color}" stroke="#fbfbf9" stroke-width="3" paint-order="stroke" stroke-linejoin="round">${text}</text>`;
+    // Three distinct outcomes, previously conflated into one fallback message:
+    // (1) the sibling direction survives and stays driveable one-way (openMid set);
+    // (2) a *whole* road is closed with nothing left to drive on (`full` mode,
+    //     no surviving sibling); (3) only the kerbside lane narrows, so the
+    //     road itself is still driveable in both directions on its remaining
+    //     lane(s) -- the old fallback wrongly told drivers this case had "no
+    //     vehicle access" at all, which only case (2) is true for.
+    const isLaneNarrowing = payload.closure_mode !== 'full' && Number(closure.edges_narrowed) > 0;
+    const fallbackLabel = isLaneNarrowing
+      ? 'Road stays open -- traffic continues on the remaining lane'
+      : 'No vehicle access -- closed in both directions';
+    return `<div class="report-plan">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Closure plan -- which lane closes, which stays open, and which way it flows">
+        <rect width="${width}" height="${height}" rx="6" fill="#fbfbf9" stroke="#d5dad6"/>
+        <polygon points="${closedRibbon}" fill="#bfe8d9" stroke="#1e6f61" stroke-width="1.6"/>
+        ${openRibbon ? `<polygon points="${openRibbon}" fill="#dde1dd" stroke="#7c8580" stroke-width="1.2"/>` : ''}
+        ${kerbLine}
+        ${arrow}
+        ${haloText(closedMid[0], closedLabelY, 11, 700, '#1e6f61', isLaneNarrowing ? 'CLOSED LANE · PEDESTRIAN AREA' : 'PEDESTRIAN AREA')}
+        ${haloText(closedMid[0], closedLabelY + 13, 9, 400, '#1e6f61', `≈${laneWidthM.toFixed(1)} m (schematic)`)}
+        ${openMid ? `${haloText(openMid[0], openLabelY, 11, 700, '#3c4842', 'TRAVEL LANE · ONE-WAY')}
+        ${haloText(openMid[0], openLabelY + 13, 9, 400, '#3c4842', `≈${laneWidthM.toFixed(1)} m (schematic)`)}` : `<text x="${width / 2}" y="${height - padding + 28}" font-size="10" text-anchor="middle" fill="#78817d">${fallbackLabel}</text>`}
+      </svg>
+      <div class="report-plan-legend">
+        <span><i style="background:#bfe8d9;border-color:#1e6f61"></i>Closed to cars, becomes pedestrian space</span>
+        ${openMid ? '<span><i style="background:#dde1dd;border-color:#7c8580"></i>Stays open, one-way (arrow = direction of travel)</span>' : isLaneNarrowing ? '<span><i style="background:#fff;border-color:#7c8580"></i>Road stays open in both directions on the remaining lane</span>' : ''}
+      </div>
+      <p class="report-cross-section-note">Schematic plan on the real road geometry — illustrative (not surveyed) lane widths. The arrow shows the one-way direction that stays open; drawn on the "One-way" or "Street closure" tool, flip with ⇄ before running to choose the other direction instead.</p>
+    </div>`;
+  }
+
+  function trafficCrossSection(payload) {
+    const closure = payload.closure || {};
+    const narrowed = Number(closure.edges_narrowed) || 0;
+    // Illustrative only: the network carries no surveyed lane widths, so this
+    // uses SUMO's own default lane width, not a measured cross-section.
+    const laneWidthM = 3.2;
+    let segments;
+    if (closure.functions_as_one_way) {
+      segments = [
+        { label: 'Pavement', widthM: 2.0, fill: '#dfe3df' },
+        { label: 'Travel lane · one-way', widthM: laneWidthM, fill: '#c7cdc8' },
+        { label: 'Pedestrian area · reallocated', widthM: laneWidthM, fill: '#bfe8d9' },
+        { label: 'Verge', widthM: 1.5, fill: '#dfe3df' },
+      ];
+    } else if (narrowed > 0) {
+      segments = [
+        { label: 'Pavement', widthM: 2.0, fill: '#dfe3df' },
+        { label: 'Remaining travel lane', widthM: laneWidthM, fill: '#c7cdc8' },
+        { label: 'Closed lane · reallocated', widthM: laneWidthM, fill: '#bfe8d9' },
+        { label: 'Verge', widthM: 1.5, fill: '#dfe3df' },
+      ];
+    } else if (payload.closure_mode === 'full') {
+      segments = [
+        { label: 'Pavement', widthM: 2.0, fill: '#dfe3df' },
+        { label: 'Pedestrian area · fully closed to vehicles', widthM: laneWidthM * 2, fill: '#bfe8d9' },
+        { label: 'Verge', widthM: 1.5, fill: '#dfe3df' },
+      ];
+    } else {
+      return '';
+    }
+    const totalWidth = segments.reduce((sum, segment) => sum + segment.widthM, 0);
+    const chartWidth = 760, chartHeight = 78, chartX = 20;
+    const pxPerMetre = (chartWidth - chartX * 2) / totalWidth;
+    let cursor = chartX;
+    const bars = segments.map(segment => {
+      const w = segment.widthM * pxPerMetre;
+      const bar = `<rect x="${cursor.toFixed(1)}" y="10" width="${w.toFixed(1)}" height="${chartHeight - 30}" fill="${segment.fill}" stroke="#9aa39d"/>
+        <text x="${(cursor + w / 2).toFixed(1)}" y="${chartHeight - 8}" font-size="9" text-anchor="middle" fill="#4b544e">${segment.label} · ${segment.widthM.toFixed(1)} m</text>`;
+      cursor += w;
+      return bar;
+    }).join('');
+    return `<div class="report-cross-section">
+      <svg viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Illustrative cross-section of the closed lane">${bars}</svg>
+      <p class="report-cross-section-note">Schematic — SUMO default lane width (${laneWidthM.toFixed(1)} m), not a surveyed cross-section.</p>
+    </div>`;
+  }
+
+  function buildTrafficDrawingSheet(payload, reportReference, generated) {
+    const closure = payload.closure || {};
+    const closureDescription = String(closure.description || 'closure applied');
+    const notes = [
+      `${reportEscape(closureDescription.charAt(0).toUpperCase() + closureDescription.slice(1))}.`,
+    ];
+    if (closure.functions_as_one_way) {
+      // `remaining_open_geometry_local` is computed from the actual closed
+      // edges, not a request flag, so this fires for the dedicated
+      // "one-way" tool and for a plain street closure of one direction,
+      // not only the flag-driven lane+reverse combination.
+      notes.push('The closed side is reallocated to pedestrians; the open side (arrow on the plan) operates one-way for vehicles.');
+    } else if (closure.one_way && Number(closure.already_one_way_edges) > 0) {
+      notes.push('One-way conversion requested, but the selected section(s) already run one-way in the source data — no reverse-direction edge to close.');
+    }
+    notes.push(`Simulated for ${reportEscape(payload.scenario?.label || '—')} traffic, using ${payload.traffic_control === 'priority' ? 'priority junctions (no traffic lights)' : 'the real traffic-light timings'}.`);
+    const notesList = notes.map((note, index) => `<li><span>${index + 1}</span>${note}</li>`).join('');
+    const crossSection = trafficCrossSection(payload);
+    const planSchematic = trafficClosureSchematic(payload);
+    return `<section class="report-sheet">
+      <div class="report-sheet-main">
+        <div class="report-sheet-heading">
+          <h2>Plan view</h2>
+          <span>Schematic, not to engineering scale</span>
+        </div>
+        ${planSchematic || '<div class="report-note">No closure geometry was available for the plan.</div>'}
+        ${crossSection ? `<div class="report-sheet-heading"><h2>Cross-section</h2><span>Illustrative lane allocation</span></div>${crossSection}` : ''}
+      </div>
+      <aside class="report-sheet-side">
+        <table class="report-title-block">
+          <tbody>
+            <tr><th colspan="2">Title</th></tr>
+            <tr><td colspan="2">${reportEscape(payload.road_name)} — traffic simulation</td></tr>
+            <tr><th>Scale</th><td>Schematic — not surveyed</td></tr>
+            <tr><th>Scenario</th><td>${reportEscape(payload.scenario?.label || '—')}</td></tr>
+            <tr><th>Date</th><td>${reportEscape(generated)}</td></tr>
+            <tr><th>Prepared by</th><td>climateExplorer traffic simulation</td></tr>
+            <tr><th>Reference</th><td>${reportEscape(reportReference)}</td></tr>
+          </tbody>
+        </table>
+        <div class="report-notes">
+          <div class="report-notes-heading">Notes</div>
+          <ol class="report-notes-list">${notesList}</ol>
+        </div>
+      </aside>
+    </section>`;
   }
 
   function buildTrafficReport() {
@@ -4510,19 +4955,12 @@ export async function startWebGLScene(canvas, status) {
     if (!payload || !trafficReportDocument) return;
     const impact = payload.impact || {};
     const assessment = trafficImpactAssessment(impact);
-    const baseline = payload.baseline || {};
-    const closure = payload.closure_metrics || {};
     const environment = impact.environment || {};
     const assessmentReady = impact.assessment_ready !== false;
     const reportedEnvironment = assessmentReady ? environment : {};
     const activity = payload.street_activity || {};
-    const roadData = payload.road_data || {};
     const demand = payload.demand_model || {};
-    const paired = impact.comparison_metrics || {};
-    const pairedBaseline = assessmentReady ? (paired.baseline || {}) : {};
-    const pairedClosure = assessmentReady ? (paired.closure || {}) : {};
     const decisionValue = value => assessmentReady ? value : null;
-    const scoringMinutes = Number(payload.playback?.scoring_horizon_s) / 60;
     const toKmh = value => value === null || value === undefined ? null : Number(value) * 3.6;
     const generated = new Intl.DateTimeFormat('en-ZA', {
       dateStyle: 'long', timeStyle: 'short', timeZone: 'Africa/Johannesburg',
@@ -4534,17 +4972,12 @@ export async function startWebGLScene(canvas, status) {
     const completionText = Math.abs(assessment.completionChange) < 0.05
       ? 'about the same share of trips finish'
       : `${Math.abs(assessment.completionChange).toFixed(1)} percentage points ${assessment.completionChange > 0 ? 'more' : 'fewer'} trips finish`;
-    const flowItems = (payload.street_flow_summary || []).slice(0, 6).map(street => `
-      <li><b>${reportEscape(street.name)}</b><span>${publicChange(street.vehicle_delta, 'concurrent vehicles')} across changed sections · vehicle-weighted speed about ${reportNumber(Number(street.closure_speed_mps) * 3.6, 0, ' km/h')}</span></li>`).join('')
-      || '<li><b>No material diversion detected</b><span>—</span></li>';
-    const fleet = Object.entries(demand.fleet_mix || {}).map(([name, share]) =>
-      `${name.replaceAll('_', ' ')} ${Math.round(Number(share) * 100)}%`).join(' · ');
+    const flowItems = (payload.street_flow_summary || []).slice(0, 5).map(street => `
+      <li><b>${reportEscape(street.name)}</b><span>${publicChange(street.vehicle_delta, 'traffic')}</span></li>`).join('')
+      || '<li><b>No nearby street noticeably affected</b><span>—</span></li>';
     const durationDetail = assessment.severity === 'incomplete'
       ? reportEscape(assessment.action)
-      : `Among the ${reportNumber(impact.compared_trip_count, 0)} trips completed in both runs, mean requested-departure-to-arrival time was <b>${reportNumber(Math.abs(impact.mean_journey_time_change_s), 0, ' seconds')} ${Number(impact.mean_journey_time_change_s) >= 0 ? 'longer' : 'shorter'}</b>. <b>${completionText}</b> by the end of the scoring horizon.`;
-    const meaningDetail = assessment.severity === 'incomplete'
-      ? 'A like-for-like impact percentage is withheld because the comparison did not satisfy the minimum validity checks.'
-      : `For matched completed trips, the closure changes mean travel time by <b>${percent(assessment.durationChange)}</b>. ${reportNumber(payload.flow_comparison?.length || 0, 0)} nearby directional road sections show a material occupancy or queue change.`;
+      : `On average, a trip through this area took <b>${reportNumber(Math.abs(impact.mean_journey_time_change_s), 0, ' seconds')} ${Number(impact.mean_journey_time_change_s) >= 0 ? 'longer' : 'shorter'}</b> (${percent(assessment.durationChange)}), and <b>${completionText}</b>.`;
 
     trafficReportDocument.innerHTML = `
       <header class="report-header">
@@ -4562,6 +4995,8 @@ export async function startWebGLScene(canvas, status) {
         </div>
       </header>
 
+      ${buildTrafficDrawingSheet(payload, reportReference, generated)}
+
       <section class="report-verdict ${assessment.severity}">
         <div>
           <h2>${reportEscape(assessment.headline)}</h2>
@@ -4575,106 +5010,50 @@ export async function startWebGLScene(canvas, status) {
           <h2>${reportEscape(assessment.action)}</h2>
         </div>
         <div class="report-decision-card">
-          <span>What the result means</span>
-          <p>${meaningDetail}</p>
-        </div>
-        <div class="report-decision-card">
-          <span>About the ${reportNumber(payload.duration_min, 0)}-minute window</span>
-          <p>This is the environmental and queue sampling window, not the proposed closure length. Trips may finish during the ${reportNumber(scoringMinutes, 1)}-minute scoring horizon. Changing the window extends the same reproducible demand stream.</p>
+          <span>What was tested</span>
+          <p><b>${reportEscape(payload.road_name)}</b> · ${reportEscape(payload.closure?.description)}. ${reportEscape(payload.scenario?.label)}, sampled over ${reportNumber(payload.duration_min, 0, ' minutes')}.</p>
         </div>
       </section>
 
       <section class="report-section">
-        <div class="report-section-heading"><h2>Scenario definition</h2><span>What was tested</span></div>
-        <div class="report-scenario-grid">
-          <div class="report-fact"><span>Location</span><strong>${reportEscape(payload.road_name)}</strong></div>
-          <div class="report-fact"><span>Intervention</span><strong>${reportEscape(payload.closure?.description)}</strong></div>
-          <div class="report-fact"><span>Traffic period</span><strong>${reportEscape(payload.scenario?.label)}</strong></div>
-          <div class="report-fact"><span>Traffic sampled</span><strong>${reportNumber(payload.duration_min, 0, ' minutes')} · ${reportEscape(payload.traffic_control === 'priority' ? 'Priority junctions' : 'Mapped traffic lights')}</strong></div>
-          <div class="report-fact"><span>Traffic level</span><strong>${reportNumber((demand.user_demand_multiplier ?? 1) * 100, 0, '%')} of the synthetic ${reportEscape(payload.scenario?.key || 'selected')} profile</strong></div>
-          <div class="report-fact"><span>Synthetic trips generated</span><strong>${reportNumber(demand.planned_vehicle_count, 0)}</strong></div>
-          <div class="report-fact"><span>Base loading rate</span><strong>${reportNumber(demand.base_departures_per_min, 0, ' departures/min')} · stability-tuned</strong></div>
-          <div class="report-fact"><span>Observed-count calibration</span><strong>${demand.observed_count_calibration ? 'Applied' : 'Not available'}</strong></div>
-          <div class="report-fact"><span>Closed lanes</span><strong>${reportNumber(payload.closure?.lanes_closed, 0)}</strong></div>
-          <div class="report-fact"><span>Road-data coverage</span><strong>${reportNumber((roadData.municipal_match_ratio ?? 0) * 100, 0, '%')} City matched</strong></div>
-        </div>
-      </section>
-
-      <section class="report-section">
-        <div class="report-section-heading"><h2>Network impact diagram</h2><span>Relative corridor change</span></div>
+        <div class="report-section-heading"><h2>Where traffic shifts to</h2><span>Streets nearby, before vs after</span></div>
         ${trafficReportMap(payload)}
       </section>
 
       <section class="report-section">
         <div class="report-section-heading"><h2>What changes for road users</h2><span>Road open compared with road closed</span></div>
         <div class="report-stat-grid">
-          <div class="report-stat"><span>Change in journey time</span><strong>${reportChange(decisionValue(impact.mean_journey_time_change_s), 0, ' sec')}</strong><small>${percent(decisionValue(impact.mean_journey_time_change_pct))} for paired completed trips, including insertion delay</small></div>
-          <div class="report-stat"><span>Peak queued vehicles</span><strong>${reportNumber(impact.max_queue_closure, 0, ' vehicles')}</strong><small>Across the corridor · open road: ${reportNumber(impact.max_queue_baseline, 0)}</small></div>
-          <div class="report-stat"><span>Trips completed</span><strong>${reportNumber(impact.completed_trip_ratio_closure === null ? null : impact.completed_trip_ratio_closure * 100, 0, '%')}</strong><small>By end of scoring horizon · open road: ${reportNumber(impact.completed_trip_ratio_baseline === null ? null : impact.completed_trip_ratio_baseline * 100, 0, '%')}</small></div>
-          <div class="report-stat"><span>Average in-network speed</span><strong>${reportChange(toKmh(decisionValue(impact.mean_speed_change_mps)), 1, ' km/h', true)}</strong><small>${percent(decisionValue(impact.mean_speed_change_pct))} for paired completed trips</small></div>
-          <div class="report-stat"><span>Change in distance per trip</span><strong>${reportChange(decisionValue(impact.mean_route_length_change_m), 0, ' m')}</strong><small>Average for paired completed trips</small></div>
-          <div class="report-stat"><span>Change in CO₂</span><strong>${percent(reportedEnvironment.co2_kg?.change_pct)}</strong><small>${reportChange(reportedEnvironment.co2_kg?.change, 2, ' kg')} during the sampling window</small></div>
+          <div class="report-stat"><span>Journey time</span><strong>${reportChange(decisionValue(impact.mean_journey_time_change_s), 0, ' sec')}</strong><small>${percent(decisionValue(impact.mean_journey_time_change_pct))} on average, per trip</small></div>
+          <div class="report-stat"><span>Queuing</span><strong>${reportNumber(impact.max_queue_closure, 0, ' vehicles')}</strong><small>Busiest moment · was ${reportNumber(impact.max_queue_baseline, 0)} before</small></div>
+          <div class="report-stat"><span>Trips completed</span><strong>${reportNumber(impact.completed_trip_ratio_closure === null ? null : impact.completed_trip_ratio_closure * 100, 0, '%')}</strong><small>Was ${reportNumber(impact.completed_trip_ratio_baseline === null ? null : impact.completed_trip_ratio_baseline * 100, 0, '%')} before</small></div>
+          <div class="report-stat"><span>Traffic speed</span><strong>${reportChange(toKmh(decisionValue(impact.mean_speed_change_mps)), 1, ' km/h', true)}</strong><small>${percent(decisionValue(impact.mean_speed_change_pct))} on average</small></div>
+          <div class="report-stat"><span>CO₂ emitted</span><strong>${percent(reportedEnvironment.co2_kg?.change_pct)}</strong><small>${reportChange(reportedEnvironment.co2_kg?.change, 2, ' kg')} over the sample window</small></div>
+          <div class="report-stat"><span>Lanes closed</span><strong>${reportNumber(payload.closure?.lanes_closed, 0)}</strong><small>${reportEscape(payload.closure?.description || '—')}</small></div>
         </div>
-      </section>
-
-      <section class="report-section">
-        <div class="report-section-heading"><h2>Detailed transport results</h2><span>For readers who want the numbers</span></div>
-        <table class="report-table">
-          <thead><tr><th>Metric</th><th>Before</th><th>With closure</th><th>Change</th></tr></thead>
-          <tbody>
-            <tr><td>Mean journey time <small>(paired, including insertion delay)</small></td><td>${reportNumber(pairedBaseline.mean_journey_time_s, 0, ' s')}</td><td>${reportNumber(pairedClosure.mean_journey_time_s, 0, ' s')}</td><td>${reportChange(decisionValue(impact.mean_journey_time_change_pct), 1, '%')}</td></tr>
-            <tr><td>Mean in-network duration <small>(paired trips)</small></td><td>${reportNumber(pairedBaseline.mean_duration_s, 0, ' s')}</td><td>${reportNumber(pairedClosure.mean_duration_s, 0, ' s')}</td><td>${reportChange(decisionValue(impact.mean_duration_change_pct), 1, '%')}</td></tr>
-            <tr><td>Mean insertion delay <small>(paired trips)</small></td><td>${reportNumber(pairedBaseline.mean_depart_delay_s, 1, ' s')}</td><td>${reportNumber(pairedClosure.mean_depart_delay_s, 1, ' s')}</td><td>${reportChange(decisionValue(impact.mean_depart_delay_change_s), 1, ' s')}</td></tr>
-            <tr><td>Mean time loss vs ideal speed <small>(paired trips)</small></td><td>${reportNumber(pairedBaseline.mean_time_loss_s, 0, ' s')}</td><td>${reportNumber(pairedClosure.mean_time_loss_s, 0, ' s')}</td><td>${reportChange(decisionValue(impact.mean_time_loss_change_s), 0, ' s')}</td></tr>
-            <tr><td>Mean in-network speed <small>(paired trips)</small></td><td>${reportNumber(toKmh(pairedBaseline.mean_speed_mps), 1, ' km/h')}</td><td>${reportNumber(toKmh(pairedClosure.mean_speed_mps), 1, ' km/h')}</td><td>${reportChange(decisionValue(impact.mean_speed_change_pct), 1, '%', true)}</td></tr>
-            <tr><td>Mean queued vehicles <small>(whole corridor)</small></td><td>${reportNumber(baseline.mean_queued_vehicles, 1)}</td><td>${reportNumber(closure.mean_queued_vehicles, 1)}</td><td>${reportChange(impact.mean_queued_vehicle_change, 1)}</td></tr>
-            <tr><td>Completed trips <small>(of ${reportNumber(demand.planned_vehicle_count, 0)} generated)</small></td><td>${reportNumber(baseline.trip_count, 0)}</td><td>${reportNumber(closure.trip_count, 0)}</td><td>${reportChange(impact.completed_trip_change, 0, '', true)}</td></tr>
-            <tr><td>Paired comparison sample</td><td colspan="2">${reportNumber(impact.compared_trip_count, 0)} trips completed in both runs</td><td>${reportNumber(impact.paired_trip_ratio === null ? null : impact.paired_trip_ratio * 100, 1, '%')} of generated</td></tr>
-          </tbody>
-        </table>
-      </section>
-
-      <section class="report-section">
-        <div class="report-section-heading"><h2>Air, fuel and noise results</h2><span>Change during the sampling window</span></div>
-        <table class="report-table">
-          <thead><tr><th>Metric</th><th>Before</th><th>With closure</th><th>Change</th></tr></thead>
-          <tbody>
-            <tr><td>CO₂</td><td>${reportNumber(reportedEnvironment.co2_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(reportedEnvironment.co2_kg?.closure, 2, ' kg')}</td><td>${reportChange(reportedEnvironment.co2_kg?.change_pct, 1, '%')}</td></tr>
-            <tr><td>NOx</td><td>${reportNumber(reportedEnvironment.nox_g?.baseline, 2, ' g')}</td><td>${reportNumber(reportedEnvironment.nox_g?.closure, 2, ' g')}</td><td>${reportChange(reportedEnvironment.nox_g?.change_pct, 1, '%')}</td></tr>
-            <tr><td>Exhaust PMx</td><td>${reportNumber(reportedEnvironment.pmx_g?.baseline, 3, ' g')}</td><td>${reportNumber(reportedEnvironment.pmx_g?.closure, 3, ' g')}</td><td>${reportChange(reportedEnvironment.pmx_g?.change_pct, 1, '%')}</td></tr>
-            <tr><td>Fuel mass</td><td>${reportNumber(reportedEnvironment.fuel_kg?.baseline, 2, ' kg')}</td><td>${reportNumber(reportedEnvironment.fuel_kg?.closure, 2, ' kg')}</td><td>${reportChange(reportedEnvironment.fuel_kg?.change_pct, 1, '%')}</td></tr>
-            <tr><td>Mean active-edge emission level</td><td>${reportNumber(reportedEnvironment.mean_active_edge_noise_db?.baseline, 1, ' dB')}</td><td>${reportNumber(reportedEnvironment.mean_active_edge_noise_db?.closure, 1, ' dB')}</td><td>${reportChange(reportedEnvironment.mean_active_edge_noise_db?.change, 1, ' dB')}</td></tr>
-          </tbody>
-        </table>
       </section>
 
       <section class="report-section report-two-column">
         <div>
-          <div class="report-section-heading"><h2>Most affected roads</h2><span>One aggregated result per street</span></div>
+          <div class="report-section-heading"><h2>Most affected nearby roads</h2><span>Where traffic shifts to</span></div>
           <ul class="report-list">${flowItems}</ul>
         </div>
         <div>
-          <div class="report-section-heading"><h2>Mapped street context</h2><span>Inventory only</span></div>
+          <div class="report-section-heading"><h2>Around this street</h2><span>What's already there</span></div>
           <ul class="report-list">
-            <li><b>Parking spaces near corridor</b><span>${reportNumber(activity.parking_spaces, 0)}</span></li>
-            <li><b>Pedestrian crossings near corridor</b><span>${reportNumber(activity.pedestrian_crossings, 0)}</span></li>
+            <li><b>Parking spaces nearby</b><span>${reportNumber(activity.parking_spaces, 0)}</span></li>
+            <li><b>Pedestrian crossings nearby</b><span>${reportNumber(activity.pedestrian_crossings, 0)}</span></li>
             <li><b>Raised crossings</b><span>${reportNumber(activity.raised_crossings, 0)}</span></li>
-            <li><b>Confirmed speed records applied</b><span>${reportNumber(roadData.confirmed_speed_limits_applied, 0)}</span></li>
-            <li><b>Inferred speed records applied</b><span>${reportNumber(roadData.inferred_speed_limits_applied, 0)}</span></li>
           </ul>
         </div>
       </section>
 
       <section class="report-section">
-        <div class="report-section-heading"><h2>How this comparison works</h2><span>Same roads, trips and traffic conditions</span></div>
-        <div class="report-two-column">
-          <div class="report-note"><b>Like-for-like comparison.</b> The same generated trips are submitted to both runs. Travel-time, time-loss, speed and distance changes use only vehicle IDs that completed both runs, preventing unfinished delayed trips from making the closure look artificially faster. Routes come from OpenStreetMap and are enriched with City road-centre attributes. Fleet: ${reportEscape(fleet || 'representative mixed fleet')}.</div>
-          <div class="report-note"><b>Limitations and use.</b> This is an exploratory synthetic-demand comparison, not a calibrated forecast or traffic-engineering design. The base loading is stability-tuned, not fitted to counts; there is no observed origin–destination matrix, parking occupancy, pedestrian volume or verified signal timing. Tailpipe outputs use European HBEFA3 classes and exclude vehicles waiting to enter, cold-start adjustment, tyre/brake dust and lifecycle emissions. The dB value is a relative simulated edge-emission indicator, not receptor noise. Validate a preferred arrangement with observed counts, signal plans, public-transport operations, emergency access and affected-street stakeholders.</div>
-        </div>
+        <div class="report-section-heading"><h2>How to read this report</h2><span>In plain terms</span></div>
+        <div class="report-note">This is a "what-if" simulation: the same simulated traffic is sent down the road twice — once as normal, once with this closure — and the two runs are compared. It's a useful planning estimate, not a certified traffic study, so treat the numbers as a guide rather than an exact prediction, and check the plan against parking, buses, deliveries and emergency access before deciding.</div>
       </section>
 
       <footer class="report-footer">
-        <img src="/branding/MisisonFavicon.webp" alt=""> Mission for Inner City Cape Town · ${reportEscape(reportReference)} · Reproducible scenario ${reportEscape(demand.seed)}
+        <img src="/branding/MisisonFavicon.webp" alt=""> Mission for Inner City Cape Town · ${reportEscape(reportReference)}
       </footer>`;
 
     trafficReportDocument.scrollTop = 0;
@@ -4746,6 +5125,7 @@ export async function startWebGLScene(canvas, status) {
           closure_mode: trafficState.closureMode,
           traffic_control: trafficControlModel?.value || 'signalized',
           demand_multiplier: Number(trafficDemand?.value) || 1,
+          one_way: trafficState.oneWay,
         }),
       });
       const payload = await response.json();
@@ -6040,9 +6420,15 @@ export async function startWebGLScene(canvas, status) {
   trafficScenario?.addEventListener('change', () => invalidateTrafficResult('Time of day changed · run the comparison again.'));
   trafficDemand?.addEventListener('change', () => invalidateTrafficResult('Demand assumption changed · run the comparison again.'));
   trafficControlModel?.addEventListener('change', () => invalidateTrafficResult('Junction behaviour changed · run the comparison again.'));
+  trafficOneWayToggle?.addEventListener('change', () => {
+    trafficState.oneWay = Boolean(trafficOneWayToggle.checked);
+    invalidateTrafficResult('One-way conversion changed · run the comparison again.');
+  });
+  trafficFlipDirection?.addEventListener('click', flipTrafficDirection);
   trafficRefresh?.addEventListener('click', () => loadTrafficLive(true));
   trafficDrawLane?.addEventListener('click', () => beginTrafficDrawing('lane'));
   trafficDrawRoad?.addEventListener('click', () => beginTrafficDrawing('full'));
+  trafficDrawOneWay?.addEventListener('click', () => beginTrafficDrawing('oneway'));
   trafficDrawConfirm?.addEventListener('click', confirmTrafficDrawing);
   trafficDrawCancel?.addEventListener('click', clearTrafficSelection);
   trafficRun?.addEventListener('click', runTrafficClosurePreview);
@@ -6235,5 +6621,18 @@ export async function startWebGLScene(canvas, status) {
   }
   requestRender();
 
+  window.__trafficDebug = {
+    trafficState, frameBounds, canvas, terrainHeightAt,
+    projectToScreen: (x, z) => {
+      const canvasRect = canvas.getBoundingClientRect();
+      const y = terrainHeightAt(x, z) + 1.0;
+      const vector = new THREE.Vector3(x, y, z);
+      vector.project(camera);
+      return {
+        x: canvasRect.left + (vector.x * 0.5 + 0.5) * canvasRect.width,
+        y: canvasRect.top + (-vector.y * 0.5 + 0.5) * canvasRect.height,
+      };
+    },
+  };
   return { renderer, scene, camera };
 }

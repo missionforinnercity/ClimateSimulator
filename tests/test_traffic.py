@@ -193,6 +193,104 @@ def test_demand_scale_increases_as_congestion_worsens():
     assert 0.4 <= severe <= 2.0
 
 
+def write_observation_rows(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def observation_row(date, weekday, hour, ratio, road="Adderley Street"):
+    return {"ts": f"{date}T{hour:02d}:00:00Z", "date": date, "weekday": weekday, "hour": hour, "road": road, "ratio": ratio}
+
+
+def test_record_traffic_observation_writes_one_row_per_sampled_road(monkeypatch, tmp_path):
+    log_path = tmp_path / "observations" / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.setenv("TOMTOM_API", "test-key")
+    monkeypatch.setattr(traffic, "_sample_road_points", sample_roads_for_live)
+    monkeypatch.setattr(traffic, "_fetch_flow_segment", lambda lat, lon, key: sample_flow_segment(10.0, 40.0))
+    written = traffic.record_traffic_observation()
+    assert written == 2
+    rows = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert {row["road"] for row in rows} == {"Long Street", "Adderley Street"}
+    assert all(row["ratio"] == 0.25 for row in rows)
+    assert all("date" in row and "weekday" in row and "hour" in row for row in rows)
+
+
+def test_record_traffic_observation_skips_without_api_key(monkeypatch, tmp_path):
+    log_path = tmp_path / "observations" / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.delenv("TOMTOM_API", raising=False)
+    assert traffic.record_traffic_observation() == 0
+    assert not log_path.exists()
+
+
+def test_historical_scenario_ratio_requires_enough_samples_and_distinct_days(monkeypatch, tmp_path):
+    log_path = tmp_path / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_SAMPLES", 4)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_DISTINCT_DAYS", 2)
+    # Only one distinct day, even with enough raw rows -- should not count.
+    write_observation_rows(log_path, [observation_row("2026-08-03", 0, 8, 0.5) for _ in range(4)])
+    assert traffic._historical_scenario_ratio("am_peak") is None
+
+    write_observation_rows(log_path, [
+        observation_row("2026-08-03", 0, 8, 0.4), observation_row("2026-08-03", 0, 8, 0.4),
+        observation_row("2026-08-04", 1, 8, 0.6), observation_row("2026-08-04", 1, 8, 0.6),
+    ])
+    result = traffic._historical_scenario_ratio("am_peak")
+    assert result is not None
+    assert result["sample_count"] == 4
+    assert result["distinct_days"] == 2
+    assert result["average_ratio"] == 0.5
+
+
+def test_historical_scenario_ratio_excludes_weekends_for_peak_scenarios(monkeypatch, tmp_path):
+    log_path = tmp_path / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_SAMPLES", 2)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_DISTINCT_DAYS", 2)
+    write_observation_rows(log_path, [
+        observation_row("2026-08-08", 5, 8, 0.9),  # Saturday, must be excluded from am_peak
+        observation_row("2026-08-09", 6, 8, 0.9),  # Sunday, must be excluded from am_peak
+    ])
+    assert traffic._historical_scenario_ratio("am_peak") is None
+
+
+def test_historical_scenario_ratio_filters_by_hour_window(monkeypatch, tmp_path):
+    log_path = tmp_path / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_SAMPLES", 2)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_DISTINCT_DAYS", 2)
+    write_observation_rows(log_path, [
+        observation_row("2026-08-03", 0, 13, 0.9),  # midday hour, not am_peak
+        observation_row("2026-08-04", 1, 13, 0.9),
+    ])
+    assert traffic._historical_scenario_ratio("am_peak") is None
+    assert traffic._historical_scenario_ratio("midday") is not None
+
+
+def test_resolve_scenario_nudges_demand_scale_toward_observed_history(monkeypatch):
+    monkeypatch.setattr(
+        traffic, "_historical_scenario_ratio",
+        lambda scenario_key: {"average_ratio": 0.2, "sample_count": 40, "distinct_days": 5} if scenario_key == "am_peak" else None,
+    )
+    resolved = traffic.resolve_scenario("am_peak")
+    base = traffic.SCENARIOS["am_peak"]["demand_scale"]
+    # Heavier observed congestion (low ratio) should push demand up, but only
+    # within the bounded +/-30% nudge band, never past it.
+    assert resolved["demand_scale"] > base
+    assert resolved["demand_scale"] <= base * 1.3 + 1e-9
+    assert resolved["historical_calibration"]["applied"] is True
+    assert resolved["historical_calibration"]["sample_count"] == 40
+
+
+def test_resolve_scenario_unaffected_without_enough_history(monkeypatch):
+    monkeypatch.setattr(traffic, "_historical_scenario_ratio", lambda scenario_key: None)
+    resolved = traffic.resolve_scenario("am_peak")
+    assert resolved["demand_scale"] == traffic.SCENARIOS["am_peak"]["demand_scale"]
+    assert resolved["historical_calibration"] is None
+
+
 def test_road_names_normalise_across_osm_and_municipal_conventions():
     assert traffic._normalise_road_name("Bree Street") == "BREE"
     assert traffic._normalise_road_name("BREE") == "BREE"
@@ -214,6 +312,17 @@ def test_city_road_centre_records_are_available_for_traffic_enrichment():
     assert records
     assert any(record["normalised_name"] == "BREE" for record in records)
     assert all(record["line"].length > 0 for record in records)
+
+
+def test_edge_index_reverse_edge_id_is_symmetric():
+    # Lets the UI offer an explicit "which direction stays open" choice for
+    # an ordinary two-way street -- if A points to B as its reverse sibling,
+    # B must point back to A.
+    index = traffic._edge_index()
+    paired = [(edge_id, record["reverse_edge_id"]) for edge_id, record in index.items() if record.get("reverse_edge_id")]
+    assert paired
+    sample_id, reverse_id = paired[0]
+    assert index[reverse_id]["reverse_edge_id"] == sample_id
 
 
 def test_diff_metrics_pairs_on_trips_completed_in_both_runs():
@@ -468,6 +577,32 @@ def test_closure_preview_validates_duration_range():
         raise AssertionError("out-of-range duration_min should fail")
 
 
+def test_closure_preview_monitors_a_wider_radius_than_it_generates_demand_in(monkeypatch):
+    # SUMO's router isn't confined to the 250 m demand corridor, so the
+    # report should look further out than that for diverted traffic instead
+    # of silently dropping anything just past the buffer -- see
+    # MONITORING_RADIUS_M in server/traffic.py.
+    real_corridor_edges = traffic.corridor_edges
+    requested_radii = []
+
+    def spy_corridor_edges(road_name, radius_m=traffic.CORRIDOR_RADIUS_M):
+        requested_radii.append(radius_m)
+        return real_corridor_edges(road_name, radius_m)
+
+    monkeypatch.setattr(traffic, "corridor_edges", spy_corridor_edges)
+    monkeypatch.setattr(
+        traffic, "resolve_closure_lanes",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("stop before running SUMO")),
+    )
+    try:
+        traffic.closure_preview({"road_name": "Adderley Street"})
+    except ValueError:
+        pass
+    assert traffic.CORRIDOR_RADIUS_M in requested_radii
+    assert traffic.MONITORING_RADIUS_M in requested_radii
+    assert traffic.MONITORING_RADIUS_M > traffic.CORRIDOR_RADIUS_M
+
+
 def test_closure_preview_validates_demand_sensitivity_range():
     try:
         traffic.closure_preview({"road_name": "Long Street", "demand_multiplier": 3})
@@ -548,12 +683,35 @@ class _FakeLane:
         return self._id
 
 
+class _FakeNode:
+    def __init__(self, node_id: str):
+        self._id = node_id
+        self.outgoing: list["_FakeLaneEdge"] = []
+
+    def getID(self) -> str:
+        return self._id
+
+    def getOutgoing(self) -> list["_FakeLaneEdge"]:
+        return self.outgoing
+
+
 class _FakeLaneEdge:
-    def __init__(self, edge_id: str, name: str, lane_count: int, allows_passenger: bool = True):
+    def __init__(
+        self,
+        edge_id: str,
+        name: str,
+        lane_count: int,
+        allows_passenger: bool = True,
+        from_node: "_FakeNode | None" = None,
+        to_node: "_FakeNode | None" = None,
+    ):
         self._id = edge_id
         self._name = name
         self._lanes = [_FakeLane(f"{edge_id}_{index}") for index in range(lane_count)]
         self._allows = allows_passenger
+        self._from_node = from_node or _FakeNode(f"{edge_id}_from")
+        self._to_node = to_node or _FakeNode(f"{edge_id}_to")
+        self._from_node.outgoing.append(self)
 
     def getID(self) -> str:
         return self._id
@@ -566,6 +724,12 @@ class _FakeLaneEdge:
 
     def allows(self, vehicle_class: str) -> bool:
         return self._allows
+
+    def getFromNode(self) -> _FakeNode:
+        return self._from_node
+
+    def getToNode(self) -> _FakeNode:
+        return self._to_node
 
 
 def fake_lane_net():
@@ -653,6 +817,115 @@ def test_invalid_closure_mode_is_rejected(monkeypatch):
         raise AssertionError("unknown closure_mode should fail")
 
 
+def fake_one_way_net():
+    node_a = _FakeNode("A")
+    node_b = _FakeNode("B")
+    node_c = _FakeNode("C")
+    forward = _FakeLaneEdge("fwd", "Alpha Street", 2, from_node=node_a, to_node=node_b)
+    reverse = _FakeLaneEdge("rev", "Alpha Street Return", 2, from_node=node_b, to_node=node_a)
+    lonely = _FakeLaneEdge("solo", "Solo Way", 2, from_node=node_b, to_node=node_c)
+    return _FakeNet([forward, reverse, lonely])
+
+
+def test_remaining_open_direction_finds_the_untouched_sibling():
+    # A plain full closure of one direction of a two-way street -- what the
+    # dedicated "one-way" drawing tool submits, with no `one_way` flag at
+    # all -- should still be recognised as leaving the other direction open.
+    net = fake_one_way_net()
+    assert traffic._remaining_open_direction({"rev"}, net) == ["fwd"]
+    assert traffic._remaining_open_direction({"fwd"}, net) == ["rev"]
+
+
+def test_remaining_open_direction_empty_when_both_sides_closed():
+    net = fake_one_way_net()
+    assert traffic._remaining_open_direction({"fwd", "rev"}, net) == []
+
+
+def test_remaining_open_direction_empty_with_no_sibling():
+    net = fake_one_way_net()
+    assert traffic._remaining_open_direction({"solo"}, net) == []
+
+
+def test_resolve_closure_lanes_one_way_closes_reverse_edge(monkeypatch):
+    monkeypatch.setattr(traffic, "_sumo_net", fake_one_way_net)
+    closure = traffic.resolve_closure_lanes("Alpha Street", "lane", one_way=True)
+    # The forward edge is narrowed like any lane closure; the opposite-
+    # direction sibling between the same node pair is fully closed to
+    # enforce one-way travel, not narrowed.
+    assert closure["lane_ids"] == ["fwd_0"]
+    assert closure["reverse_edge_ids"] == ["rev"]
+    assert closure["edge_ids"] == ["rev"]
+    assert closure["already_one_way_edge_ids"] == []
+
+
+def test_resolve_closure_lanes_reports_already_one_way_without_closing_anything(monkeypatch):
+    monkeypatch.setattr(traffic, "_sumo_net", fake_one_way_net)
+    closure = traffic.resolve_closure_lanes("Solo Way", "lane", one_way=True)
+    # No sibling edge runs the opposite way between the same nodes, so this
+    # street is already one-way -- report it honestly instead of fabricating
+    # a closure.
+    assert closure["reverse_edge_ids"] == []
+    assert closure["already_one_way_edge_ids"] == ["solo"]
+    assert closure["edge_ids"] == []
+
+
+def test_resolve_closure_lanes_without_one_way_leaves_reverse_edge_open(monkeypatch):
+    monkeypatch.setattr(traffic, "_sumo_net", fake_one_way_net)
+    closure = traffic.resolve_closure_lanes("Alpha Street", "lane", one_way=False)
+    assert closure["edge_ids"] == []
+    assert closure["reverse_edge_ids"] == []
+    assert closure["one_way"] is False
+
+
+def test_resolve_drawn_closure_one_way_closes_reverse_edge(monkeypatch):
+    monkeypatch.setattr(traffic, "_sumo_net", fake_one_way_net)
+    closure = traffic.resolve_drawn_closure(["fwd"], "lane", one_way=True)
+    assert closure["lane_ids"] == ["fwd_0"]
+    assert closure["reverse_edge_ids"] == ["rev"]
+    assert closure["edge_ids"] == ["rev"]
+
+
+def test_resolve_drawn_closure_one_way_reports_already_one_way(monkeypatch):
+    monkeypatch.setattr(traffic, "_sumo_net", fake_one_way_net)
+    closure = traffic.resolve_drawn_closure(["solo"], "lane", one_way=True)
+    assert closure["reverse_edge_ids"] == []
+    assert closure["already_one_way_edge_ids"] == ["solo"]
+    assert closure["edge_ids"] == []
+
+
+def test_closure_preview_ignores_one_way_for_full_closure_mode(monkeypatch):
+    # A full closure already shuts the selected direction entirely; also
+    # closing its reverse sibling would silently pedestrianise both
+    # directions while still reporting it as "converted to one-way".
+    captured = {}
+
+    def fake_resolve_drawn_closure(edge_ids, closure_mode, one_way=False):
+        captured["one_way"] = one_way
+        raise ValueError("stop before running SUMO")
+
+    monkeypatch.setattr(traffic, "resolve_drawn_closure", fake_resolve_drawn_closure)
+    try:
+        traffic.closure_preview({"edge_ids": ["any"], "closure_mode": "full", "one_way": True})
+    except ValueError:
+        pass
+    assert captured["one_way"] is False
+
+
+def test_closure_preview_keeps_one_way_for_lane_closure_mode(monkeypatch):
+    captured = {}
+
+    def fake_resolve_drawn_closure(edge_ids, closure_mode, one_way=False):
+        captured["one_way"] = one_way
+        raise ValueError("stop before running SUMO")
+
+    monkeypatch.setattr(traffic, "resolve_drawn_closure", fake_resolve_drawn_closure)
+    try:
+        traffic.closure_preview({"edge_ids": ["any"], "closure_mode": "lane", "one_way": True})
+    except ValueError:
+        pass
+    assert captured["one_way"] is True
+
+
 def test_closure_preview_validates_closure_mode():
     try:
         traffic.closure_preview({"road_name": "Bree Street", "closure_mode": "sidewalk"})
@@ -728,6 +1001,82 @@ def test_trip_weights_use_municipal_lanes_and_right_of_way_class():
     ]
     origins, _ = traffic._trip_weights(corridor, inbound_bias=0.0)
     assert origins[0] > origins[1] * 4
+
+
+def test_trip_weights_favour_currently_congested_roads():
+    from shapely.geometry import Point
+
+    corridor = [
+        {"id": "jammed", "name": "Jammed Street", "lane_count": 2, "length_m": 100.0, "midpoint": Point(100, 0)},
+        {"id": "clear", "name": "Clear Street", "lane_count": 2, "length_m": 100.0, "midpoint": Point(100, 10)},
+    ]
+    without_live_data, _ = traffic._trip_weights(corridor, inbound_bias=0.0)
+    assert without_live_data[0] == without_live_data[1]  # identical roads, no live signal yet
+
+    with_live_data, _ = traffic._trip_weights(
+        corridor, inbound_bias=0.0,
+        road_congestion={"Jammed Street": 0.2, "Clear Street": 1.1},
+    )
+    assert with_live_data[0] > with_live_data[1]
+
+
+def test_corridor_sample_points_ranks_by_capacity_and_caps_at_limit():
+    from shapely.geometry import Point
+
+    corridor = [
+        {"name": "Big Road", "lane_count": 4, "length_m": 400.0, "midpoint": Point(0, 0)},
+        {"name": "Small Road", "lane_count": 1, "length_m": 40.0, "midpoint": Point(50, 0)},
+        # Same street mapped as two edges -- only the larger should be kept.
+        {"name": "Big Road", "lane_count": 1, "length_m": 20.0, "midpoint": Point(10, 10)},
+    ]
+    points = traffic._corridor_sample_points(corridor, limit=1)
+    assert len(points) == 1
+    assert points[0]["name"] == "Big Road"
+    assert "lon" in points[0]["sample_point"] and "lat" in points[0]["sample_point"]
+
+
+def test_corridor_live_ratios_falls_back_to_none_without_api_key(monkeypatch):
+    monkeypatch.delenv("TOMTOM_API", raising=False)
+    assert traffic._corridor_live_ratios(corridor_fixture()) is None
+
+
+def test_corridor_live_ratios_uses_per_road_tomtom_samples(monkeypatch):
+    from shapely.geometry import Point
+
+    monkeypatch.setenv("TOMTOM_API", "test-key")
+    corridor = [{"name": "Jammed Street", "lane_count": 2, "length_m": 100.0, "midpoint": Point(0, 0)}]
+    monkeypatch.setattr(
+        traffic, "_corridor_sample_points",
+        lambda corridor, limit=8: [{"name": "Jammed Street", "sample_point": {"lat": -33.9, "lon": 18.4}}],
+    )
+    monkeypatch.setattr(traffic, "_fetch_flow_segment", lambda lat, lon, key: sample_flow_segment(10.0, 40.0))
+    result = traffic._corridor_live_ratios(corridor)
+    assert result["roads_sampled"] == 1
+    assert result["per_road_ratio"]["Jammed Street"] == 0.25
+    assert result["average_ratio"] == 0.25
+
+
+def test_closure_preview_live_scenario_prefers_corridor_specific_tomtom_data(monkeypatch):
+    monkeypatch.setenv("TOMTOM_API", "test-key")
+    citywide_called = []
+    monkeypatch.setattr(traffic, "current_traffic", lambda: citywide_called.append(True) or {"average_speed_ratio": 0.85})
+    monkeypatch.setattr(
+        traffic, "_corridor_live_ratios",
+        lambda corridor: {"per_road_ratio": {"Adderley Street": 0.3}, "average_ratio": 0.3, "roads_sampled": 1, "roads_requested": 1},
+    )
+    captured = {}
+
+    def fake_generate_trips(**kwargs):
+        captured.update(kwargs)
+        raise ValueError("stop before running SUMO")
+
+    monkeypatch.setattr(traffic, "_generate_trips", fake_generate_trips)
+    try:
+        traffic.closure_preview({"road_name": "Adderley Street", "scenario": "live", "duration_min": 5})
+    except ValueError:
+        pass
+    assert not citywide_called  # corridor-specific data was available, so the citywide fallback must not run
+    assert captured.get("road_congestion") == {"Adderley Street": 0.3}
 
 
 def test_street_activity_summary_counts_inventory_near_corridor(monkeypatch):

@@ -502,9 +502,12 @@
         <div class="traffic-card compact-section">
           <div class="traffic-card-heading"><span>Intervention</span></div>
           <div class="traffic-closure-choice" role="group" aria-label="Choose closure drawing tool">
-            <button id="traffic-draw-lane" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v18M17 3v18M12 4v3m0 4v3m0 4v2"/></svg><span>Lane closure</span></button>
-            <button id="traffic-draw-road" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M6 12h12"/></svg><span>Street closure</span></button>
+            <button id="traffic-draw-lane" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v18M17 3v18M12 4v3m0 4v3m0 4v2"/></svg><span>Lane</span></button>
+            <button id="traffic-draw-road" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M6 12h12"/></svg><span>Street</span></button>
+            <button id="traffic-draw-oneway" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h14M13 6l6 6-6 6"/></svg><span>One-way</span></button>
           </div>
+          <label id="traffic-oneway-row" class="traffic-oneway-toggle" hidden><input id="traffic-oneway" type="checkbox"> Also close the return lane <small>(streets with 2+ lanes each way)</small></label>
+          <button id="traffic-flip-direction" class="secondary traffic-flip-direction" type="button" hidden>⇄ Close the other direction instead</button>
           <p id="traffic-selection-status" class="traffic-selection-status">Choose a tool and draw on the map.</p>
           <div class="traffic-actions">
             <button id="traffic-run" type="button" disabled>Simulate</button>
@@ -531,6 +534,7 @@
             <div class="road-status-legend" aria-label="Road status legend">
               <span><i class="status-swatch pedestrian"></i>Pedestrian</span>
               <span><i class="status-swatch closure"></i>Closed</span>
+              <span><i class="status-swatch oneway"></i>One-way closure</span>
               <span><i class="status-swatch diverted"></i>More traffic</span>
               <span><i class="status-swatch relieved"></i>Less traffic</span>
               <span><i class="status-swatch direction">➜</i>Travel direction</span>

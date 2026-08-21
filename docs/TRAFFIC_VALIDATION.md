@@ -119,6 +119,66 @@ scale ≈1.0).
   and lifecycle emissions. The noise value is an edge emission indicator, not
   a facade or pedestrian receptor level.
 
+## One-way conversion (2026-08-19)
+
+SUMO/`netconvert` bakes edge direction into the network at build time; there
+is no live "reverse this lane" call in TraCI. A two-way street is modelled as
+two directional edges between the same pair of nodes, so a one-way
+conversion is implemented by fully closing the opposite-direction sibling
+edge (the same `edge.setDisallowed` mechanism a full closure already uses),
+not by mutating direction. This is representative for a low-volume access
+street, such as a single-block residential road, but will understate impact
+on a street where the closed direction itself carries significant flow —
+that traffic simply has nowhere to be generated in the model, rather than
+being displaced onto it. Edges that are already one-way in the source OSM
+data have no opposite sibling to close; the resolver reports this rather
+than fabricating a closure.
+
+The technical drawing-sheet report's cross-section is illustrative only: it
+draws SUMO's default lane width, not a surveyed measurement, since the
+network carries no per-lane survey data. It should not be read against a
+concept design's dimensioned cross-section.
+
+## Signal timing: actuated control tested and reverted (2026-08-20)
+
+Following up on "the current SUMO programs are generated network programs,
+not the CBD's field timing" above: inspected the built network directly and
+confirmed all 181 `tlLogic` programs use the exact same 90 s cycle
+(`netconvert`'s blind default), regardless of intersection size or
+approach count -- a two-lane residential crossing and a major Adderley/Strand
+junction currently run an identical fixed cycle.
+
+Real per-intersection field timing is not available (same "evidence still
+needed" gap as below), but SUMO's `actuated` signal type -- which extends or
+cuts short green time based on real-time detector occupancy instead of a
+blind fixed cycle -- does not require any such data and is a standard,
+well-established improvement. Tested by rebuilding the network with
+`netconvert --tls.default-type actuated` (plus `--tls.max-dur 90` so
+actuated green could extend at least as long as the original static green,
+not less):
+
+- Topology was unaffected: identical edge/junction/tlLogic counts and edge
+  IDs to the current network, only the `tlLogic` definitions changed.
+- At light demand (5-minute Adderley sample) it measurably helped: baseline
+  completion rose from 80.6% to 88.7% for the same request.
+- At the calibration sweep's own reference point (10-minute Adderley,
+  am-peak, `lane` closure, demand scale 1.0) it reproduced the
+  saturation-inversion failure mode from the Stability calibration section
+  above: journey time came back **negative** (-3.2%) for a plain lane
+  closure, with closure completion *below* baseline completion. The sign
+  only became sane again around demand_multiplier ≈ 0.7 -- i.e. actuated
+  signals shift this network's effective capacity enough that
+  `BASE_VEHICLES_PER_MIN = 50` is no longer inside the validated stability
+  band.
+
+**Reverted** -- `data/sumo/cbd.net.xml` is unchanged, still the `static`
+signal build. Actuated control is a real, low-risk-in-principle accuracy
+improvement (SUMO-standard, needs no unavailable data), but it moves the
+demand-model's calibration point and must not ship without redoing the full
+stability sweep (the 50/60/70/80/120/160-departures/min table above) against
+an actuated network first, the same way the original sweep was done for the
+static one. Treat as a scoped follow-up, not a drop-in swap.
+
 ## Evidence still needed for calibration
 
 1. Weekday AM, interpeak and PM turning counts for Adderley/Wale and diversion

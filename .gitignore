@@ -3,3 +3,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+# Runtime-accumulated TomTom speed-ratio log, see server/traffic.py's
+# record_traffic_observation -- generated on the deployed server, not
+# checked-in source data.
+data/observations/

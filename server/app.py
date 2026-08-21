@@ -47,7 +47,15 @@ from .sunlight import (
 from .location import streetview_location
 from .weather import current_weather
 from .traffic import SCENARIOS as TRAFFIC_SCENARIOS
-from .traffic import closure_preview, current_traffic, drawable_road_edges, named_roads, permanent_road_statuses
+from .traffic import (
+    DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S,
+    closure_preview,
+    current_traffic,
+    drawable_road_edges,
+    named_roads,
+    permanent_road_statuses,
+    record_traffic_observation,
+)
 from .wind_metrics import COMFORT_CATEGORIES, STABILITY_PROFILES, validate_against_observations
 from .era5_wind import climatology_summary
 
@@ -87,6 +95,39 @@ HEAVY_PATH_LIMITS = {
 }
 HEAVY_SEMAPHORES = {path: asyncio.Semaphore(max(1, limit)) for path, limit in HEAVY_PATH_LIMITS.items()}
 RATE_LIMIT_REQUESTS = max(1, int(os.getenv("SIMULATION_RATE_LIMIT", "12")))
+
+TRAFFIC_OBSERVATION_INTERVAL_S = max(
+    300, int(os.getenv("TRAFFIC_OBSERVATION_INTERVAL_S", str(DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S)))
+)
+_traffic_observation_task: asyncio.Task | None = None
+
+
+async def _traffic_observation_loop() -> None:
+    """Periodically snapshot TomTom speed ratios so the fixed time-of-day
+    demand profiles can eventually be nudged toward observed reality
+    instead of only hand-tuned constants -- see
+    `server/traffic.py::record_traffic_observation`. Runs for the life of
+    the process; a single failed tick (TomTom down, no API key) must not
+    kill collection for every tick after it.
+    """
+    while True:
+        try:
+            await asyncio.to_thread(record_traffic_observation)
+        except Exception as error:
+            LOGGER.warning("traffic observation tick failed: %s", error)
+        await asyncio.sleep(TRAFFIC_OBSERVATION_INTERVAL_S)
+
+
+@app.on_event("startup")
+async def _start_traffic_observation_loop() -> None:
+    global _traffic_observation_task
+    _traffic_observation_task = asyncio.create_task(_traffic_observation_loop())
+
+
+@app.on_event("shutdown")
+async def _stop_traffic_observation_loop() -> None:
+    if _traffic_observation_task is not None:
+        _traffic_observation_task.cancel()
 RATE_LIMIT_WINDOW_S = max(1, int(os.getenv("SIMULATION_RATE_WINDOW_S", "60")))
 RATE_HISTORY: dict[str, deque[float]] = defaultdict(deque)
 RATE_LOCK = asyncio.Lock()
@@ -211,6 +252,7 @@ class TrafficClosurePayload(BaseModel):
     closure_scope: Literal["block", "road"] = "block"
     traffic_control: Literal["signalized", "priority"] = "signalized"
     demand_multiplier: float = Field(default=1.0, ge=0.5, le=1.5)
+    one_way: bool = False
 
 
 class FloodPayload(BaseModel):

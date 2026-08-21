@@ -382,7 +382,7 @@ button.secondary:hover { border-color: #727272; background: var(--control-hover)
 button.secondary.active { border-color: var(--accent); background: var(--accent-dark); color: #fff; box-shadow: inset 3px 0 0 var(--accent-pale); }
 button:disabled { cursor: not-allowed; opacity: .5; }
 .current-actions, .streetview-actions, .wind-actions, .flood-actions, .traffic-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.traffic-closure-choice { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.traffic-closure-choice { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .traffic-closure-choice button { min-height: 44px; padding: 7px 6px; font-size: 9px; line-height: 1.2; }
 .traffic-closure-choice button span { display: block; margin-bottom: 3px; color: #8beed8; font-size: 14px; }
 .traffic-closure-choice button.active {
@@ -573,7 +573,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .report-verdict.incomplete::before { background: #bd8736; }
 .report-verdict h2 { margin: 0 0 5px; color: #20302a; font-size: 18px; }
 .report-verdict p { margin: 0; color: #55615c; }
-.report-decision-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 10px; margin: -10px 0 30px; }
+.report-decision-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: -10px 0 30px; }
 .report-decision-card { padding: 16px; border: 1px solid #cfd7d2; border-radius: 5px; background: #fff; }
 .report-decision-card.primary { border-color: #77a998; background: #e5f3ed; }
 .report-decision-card > span { display: block; margin-bottom: 7px; color: #397564; font-size: 9px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
@@ -620,6 +620,41 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .report-list b { color: #283830; }
 .report-list span { color: #69736e; text-align: right; }
 .report-note { padding: 14px 16px; border-left: 4px solid #8d9691; background: #e7e9e7; color: #58615d; font-size: 10px; }
+.report-sheet {
+  display: grid;
+  grid-template-columns: 1fr 260px;
+  gap: 18px;
+  margin: 26px 0;
+  padding: 18px;
+  border: 1px solid #cdd5d0;
+  border-radius: 5px;
+  background: #fff;
+}
+.report-sheet-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin: 0 0 8px; }
+.report-sheet-heading:not(:first-child) { margin-top: 18px; }
+.report-sheet-heading h2 { margin: 0; color: #1d2924; font-size: 13px; }
+.report-sheet-heading span { color: #77817c; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.report-cross-section svg { display: block; width: 100%; height: auto; }
+.report-cross-section-note { margin: 6px 0 0; color: #78817d; font-size: 9px; }
+.report-plan svg { display: block; width: 100%; height: auto; border-radius: 6px; }
+.report-plan-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; color: #55615c; font-size: 9px; }
+.report-plan-legend i { display: inline-block; width: 14px; height: 10px; margin-right: 5px; vertical-align: middle; border: 1.5px solid; border-radius: 2px; }
+.report-title-block { width: 100%; border-collapse: collapse; border: 1px solid #cdd5d0; background: #fbfbf9; font-size: 10px; }
+.report-title-block th, .report-title-block td { padding: 6px 8px; border-bottom: 1px solid #e1e4e2; text-align: left; }
+.report-title-block th { width: 34%; color: #78817d; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; font-size: 8px; }
+.report-title-block tr:first-child th { background: #1e6f61; color: #fff; text-transform: uppercase; font-size: 9px; letter-spacing: .1em; }
+.report-title-block tr:last-child td, .report-title-block tr:last-child th { border-bottom: 0; }
+.report-notes { margin-top: 14px; padding: 12px; border: 1px solid #cdd5d0; border-radius: 4px; background: #fbfbf9; }
+.report-notes-heading { margin-bottom: 8px; color: #78817d; font-size: 9px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.report-notes-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.report-notes-list li { display: grid; grid-template-columns: 16px 1fr; gap: 8px; color: #3c4842; font-size: 10px; line-height: 1.4; }
+.report-notes-list li span { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: #1e6f61; color: #fff; font-size: 9px; font-weight: 800; }
+@media (max-width: 900px) {
+  .report-sheet { grid-template-columns: 1fr; }
+}
+@media print {
+  .report-sheet { break-inside: avoid; }
+}
 .report-footer { display: flex; align-items: center; gap: 7px; margin-top: 34px; padding-top: 14px; border-top: 1px solid #bbc3be; color: #78817d; font-size: 9px; }
 .report-footer img { width: 18px; height: 18px; }
 
@@ -670,6 +705,28 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   background: linear-gradient(135deg, #193d38, #263331);
   color: #a9f4df;
 }
+.traffic-oneway-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 4px;
+  padding: 7px 8px;
+  border: 1px solid #2d4f73;
+  border-radius: 3px;
+  background: linear-gradient(135deg, #17263a, #1c2733);
+  color: #b9d6ff;
+  font-size: 9px;
+  font-weight: 500;
+}
+.traffic-oneway-toggle small { color: var(--muted); font-weight: 400; }
+.traffic-flip-direction {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 7px 8px;
+  font-size: 9px;
+  font-weight: 600;
+}
 /* Matches the HSL red→green speed ramp the cars are shaded with. */
 .traffic-gradient { height: 9px; border-radius: 2px; box-shadow: inset 0 0 0 1px #ffffff35; background: linear-gradient(90deg, #ee2f2f 0%, #eec92f 50%, #3fd44f 100%); }
 .traffic-legend-labels { display: flex; justify-content: space-between; gap: 8px; color: #d7d7d3; font-size: 9px; line-height: 1.25; }
@@ -688,6 +745,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .status-swatch { width: 18px; height: 4px; border-radius: 4px; box-shadow: 0 0 7px currentColor; }
 .status-swatch.pedestrian { color: #82aaa5; background: #82aaa5; box-shadow: 0 0 4px currentColor; }
 .status-swatch.closure { color: #ff4b45; background: repeating-linear-gradient(90deg, #ff4b45 0 5px, #fff2d0 5px 8px); }
+.status-swatch.oneway { color: #4f8bff; background: #4f8bff; }
 .status-swatch.diverted { color: #ff9c3a; background: #ff9c3a; }
 .status-swatch.relieved { color: #4cc7ff; background: #4cc7ff; }
 .status-swatch.direction {

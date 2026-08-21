@@ -28,6 +28,7 @@ real origin-destination counts.
 
 from __future__ import annotations
 
+import html
 import json
 import math
 import os
@@ -44,6 +45,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 from urllib.request import urlopen
+from zoneinfo import ZoneInfo
 
 from pyproj import Transformer
 from shapely.geometry import LineString, Point, shape
@@ -57,11 +59,16 @@ ROADS_PATH = PROJECT_ROOT / "data" / "osm_cbd_roads.geojson"
 SUMO_NET_PATH = PROJECT_ROOT / "data" / "sumo" / "cbd.net.xml"
 SCENE_FOOTPRINT_PATH = PROJECT_ROOT / "data" / "scene_footprint.geojson"
 CITY_MODEL_PATH = PROJECT_ROOT / "public" / "assets" / "city_model.json"
+# Growing, gitignored log of TomTom speed-ratio snapshots -- see
+# `record_traffic_observation`/`_historical_scenario_ratio`. Not the
+# checked-in `data/` GIS assets above; this is runtime-accumulated.
+TRAFFIC_OBSERVATIONS_PATH = PROJECT_ROOT / "data" / "observations" / "traffic_speed_log.jsonl"
 
 TOMTOM_PROVIDER = "TomTom Traffic Flow"
 TOMTOM_BASE_URL = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json"
 CACHE_SECONDS = 300
 SAMPLE_ROAD_LIMIT = 16
+CAPE_TOWN_TZ = ZoneInfo("Africa/Johannesburg")
 
 # Highway classes that carry general vehicle traffic; footways, steps, tracks
 # etc. are excluded from both the live sample and the closable-road list.
@@ -100,9 +107,24 @@ SIMULATION_WALL_CLOCK_BUDGET_S = 45.0
 # How far either side of the selected road counts as "the corridor". 250 m
 # is roughly one CBD block, enough to contain the parallel streets traffic
 # actually diverts onto when a lane closes, without spreading the vehicle
-# budget so thin that the street looks deserted.
+# budget so thin that the street looks deserted. This also sets how far
+# synthetic demand is generated -- BASE_VEHICLES_PER_MIN and the whole
+# demand-stability sweep behind it (see project memory) were validated at
+# this radius, so it stays fixed here rather than growing with the radius
+# below.
 CORRIDOR_RADIUS_M = 250.0
 MIN_CORRIDOR_EDGES = 12
+# SUMO's own router is never confined to the 250 m corridor -- it runs on
+# the full network, so a closure can and does reroute traffic further away
+# than that in the simulation itself. What *was* confined to 250 m is what
+# gets reported: `_flow_comparison` only ever looked at corridor edges, so
+# any diversion landing just past the buffer was invisible in the report --
+# making the nearest corridor street look like it absorbed all the
+# diverted traffic, when the simulation may have actually spread some of it
+# further out. This wider radius is used only for monitoring/reporting
+# (see `monitoring_corridor` in `closure_preview`), never for demand
+# generation, so it does not touch the tuned demand model above.
+MONITORING_RADIUS_M = 500.0
 # Synthetic vehicle departures per simulated minute at demand scale 1.0, for a
 # corridor with REFERENCE_CORRIDOR_LANE_KM of capacity. This is a *model
 # loading rate*, not an observed Adderley Street count: trips both start and
@@ -465,6 +487,136 @@ def current_traffic(force: bool = False) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
+# Historical speed observations -- a step toward ground-truth calibration
+# --------------------------------------------------------------------------
+#
+# There is no real vehicle-count (OD/AADT) dataset bundled with this project,
+# and TomTom exposes speed, not volume, so this cannot become true ground
+# truth for absolute demand. What it *can* do: build up, over real operating
+# time, an empirical record of when this specific network is actually
+# congested, and use that to gently correct the fixed time-of-day
+# SCENARIOS constants (which started as hand-picked shapes) toward observed
+# reality. `record_traffic_observation` is meant to be called on a
+# schedule (see server/app.py's startup task); `_historical_scenario_ratio`
+# reads back whatever has accumulated so far and stays a no-op, deferring to
+# the hand-tuned constant, until there is enough of it to trust.
+
+# Default interval for server/app.py's background collector task (seconds).
+# Each tick costs one TomTom request per sampled road (SAMPLE_ROAD_LIMIT, up
+# to 16) -- 30 minutes keeps a day's worth of unattended collection well
+# under a typical free/trial TomTom quota, leaving headroom for actual
+# user-triggered live-scenario and corridor-specific requests. Override with
+# the TRAFFIC_OBSERVATION_INTERVAL_S env var for a plan with more headroom.
+DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S = 1800
+MIN_HISTORICAL_SAMPLES = 40
+MIN_HISTORICAL_DISTINCT_DAYS = 5
+# Local hour-of-day each fixed scenario represents, and whether weekends
+# should be excluded -- mirrors the plain-language windows in each
+# SCENARIOS label above.
+SCENARIO_HISTORICAL_WINDOWS: dict[str, dict[str, Any]] = {
+    "am_peak": {"hours": range(7, 9), "weekdays_only": True},
+    "midday": {"hours": range(11, 14), "weekdays_only": False},
+    "pm_peak": {"hours": range(16, 18), "weekdays_only": True},
+    "evening": {"hours": range(19, 21), "weekdays_only": False},
+}
+# Rewritten (rarely -- only once meaningfully over the cap) rather than
+# growing forever. ~200k lines is several months of 15-minute samples
+# across the ~16-road citywide sample.
+MAX_OBSERVATION_LINES = 200_000
+
+
+def record_traffic_observation() -> int:
+    """Append one TomTom speed-ratio sample per citywide sample road.
+
+    Safe to call on an unattended schedule: any failure (no API key, TomTom
+    error, no usable roads) is swallowed and simply records nothing for this
+    tick, rather than raising into whatever scheduled it.
+    """
+    try:
+        api_key = _tomtom_api_key()
+    except RuntimeError:
+        return 0
+    now_utc = datetime.now(timezone.utc)
+    local_now = now_utc.astimezone(CAPE_TOWN_TZ)
+    rows = []
+    for road in _sample_road_points():
+        point = road["sample_point"]
+        try:
+            segment = _fetch_flow_segment(point["lat"], point["lon"], api_key)
+        except Exception:
+            continue
+        if not segment:
+            continue
+        current_speed = float(segment.get("currentSpeed") or 0.0)
+        free_flow_speed = float(segment.get("freeFlowSpeed") or 0.0)
+        if free_flow_speed <= 0:
+            continue
+        ratio = max(0.05, min(1.2, current_speed / free_flow_speed))
+        rows.append({
+            "ts": now_utc.isoformat().replace("+00:00", "Z"),
+            "date": local_now.date().isoformat(),
+            "weekday": local_now.weekday(),
+            "hour": local_now.hour,
+            "road": road["name"],
+            "ratio": round(ratio, 3),
+        })
+    if not rows:
+        return 0
+    TRAFFIC_OBSERVATIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with TRAFFIC_OBSERVATIONS_PATH.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(json.dumps(row) for row in rows) + "\n")
+    _trim_observation_log()
+    return len(rows)
+
+
+def _trim_observation_log(max_lines: int = MAX_OBSERVATION_LINES) -> None:
+    if not TRAFFIC_OBSERVATIONS_PATH.exists():
+        return
+    lines = TRAFFIC_OBSERVATIONS_PATH.read_text(encoding="utf-8").splitlines()
+    if len(lines) <= max_lines * 1.2:
+        return
+    TRAFFIC_OBSERVATIONS_PATH.write_text("\n".join(lines[-max_lines:]) + "\n", encoding="utf-8")
+
+
+def _historical_scenario_ratio(scenario_key: str) -> dict[str, Any] | None:
+    """Mean observed speed ratio for a fixed scenario's representative hours.
+
+    Returns ``None`` until both a minimum sample count and a minimum spread
+    of distinct calendar days are met, so a single unusually quiet or busy
+    day right after deployment can't masquerade as "this scenario's typical
+    congestion" -- callers must fall back to the hand-tuned SCENARIOS
+    constant in that case.
+    """
+    window = SCENARIO_HISTORICAL_WINDOWS.get(scenario_key)
+    if window is None or not TRAFFIC_OBSERVATIONS_PATH.exists():
+        return None
+    ratios: list[float] = []
+    days_seen: set[str] = set()
+    for line in TRAFFIC_OBSERVATIONS_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("hour") not in window["hours"]:
+            continue
+        if window["weekdays_only"] and row.get("weekday", 0) >= 5:
+            continue
+        ratio = row.get("ratio")
+        if not isinstance(ratio, (int, float)):
+            continue
+        ratios.append(float(ratio))
+        if row.get("date"):
+            days_seen.add(row["date"])
+    if len(ratios) < MIN_HISTORICAL_SAMPLES or len(days_seen) < MIN_HISTORICAL_DISTINCT_DAYS:
+        return None
+    return {
+        "average_ratio": sum(ratios) / len(ratios),
+        "sample_count": len(ratios),
+        "distinct_days": len(days_seen),
+    }
+
+
+# --------------------------------------------------------------------------
 # SUMO network + closure-impact simulation
 # --------------------------------------------------------------------------
 
@@ -482,7 +634,7 @@ def _sumo_net() -> Any:
 
 def resolve_road_edges(road_name: str) -> list[str]:
     net = _sumo_net()
-    matches = [edge.getID() for edge in net.getEdges() if edge.getName() == road_name]
+    matches = [edge.getID() for edge in net.getEdges() if _edge_name(edge) == road_name]
     if not matches:
         raise ValueError(f"unknown road name: {road_name!r}")
     return matches
@@ -497,6 +649,95 @@ def _demand_scale(average_speed_ratio: float) -> float:
     """
     ratio = max(0.15, min(1.0, average_speed_ratio))
     return max(0.4, min(2.0, 1.9 - ratio * 1.5))
+
+
+# How many of a corridor's own named roads to query TomTom for, for the
+# ``live`` scenario. Kept small: each entry is a synchronous HTTP round trip
+# inside the same request that also runs two SUMO simulations, and TomTom
+# quota is shared with the citywide live-conditions snapshot.
+CORRIDOR_LIVE_SAMPLE_LIMIT = 8
+
+
+@lru_cache(maxsize=1)
+def _local_to_lonlat_transformer() -> Transformer:
+    return Transformer.from_crs(LOCAL_CRS, WEB_CRS, always_xy=True)
+
+
+def _corridor_sample_points(
+    corridor: list[dict[str, Any]], limit: int = CORRIDOR_LIVE_SAMPLE_LIMIT
+) -> list[dict[str, Any]]:
+    """The corridor's own biggest named roads, one sample point each.
+
+    `current_traffic()`'s citywide sample ranks the top ``SAMPLE_ROAD_LIMIT``
+    roads network-wide by highway class, so a closure on a smaller street
+    could be "live"-scaled entirely from conditions on roads nowhere near it.
+    This instead ranks by capacity (lane-km) within the corridor itself, so
+    the live scenario reflects the streets actually being simulated.
+    """
+    config = load_viewer_config()
+    origin_x, origin_y = config["origin"]
+    transformer = _local_to_lonlat_transformer()
+    by_name: dict[str, dict[str, Any]] = {}
+    for record in corridor:
+        name = record.get("name")
+        if not name:
+            continue
+        capacity = record["lane_count"] * record["length_m"]
+        existing = by_name.get(name)
+        if existing is None or capacity > existing["capacity"]:
+            by_name[name] = {"name": name, "capacity": capacity, "midpoint": record["midpoint"]}
+    ranked = sorted(by_name.values(), key=lambda item: item["capacity"], reverse=True)[:limit]
+    points = []
+    for item in ranked:
+        # Local viewer coordinates are origin-shifted and z-flipped relative
+        # to the LOCAL_CRS metres `named_roads()` projects from -- invert
+        # both before handing the point to the lon/lat transformer.
+        projected_x = item["midpoint"].x + origin_x
+        projected_y = origin_y - item["midpoint"].y
+        longitude, latitude = transformer.transform(projected_x, projected_y)
+        points.append({"name": item["name"], "sample_point": {"lon": longitude, "lat": latitude}})
+    return points
+
+
+def _corridor_live_ratios(corridor: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Per-road live speed ratios for the roads actually in this corridor.
+
+    Returns ``None`` (callers fall back to the citywide snapshot) if TomTom
+    is unavailable or returns nothing usable -- the ``live`` scenario must
+    still work without this, just less spatially targeted.
+    """
+    try:
+        api_key = _tomtom_api_key()
+    except RuntimeError:
+        return None
+    sample_roads = _corridor_sample_points(corridor)
+    if not sample_roads:
+        return None
+    per_road: dict[str, float] = {}
+    for road in sample_roads:
+        point = road["sample_point"]
+        try:
+            segment = _fetch_flow_segment(point["lat"], point["lon"], api_key)
+        except Exception:
+            continue
+        if not segment:
+            continue
+        current_speed = float(segment.get("currentSpeed") or 0.0)
+        free_flow_speed = float(segment.get("freeFlowSpeed") or 0.0)
+        if free_flow_speed <= 0:
+            continue
+        # Clamped the same way `_demand_scale` clamps its input: a momentary
+        # zero-speed reading (e.g. a stopped queue at the sample instant)
+        # should not be read as "this street has no capacity at all".
+        per_road[road["name"]] = max(0.15, min(1.2, current_speed / free_flow_speed))
+    if not per_road:
+        return None
+    return {
+        "per_road_ratio": per_road,
+        "average_ratio": sum(per_road.values()) / len(per_road),
+        "roads_sampled": len(per_road),
+        "roads_requested": len(sample_roads),
+    }
 
 
 @lru_cache(maxsize=1)
@@ -524,6 +765,21 @@ def _scene_footprint_local() -> Any:
     if not polygons:
         raise RuntimeError(f"no usable scene footprint in {SCENE_FOOTPRINT_PATH}")
     return unary_union(polygons)
+
+
+def _edge_name(edge: Any) -> str:
+    """The edge's street name, undoing a `netconvert` double-escaping quirk.
+
+    The raw OSM data has plain text like ``Saint George's Mall``, but
+    `netconvert` writes the `cbd.net.xml` edge `name` attribute as
+    ``Saint George&amp;apos;s Mall`` -- it XML-escapes the apostrophe to
+    `&apos;` and then escapes the resulting `&` a second time, so after
+    sumolib's own (correct, single-pass) XML parsing, `edge.getName()`
+    still returns a string that literally contains the six characters
+    `&apos;` rather than an apostrophe. `html.unescape` undoes exactly that
+    residual escaping; it is a no-op for a name that has none.
+    """
+    return html.unescape(edge.getName())
 
 
 def _normalise_road_name(value: Any) -> str:
@@ -738,15 +994,16 @@ def _edge_index() -> dict[str, dict[str, Any]]:
         }
         lanes = edge.getLanes()
         midpoint = line.interpolate(0.5, normalized=True)
-        municipal = _municipal_match(line, edge.getName())
+        municipal = _municipal_match(line, _edge_name(edge))
         snap_line = line
         if municipal:
             official_near_edge = _longest_line(municipal["line"].intersection(line.buffer(18.0)))
             if official_near_edge is not None and official_near_edge.length >= 3.0:
                 snap_line = official_near_edge
+        reverse_siblings = _reverse_siblings(edge)
         records[edge.getID()] = {
             "id": edge.getID(),
-            "name": edge.getName(),
+            "name": _edge_name(edge),
             "line": line,
             "midpoint": midpoint,
             "lane_count": edge.getLaneNumber(),
@@ -754,6 +1011,12 @@ def _edge_index() -> dict[str, dict[str, Any]]:
             "speed_mps": edge.getSpeed(),
             "visible": footprint.covers(midpoint),
             "snap_line": snap_line,
+            # The opposite-direction edge between the same node pair, if any.
+            # Lets the UI offer an explicit "which direction stays open"
+            # choice for an ordinary two-way street (one lane each way),
+            # instead of leaving that up to which side a freehand stroke
+            # happens to land nearest.
+            "reverse_edge_id": reverse_siblings[0].getID() if reverse_siblings else None,
             # Lane index in this network runs left-to-right across every
             # multi-lane edge checked (verified against the actual lane
             # geometry, not just SUMO's general convention) -- so index 0 is
@@ -813,6 +1076,7 @@ def drawable_road_edges() -> tuple[dict[str, Any], ...]:
             "id": record["id"],
             "name": record.get("name") or "Unnamed road",
             "lane_count": record["lane_count"],
+            "reverse_edge_id": record.get("reverse_edge_id"),
             "points": [[round(x, 1), round(z, 1)] for x, z in record["line"].coords],
             "snap_points": [[round(x, 1), round(z, 1)] for x, z in record["snap_line"].coords],
             "lane_points": (
@@ -892,14 +1156,91 @@ def resolve_scenario(scenario: str, live_average_ratio: float | None = None) -> 
         raise ValueError(f"unknown scenario: {scenario!r} (expected one of {sorted(SCENARIOS)})")
     profile = SCENARIOS[scenario]
     demand_scale = profile["demand_scale"]
+    historical_calibration: dict[str, Any] | None = None
     if demand_scale is None:
         ratio = 0.85 if live_average_ratio is None else live_average_ratio
         demand_scale = _demand_scale(ratio)
+    else:
+        historical = _historical_scenario_ratio(scenario)
+        if historical is not None:
+            implied_scale = _demand_scale(historical["average_ratio"])
+            blended = 0.5 * demand_scale + 0.5 * implied_scale
+            # Real observations can only *nudge* the stability-swept constant,
+            # not override it -- keeps the result inside the narrow band that
+            # was actually validated against gridlock (see project memory on
+            # BASE_VEHICLES_PER_MIN), even once months of history accumulate.
+            demand_scale = max(demand_scale * 0.7, min(demand_scale * 1.3, blended))
+            historical_calibration = {
+                "applied": True,
+                "sample_count": historical["sample_count"],
+                "distinct_days": historical["distinct_days"],
+                "observed_average_speed_ratio": round(historical["average_ratio"], 3),
+            }
     return {
         "key": scenario,
         "label": profile["label"],
         "demand_scale": float(demand_scale),
         "inbound_bias": float(profile["inbound_bias"]),
+        "historical_calibration": historical_calibration,
+    }
+
+
+def _reverse_siblings(edge: Any) -> list[Any]:
+    """The opposite-direction edge(s) running between the same node pair.
+
+    SUMO/netconvert bakes direction into the network at build time -- there is
+    no live "reverse this lane" call in TraCI. A two-way street is modelled as
+    two directional edges between the same node pair, so converting a street
+    to one-way is done by fully closing the sibling edge running the other
+    way (the same `setDisallowed` mechanism a ``full`` closure already uses),
+    not by mutating direction.
+    """
+    from_id = edge.getFromNode().getID()
+    return [
+        candidate for candidate in edge.getToNode().getOutgoing()
+        if candidate.getToNode().getID() == from_id
+        and candidate.getID() != edge.getID()
+        and candidate.allows("passenger")
+    ]
+
+
+def _remaining_open_direction(closed_edge_ids: set[str], net: Any) -> list[str]:
+    """Which direction(s) stay open purely because their sibling is closed.
+
+    Computed from the actual closed-edge set rather than a request flag, so
+    it recognises a one-way outcome regardless of how the closure was
+    produced -- a plain ``full`` closure of one direction of an ordinary
+    two-way street (what the dedicated "one-way" drawing tool submits, with
+    no flag at all) counts exactly the same as the flag-driven lane+reverse
+    combination.
+    """
+    by_id = {edge.getID(): edge for edge in net.getEdges()}
+    return sorted({
+        sibling.getID()
+        for edge_id in closed_edge_ids
+        if (edge := by_id.get(edge_id)) is not None
+        for sibling in _reverse_siblings(edge)
+        if sibling.getID() not in closed_edge_ids
+    })
+
+
+def _reverse_edge_ids(edges: list[Any]) -> dict[str, list[str]]:
+    """Find each edge's opposite-direction sibling(s), across a whole selection.
+
+    Edges with no such sibling are already one-way in the source data and are
+    reported separately rather than silently treated as closed.
+    """
+    reverse_ids: list[str] = []
+    already_one_way: list[str] = []
+    for edge in edges:
+        siblings = _reverse_siblings(edge)
+        if siblings:
+            reverse_ids.extend(sibling.getID() for sibling in siblings)
+        else:
+            already_one_way.append(edge.getID())
+    return {
+        "reverse_edge_ids": sorted(set(reverse_ids)),
+        "already_one_way_edge_ids": sorted(set(already_one_way)),
     }
 
 
@@ -907,6 +1248,7 @@ def resolve_closure_lanes(
     road_name: str,
     closure_mode: str,
     closure_scope: str = "road",
+    one_way: bool = False,
 ) -> dict[str, Any]:
     """Work out exactly which lanes a closure removes.
 
@@ -923,7 +1265,7 @@ def resolve_closure_lanes(
     net = _sumo_net()
     edges = [
         edge for edge in net.getEdges()
-        if edge.getName() == road_name and edge.allows("passenger")
+        if _edge_name(edge) == road_name and edge.allows("passenger")
     ]
     if not edges:
         raise ValueError(f"{road_name!r} has no drivable edges in the simulation network")
@@ -996,13 +1338,17 @@ def resolve_closure_lanes(
             f"{road_name!r} has no multi-lane sections to narrow; "
             "choose another road or use a full closure"
         )
+    reverse = _reverse_edge_ids(edges) if one_way else {"reverse_edge_ids": [], "already_one_way_edge_ids": []}
     return {
         "lane_ids": lane_ids,
-        "edge_ids": edge_ids,
+        "edge_ids": sorted(set(edge_ids) | set(reverse["reverse_edge_ids"])),
         "affected_edge_ids": (
             edge_ids if closure_mode == "full"
             else [edge.getID() for edge in edges if len(edge.getLanes()) >= 2]
         ),
+        "one_way": one_way,
+        "reverse_edge_ids": reverse["reverse_edge_ids"],
+        "already_one_way_edge_ids": reverse["already_one_way_edge_ids"],
         "edges_total": len(edges),
         "edges_narrowed": narrowed,
         "edges_skipped_single_lane": skipped_single_lane,
@@ -1010,7 +1356,11 @@ def resolve_closure_lanes(
     }
 
 
-def resolve_drawn_closure(edge_ids: list[str], closure_mode: str) -> dict[str, Any]:
+def resolve_drawn_closure(
+    edge_ids: list[str],
+    closure_mode: str,
+    one_way: bool = False,
+) -> dict[str, Any]:
     """Resolve an exact snapped map selection into lanes/edges to close."""
     if closure_mode not in CLOSURE_MODES:
         raise ValueError(f"closure_mode must be one of {list(CLOSURE_MODES)}")
@@ -1088,14 +1438,18 @@ def resolve_drawn_closure(edge_ids: list[str], closure_mode: str) -> dict[str, A
     if not lane_ids:
         raise ValueError("the drawn section has no multi-lane road to narrow; use a full closure")
 
-    road_names = sorted({edge.getName() for edge in edges if edge.getName()})
+    road_names = sorted({_edge_name(edge) for edge in edges if _edge_name(edge)})
+    reverse = _reverse_edge_ids(edges) if one_way else {"reverse_edge_ids": [], "already_one_way_edge_ids": []}
     return {
         "lane_ids": lane_ids,
-        "edge_ids": closed_edge_ids,
+        "edge_ids": sorted(set(closed_edge_ids) | set(reverse["reverse_edge_ids"])),
         # Selected single-lane sections are explicitly skipped above, so do
         # not colour or report them as closed in the response.
         "affected_edge_ids": closed_edge_ids if closure_mode == "full" else narrowed_edge_ids,
         "requested_edge_ids": requested_ids,
+        "one_way": one_way,
+        "reverse_edge_ids": reverse["reverse_edge_ids"],
+        "already_one_way_edge_ids": reverse["already_one_way_edge_ids"],
         "edges_total": len(edges),
         "edges_narrowed": narrowed,
         "edges_skipped_single_lane": skipped_single_lane,
@@ -1105,14 +1459,22 @@ def resolve_drawn_closure(edge_ids: list[str], closure_mode: str) -> dict[str, A
     }
 
 
-def _trip_weights(corridor: list[dict[str, Any]], inbound_bias: float) -> tuple[list[float], list[float]]:
+def _trip_weights(
+    corridor: list[dict[str, Any]],
+    inbound_bias: float,
+    road_congestion: dict[str, float] | None = None,
+) -> tuple[list[float], list[float]]:
     """Origin/destination sampling weights for one corridor.
 
     Base weight favours long, multi-lane, fast edges -- a six-lane arterial
     should originate far more trips than a short service road. `inbound_bias`
     then tilts origins outward and destinations inward (morning commute) or
     the reverse (afternoon), using distance from the viewer origin, which sits
-    on the CBD core.
+    on the CBD core. `road_congestion` (the ``live`` scenario's per-road
+    TomTom speed ratio, see `_corridor_live_ratios`) then nudges weight
+    toward streets that are *currently* congested -- a proxy for real
+    concentrated demand, since a road can only be jammed if more trips want
+    it right now than it can carry.
     """
     centre = Point(0.0, 0.0)
     distances = [record["midpoint"].distance(centre) for record in corridor]
@@ -1125,6 +1487,13 @@ def _trip_weights(corridor: list[dict[str, Any]], inbound_bias: float) -> tuple[
             "1": 1.45, "2": 1.3, "3": 1.15, "4": 1.0, "5": 0.8,
         }.get(str(municipal.get("right_of_way_class") or ""), 1.0)
         base = capacity_lanes * priority_factor * math.sqrt(max(record["length_m"], 1.0))
+        # Kept in the same ~0.6-1.6x band as `priority_factor` above so a
+        # single congested sample can't dominate the capacity-driven base
+        # weight -- this is a nudge toward realistic hotspots, not a
+        # replacement for the lane/length/priority model.
+        ratio = (road_congestion or {}).get(record.get("name") or "")
+        congestion_factor = max(0.6, min(1.6, 1.55 - ratio * 1.1)) if ratio is not None else 1.0
+        base *= congestion_factor
         radial = distance / furthest  # 0 at the CBD core, 1 at the corridor rim
         outward = 0.5 + inbound_bias * (radial - 0.5)
         inward = 0.5 - inbound_bias * (radial - 0.5)
@@ -1140,6 +1509,7 @@ def _generate_trips(
     inbound_bias: float,
     seed: int,
     workdir: Path,
+    road_congestion: dict[str, float] | None = None,
 ) -> tuple[Path, int]:
     """Write a corridor-scoped trip file and return it with its vehicle count.
 
@@ -1150,7 +1520,7 @@ def _generate_trips(
     """
     workdir.mkdir(parents=True, exist_ok=True)
     rng = random.Random(seed)
-    origin_weights, destination_weights = _trip_weights(corridor, inbound_bias)
+    origin_weights, destination_weights = _trip_weights(corridor, inbound_bias, road_congestion)
     departure_window_s = float(duration_s) * DEPARTURE_WINDOW_FRACTION
     # Keep the arrival stream stable when the sampling window changes. With a
     # fixed demand rate, a 20-minute run now extends the 10-minute trip stream
@@ -1730,6 +2100,14 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     closure_mode = str(payload.get("closure_mode", DEFAULT_CLOSURE_MODE))
     closure_scope = str(payload.get("closure_scope", DEFAULT_CLOSURE_SCOPE))
     traffic_control = str(payload.get("traffic_control", DEFAULT_TRAFFIC_CONTROL))
+    # `one_way` fully closes the reverse-direction sibling of whatever is
+    # selected, on top of whatever this closure_mode already closes. For
+    # ``full`` mode that sibling closure is redundant -- the selected
+    # direction is already closed entirely -- and would silently turn a
+    # one-direction closure into a two-direction one while still reporting
+    # it as "converted to one-way". It only means something for ``lane``
+    # mode, where narrowing one direction does not by itself touch the other.
+    one_way = bool(payload.get("one_way", False)) and closure_mode == "lane"
     demand_multiplier = float(payload.get("demand_multiplier", 1.0))
     if closure_mode not in CLOSURE_MODES:
         raise ValueError(f"closure_mode must be one of {list(CLOSURE_MODES)}")
@@ -1742,24 +2120,47 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             f"demand_multiplier must be between {MIN_DEMAND_MULTIPLIER} and {MAX_DEMAND_MULTIPLIER}"
         )
 
-    live_ratio: float | None = None
-    if scenario_key == "live":
-        try:
-            live_ratio = float(current_traffic().get("average_speed_ratio", 0.85))
-        except Exception:
-            live_ratio = None
-    scenario = resolve_scenario(scenario_key, live_ratio)
-
     net = _sumo_net()
     if requested_edge_ids:
-        closure = resolve_drawn_closure(requested_edge_ids, closure_mode)
+        closure = resolve_drawn_closure(requested_edge_ids, closure_mode, one_way=one_way)
         road_name = closure["label"]
         closure_scope = "drawn"
         corridor = corridor_edges_for_ids(closure["requested_edge_ids"], road_name)
+        monitoring_corridor = corridor_edges_for_ids(
+            closure["requested_edge_ids"], road_name, radius_m=MONITORING_RADIUS_M
+        )
     else:
         corridor = corridor_edges(road_name)
-        closure = resolve_closure_lanes(road_name, closure_mode, closure_scope)
-    monitored_edge_ids = [record["id"] for record in corridor]
+        monitoring_corridor = corridor_edges(road_name, radius_m=MONITORING_RADIUS_M)
+        closure = resolve_closure_lanes(road_name, closure_mode, closure_scope, one_way=one_way)
+
+    # Corridor is now known, so the `live` scenario can be grounded in
+    # TomTom conditions on the streets actually being simulated rather than
+    # a citywide sample that may have nothing to do with this corridor. Falls
+    # back to the citywide snapshot, then to a neutral ratio, if the
+    # corridor-specific fetch comes back empty (e.g. TomTom has no segment
+    # data for these particular streets).
+    live_ratio: float | None = None
+    live_calibration: dict[str, Any] | None = None
+    road_congestion: dict[str, float] | None = None
+    if scenario_key == "live":
+        corridor_live = _corridor_live_ratios(corridor)
+        if corridor_live:
+            live_ratio = corridor_live["average_ratio"]
+            road_congestion = corridor_live["per_road_ratio"]
+            live_calibration = {
+                "corridor_specific": True,
+                "roads_sampled": corridor_live["roads_sampled"],
+                "roads_requested": corridor_live["roads_requested"],
+            }
+        else:
+            try:
+                live_ratio = float(current_traffic().get("average_speed_ratio", 0.85))
+            except Exception:
+                live_ratio = None
+            live_calibration = {"corridor_specific": False, "roads_sampled": 0, "roads_requested": 0}
+    scenario = resolve_scenario(scenario_key, live_ratio)
+    monitored_edge_ids = [record["id"] for record in monitoring_corridor]
 
     duration_s = int(duration_min * 60)
     corridor_lane_km = _corridor_lane_km(corridor)
@@ -1771,14 +2172,32 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     # A stable hash (not the builtin `hash()`, which is salted per-process)
     # so the same request always gets the same synthetic demand -- otherwise
     # repeat previews would be silently non-reproducible and the "seed"
-    # reported in demand_model would be meaningless.
-    selection_seed = ",".join(requested_edge_ids) if requested_edge_ids else road_name
+    # reported in demand_model would be meaningless. Sorted rather than
+    # request order: the browser's freehand draw tool appends edges in
+    # whatever order the cursor happens to cross them, so retracing the
+    # same street a second time (even in the same direction) rarely
+    # reproduces the exact same order -- without sorting, two draws that
+    # close the *same set* of road sections got different seeds, and so a
+    # visually identical closure could land in a different severity band
+    # between runs for no reason a user could see on the map.
+    selection_seed = ",".join(sorted(requested_edge_ids)) if requested_edge_ids else road_name
     # Duration deliberately does not affect the seed: changing 10 to 20
     # minutes should extend the same demand stream, not invent a new scenario.
     seed = zlib.crc32(
         f"{selection_seed}|{scenario_key}|{demand_multiplier}".encode("utf-8")
     )
-    municipal_speed_limits, speed_limit_counts = _speed_limit_overrides(corridor)
+    # Applied to the simulation from monitoring_corridor, not the 250 m
+    # demand corridor: SUMO applies these network-wide via traci regardless
+    # of which edges are "in" the corridor, so a vehicle rerouting just past
+    # 250 m used to fall back to the network's generic default speed there
+    # even when a real municipal limit was available for that block.
+    municipal_speed_limits, _monitoring_speed_limit_counts = _speed_limit_overrides(monitoring_corridor)
+    # road_data's coverage reporting below stays scoped to `corridor` and
+    # uses its own separate tally -- kept distinct from the wider
+    # `municipal_speed_limits` above so "confirmed/inferred applied" and
+    # "records matched" describe the same area instead of one being a
+    # superset of the other.
+    _, speed_limit_counts = _speed_limit_overrides(corridor)
     speed_limit_records = [
         record for record in corridor
         if record.get("municipal") and record["municipal"].get("speed_limit_kph")
@@ -1798,6 +2217,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             inbound_bias=scenario["inbound_bias"],
             seed=seed,
             workdir=workdir,
+            road_congestion=road_congestion,
         )
 
         baseline_raw, baseline_metrics = _run_simulation(
@@ -1818,8 +2238,12 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         closure_tracks = _project_tracks(closure_raw["tracks"], net, config)
 
     impact = _diff_metrics(baseline_metrics, closure_metrics, planned_count)
+    # Uses the wider monitoring_corridor, not the 250 m demand corridor --
+    # SUMO's router isn't confined to 250 m, so without this a diversion
+    # landing just past the demand buffer would be silently dropped from the
+    # report rather than shown.
     flow_comparison = _flow_comparison(
-        corridor,
+        monitoring_corridor,
         baseline_metrics.get("edge_stats", {}),
         closure_metrics.get("edge_stats", {}),
     )
@@ -1838,12 +2262,40 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         ]
     else:
         closure_geometry_records = affected_records
+    reverse_edge_ids = closure.get("reverse_edge_ids") or []
+    already_one_way_edge_ids = closure.get("already_one_way_edge_ids") or []
+    one_way_geometry_records = [index[edge_id] for edge_id in reverse_edge_ids if edge_id in index]
+    remaining_open_edge_ids = _remaining_open_direction(set(closure["edge_ids"]), net)
+    remaining_open_geometry_records = [index[edge_id] for edge_id in remaining_open_edge_ids if edge_id in index]
     # Per-vehicle rows exist only to pair the two runs; sending thousands of
     # them to the viewer would dwarf the trajectories they came from.
     baseline_metrics.pop("per_vehicle", None)
     closure_metrics.pop("per_vehicle", None)
     baseline_metrics.pop("edge_stats", None)
     closure_metrics.pop("edge_stats", None)
+
+    base_description = (
+        f"kerbside lane closed on {closure['edges_narrowed']} of "
+        f"{closure['edges_total']} "
+        f"{'section' if closure['edges_total'] == 1 else 'sections'}"
+        if closure_mode == "lane"
+        else f"all lanes closed on {closure['edges_total']} "
+        f"{'section' if closure['edges_total'] == 1 else 'sections'}"
+    )
+    # Driven by the actual closed-edge topology rather than the `one_way`
+    # request flag, so a plain full closure of one direction of a two-way
+    # street (submitted by the dedicated "one-way" drawing tool, with no
+    # flag at all) is reported and drawn the same way as the flag-driven
+    # lane+reverse-closure case -- both leave the same kind of remainder.
+    one_way_description = None
+    if remaining_open_edge_ids:
+        one_way_description = (
+            f"other direction remains open, one-way, on "
+            f"{len(remaining_open_edge_ids)} "
+            f"{'section' if len(remaining_open_edge_ids) == 1 else 'sections'}"
+        )
+    elif one_way and already_one_way_edge_ids:
+        one_way_description = "already one-way in the source data; no reverse-direction edge to close"
 
     return {
         "road_name": road_name,
@@ -1858,18 +2310,30 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "edges_narrowed": closure["edges_narrowed"],
             "edges_skipped_single_lane": closure["edges_skipped_single_lane"],
             "scope": closure_scope,
+            "one_way": one_way,
+            "reverse_edges_closed": len(reverse_edge_ids),
+            "already_one_way_edges": len(already_one_way_edge_ids),
+            # Whether this closure leaves a two-way street operating
+            # one-way -- true whenever a closed edge's opposite-direction
+            # sibling remains open, regardless of which drawing tool or
+            # request flag produced the closure.
+            "functions_as_one_way": bool(remaining_open_edge_ids),
+            "remaining_open_edges": len(remaining_open_edge_ids),
             # Lane closures use the actual offset kerbside-lane shapes. Full closures
             # use the road edge centreline. The old response always returned
             # the centreline, which made a one-lane intervention look like the
             # whole carriageway was closed and could paint skipped sections.
             "geometry_local": _lines_payload(closure_geometry_records),
+            # Reverse-direction edges closed by the `one_way` request flag,
+            # kept separate from `geometry_local` so the report can draw the
+            # "narrowed lane" and "made one-way" interventions distinctly.
+            "one_way_geometry_local": _lines_payload(one_way_geometry_records),
+            # The direction that stays open precisely because its sibling is
+            # closed -- see `functions_as_one_way` above. This is what the
+            # report/map should draw as "stays open, one-way".
+            "remaining_open_geometry_local": _lines_payload(remaining_open_geometry_records),
             "description": (
-                f"kerbside lane closed on {closure['edges_narrowed']} of "
-                f"{closure['edges_total']} "
-                f"{'section' if closure['edges_total'] == 1 else 'sections'}"
-                if closure_mode == "lane"
-                else f"all lanes closed on {closure['edges_total']} "
-                f"{'section' if closure['edges_total'] == 1 else 'sections'}"
+                f"{base_description}; {one_way_description}" if one_way_description else base_description
             ),
         },
         "corridor": {
@@ -1881,6 +2345,12 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             # of leaving them to hunt for it across the whole CBD.
             "road_bounds_local": _records_bounds(closure_geometry_records) or _road_bounds_local(road_name),
             "note": "demand is generated only between visible edges inside this corridor",
+            # SUMO's router runs on the full network regardless of this
+            # radius; only the *reporting* radius is wider, so diversion
+            # landing just past the demand corridor still shows up in
+            # flow_comparison/street_flow_summary instead of being dropped.
+            "monitoring_radius_m": MONITORING_RADIUS_M,
+            "monitoring_edge_count": len(monitoring_corridor),
         },
         "demand_model": {
             "generator": "corridor-scoped synthetic trips, lane/length weighted, time-of-day biased",
@@ -1892,12 +2362,29 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
                 "network-stability sweep on the supplied Cape Town CBD SUMO network, "
                 "scaled to this corridor's lane-km relative to the reference corridor"
             ),
+            # Genuinely false, always: TomTom (below) gives speed, never
+            # vehicle counts, so this project has no real trip-volume ground
+            # truth to calibrate against -- see `historical_speed_calibration`
+            # for what real data *is* folded in.
             "observed_count_calibration": False,
             "scenario": scenario["key"],
             "demand_scale": scenario["demand_scale"],
             "user_demand_multiplier": demand_multiplier,
             "inbound_bias": scenario["inbound_bias"],
+            # Only set for the fixed am_peak/midday/pm_peak/evening profiles,
+            # and only once the background collector (see server/app.py) has
+            # built up enough real TomTom history -- nudges (not replaces)
+            # the hand-tuned demand_scale toward this network's own observed
+            # congestion pattern for that time window. `None` means either
+            # this is the `live` scenario (see `live_calibration` instead)
+            # or there isn't enough history yet.
+            "historical_speed_calibration": scenario.get("historical_calibration"),
             "live_average_speed_ratio": live_ratio,
+            # Only set for scenario == "live" -- whether the demand level and
+            # spatial weighting came from TomTom conditions on this
+            # corridor's own roads, or fell back to the citywide snapshot
+            # because no corridor-specific segment data was available.
+            "live_calibration": live_calibration,
             "planned_vehicle_count": planned_count,
             "fleet_mix": FLEET_MIX,
             "seed": seed,
