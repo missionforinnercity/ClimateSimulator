@@ -4537,6 +4537,12 @@ export async function startWebGLScene(canvas, status) {
     return `${reportNumber(Math.abs(numeric), 1)} ${numeric > 0 ? 'more' : 'fewer'} ${noun}`;
   }
 
+  function publicOccupancyChange(value) {
+    const numeric = Number(value) || 0;
+    if (Math.abs(numeric) < 0.05) return 'about the same mean vehicle occupancy';
+    return `${reportNumber(Math.abs(numeric), 1)} ${numeric > 0 ? 'higher' : 'lower'} mean vehicle occupancy`;
+  }
+
   const reportEscape = value => String(value ?? '—').replace(/[&<>"]/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
   })[character]);
@@ -4843,10 +4849,24 @@ export async function startWebGLScene(canvas, status) {
       // "one-way" tool and for a plain street closure of one direction,
       // not only the flag-driven lane+reverse combination.
       notes.push('The closed side is reallocated to pedestrians; the open side (arrow on the plan) operates one-way for vehicles.');
+      if (closure.open_direction?.label) {
+        notes.push(`Direction kept open: ${closure.open_direction.label}. This compass label, not only the arrow, identifies the tested option.`);
+      }
     } else if (closure.one_way && Number(closure.already_one_way_edges) > 0) {
       notes.push('One-way conversion requested, but the selected section(s) already run one-way in the source data — no reverse-direction edge to close.');
     }
-    notes.push(`Simulated for ${reportEscape(payload.scenario?.label || '—')} traffic, using ${payload.traffic_control === 'priority' ? 'priority junctions (no traffic lights)' : 'the real traffic-light timings'}.`);
+    notes.push(`Simulated for ${payload.scenario?.label || '—'} traffic, using ${payload.signal_data_source || (payload.traffic_control === 'priority' ? 'priority junctions (no traffic lights)' : 'SUMO-generated signal programs')}.`);
+    if (payload.demand_model?.endpoint_policy?.startsWith('through_traffic_only')) {
+      notes.push('Through-traffic test: the selected physical street section is excluded from trip origins and destinations so displaced trips reroute instead of disappearing. Driveway, loading and kerbside access demand is not modelled.');
+    }
+    const historicalCalibration = payload.demand_model?.historical_speed_calibration;
+    if (historicalCalibration?.applied) {
+      const peakWindow = historicalCalibration.observed_peak_window
+        ? `; observed peak window ${historicalCalibration.observed_peak_window}` : '';
+      notes.push(`TomTom speed-pattern calibration applied from ${historicalCalibration.distinct_days} weekdays and ${historicalCalibration.sample_count} samples${peakWindow}. This calibrates peak timing and relative congestion, not vehicle counts.`);
+    } else if (['am_peak', 'pm_peak'].includes(payload.scenario?.key)) {
+      notes.push('TomTom peak calibration is not ready yet; the labelled peak window remains the default assumption until at least five adequately covered weekdays have been collected.');
+    }
     const notesList = notes.map((note, index) => `<li><span>${index + 1}</span>${note}</li>`).join('');
     const crossSection = trafficCrossSection(payload);
     const planSchematic = trafficClosureSchematic(payload);
@@ -4889,6 +4909,7 @@ export async function startWebGLScene(canvas, status) {
     const reportedEnvironment = assessmentReady ? environment : {};
     const activity = payload.street_activity || {};
     const demand = payload.demand_model || {};
+    const historicalCalibration = demand.historical_speed_calibration || {};
     const decisionValue = value => assessmentReady ? value : null;
     const toKmh = value => value === null || value === undefined ? null : Number(value) * 3.6;
     const generated = new Intl.DateTimeFormat('en-ZA', {
@@ -4902,7 +4923,7 @@ export async function startWebGLScene(canvas, status) {
       ? 'about the same share of trips finish'
       : `${Math.abs(assessment.completionChange).toFixed(1)} percentage points ${assessment.completionChange > 0 ? 'more' : 'fewer'} trips finish`;
     const flowItems = (payload.street_flow_summary || []).slice(0, 5).map(street => `
-      <li><b>${reportEscape(street.name)}</b><span>${publicChange(street.vehicle_delta, 'traffic')}</span></li>`).join('')
+      <li><b>${reportEscape(street.name)}</b><span>${publicOccupancyChange(street.vehicle_delta)}</span></li>`).join('')
       || '<li><b>No nearby street noticeably affected</b><span>—</span></li>';
     const durationDetail = assessment.severity === 'incomplete'
       ? reportEscape(assessment.action)
@@ -4940,7 +4961,7 @@ export async function startWebGLScene(canvas, status) {
         </div>
         <div class="report-decision-card">
           <span>What was tested</span>
-          <p><b>${reportEscape(payload.road_name)}</b> · ${reportEscape(payload.closure?.description)}. ${reportEscape(payload.scenario?.label)}, sampled over ${reportNumber(payload.duration_min, 0, ' minutes')}.</p>
+          <p><b>${reportEscape(payload.road_name)}</b> · ${reportEscape(payload.closure?.description)}${payload.closure?.open_direction?.label ? ` · direction kept open: ${reportEscape(payload.closure.open_direction.label)}` : ''}. ${reportEscape(payload.scenario?.label)}, sampled over ${reportNumber(payload.duration_min, 0, ' minutes')}.</p>
         </div>
       </section>
 
@@ -4977,8 +4998,13 @@ export async function startWebGLScene(canvas, status) {
       </section>
 
       <section class="report-section">
+        <div class="report-section-heading"><h2>Comparison provenance</h2><span>Reproduce and compare this run</span></div>
+        <div class="report-note">Demand seed <b>${reportNumber(demand.seed, 0)}</b> · ${reportNumber(demand.planned_vehicle_count, 0)} generated trips · ${reportNumber(impact.compared_trip_count, 0)} paired completions (${reportNumber(Number(impact.paired_trip_ratio || 0) * 100, 1, '%')}) · open-road completion ${reportNumber(Number(impact.completed_trip_ratio_baseline || 0) * 100, 1, '%')} · peak calibration ${historicalCalibration.applied ? `${reportEscape(historicalCalibration.observed_peak_window || 'fixed scenario window')} from ${reportNumber(historicalCalibration.distinct_days, 0)} weekdays` : 'not yet ready'} · ${reportEscape(payload.signal_data_source || 'signal source not recorded')}. Opposite one-way directions are comparable only when scenario, duration, demand multiplier, demand seed and generated-trip count match.</div>
+      </section>
+
+      <section class="report-section">
         <div class="report-section-heading"><h2>How to read this report</h2><span>In plain terms</span></div>
-        <div class="report-note">This is a "what-if" simulation: the same simulated traffic is sent down the road twice — once as normal, once with this closure — and the two runs are compared. It's a useful planning estimate, not a certified traffic study, so treat the numbers as a guide rather than an exact prediction, and check the plan against parking, buses, deliveries and emergency access before deciding.</div>
+        <div class="report-note">This is a "what-if" through-traffic simulation: the same synthetic traffic is sent through the network twice — once as normal, once with this closure — and the two runs are compared. It is not calibrated to observed counts on the selected street and does not model driveway, loading, pedestrian, public-transport or emergency-access operations. Treat it as option screening, not a certified traffic study.</div>
       </section>
 
       <footer class="report-footer">

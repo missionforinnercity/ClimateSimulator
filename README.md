@@ -227,6 +227,22 @@ minute. Reports withhold impact claims if the open-road run completes less than
 not a substitute for observed counts or an origin-destination calibration; see
 `docs/TRAFFIC_VALIDATION.md` for the report review, sweep results and evidence
 needed to promote the model beyond exploratory use.
+For drawn one-way options, both directional edges of the selected physical
+section now form a direction-neutral comparison key. Flipping the arrow keeps
+the same corridor, demand seed and through-traffic population. The selected
+section is excluded from trip endpoints so displaced vehicles reroute rather
+than disappearing, while local driveway, loading and parking-access demand is
+explicitly left for an operational assessment. Reports print the direction
+kept open and the provenance fields needed to verify an apples-to-apples run.
+TomTom live-flow snapshots are collected every 30 minutes while the API is
+running. After at least five adequately covered weekdays, the AM and PM
+profiles search broad morning (05:00-11:00) and afternoon (14:00-20:00) bands
+for the most congested two-hour window. Low-confidence samples are rejected,
+road samples are collapsed into robust half-hour/day values, and the detected
+window gently adjusts the stability-tested demand scale. This calibrates peak
+timing and relative congestion only—not absolute vehicle demand. Readiness and
+the detected windows are exposed at `GET /api/traffic/calibration-status` and
+printed in generated reports.
 Changing the sampling window extends the same reproducible traffic stream, so
 a 20-minute comparison is a longer observation of the 10-minute scenario rather
 than a newly randomised population. Rebuild the SUMO

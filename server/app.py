@@ -54,6 +54,7 @@ from .traffic import (
     named_roads,
     permanent_road_statuses,
     record_traffic_observation,
+    traffic_calibration_status,
 )
 from .wind_metrics import COMFORT_CATEGORIES, STABILITY_PROFILES, validate_against_observations
 from .era5_wind import climatology_summary
@@ -512,6 +513,11 @@ def traffic_live(refresh: bool = False) -> dict[str, Any]:
         return current_traffic(force=refresh)
     except Exception as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/traffic/calibration-status")
+def traffic_peak_calibration_status() -> dict[str, Any]:
+    return traffic_calibration_status()
 
 
 @app.get("/api/traffic/roads")

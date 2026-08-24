@@ -198,8 +198,18 @@ def write_observation_rows(path, rows):
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def observation_row(date, weekday, hour, ratio, road="Adderley Street"):
-    return {"ts": f"{date}T{hour:02d}:00:00Z", "date": date, "weekday": weekday, "hour": hour, "road": road, "ratio": ratio}
+def observation_row(date, weekday, hour, ratio, road="Adderley Street", minute=0, confidence=1.0):
+    return {
+        "ts": f"{date}T{hour:02d}:{minute:02d}:00Z",
+        "date": date,
+        "weekday": weekday,
+        "hour": hour,
+        "minute": minute,
+        "minute_bin": (minute // 30) * 30,
+        "road": road,
+        "ratio": ratio,
+        "confidence": confidence,
+    }
 
 
 def test_record_traffic_observation_writes_one_row_per_sampled_road(monkeypatch, tmp_path):
@@ -214,6 +224,21 @@ def test_record_traffic_observation_writes_one_row_per_sampled_road(monkeypatch,
     assert {row["road"] for row in rows} == {"Long Street", "Adderley Street"}
     assert all(row["ratio"] == 0.25 for row in rows)
     assert all("date" in row and "weekday" in row and "hour" in row for row in rows)
+    assert all("minute_bin" in row and "confidence" in row for row in rows)
+
+
+def test_record_traffic_observation_skips_low_confidence_segments(monkeypatch, tmp_path):
+    log_path = tmp_path / "observations" / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.setenv("TOMTOM_API", "test-key")
+    monkeypatch.setattr(traffic, "_sample_road_points", sample_roads_for_live)
+    monkeypatch.setattr(
+        traffic,
+        "_fetch_flow_segment",
+        lambda lat, lon, key: {**sample_flow_segment(10.0, 40.0), "confidence": 0.2},
+    )
+    assert traffic.record_traffic_observation() == 0
+    assert not log_path.exists()
 
 
 def test_record_traffic_observation_skips_without_api_key(monkeypatch, tmp_path):
@@ -285,10 +310,49 @@ def test_resolve_scenario_nudges_demand_scale_toward_observed_history(monkeypatc
 
 
 def test_resolve_scenario_unaffected_without_enough_history(monkeypatch):
+    monkeypatch.setattr(traffic, "_historical_peak_profile", lambda scenario_key: None)
     monkeypatch.setattr(traffic, "_historical_scenario_ratio", lambda scenario_key: None)
     resolved = traffic.resolve_scenario("am_peak")
     assert resolved["demand_scale"] == traffic.SCENARIOS["am_peak"]["demand_scale"]
     assert resolved["historical_calibration"] is None
+
+
+def test_historical_peak_profile_detects_shifted_two_hour_window(monkeypatch, tmp_path):
+    log_path = tmp_path / "traffic_speed_log.jsonl"
+    monkeypatch.setattr(traffic, "TRAFFIC_OBSERVATIONS_PATH", log_path)
+    monkeypatch.setattr(traffic, "MIN_HISTORICAL_SAMPLES", 20)
+    rows = []
+    for day_number, date in enumerate(("2026-08-03", "2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07")):
+        for total_minute in range(5 * 60, 11 * 60, 30):
+            # The observed AM peak is 07:30-09:30, not the fixed 07:00-09:00.
+            ratio = 0.35 if 7 * 60 + 30 <= total_minute < 9 * 60 + 30 else 0.9
+            rows.append(observation_row(
+                date, day_number, total_minute // 60, ratio,
+                minute=total_minute % 60,
+            ))
+    write_observation_rows(log_path, rows)
+    profile = traffic._historical_peak_profile("am_peak")
+    assert profile is not None
+    assert profile["start_minute"] == 7 * 60 + 30
+    assert profile["end_minute"] == 9 * 60 + 30
+    assert profile["distinct_days"] == 5
+    assert profile["average_ratio"] == 0.35
+
+
+def test_resolve_scenario_labels_tomtom_detected_peak(monkeypatch):
+    monkeypatch.setattr(traffic, "_historical_peak_profile", lambda scenario_key: {
+        "start_minute": 450,
+        "end_minute": 570,
+        "average_ratio": 0.4,
+        "sample_count": 80,
+        "distinct_days": 5,
+        "roads_sampled": 8,
+        "candidate_windows": 9,
+    } if scenario_key == "am_peak" else None)
+    resolved = traffic.resolve_scenario("am_peak")
+    assert resolved["label"] == "Morning peak · TomTom-observed 07:30–09:30"
+    assert resolved["historical_calibration"]["peak_window_detected"] is True
+    assert resolved["historical_calibration"]["calibration_kind"] == "speed_pattern_not_vehicle_count"
 
 
 def test_road_names_normalise_across_osm_and_municipal_conventions():
@@ -836,6 +900,20 @@ def test_remaining_open_direction_finds_the_untouched_sibling():
     assert traffic._remaining_open_direction({"fwd"}, net) == ["rev"]
 
 
+def test_physical_selection_is_identical_when_direction_is_flipped():
+    net = fake_one_way_net()
+    assert traffic._physical_selection_edge_ids(["fwd"], net) == ["fwd", "rev"]
+    assert traffic._physical_selection_edge_ids(["rev"], net) == ["fwd", "rev"]
+
+
+def test_travel_direction_summary_uses_viewer_compass_axes():
+    north_west = [{"line": traffic.LineString([(10, 10), (0, 0)])}]
+    summary = traffic._travel_direction_summary(north_west)
+    assert summary is not None
+    assert summary["cardinal"] == "NW"
+    assert summary["bearing_deg"] == 315.0
+
+
 def test_remaining_open_direction_empty_when_both_sides_closed():
     net = fake_one_way_net()
     assert traffic._remaining_open_direction({"fwd", "rev"}, net) == []
@@ -1139,6 +1217,24 @@ def test_generated_trips_are_reproducible_for_a_given_seed(tmp_path):
         inbound_bias=0.0, seed=99, workdir=tmp_path / "b",
     )
     assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
+
+
+def test_generated_trips_keep_selected_physical_section_out_of_endpoints(tmp_path):
+    corridor = corridor_fixture()
+    trips_path, count = traffic._generate_trips(
+        corridor=corridor,
+        duration_s=300,
+        vehicle_count=100,
+        inbound_bias=0.0,
+        seed=17,
+        workdir=tmp_path,
+        endpoint_exclusion_ids={"core-a", "core-b"},
+    )
+    trips = ElementTree.parse(trips_path).getroot().findall("trip")
+    assert count == len(trips)
+    assert trips
+    assert {trip.get("from") for trip in trips} <= {"rim-a", "rim-b"}
+    assert {trip.get("to") for trip in trips} <= {"rim-a", "rim-b"}
 
 
 def test_longer_window_extends_the_same_demand_stream(tmp_path):

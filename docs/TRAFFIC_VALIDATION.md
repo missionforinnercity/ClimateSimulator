@@ -126,13 +126,24 @@ is no live "reverse this lane" call in TraCI. A two-way street is modelled as
 two directional edges between the same pair of nodes, so a one-way
 conversion is implemented by fully closing the opposite-direction sibling
 edge (the same `edge.setDisallowed` mechanism a full closure already uses),
-not by mutating direction. This is representative for a low-volume access
-street, such as a single-block residential road, but will understate impact
-on a street where the closed direction itself carries significant flow —
-that traffic simply has nowhere to be generated in the model, rather than
-being displaced onto it. Edges that are already one-way in the source OSM
-data have no opposite sibling to close; the resolver reports this rather
-than fabricating a closure.
+not by mutating direction. Drawn one-way comparisons now canonicalise the
+selected edge and its reverse sibling into one physical-section comparison
+key. Both arrow directions therefore use the same demand corridor, random
+seed and synthetic traffic population.
+
+The selected physical section is also excluded from trip origins and
+destinations in both the open-road and closure runs. This prevents trips on
+the closed directional edge from disappearing at insertion time and makes
+them route through or around the intervention. The result is explicitly a
+**through-traffic comparison**. Driveway, parking, loading and other local
+access demand on the selected block is still not modelled and must be checked
+operationally. Edges already one-way in the source OSM data have no opposite
+sibling to close; the resolver reports this rather than fabricating a closure.
+
+Every report now prints the compass direction kept open, synthetic demand
+seed, generated and paired trip counts, baseline completion, and actual signal
+data source. Two direction reports should only be compared when their
+scenario, duration, demand multiplier, seed and generated-trip count match.
 
 The technical drawing-sheet report's cross-section is illustrative only: it
 draws SUMO's default lane width, not a surveyed measurement, since the
@@ -192,6 +203,28 @@ static one. Treat as a scoped follow-up, not a drop-in swap.
 Calibration should target held-out counts, journey times and queues, report
 error measures by period, and retain a separate validation day before the tool
 is labelled forecast- or engineering-grade.
+
+## TomTom peak-window calibration (2026-08-24)
+
+The server records TomTom current/free-flow speed ratios every 30 minutes while
+it is running. AM and PM scenarios no longer have to remain permanently tied to
+the original 07:00-09:00 and 16:00-18:00 assumptions: after five adequately
+covered weekdays, the model selects the most congested two-hour window inside
+05:00-11:00 for AM and 14:00-20:00 for PM.
+
+The calculation rejects low-confidence TomTom segments, collapses repeated
+road observations to a median for each date/half-hour, requires every half-hour
+in the selected window to meet the day and sample gates, and uses the median
+daily speed ratio. The observed ratio may only nudge the stability-tested
+demand scale within its existing bounded range. The detected window, sample
+count, distinct weekdays and number of roads are retained in report
+provenance. `GET /api/traffic/calibration-status` reports whether each peak is
+ready.
+
+This is deliberately labelled `speed_pattern_not_vehicle_count`. Congestion
+can locate and rank peak periods, but it cannot identify absolute traffic
+volume or a directional OD matrix. Municipal/field counts remain necessary for
+true demand calibration.
 
 ## Sources
 

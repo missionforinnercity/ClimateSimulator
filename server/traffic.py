@@ -34,6 +34,7 @@ import math
 import os
 import random
 import re
+import statistics
 import tempfile
 import threading
 import time
@@ -510,6 +511,8 @@ def current_traffic(force: bool = False) -> dict[str, Any]:
 DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S = 1800
 MIN_HISTORICAL_SAMPLES = 40
 MIN_HISTORICAL_DISTINCT_DAYS = 5
+MIN_TOMTOM_CONFIDENCE = 0.5
+PEAK_BIN_MINUTES = 30
 # Local hour-of-day each fixed scenario represents, and whether weekends
 # should be excluded -- mirrors the plain-language windows in each
 # SCENARIOS label above.
@@ -518,6 +521,13 @@ SCENARIO_HISTORICAL_WINDOWS: dict[str, dict[str, Any]] = {
     "midday": {"hours": range(11, 14), "weekdays_only": False},
     "pm_peak": {"hours": range(16, 18), "weekdays_only": True},
     "evening": {"hours": range(19, 21), "weekdays_only": False},
+}
+# Broad weekday search bands used to discover the observed two-hour peak,
+# instead of assuming the hand-labelled 07:00-09:00 and 16:00-18:00 windows
+# are correct forever. Bounds are local Cape Town clock minutes.
+PEAK_SEARCH_WINDOWS: dict[str, dict[str, int]] = {
+    "am_peak": {"start_minute": 5 * 60, "end_minute": 11 * 60, "duration_minutes": 120},
+    "pm_peak": {"start_minute": 14 * 60, "end_minute": 20 * 60, "duration_minutes": 120},
 }
 # Rewritten (rarely -- only once meaningfully over the cap) rather than
 # growing forever. ~200k lines is several months of 15-minute samples
@@ -547,18 +557,29 @@ def record_traffic_observation() -> int:
             continue
         if not segment:
             continue
+        if bool(segment.get("roadClosure", False)):
+            continue
         current_speed = float(segment.get("currentSpeed") or 0.0)
         free_flow_speed = float(segment.get("freeFlowSpeed") or 0.0)
         if free_flow_speed <= 0:
             continue
         ratio = max(0.05, min(1.2, current_speed / free_flow_speed))
+        confidence = segment.get("confidence")
+        if isinstance(confidence, (int, float)) and confidence < MIN_TOMTOM_CONFIDENCE:
+            continue
+        minute_bin = (local_now.minute // PEAK_BIN_MINUTES) * PEAK_BIN_MINUTES
         rows.append({
             "ts": now_utc.isoformat().replace("+00:00", "Z"),
             "date": local_now.date().isoformat(),
             "weekday": local_now.weekday(),
             "hour": local_now.hour,
+            "minute": local_now.minute,
+            "minute_bin": minute_bin,
             "road": road["name"],
             "ratio": round(ratio, 3),
+            "current_speed_kmh": round(current_speed, 2),
+            "free_flow_speed_kmh": round(free_flow_speed, 2),
+            "confidence": confidence,
         })
     if not rows:
         return 0
@@ -613,6 +634,144 @@ def _historical_scenario_ratio(scenario_key: str) -> dict[str, Any] | None:
         "average_ratio": sum(ratios) / len(ratios),
         "sample_count": len(ratios),
         "distinct_days": len(days_seen),
+    }
+
+
+def _row_local_minute(row: dict[str, Any]) -> int | None:
+    """Return a historical row's local time as a half-hour clock bin."""
+    hour = row.get("hour")
+    if not isinstance(hour, int) or not 0 <= hour <= 23:
+        return None
+    minute_bin = row.get("minute_bin")
+    if not isinstance(minute_bin, int):
+        minute = row.get("minute")
+        if not isinstance(minute, int):
+            # Old rows predate the explicit minute fields. Recover the minute
+            # from their ISO timestamp; UTC/local conversion does not alter it.
+            try:
+                minute = datetime.fromisoformat(str(row.get("ts", "")).replace("Z", "+00:00")).minute
+            except ValueError:
+                minute = 0
+        minute_bin = (minute // PEAK_BIN_MINUTES) * PEAK_BIN_MINUTES
+    return hour * 60 + minute_bin
+
+
+def _historical_peak_profile(scenario_key: str) -> dict[str, Any] | None:
+    """Discover the most congested weekday two-hour window from TomTom.
+
+    Ratios are first collapsed to one median per date and half-hour bin, so a
+    road sampled more often cannot dominate the peak. Every bin in the chosen
+    window must be represented on at least MIN_HISTORICAL_DISTINCT_DAYS.
+    """
+    search = PEAK_SEARCH_WINDOWS.get(scenario_key)
+    if search is None or not TRAFFIC_OBSERVATIONS_PATH.exists():
+        return None
+
+    values: dict[tuple[str, int], list[float]] = {}
+    roads_by_bin: dict[int, set[str]] = {}
+    for line in TRAFFIC_OBSERVATIONS_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        weekday = row.get("weekday")
+        if not isinstance(weekday, int) or weekday >= 5:
+            continue
+        confidence = row.get("confidence")
+        if isinstance(confidence, (int, float)) and confidence < MIN_TOMTOM_CONFIDENCE:
+            continue
+        ratio = row.get("ratio")
+        date = row.get("date")
+        minute = _row_local_minute(row)
+        if not isinstance(ratio, (int, float)) or not date or minute is None:
+            continue
+        if not search["start_minute"] <= minute < search["end_minute"]:
+            continue
+        values.setdefault((str(date), minute), []).append(float(ratio))
+        if row.get("road"):
+            roads_by_bin.setdefault(minute, set()).add(str(row["road"]))
+
+    daily_bin_ratio = {
+        key: statistics.median(ratios) for key, ratios in values.items() if ratios
+    }
+    duration_bins = search["duration_minutes"] // PEAK_BIN_MINUTES
+    candidates: list[dict[str, Any]] = []
+    latest_start = search["end_minute"] - search["duration_minutes"]
+    for start in range(search["start_minute"], latest_start + 1, PEAK_BIN_MINUTES):
+        bins = [start + offset * PEAK_BIN_MINUTES for offset in range(duration_bins)]
+        dates_per_bin = [
+            {date for date, minute in daily_bin_ratio if minute == bin_minute}
+            for bin_minute in bins
+        ]
+        common_dates = set.intersection(*dates_per_bin) if dates_per_bin else set()
+        if len(common_dates) < MIN_HISTORICAL_DISTINCT_DAYS:
+            continue
+        sample_count = sum(
+            len(values.get((date, bin_minute), []))
+            for date in common_dates
+            for bin_minute in bins
+        )
+        if sample_count < MIN_HISTORICAL_SAMPLES:
+            continue
+        per_day = [
+            sum(daily_bin_ratio[(date, bin_minute)] for bin_minute in bins) / len(bins)
+            for date in common_dates
+        ]
+        candidates.append({
+            "start_minute": start,
+            "end_minute": start + search["duration_minutes"],
+            "average_ratio": statistics.median(per_day),
+            "distinct_days": len(common_dates),
+            "sample_count": sample_count,
+            "roads_sampled": len(set().union(*(roads_by_bin.get(bin_minute, set()) for bin_minute in bins))),
+        })
+    if not candidates:
+        return None
+    peak = min(candidates, key=lambda candidate: candidate["average_ratio"])
+    peak["candidate_windows"] = len(candidates)
+    return peak
+
+
+def _clock_label(clock_minute: int) -> str:
+    return f"{(clock_minute // 60) % 24:02d}:{clock_minute % 60:02d}"
+
+
+def traffic_calibration_status() -> dict[str, Any]:
+    """Public, secret-free summary of accumulated TomTom peak evidence."""
+    rows = []
+    if TRAFFIC_OBSERVATIONS_PATH.exists():
+        for line in TRAFFIC_OBSERVATIONS_PATH.read_text(encoding="utf-8").splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                continue
+    dates = sorted({str(row["date"]) for row in rows if row.get("date")})
+    profiles = {}
+    for scenario_key in PEAK_SEARCH_WINDOWS:
+        profile = _historical_peak_profile(scenario_key)
+        profiles[scenario_key] = ({
+            **profile,
+            "window": f"{_clock_label(profile['start_minute'])}-{_clock_label(profile['end_minute'])}",
+            "ready": True,
+        } if profile else {
+            "ready": False,
+            "minimum_distinct_weekdays": MIN_HISTORICAL_DISTINCT_DAYS,
+        })
+    return {
+        "provider": TOMTOM_PROVIDER,
+        "calibration_kind": "speed_pattern_not_vehicle_count",
+        "observation_rows": len(rows),
+        "distinct_days": len(dates),
+        "first_date": dates[0] if dates else None,
+        "last_date": dates[-1] if dates else None,
+        "collector_interval_s": max(
+            300,
+            int(os.getenv(
+                "TRAFFIC_OBSERVATION_INTERVAL_S",
+                str(DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S),
+            )),
+        ),
+        "profiles": profiles,
     }
 
 
@@ -1122,6 +1281,25 @@ def _lines_payload(records: list[dict[str, Any]]) -> list[list[list[float]]]:
     ]
 
 
+def _travel_direction_summary(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Compass label for the direction encoded by an open SUMO edge."""
+    candidates = [record["line"] for record in records if len(record["line"].coords) >= 2]
+    if not candidates:
+        return None
+    line = max(candidates, key=lambda candidate: candidate.length)
+    start_x, start_z = line.coords[0]
+    end_x, end_z = line.coords[-1]
+    # Viewer-local x points east and z points south.
+    bearing = math.degrees(math.atan2(end_x - start_x, -(end_z - start_z))) % 360.0
+    cardinals = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+    cardinal = cardinals[int((bearing + 22.5) // 45.0) % len(cardinals)]
+    return {
+        "bearing_deg": round(bearing, 1),
+        "cardinal": cardinal,
+        "label": f"{cardinal}-bound ({bearing:.0f}°)",
+    }
+
+
 def _records_bounds(records: list[dict[str, Any]]) -> list[float] | None:
     if not records:
         return None
@@ -1156,12 +1334,14 @@ def resolve_scenario(scenario: str, live_average_ratio: float | None = None) -> 
         raise ValueError(f"unknown scenario: {scenario!r} (expected one of {sorted(SCENARIOS)})")
     profile = SCENARIOS[scenario]
     demand_scale = profile["demand_scale"]
+    scenario_label = profile["label"]
     historical_calibration: dict[str, Any] | None = None
     if demand_scale is None:
         ratio = 0.85 if live_average_ratio is None else live_average_ratio
         demand_scale = _demand_scale(ratio)
     else:
-        historical = _historical_scenario_ratio(scenario)
+        peak_profile = _historical_peak_profile(scenario)
+        historical = peak_profile or _historical_scenario_ratio(scenario)
         if historical is not None:
             implied_scale = _demand_scale(historical["average_ratio"])
             blended = 0.5 * demand_scale + 0.5 * implied_scale
@@ -1172,13 +1352,26 @@ def resolve_scenario(scenario: str, live_average_ratio: float | None = None) -> 
             demand_scale = max(demand_scale * 0.7, min(demand_scale * 1.3, blended))
             historical_calibration = {
                 "applied": True,
+                "provider": TOMTOM_PROVIDER,
+                "calibration_kind": "speed_pattern_not_vehicle_count",
                 "sample_count": historical["sample_count"],
                 "distinct_days": historical["distinct_days"],
                 "observed_average_speed_ratio": round(historical["average_ratio"], 3),
+                "roads_sampled": historical.get("roads_sampled"),
+                "peak_window_detected": peak_profile is not None,
             }
+            if peak_profile is not None:
+                window = (
+                    f"{_clock_label(peak_profile['start_minute'])}–"
+                    f"{_clock_label(peak_profile['end_minute'])}"
+                )
+                historical_calibration["observed_peak_window"] = window
+                historical_calibration["candidate_windows"] = peak_profile["candidate_windows"]
+                period_name = "Morning peak" if scenario == "am_peak" else "Afternoon peak"
+                scenario_label = f"{period_name} · TomTom-observed {window}"
     return {
         "key": scenario,
-        "label": profile["label"],
+        "label": scenario_label,
         "demand_scale": float(demand_scale),
         "inbound_bias": float(profile["inbound_bias"]),
         "historical_calibration": historical_calibration,
@@ -1202,6 +1395,25 @@ def _reverse_siblings(edge: Any) -> list[Any]:
         and candidate.getID() != edge.getID()
         and candidate.allows("passenger")
     ]
+
+
+def _physical_selection_edge_ids(edge_ids: list[str], net: Any) -> list[str]:
+    """Return a direction-neutral identifier set for a drawn road section.
+
+    Drawing the opposite carriageway of the same physical street used to
+    change both the demand corridor and the random seed. Include each selected
+    edge's reverse sibling so either direction resolves to the same physical
+    section and therefore the same synthetic traffic population.
+    """
+    by_id = {edge.getID(): edge for edge in net.getEdges()}
+    physical_ids: set[str] = set()
+    for edge_id in edge_ids:
+        edge = by_id.get(edge_id)
+        if edge is None:
+            continue
+        physical_ids.add(edge.getID())
+        physical_ids.update(sibling.getID() for sibling in _reverse_siblings(edge))
+    return sorted(physical_ids)
 
 
 def _remaining_open_direction(closed_edge_ids: set[str], net: Any) -> list[str]:
@@ -1510,6 +1722,7 @@ def _generate_trips(
     seed: int,
     workdir: Path,
     road_congestion: dict[str, float] | None = None,
+    endpoint_exclusion_ids: set[str] | None = None,
 ) -> tuple[Path, int]:
     """Write a corridor-scoped trip file and return it with its vehicle count.
 
@@ -1519,8 +1732,21 @@ def _generate_trips(
     subprocess and its timeout from the request path.
     """
     workdir.mkdir(parents=True, exist_ok=True)
+    # Keep trip endpoints off both directional edges of a drawn physical
+    # section. Otherwise a trip whose origin or destination is closed can
+    # disappear at insertion time instead of diverting. The resulting model
+    # is explicitly a through-traffic comparison; local access is reported as
+    # a limitation until observed driveway/loading demand can be supplied.
+    excluded = endpoint_exclusion_ids or set()
+    endpoint_corridor = [record for record in corridor if record["id"] not in excluded]
+    if len(endpoint_corridor) < 2:
+        raise ValueError(
+            "the selected corridor has too few open boundary roads to generate comparable demand"
+        )
     rng = random.Random(seed)
-    origin_weights, destination_weights = _trip_weights(corridor, inbound_bias, road_congestion)
+    origin_weights, destination_weights = _trip_weights(
+        endpoint_corridor, inbound_bias, road_congestion
+    )
     departure_window_s = float(duration_s) * DEPARTURE_WINDOW_FRACTION
     # Keep the arrival stream stable when the sampling window changes. With a
     # fixed demand rate, a 20-minute run now extends the 10-minute trip stream
@@ -1532,8 +1758,8 @@ def _generate_trips(
     fleet_types = list(FLEET_MIX)
     fleet_weights = list(FLEET_MIX.values())
     for candidate_index in range(vehicle_count):
-        origin = rng.choices(corridor, weights=origin_weights, k=1)[0]
-        destination = rng.choices(corridor, weights=destination_weights, k=1)[0]
+        origin = rng.choices(endpoint_corridor, weights=origin_weights, k=1)[0]
+        destination = rng.choices(endpoint_corridor, weights=destination_weights, k=1)[0]
         # A trip that starts and ends on the same edge has nothing to route.
         if destination["id"] == origin["id"]:
             continue
@@ -2125,11 +2351,18 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
         closure = resolve_drawn_closure(requested_edge_ids, closure_mode, one_way=one_way)
         road_name = closure["label"]
         closure_scope = "drawn"
-        corridor = corridor_edges_for_ids(closure["requested_edge_ids"], road_name)
+        # Use both directions of the selected physical section as the demand
+        # anchor. Flipping the one-way arrow then changes only the direction
+        # left open, not the corridor or synthetic trip population.
+        comparison_edge_ids = _physical_selection_edge_ids(
+            closure["requested_edge_ids"], net
+        ) or sorted(closure["requested_edge_ids"])
+        corridor = corridor_edges_for_ids(comparison_edge_ids, road_name)
         monitoring_corridor = corridor_edges_for_ids(
-            closure["requested_edge_ids"], road_name, radius_m=MONITORING_RADIUS_M
+            comparison_edge_ids, road_name, radius_m=MONITORING_RADIUS_M
         )
     else:
+        comparison_edge_ids = []
         corridor = corridor_edges(road_name)
         monitoring_corridor = corridor_edges(road_name, radius_m=MONITORING_RADIUS_M)
         closure = resolve_closure_lanes(road_name, closure_mode, closure_scope, one_way=one_way)
@@ -2180,7 +2413,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     # close the *same set* of road sections got different seeds, and so a
     # visually identical closure could land in a different severity band
     # between runs for no reason a user could see on the map.
-    selection_seed = ",".join(sorted(requested_edge_ids)) if requested_edge_ids else road_name
+    selection_seed = ",".join(comparison_edge_ids) if comparison_edge_ids else road_name
     # Duration deliberately does not affect the seed: changing 10 to 20
     # minutes should extend the same demand stream, not invent a new scenario.
     seed = zlib.crc32(
@@ -2218,6 +2451,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             seed=seed,
             workdir=workdir,
             road_congestion=road_congestion,
+            endpoint_exclusion_ids=set(comparison_edge_ids),
         )
 
         baseline_raw, baseline_metrics = _run_simulation(
@@ -2267,6 +2501,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
     one_way_geometry_records = [index[edge_id] for edge_id in reverse_edge_ids if edge_id in index]
     remaining_open_edge_ids = _remaining_open_direction(set(closure["edge_ids"]), net)
     remaining_open_geometry_records = [index[edge_id] for edge_id in remaining_open_edge_ids if edge_id in index]
+    open_direction = _travel_direction_summary(remaining_open_geometry_records)
     # Per-vehicle rows exist only to pair the two runs; sending thousands of
     # them to the viewer would dwarf the trajectories they came from.
     baseline_metrics.pop("per_vehicle", None)
@@ -2319,6 +2554,7 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             # request flag produced the closure.
             "functions_as_one_way": bool(remaining_open_edge_ids),
             "remaining_open_edges": len(remaining_open_edge_ids),
+            "open_direction": open_direction,
             # Lane closures use the actual offset kerbside-lane shapes. Full closures
             # use the road edge centreline. The old response always returned
             # the centreline, which made a one-lane intervention look like the
@@ -2388,6 +2624,13 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "planned_vehicle_count": planned_count,
             "fleet_mix": FLEET_MIX,
             "seed": seed,
+            "comparison_key": selection_seed,
+            "comparison_edge_ids": comparison_edge_ids,
+            "endpoint_policy": (
+                "through_traffic_only_selected_physical_section_excluded_from_trip_endpoints"
+                if comparison_edge_ids else "corridor_scoped_origins_and_destinations"
+            ),
+            "local_access_modelled": not bool(comparison_edge_ids),
         },
         "road_data": {
             "routing_topology": "OpenStreetMap via SUMO",
@@ -2408,6 +2651,11 @@ def closure_preview(payload: dict[str, Any]) -> dict[str, Any]:
             "network_signal_programs_enabled"
             if traffic_control == "signalized"
             else "all_traffic_lights_switched_off_priority_right_of_way"
+        ),
+        "signal_data_source": (
+            "SUMO-generated fixed signal programs; not surveyed field timings, coordination, or detector logic"
+            if traffic_control == "signalized"
+            else "priority right-of-way with traffic lights disabled"
         ),
         "baseline": baseline_metrics,
         "closure_metrics": closure_metrics,
