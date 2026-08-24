@@ -8,8 +8,6 @@ from rasterio.features import shapes
 from shapely.geometry import shape
 from shapely.ops import unary_union
 
-from server.flood import flood_preview
-
 ROOT = Path(__file__).resolve().parents[1]
 LIDAR = ROOT / "data" / "raw" / "LiDAR2025" / "LiDAR2025_2m_DTM.tif"
 HYBRID = ROOT / "data" / "derived" / "company_gardens_hybrid_dem_2m.tif"
@@ -39,17 +37,3 @@ def test_hybrid_dem_preserves_every_valid_lidar_cell_and_records_provenance():
         ])
         assert footprint.geom_type == "Polygon"
         assert len(footprint.interiors) == 0
-
-
-def test_company_gardens_flood_box_uses_coarse_terrain_and_retains_water():
-    result = flood_preview({
-        "bounds_local": [-600, 420, -500, 520],
-        "resolution_m": 6,
-        "rainfall_mm_h": 30,
-        "duration_min": 5,
-        "infiltration_mm_h": 0,
-        "manning_n": 0.04,
-    })
-    assert result["summary"]["coarse_terrain_pct"] == 100
-    assert result["summary"]["retained_water_m3"] > 0
-    assert result["summary"]["mass_balance_error_pct"] < 0.01

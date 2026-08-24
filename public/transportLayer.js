@@ -152,7 +152,7 @@ export async function createTransportLayer({
   THREE, scene, terrainHeightAt, terrainValidAt, requestRender, frameBounds,
   requestGroundPick, addScenePickHandler,
 }) {
-  const response = await fetch('assets/transport.json', { cache: 'no-store' });
+  const response = await fetch('/assets/transport.json', { cache: 'no-store' });
   if (!response.ok) throw new Error(`Transport asset HTTP ${response.status}`);
   const data = await response.json();
   const group = new THREE.Group();

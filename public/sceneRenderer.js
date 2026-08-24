@@ -105,10 +105,10 @@ export async function startScene(canvas, status) {
   asphaltContext.putImageData(asphaltPixels, 0, 0);
   const asphaltPattern = sceneContext.createPattern(asphaltTile, 'repeat');
 
-  const manifest = await fetch('assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
+  const manifest = await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
   const [scene, canopyAsset] = await Promise.all([
-    fetch(`assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`).then(response => response.json()),
-    fetch(`assets/${manifest.assets?.canopy || 'canopy.json'}?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
+    fetch(`/assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`).then(response => response.json()),
+    fetch(`/assets/${manifest.assets?.canopy || 'canopy.json'}?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };
   const visibility = { terrain: true, water: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true };

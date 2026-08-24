@@ -48,7 +48,7 @@ def _osm_vertical_semantics(attributes: dict[str, Any]) -> dict[str, Any]:
 
     OSM layer/bridge/tunnel tags establish ordering, not surveyed elevation.
     The offset is therefore only a renderer-safe visualization estimate and
-    is kept out of analytical terrain and flood/wind obstruction geometry.
+    is kept out of analytical terrain and wind-obstruction geometry.
     """
     try:
         layer = max(-5, min(5, int(float(attributes.get("layer") or 0))))

@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from shapely.geometry import box, mapping, shape
 
@@ -37,7 +37,6 @@ from .field import (
     request_from_payload,
 )
 from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, heat_zones
-from .flood import dem_control_summary, flood_preview
 from .sunlight import (
     SunlightAnalysisCancelled,
     building_surface_sunlight,
@@ -60,7 +59,13 @@ from .wind_metrics import COMFORT_CATEGORIES, STABILITY_PROFILES, validate_again
 from .era5_wind import climatology_summary
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-app = FastAPI(title="Cape Town Wind Explorer API", version="0.1.0")
+app = FastAPI(
+    title="Cape Town Wind Explorer API",
+    version="0.1.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_ROOT = PROJECT_ROOT / "public"
 ASSET_ROOT = PUBLIC_ROOT / "assets"
@@ -78,7 +83,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
-# The traffic and flood previews return long arrays of rounded numbers, which
+# The traffic preview returns long arrays of rounded numbers, which
 # compress by roughly 5x. Worth it even on localhost for the multi-megabyte
 # vehicle-trajectory responses.
 app.add_middleware(GZipMiddleware, minimum_size=8192)
@@ -90,7 +95,6 @@ HEAVY_PATH_LIMITS = {
     "/api/wind/preview": int(os.getenv("WIND_CONCURRENCY", "2")),
     "/api/wind/comfort": int(os.getenv("WIND_COMFORT_CONCURRENCY", "1")),
     "/api/wind/validate": int(os.getenv("WIND_CONCURRENCY", "2")),
-    "/api/flood/preview": int(os.getenv("FLOOD_CONCURRENCY", "1")),
     "/api/traffic/closure-preview": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
 }
 HEAVY_SEMAPHORES = {path: asyncio.Semaphore(max(1, limit)) for path, limit in HEAVY_PATH_LIMITS.items()}
@@ -253,32 +257,6 @@ class TrafficClosurePayload(BaseModel):
     traffic_control: Literal["signalized", "priority"] = "signalized"
     demand_multiplier: float = Field(default=1.0, ge=0.5, le=1.5)
     one_way: bool = False
-
-
-class FloodPayload(BaseModel):
-    center_local: list[float] = Field(default=[0.0, 0.0], min_length=2, max_length=2)
-    bounds_local: list[float] | None = Field(default=None, min_length=4, max_length=4)
-    size_m: float = Field(default=500.0, ge=150.0, le=1200.0)
-    resolution_m: float = Field(default=4.0, ge=2.0, le=10.0)
-    rainfall_mm_h: float = Field(default=50.0, ge=1.0, le=300.0)
-    duration_min: float = Field(default=60.0, ge=5.0, le=360.0)
-    infiltration_mm_h: float = Field(default=5.0, ge=0.0, le=100.0)
-    manning_n: float = Field(default=0.04, ge=0.015, le=0.15)
-
-    @model_validator(mode="after")
-    def enforce_work_budget(self):
-        if self.bounds_local is not None:
-            width = abs(self.bounds_local[2] - self.bounds_local[0])
-            height = abs(self.bounds_local[3] - self.bounds_local[1])
-        else:
-            width = height = self.size_m
-        cells = math.ceil(width / self.resolution_m) * math.ceil(height / self.resolution_m)
-        cell_minutes = cells * self.duration_min
-        if cells > 90_000 or cell_minutes > 3_000_000:
-            raise ValueError(
-                "flood workload exceeds the service budget; reduce the box, duration, or use a coarser grid"
-            )
-        return self
 
 
 @app.get("/api/health")
@@ -564,21 +542,6 @@ def traffic_closure_preview(payload: TrafficClosurePayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"traffic closure preview unavailable: {error}") from error
-
-
-@app.get("/api/flood/dem-quality")
-def flood_dem_quality() -> dict[str, Any]:
-    return dem_control_summary()
-
-
-@app.post("/api/flood/preview")
-def flood_surface_preview(payload: FloodPayload) -> dict[str, Any]:
-    try:
-        return flood_preview(payload.model_dump())
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(status_code=503, detail=f"flood simulation unavailable: {error}") from error
 
 
 @app.get("/api/wind/field/{direction}/{tile}")

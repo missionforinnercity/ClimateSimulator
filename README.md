@@ -157,7 +157,7 @@ Deployment controls are environment variables:
 - `SIMULATION_RATE_LIMIT` and `SIMULATION_RATE_WINDOW_S` control the per-client
   expensive-request budget (12 per minute by default).
 - `HEAT_CONCURRENCY`, `SUNLIGHT_CONCURRENCY`, `WIND_CONCURRENCY`,
-  `WIND_COMFORT_CONCURRENCY`, `FLOOD_CONCURRENCY`, and `TRAFFIC_CONCURRENCY`
+  `WIND_COMFORT_CONCURRENCY`, and `TRAFFIC_CONCURRENCY`
   bound CPU-heavy work. Over-capacity requests fail quickly instead of forming
   an unbounded queue.
 
@@ -246,9 +246,9 @@ uvicorn server.app:app --reload --port 8000
 ```
 
 Open http://localhost:8000. The Wind explorer separates single-direction
-diagnostics from 16-direction wind-rose-weighted comfort screening. Its
-Jifto-inspired controls expose the editable domain, result height, grid,
-period, stability, activity threshold, surface layer and flowline appearance.
+diagnostics from 16-direction wind-rose-weighted comfort screening. The
+controls expose the editable domain, result height, grid, period, stability,
+activity threshold, surface layer and flowline appearance.
 Clicking the city
 normally orbits the camera; use **Move / resize domain** when repositioning the
 box, or drag its corner handle to resize it. Gusts are constrained to free
@@ -285,10 +285,11 @@ a clear-sky ray toward every sampled sun position, and tests it against mapped
 opaque building prisms and canopy volumes. Ground, building, or combined
 surfaces can be selected over an editable daily window at 15, 30, or 60 minute
 steps. Full-CBD building grids are available at 20 m (faster) and 10 m
-(detailed); a 20 m all-surface study contains roughly 25,000 cells. Unlike
-Jifto's OptiX implementation, this CPU planning approximation uses flat roof
-planes and does not ray-test terrain, detailed roof slopes, diffuse light, or
-reflections, so it is not a regulatory solar-radiation calculation.
+(detailed); a 20 m all-surface study contains roughly 25,000 cells. The
+cumulative building study uses CPU ray tests against simplified roof planes
+and mapped blockers. It focuses on direct sunlight; terrain occlusion,
+detailed roof slopes, diffuse light and reflections are outside its current
+scope. Regulatory solar-radiation work should use a dedicated detailed model.
 
 The former intervention-painting preview has been removed. Heat outputs remain
 screening evidence rather than measured or engineering-grade performance
@@ -302,8 +303,8 @@ wind-rose-weighted seasonal/annual comfort, and model-form uncertainty bands.
 The interface and API label these outputs **Screening**. The installed ERA5
 archive covers only 35.4% of possible hours, so its directional frequencies
 and comfort results remain provisional. See `docs/WIND_VALIDATION.md` for the
-calculation, Jifto comparison, benchmark workflow, observation schema, error
-maps, and promotion criteria for a future validated mode.
+calculation, benchmark workflow, observation schema, error maps, and promotion
+criteria for a future validated mode.
 
 When `data/wind_climatology/cape_town_era5.json` is present, the Wind panel
 defaults to ERA5 forcing. Direction, season and stability select the measured
@@ -330,47 +331,8 @@ Activating Current updates Cape Town local sun time and shadows, then uses the
 The current weather is not a station observation, and the heat layer remains
 the explicitly labelled Summer 2025–26 baseline. The heat panel combines the
 map with an area-weighted summary, a top-decile priority-hotspot measure and
-response guidance for shade, planting, hard surfaces and roofs. Relevant
-stormwater responses sit in the flood panel so that possible interventions are
-read alongside the evidence and limitations they depend on. These are
+response guidance for shade, planting, hard surfaces and roofs. These are
 screening prompts, not measurements or engineering-grade recommendations.
-
-## Surface flood simulator
-
-The WebGL viewer includes a rain-on-grid surface-flood tool. It runs a
-local-inertial 2D shallow-water solve over the hybrid terrain grid and returns
-maximum depth, final velocity, arrival time, wet area, and model metadata.
-Buildings are impermeable barriers; rainfall on their roofs is conserved and
-routed to the nearest open ground cell without inventing downpipe locations.
-Rainfall intensity, storm duration, infiltration, Manning roughness, domain,
-and grid resolution are editable.
-
-The model deliberately excludes unknown stormwater drains and unverified OSM
-curbs. It therefore represents a conservative above-ground surface-water
-scenario, not a drainage-capacity or engineering flood study. Results should
-be read as rainfall accumulation within the drawn box, not general flood
-depth for the selected place: there is no represented upstream inflow from
-outside the box. The user drags a rectangular analysis box; most of its
-perimeter is a closed hydraulic boundary, but the solver automatically leaves
-a box edge open for outflow where the terrain slopes downhill through it, so
-water can drain off a downhill edge instead of pooling against a wall that
-does not exist on the ground. The API reports which edges were left open in
-`model.boundary_open_sides`. The API returns 21 physical depth states and
-the WebGL viewer animates the box filling from dry terrain to storm completion.
-The supplied Town Survey Marks are used for LiDAR QA only: 62 valid marks
-overlap the original LiDAR DTM, whose sampled levels are about 0.343 m higher
-at the median with 0.377 m RMSE. No vertical correction is applied until datum
-compatibility is confirmed. SRTM cells are explicitly reported as a
-lower-accuracy percentage in every flood result.
-
-Run the FastAPI application, open the **Flood** tool, choose **Draw flood box**,
-and drag between opposite corners on the terrain before simulating. A 4 m grid
-is the practical detailed default; 2 m scenarios are substantially slower.
-The API also enforces a combined cell-count × duration budget; oversized jobs
-must use a smaller box, shorter storm, or coarser grid.
-The complete rectangular flood box must fall inside available terrain
-coverage; the browser marks an invalid box red and the API independently
-rejects it.
 
 Install the API dependencies with:
 

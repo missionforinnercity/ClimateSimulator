@@ -24,17 +24,15 @@ mean speed for the selected direction. A Weibull distribution estimates the
 fraction of that sector's hours above the selected threshold. In Comfort mode,
 all 16 conditional curves are frequency weighted and summed.
 
-## Comparison with jifto Wind
+## Solver scope
 
-The revised workflow follows jifto's useful product separation—single-
-direction diagnostics, multi-direction wind-rose comfort, selectable surface
-and flowline layers, analysis height, grid resolution, domain, period and
-appearance controls. It does **not** claim solver parity. jifto documents a
-GPU D3Q19 lattice-Boltzmann LES solver with synthetic turbulence, wall stress,
-warmup/averaging and wind-tunnel benchmark results. This application uses
-precomputed diagnostic mass-conserving terrain/building fields and does not
-resolve transient turbulence, scalar/vector time averages or tower wakes to
-the same standard. Its results therefore remain screening-grade.
+The application uses precomputed diagnostic mass-conserving terrain and
+building fields. It resolves regional terrain steering and local speed-factor
+effects for comparative planning studies. It does not resolve transient
+turbulence, time-averaged wake structures, or tower-scale vortex shedding.
+Those effects require project-specific RANS/LES modelling or wind-tunnel
+analysis. Results remain planning-grade until the field-benchmarking gates
+below are met.
 
 ## ERA5 Cape Town forcing
 

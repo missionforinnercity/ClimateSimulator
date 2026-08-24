@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docs — Climate Explorer</title>
+  <meta name="description" content="A practical guide to Climate Explorer tools, methods, outputs and appropriate planning uses.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%230e322c'/%3E%3Ccircle cx='32' cy='32' r='17' fill='%23f5f5ef'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/landing.css">
+  <link rel="stylesheet" href="/docs/docs.css?v=2">
+</head>
+<body>
+
+  <nav class="topnav">
+    <div class="topnav-inner">
+      <a class="brand" href="/">
+        <span class="brand-dot"></span>
+        Climate Explorer <span class="brand-sub">/ Cape Town CBD</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#explore">Tools</a>
+        <a href="/docs" class="current">Docs</a>
+        <a class="nav-cta" href="/app">Launch explorer →</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="docs-shell">
+    <aside class="docs-side" id="docs-side">
+      <div class="docs-side-group">
+        <div class="docs-side-label">Tools</div>
+        <a href="#map-tools">Map tools &amp; current conditions</a>
+        <a href="#heat">Urban heat</a>
+        <a href="#sun">Sunlight &amp; shadows</a>
+        <a href="#wind">Wind analysis</a>
+        <a href="#traffic">Traffic &amp; closures</a>
+        <a href="#transport">Public transport</a>
+        <a href="#city-model">City model &amp; terrain</a>
+      </div>
+      <div class="docs-side-group">
+        <div class="docs-side-label">Reference</div>
+        <a href="#validation">Using results responsibly</a>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <h1>How the model works</h1>
+      <p class="lede">
+        Climate Explorer brings environmental and mobility evidence into one
+        interactive city model. This guide explains how to run each tool, read
+        its outputs and turn the results into informed placemaking priorities.
+        Jump to a tool from the navigation or open it directly in the explorer.
+      </p>
+
+      <section class="tool-doc" id="map-tools">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h7m4 0h5M4 12h2m4 0h10M4 18h9m4 0h3"/><circle cx="13" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="15" cy="18" r="2"/></svg></div>
+          <h2>Map tools &amp; current conditions</h2>
+          <span class="status-chip reference">Reference</span>
+        </div>
+        <p class="dek">Control the shared scene, inspect street context, and apply current modelled weather to the sunlight and wind tools.</p>
+        <div class="doc-grid">
+          <div>
+            <div class="doc-subhead">Scene controls</div>
+            <p>Toggle ground, water, grass, railways, paths, roads, buildings and trees independently. Buildings can use a neutral material or an elevation colour ramp. Use <strong>Fit to CBD</strong> to restore the full model view.</p>
+          </div>
+          <div>
+            <div class="doc-subhead">Navigation</div>
+            <p>Left-drag orbits, right-drag or Shift-drag pans, the wheel zooms, and double-click resets the camera. Layer choices are retained while analysis modes temporarily simplify the scene.</p>
+          </div>
+          <div>
+            <div class="doc-subhead">Street View</div>
+            <p>Select <strong>Drop pin</strong>, click mapped terrain, then follow the generated Google Maps link. The pin is converted from viewer-local metres to WGS84; imagery availability is controlled by Google.</p>
+          </div>
+          <div>
+            <div class="doc-subhead">Current conditions</div>
+            <p>The API normalises Open-Meteo air temperature, apparent temperature, humidity, 10 m wind speed and direction. <strong>Use current</strong> applies local time to sunlight and the 10 m wind as forcing for the exploratory pedestrian wind view.</p>
+          </div>
+        </div>
+        <div class="caveat-box"><strong>Current-conditions context.</strong> Weather values come from Open-Meteo's modelled conditions and are refreshed on demand. They update sunlight timing and wind forcing; the dedicated summer heat baseline remains a consistent comparison layer.</div>
+        <div class="doc-links"><a href="/app?tool=tools">Open map tools →</a></div>
+      </section>
+
+      <section class="tool-doc" id="heat">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 14.8V5a3 3 0 0 1 6 0v9.8a5 5 0 1 1-6 0Z"/><path d="M12 7v9"/></svg></div>
+          <h2>Urban heat</h2>
+          <span class="status-chip screening">Planning analysis</span>
+        </div>
+        <p class="dek">Surface-temperature evidence and shade-deficit modelling to prioritise cooling interventions across the CBD.</p>
+
+        <div class="doc-subhead">Quick workflow</div>
+        <ol class="workflow">
+          <li>Open <strong>Heat</strong> and turn on <strong>Show</strong>.</li>
+          <li>Choose the question you want to ask from <strong>Layer</strong>.</li>
+          <li>For shade-sensitive layers, set the scenario date and time.</li>
+          <li>Read the map with the area-weighted average, priority area and maximum summary.</li>
+        </ol>
+        <div class="doc-subhead">Controls and outputs</div>
+        <div class="reference-table" role="table" aria-label="Heat controls and outputs">
+          <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
+          <div class="reference-row" role="row"><b>Intervention priority</b><span>70% normalised summer surface-temperature baseline plus 30% shade deficit for the selected date and time.</span></div>
+          <div class="reference-row" role="row"><b>Thermal exposure</b><span>A comparative pedestrian heat-exposure indicator for identifying higher- and lower-priority areas.</span></div>
+          <div class="reference-row" role="row"><b>Shade deficit</b><span>Scores mapped zones from more shaded to more exposed using current sun geometry.</span></div>
+          <div class="reference-row" role="row"><b>Surface / rooftop temperature</b><span>Shows the fixed source LST model on ground zones or painted onto mapped roof surfaces.</span></div>
+          <div class="reference-row" role="row"><b>Summary</b><span>Area-weighted average, top-priority area, and maximum value for the visible metric.</span></div>
+        </div>
+
+        <div class="doc-subhead">What it shows</div>
+        <p>
+          Defaults to an intervention-priority view: a fixed Summer 2025–26 surface-temperature
+          baseline (70% weight) combined with a shade deficit computed for the selected
+          date and time (30% weight). Because the temperature term doesn't vary by date,
+          this is labelled a "summer thermal baseline + selected-date shade scenario" — a
+          winter date pairs winter shade geometry with the summer baseline temperature, not
+          a winter temperature. Users can switch to pedestrian thermal-exposure proxy, shade
+          deficit alone, raw surface temperature, or a rooftop-temperature view clipped to
+          building footprints.
+        </p>
+
+        <div class="doc-subhead">Data &amp; method</div>
+        <ul>
+          <li>Uses a continuous Summer 2025–26 land-surface-temperature baseline aligned to the city model.</li>
+          <li>Combines temperature evidence with date- and time-specific shade geometry from mapped buildings and canopies.</li>
+          <li>Rooftop values place the source temperature model onto detailed roof geometry for consistent spatial comparison.</li>
+        </ul>
+
+        <div class="caveat-box"><strong>Best used for prioritisation.</strong> Use the relative patterns to identify places for shade, planting, surface upgrades and more detailed site assessment. The exposure layer is a comparative indicator rather than a human thermal-comfort index.</div>
+
+        <div class="doc-links"><a href="/app?tool=heat">Open in the explorer →</a></div>
+      </section>
+
+      <section class="tool-doc" id="sun">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg></div>
+          <h2>Sunlight &amp; shadows</h2>
+          <span class="status-chip screening">Planning analysis</span>
+        </div>
+        <p class="dek">Instant GPU shadow casts alongside a CPU ray-traced cumulative sun-hours study on ground, roofs and façades.</p>
+
+        <div class="doc-subhead">Quick workflow</div>
+        <ol class="workflow">
+          <li>Choose <strong>Shadows</strong> for one moment or <strong>Sun hours</strong> for a time window.</li>
+          <li>Set the date and either a time or start/end window.</li>
+          <li>For Sun hours, choose surfaces, grid resolution and analysis-area size, then move the box if needed.</li>
+          <li>Generate the study and interpret the least-to-most-sun legend.</li>
+        </ol>
+        <div class="doc-subhead">Controls and outputs</div>
+        <div class="reference-table" role="table" aria-label="Sunlight controls and outputs">
+          <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
+          <div class="reference-row" role="row"><b>Shadows</b><span>Instant terrain-aware GPU shadow display for the selected date and ten-minute time increment.</span></div>
+          <div class="reference-row" role="row"><b>Analysis surfaces</b><span>Ground plus buildings, building roofs/façades only, or ground only.</span></div>
+          <div class="reference-row" role="row"><b>Time step</b><span>15, 30 or 60 minutes. Smaller steps capture change more finely but require more rays.</span></div>
+          <div class="reference-row" role="row"><b>Building grid</b><span>10 m for faster studies or 5 m for smoother roof and façade cells.</span></div>
+          <div class="reference-row" role="row"><b>Analysis area</b><span>A movable 300, 500 or 750 m local domain. All mapped buildings and canopies remain blockers.</span></div>
+          <div class="reference-row" role="row"><b>Sun-hours result</b><span>Direct clear-sky hours accumulated per ground zone, roof cell, or façade cell over the selected window.</span></div>
+        </div>
+
+        <div class="doc-subhead">What it shows</div>
+        <p>
+          Instantaneous shadows use complete building-footprint geometry and are
+          regenerated only when <strong>Generate shadows</strong> is clicked; orbiting the
+          camera reuses the cached GPU depth texture. The cumulative study places analysis
+          cells on roofs and outward-facing façades, casts a clear-sky ray toward every
+          sampled sun position over an editable daily window (15/30/60-minute steps), and
+          tests it against building prisms and canopy volumes. Full-CBD grids are available
+          at 20 m (faster, ~25,000 cells for an all-surface study) and 10 m (detailed).
+        </p>
+
+        <div class="doc-subhead">Data &amp; method</div>
+        <ul>
+          <li>Ground sunlight accumulates from mapped shadow overlap, while roof and façade cells are tested with clear-sky rays against building and canopy geometry.</li>
+          <li>The method focuses on direct sunlight and shadow duration, creating a consistent basis for comparing public spaces and building surfaces.</li>
+        </ul>
+
+        <div class="caveat-box"><strong>Designed for early design decisions.</strong> Use the results to compare shade, solar access and seasonal performance before advancing preferred options to a detailed daylight or energy assessment.</div>
+
+        <div class="doc-links"><a href="/app?tool=sun">Open in the explorer →</a></div>
+      </section>
+
+      <section class="tool-doc" id="wind">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8h11.5a2.5 2.5 0 1 0-2.3-3.5M3 12h16a2 2 0 1 1-1.7 3M3 16h8"/></svg></div>
+          <h2>Wind analysis</h2>
+          <span class="status-chip screening">Planning analysis</span>
+        </div>
+        <p class="dek">Pedestrian-height wind comfort, from a single tested direction up to a full 16-direction wind-rose-weighted seasonal assessment.</p>
+
+        <div class="doc-subhead">Quick workflow</div>
+        <ol class="workflow">
+          <li>Move or resize the orange analysis domain and choose result height and grid.</li>
+          <li>Use <strong>Direction</strong> to inspect one inflow, or <strong>Comfort</strong> to combine the 16-direction wind rose.</li>
+          <li>Select period, atmospheric stability and the activity threshold you care about.</li>
+          <li>Run the study, then toggle the surface and flowlines or generate the detailed report.</li>
+        </ol>
+        <div class="doc-subhead">Controls and outputs</div>
+        <div class="reference-table" role="table" aria-label="Wind controls and outputs">
+          <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
+          <div class="reference-row" role="row"><b>Direction study</b><span>One of 16 compass sectors or the 150° Cape Doctor case, driven by ERA5 climatology or a manual mean speed.</span></div>
+          <div class="reference-row" role="row"><b>Comfort study</b><span>Frequency-weights all directional fields and assigns the first Lawson-LDDC-style activity class at no more than 5% exceedance.</span></div>
+          <div class="reference-row" role="row"><b>Height / grid / domain</b><span>1.5, 2 or 4 m results; 2–10 m cells; and a movable 100–1,200 m square.</span></div>
+          <div class="reference-row" role="row"><b>Stability</b><span>Unstable, neutral or stable height-profile assumptions used for pedestrian-height conversion.</span></div>
+          <div class="reference-row" role="row"><b>Activity threshold</b><span>2.5–10 m/s thresholds covering long sitting through business walking.</span></div>
+          <div class="reference-row" role="row"><b>Result</b><span>Speed or comfort surface, animated flowlines, threshold exceedance, planning ranges and model context.</span></div>
+        </div>
+
+        <div class="doc-subhead">What it shows</div>
+        <p>
+          Separates single-direction diagnostics from 16-direction wind-rose-weighted comfort
+          analysis, exposing an editable domain, result height, grid, period, stability,
+          activity threshold and surface layer. Results include stability-dependent
+          pedestrian-height conversion, Lawson-LDDC-style activity categories, conditional
+          threshold exceedance and lower-to-upper planning ranges.
+        </p>
+
+        <div class="doc-subhead">Data &amp; method</div>
+        <ul>
+          <li>Combines local ventilation factors with a terrain-resolved, mass-conserving regional wind field so major slopes, gaps and sheltered areas influence the result.</li>
+          <li>ERA5 reanalysis supplies Cape Town direction frequencies, conditional speeds, gust factors and height profiles for annual and seasonal studies.</li>
+          <li>Building footprints and canopy are incorporated to communicate local acceleration, shelter and pedestrian-level flow patterns.</li>
+        </ul>
+
+        <div class="caveat-box"><strong>Built for option comparison.</strong> Use the wind patterns and activity categories to locate exposed routes, sheltered spaces and areas that benefit from design refinement. Final structural or safety decisions should use a project-specific wind assessment.</div>
+
+        <div class="doc-links"><a href="/app?tool=wind">Open in the explorer →</a></div>
+      </section>
+
+      <section class="tool-doc" id="traffic">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14v-2.2c0-.8.5-1.5 1.3-1.8l1.4-.5 1.6-3.1c.3-.6.9-.9 1.5-.9h5.1c.7 0 1.3.4 1.6 1l1.3 3 1 .3c.7.2 1.2.9 1.2 1.7V14"/><path d="M4 14h16v3H4zM7 9.5h10M7 17v1.5m10-1.5v1.5"/><circle cx="7.5" cy="14" r="1"/><circle cx="16.5" cy="14" r="1"/></svg></div>
+          <h2>Traffic &amp; street closures</h2>
+          <span class="status-chip screening">Scenario comparison</span>
+        </div>
+        <p class="dek">Draw a lane or street closure directly on the map and compare a paired SUMO simulation against the open-road baseline.</p>
+
+        <div class="doc-subhead">Quick workflow</div>
+        <ol class="workflow">
+          <li>Choose time period, demand level, junction behaviour and a 5–20 minute duration.</li>
+          <li>Select <strong>Lane</strong>, <strong>Street</strong>, or <strong>One-way</strong>, then draw over one or more mapped sections.</li>
+          <li>Confirm the snapped selection, adjust direction where available, and simulate.</li>
+          <li>Compare Before and With closure, inspect diversion colours, then open the printable report.</li>
+        </ol>
+        <div class="doc-subhead">Controls and outputs</div>
+        <div class="reference-table" role="table" aria-label="Traffic controls and outputs">
+          <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
+          <div class="reference-row" role="row"><b>Period and demand</b><span>Selects a synthetic time-of-day profile at 75%, 100% or 125% of reference demand.</span></div>
+          <div class="reference-row" role="row"><b>Junctions</b><span>Uses mapped/generated signal programs or priority right-of-way for the paired runs.</span></div>
+          <div class="reference-row" role="row"><b>Lane</b><span>Closes the left-side kerbside lane on selected directional edges, consistent with South African left-hand traffic.</span></div>
+          <div class="reference-row" role="row"><b>Street / One-way</b><span>Closes full selected edges, or the opposite-direction sibling to screen a one-way conversion.</span></div>
+          <div class="reference-row" role="row"><b>Comparison</b><span>Journey time, delay, speed, completion, queue, diversion, emissions, fuel and relative edge-noise differences.</span></div>
+          <div class="reference-row" role="row"><b>Quality checks</b><span>Comparison metrics are shown only when the baseline, run completion and paired-trip sample meet the model's reliability thresholds.</span></div>
+        </div>
+
+        <div class="doc-subhead">What it shows</div>
+        <p>
+          The freehand pen snaps to the SUMO road network and can close one lane or the whole
+          street; in lane mode each selected directional section closes its left-side kerbside
+          lane (South African left-hand traffic). The panel replays baseline and closure traffic,
+          compares mapped signal programs with priority right-of-way, and reports queue,
+          route-length, completion, speed, delay, and road-level diversion metrics. A
+          representative car / minibus-taxi / delivery-van / shuttle fleet carries HBEFA3
+          emission classes for CO₂, NOx, exhaust PMx, fuel use, and relative edge-noise
+          comparisons. Completed comparisons can generate a print-ready A4 report.
+        </p>
+
+        <div class="doc-subhead">Data &amp; method</div>
+        <ul>
+          <li>The reference load is stability-tuned at 50 corridor departures per minute, with consistent demand used in the before-and-after runs.</li>
+          <li>Built-in quality checks protect the comparison from incomplete baselines, timed-out runs and undersized paired samples.</li>
+          <li>Nearby parking and pedestrian crossings are included as useful street context alongside the modelled vehicle network.</li>
+        </ul>
+
+        <div class="caveat-box"><strong>Purpose-built for comparing interventions.</strong> Use paired scenarios to understand direction and relative scale of network effects, identify diversion routes and refine staging options. Confirm selected schemes with observed counts and operational analysis before implementation.</div>
+
+        <div class="doc-links"><a href="/app?tool=traffic">Open in the explorer →</a></div>
+      </section>
+
+      <section class="tool-doc" id="transport">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="3.5" width="14" height="15" rx="3"/><path d="M8 7h8M7.5 12.5h9M8 18.5l-1 2m9-2 1 2"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/></svg></div>
+          <h2>Public transport</h2>
+          <span class="status-chip screening">Schedule-based planning</span>
+        </div>
+        <p class="dek">Timetable-derived MyCiTi buses and Metrorail trains, network routes, and an event-access planner.</p>
+
+        <div class="doc-subhead">Quick workflow</div>
+        <ol class="workflow">
+          <li>Choose Network, Bus or Rail and select a route or corridor.</li>
+          <li>Scrub or play model time; click a stop or station for scheduled service details.</li>
+          <li>For an event, set its date, attendance and start/end times.</li>
+          <li>Select a hub or pick a venue on the map, set walking and service-window assumptions, then run access analysis.</li>
+        </ol>
+        <div class="doc-subhead">Controls and outputs</div>
+        <div class="reference-table" role="table" aria-label="Public transport controls and outputs">
+          <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
+          <div class="reference-row" role="row"><b>Model time</b><span>Interpolates vehicles along mapped route shapes from supplied timetable endpoints. Playback can run at ¼×, 1× or 5×.</span></div>
+          <div class="reference-row" role="row"><b>Lines and stops</b><span>Filters the network map; clicking a stop shows matched routes and upcoming modelled departures.</span></div>
+          <div class="reference-row" role="row"><b>Event demand</b><span>Attendance multiplied by the selected public-transport mode share to create a transparent planning scenario.</span></div>
+          <div class="reference-row" role="row"><b>Walk shed</b><span>400, 800 or 1,200 m routed over the mapped walking/street network at 4.8 km/h.</span></div>
+          <div class="reference-row" role="row"><b>Service windows</b><span>Counts arrivals before the event and return departures during the selected dispersal period.</span></div>
+          <div class="reference-row" role="row"><b>Access result</b><span>Connected origin areas, arrival/return counts, scheduled-capacity coverage proxy, service list, grade and ranked interventions.</span></div>
+        </div>
+
+        <div class="doc-subhead">What it shows</div>
+        <p>
+          Adds 3D vehicles positioned from schedule interpolation, bold
+          network-map routes, a neutral rail track layer, clickable stops/stations, an
+          accelerated service clock, and event-access planning. Set an event venue from the
+          hub list or by clicking the map; with a date, time window, walking catchment,
+          dispersal window, attendance and mode share, the panel reports connected origin
+          areas, arrival/return service counts, how much of an event-demand proxy the return
+          services' scheduled capacity covers, and ranked corridor interventions.
+        </p>
+
+        <div class="doc-subhead">Data &amp; method</div>
+        <ul>
+          <li>PRASA and MyCiTi schedules provide weekday and weekend service patterns along matched routes and corridors.</li>
+          <li>Scheduled capacity uses clear per-departure assumptions of 60 places for a bus and 800 for a train.</li>
+          <li>Walking access follows the mapped pedestrian and street network, including a public-entrance route for Cape Town Station.</li>
+        </ul>
+
+        <div class="caveat-box"><strong>A clear view of scheduled access.</strong> Vehicle movement represents timetable-based service rather than live tracking. Use the event analysis to identify strong connections, return-service gaps and priority conversations with transport operators.</div>
+
+        <div class="doc-links"><a href="/app?tool=transport">Open in the explorer →</a></div>
+      </section>
+
+      <section class="tool-doc" id="city-model">
+        <div class="tool-doc-head">
+          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V9l8-5 8 5v11"/><path d="M9 20v-6h6v6M4 9l8 5 8-5"/></svg></div>
+          <h2>City model &amp; terrain</h2>
+          <span class="status-chip validated">LiDAR-grounded</span>
+        </div>
+        <p class="dek">The hybrid terrain, building and roof model every other panel is built on.</p>
+
+        <div class="doc-subhead">What it is</div>
+        <p>
+          The city model combines 2025 LiDAR terrain, locally aligned SRTM coverage,
+          OpenStreetMap footprints, municipal photogrammetry, street information and
+          mapped tree canopy. Building footprints are fitted to available elevation and
+          roof evidence to create flat, sloped, gable and hip forms, while every layer is
+          aligned in the same projected coordinate system.
+        </p>
+
+        <div class="doc-subhead">Data &amp; method</div>
+        <ul>
+          <li>The scene follows the valid terrain footprint, keeping buildings, streets and analysis layers inside mapped ground coverage.</li>
+          <li>Objects retain stable identifiers, source attribution, level of detail and geometry-quality information.</li>
+          <li>Municipal centrelines, lights, crossings, parking and festoon lighting enrich the street-level model.</li>
+        </ul>
+
+        <div class="caveat-box"><strong>A consistent spatial foundation.</strong> The model is designed to keep terrain, buildings, vegetation, streets, transit and analysis results aligned, making it possible to compare different placemaking questions in one coherent view.</div>
+
+        <div class="doc-links"><a href="/app">Open in the explorer →</a></div>
+      </section>
+
+      <section class="tool-doc" id="validation">
+        <div class="tool-doc-head">
+          <h2>Using results responsibly</h2>
+        </div>
+        <p class="dek">Climate Explorer is built to move from city-scale evidence to focused, practical action.</p>
+        <div class="doc-grid">
+          <div>
+            <div class="doc-subhead">Compare</div>
+            <p>Use a consistent baseline and change one design, time, weather or mobility assumption at a time.</p>
+          </div>
+          <div>
+            <div class="doc-subhead">Prioritise</div>
+            <p>Identify the streets, public spaces and connections where intervention can have the clearest benefit.</p>
+          </div>
+          <div>
+            <div class="doc-subhead">Coordinate</div>
+            <p>Bring environmental and mobility findings into the same conversation with designers, planners and operators.</p>
+          </div>
+          <div>
+            <div class="doc-subhead">Advance</div>
+            <p>Use the selected priorities to guide site visits, stakeholder engagement and the appropriate detailed technical work.</p>
+          </div>
+        </div>
+        <div class="caveat-box"><strong>Clear scope, confident decisions.</strong> The tools are strongest for comparing options, locating priorities and building a shared evidence base. Where a decision requires statutory approval, safety certification or detailed engineering, carry the preferred option into the relevant specialist assessment.</div>
+        <div class="doc-links"><a href="/app">Open Climate Explorer →</a></div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer>
+    <div class="wrap footer-inner">
+      <span>© Climate Explorer · Cape Town CBD model</span>
+      <div class="footer-links">
+        <a href="/app">Explorer</a>
+        <a href="/">Home</a>
+        <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OSM attribution</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="scrollspy.js"></script>
+</body>
+</html>

@@ -48,14 +48,14 @@ export async function startWebGLScene(canvas, status) {
   renderer.shadowMap.type = THREE.BasicShadowMap;
   renderer.shadowMap.autoUpdate = false;
 
-  const manifest = await fetch('assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
+  const manifest = await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
   const loadRendererScene = async () => {
     // The compact scene is intentionally the normal interactive asset. The
     // full semantic model and dense roof mesh remain available for analysis,
     // but parsing them here adds substantial startup and rendering overhead.
     const expectedWater = manifest.layers?.fallback?.water || 0;
     const fallbackResponse = await fetch(
-      `assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`,
+      `/assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`,
     );
     if (!fallbackResponse.ok) throw new Error(`compact scene HTTP ${fallbackResponse.status}`);
     const fallback = await fallbackResponse.json();
@@ -66,7 +66,7 @@ export async function startWebGLScene(canvas, status) {
   };
   const [data, canopyAsset, roofSurfaceBuffer] = await Promise.all([
     loadRendererScene(),
-    fetch(`assets/canopy.json?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
+    fetch(`/assets/canopy.json?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
     Promise.resolve(null),
   ]);
 
@@ -2069,7 +2069,6 @@ export async function startWebGLScene(canvas, status) {
   const heatGroup = new THREE.Group();
   const sunDomainGroup = new THREE.Group();
   const windGroup = new THREE.Group();
-  const floodGroup = new THREE.Group();
   const trafficGroup = new THREE.Group();
   const trafficStatusGroup = new THREE.Group();
   const trafficDrawingGroup = new THREE.Group();
@@ -2092,7 +2091,7 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, sunDomainGroup, windGroup, floodGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
+  scene.add(heatGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
@@ -2158,23 +2157,6 @@ export async function startWebGLScene(canvas, status) {
   const windLensButtons = [...document.querySelectorAll('[data-wind-lens]')];
   const windDirectionControls = document.querySelector('[data-wind-direction-controls]');
   const windDirectionPresets = [...document.querySelectorAll('[data-wind-direction]')];
-  const floodToggle = document.querySelector('#flood-toggle');
-  const floodRain = document.querySelector('#flood-rain');
-  const floodRainValue = document.querySelector('#flood-rain-value');
-  const floodDuration = document.querySelector('#flood-duration');
-  const floodDurationValue = document.querySelector('#flood-duration-value');
-  const floodInfiltration = document.querySelector('#flood-infiltration');
-  const floodInfiltrationValue = document.querySelector('#flood-infiltration-value');
-  const floodRoughness = document.querySelector('#flood-roughness');
-  const floodSize = document.querySelector('#flood-size');
-  const floodSizeValue = document.querySelector('#flood-size-value');
-  const floodResolution = document.querySelector('#flood-resolution');
-  const floodMoveDomain = document.querySelector('#flood-move-domain');
-  const floodSimulate = document.querySelector('#flood-simulate');
-  const floodStatus = document.querySelector('#flood-status');
-  const floodLegendMax = document.querySelector('#flood-legend-max');
-  const floodTime = document.querySelector('#flood-time');
-  const floodResults = document.querySelector('#flood-results');
   const trafficToggle = document.querySelector('#traffic-toggle');
   const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
   const trafficFreshness = document.querySelector('#traffic-freshness');
@@ -2249,19 +2231,6 @@ export async function startWebGLScene(canvas, status) {
     moveMode: false,
     lastTime: performance.now(),
   };
-  const floodState = {
-    enabled: Boolean(floodToggle?.checked),
-    center: [0, 0],
-    size: Number(floodSize?.value) || 400,
-    bounds: null,
-    moveMode: false,
-    validBox: true,
-    field: null,
-  };
-  floodState.bounds = [
-    -floodState.size / 2, -floodState.size / 2,
-    floodState.size / 2, floodState.size / 2,
-  ];
   const trafficState = {
     sceneActive: document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'traffic',
     enabled: Boolean(trafficToggle?.checked),
@@ -2312,20 +2281,11 @@ export async function startWebGLScene(canvas, status) {
   let sunBox = null;
   let sunEdges = null;
   let sunHandle = null;
-  let floodWaterMesh = null;
-  let floodVelocityLines = null;
-  let floodDomainMesh = null;
-  let floodBox = null;
-  let floodBoxEdges = null;
-  let floodHandle = null;
-  let floodAnimationFrame = 0;
-  let roadsVisibleBeforeFlood = null;
   let streetLayersVisibleBeforeWind = null;
   const windTrailPoints = 5;
   let drag = null;
   let windDrag = null;
   let sunDrag = null;
-  let floodDrag = null;
   const windBuildingCellSize = 60;
   const windBuildingGrid = new Map();
   const savedVisibility = Object.fromEntries(
@@ -2344,23 +2304,6 @@ export async function startWebGLScene(canvas, status) {
 
   function restoreNormalVisibility() {
     for (const [name, group] of Object.entries(layerGroups)) group.visible = savedVisibility[name];
-  }
-
-  // Roads sit ~0.3-0.5m above the terrain, which pokes through the flood
-  // water surface (rendered ~0.12m above the simulated depth) and z-fights.
-  // Hide them for the duration of flood mode and restore whatever the layer
-  // toggle had set beforehand.
-  function hideRoadsForFlood() {
-    if (roadsVisibleBeforeFlood === null) roadsVisibleBeforeFlood = layerGroups.roads.visible;
-    layerGroups.roads.visible = false;
-    syncLayerControls();
-  }
-
-  function restoreRoadsAfterFlood() {
-    if (roadsVisibleBeforeFlood === null) return;
-    layerGroups.roads.visible = roadsVisibleBeforeFlood;
-    roadsVisibleBeforeFlood = null;
-    syncLayerControls();
   }
 
   // Road and footpath meshes are drawn above the terrain and otherwise cover
@@ -2777,7 +2720,6 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function setShadowMode(enabled) {
-    if (enabled) restoreRoadsAfterFlood();
     const wasInStudyMode = shadowState.enabled || heatGroup.visible;
     if (enabled && !wasInStudyMode) rememberNormalVisibility();
     shadowState.enabled = enabled;
@@ -2791,11 +2733,6 @@ export async function startWebGLScene(canvas, status) {
     if (enabled) {
       if (heatToggle) heatToggle.checked = false;
       setHeatMode(false);
-      if (floodState.enabled) {
-        floodState.enabled = false;
-        if (floodToggle) floodToggle.checked = false;
-        floodGroup.visible = false;
-      }
       heatGroup.visible = false;
       layerGroups.terrain.visible = true;
       layerGroups.grass.visible = false;
@@ -3309,7 +3246,6 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function setHeatMode(enabled) {
-    if (enabled) restoreRoadsAfterFlood();
     if (enabled) restoreStreetLayersAfterWind();
     const wasInStudyMode = shadowState.enabled || heatGroup.visible;
     if (enabled && !wasInStudyMode) rememberNormalVisibility();
@@ -3345,9 +3281,6 @@ export async function startWebGLScene(canvas, status) {
       windState.enabled = false;
       if (windToggle) windToggle.checked = false;
       windGroup.visible = false;
-      floodState.enabled = false;
-      if (floodToggle) floodToggle.checked = false;
-      floodGroup.visible = false;
       trafficState.enabled = false;
       if (trafficToggle) trafficToggle.checked = false;
       trafficGroup.visible = false;
@@ -3356,8 +3289,6 @@ export async function startWebGLScene(canvas, status) {
       restoreNormalVisibility();
       windState.enabled = Boolean(windToggle?.checked);
       windGroup.visible = windState.enabled;
-      floodState.enabled = Boolean(floodToggle?.checked);
-      floodGroup.visible = floodState.enabled;
       trafficState.enabled = Boolean(trafficToggle?.checked);
       syncTrafficSceneVisibility();
     }
@@ -4163,9 +4094,7 @@ export async function startWebGLScene(canvas, status) {
     clearTrafficSelection();
     setBuildingDrawTransparency(true);
     streetViewState.placing = false;
-    floodState.moveMode = false;
     windState.moveMode = false;
-    floodMoveDomain?.classList.remove('active');
     windMoveDomain?.classList.remove('active');
     // "One-way" submits the same closure_mode: "full" as "Street" -- a
     // one-way conversion on the (typical) single-lane-per-direction road is
@@ -5203,285 +5132,6 @@ export async function startWebGLScene(canvas, status) {
     else object.material?.dispose();
   }
 
-  function updateFloodBox() {
-    const [minX, minZ, maxX, maxZ] = floodState.bounds;
-    const width = Math.max(1, maxX - minX);
-    const depth = Math.max(1, maxZ - minZ);
-    const centerX = (minX + maxX) * 0.5;
-    const centerZ = (minZ + maxZ) * 0.5;
-    const centerY = terrainHeightAt(centerX, centerZ) + 7;
-    if (!floodBox) {
-      const geometry = new THREE.BoxGeometry(1, 14, 1);
-      floodBox = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-        color: 0x32bce8,
-        transparent: true,
-        opacity: 0.045,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-      }));
-      floodBoxEdges = new THREE.LineSegments(
-        new THREE.EdgesGeometry(geometry),
-        new THREE.LineBasicMaterial({ color: 0x8de4ff, transparent: true, opacity: 0.9, depthTest: false }),
-      );
-      floodHandle = new THREE.Mesh(new THREE.SphereGeometry(7, 12, 8), new THREE.MeshBasicMaterial({ color: 0x32bce8, depthTest: false }));
-      floodHandle.name = 'flood-resize-handle';
-      floodBox.renderOrder = 7;
-      floodBoxEdges.renderOrder = 8;
-      floodGroup.add(floodBox, floodBoxEdges, floodHandle);
-    }
-    floodBox.position.set(centerX, centerY, centerZ);
-    floodBox.scale.set(width, 1, depth);
-    floodBox.material.opacity = floodState.moveMode ? 0.12 : 0.045;
-    floodBox.material.color.setHex(floodState.validBox ? 0x32bce8 : 0xe45757);
-    floodBoxEdges.material.color.setHex(floodState.validBox ? 0x8de4ff : 0xff8a8a);
-    floodBoxEdges.position.copy(floodBox.position);
-    floodBoxEdges.scale.copy(floodBox.scale);
-    floodHandle.position.set(maxX, centerY + 22, maxZ);
-    floodHandle.material.color.setHex(floodState.validBox ? 0x32bce8 : 0xe45757);
-    floodHandle.visible = floodState.moveMode;
-    floodBox.visible = true;
-    floodBoxEdges.visible = true;
-    requestRender();
-  }
-
-  function stopFloodAnimation() {
-    if (floodAnimationFrame) cancelAnimationFrame(floodAnimationFrame);
-    floodAnimationFrame = 0;
-  }
-
-  function floodColor(depth, maximum) {
-    const stops = [
-      [0, 0xbdeeff],
-      [0.35, 0x42bde8],
-      [0.68, 0x1975c5],
-      [1, 0x4437a4],
-    ];
-    const t = Math.sqrt(clamp(depth / Math.max(maximum, 0.01), 0, 1));
-    let upper = 1;
-    while (upper < stops.length - 1 && t > stops[upper][0]) upper += 1;
-    const lower = upper - 1;
-    const amount = (t - stops[lower][0]) / (stops[upper][0] - stops[lower][0]);
-    return new THREE.Color(stops[lower][1]).lerp(new THREE.Color(stops[upper][1]), amount);
-  }
-
-  function clearFloodSimulation() {
-    stopFloodAnimation();
-    for (const object of [floodWaterMesh, floodVelocityLines, floodDomainMesh]) {
-      if (!object) continue;
-      floodGroup.remove(object);
-      disposeObject(object);
-    }
-    floodWaterMesh = null;
-    floodVelocityLines = null;
-    floodDomainMesh = null;
-    floodState.field = null;
-    if (floodResults) floodResults.hidden = true;
-    if (floodTime) floodTime.textContent = 'Dry · 0 min';
-  }
-
-  function buildFloodCoverage() {
-    const field = floodState.field;
-    if (!field?.active?.length) return;
-    if (floodDomainMesh) {
-      floodGroup.remove(floodDomainMesh);
-      disposeObject(floodDomainMesh);
-    }
-    const positions = [];
-    for (let row = 0; row < field.height; row += 1) {
-      for (let column = 0; column < field.width; column += 1) {
-        const index = row * field.width + column;
-        if (!field.active[index] || field.buildings[index]) continue;
-        const x0 = field.origin[0] + column * field.dx;
-        const z0 = field.origin[1] + row * field.dz;
-        const x1 = x0 + field.dx;
-        const z1 = z0 + field.dz;
-        const y = field.bed[index] + 0.09;
-        positions.push(
-          x0, y, z0, x0, y, z1, x1, y, z0,
-          x1, y, z0, x0, y, z1, x1, y, z1,
-        );
-      }
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    floodDomainMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-      color: 0x38535e, transparent: true, opacity: 0.34, side: THREE.DoubleSide,
-      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
-    }));
-    floodDomainMesh.name = 'calculated-flood-domain';
-    floodDomainMesh.renderOrder = 4;
-    floodGroup.add(floodDomainMesh);
-  }
-
-  function buildFloodSurface(depthValues = null, showVelocity = false) {
-    const field = floodState.field;
-    if (!field?.max_depth?.length) return;
-    for (const object of [floodWaterMesh, floodVelocityLines]) {
-      if (!object) continue;
-      floodGroup.remove(object);
-      disposeObject(object);
-    }
-    floodWaterMesh = null;
-    floodVelocityLines = null;
-    const positions = [];
-    const colors = [];
-    const velocityPositions = [];
-    const displayMaximum = clamp(field.summary?.max_depth_m || 0.2, 0.15, 1.5);
-    const stride = Math.max(2, Math.ceil(Math.sqrt(field.width * field.height / 450)));
-    for (let row = 0; row < field.height; row += 1) {
-      for (let column = 0; column < field.width; column += 1) {
-        const index = row * field.width + column;
-        const depth = (depthValues || field.depth)[index] || 0;
-        if (!field.active[index] || field.buildings[index] || depth < 0.0002) continue;
-        const x0 = field.origin[0] + column * field.dx;
-        const z0 = field.origin[1] + row * field.dz;
-        const x1 = x0 + field.dx;
-        const z1 = z0 + field.dz;
-        const y = field.bed[index] + depth + 0.12;
-        const color = floodColor(depth, displayMaximum);
-        positions.push(
-          x0, y, z0, x0, y, z1, x1, y, z0,
-          x1, y, z0, x0, y, z1, x1, y, z1,
-        );
-        for (let vertex = 0; vertex < 6; vertex += 1) colors.push(color.r, color.g, color.b);
-
-        if (showVelocity && row % stride === 0 && column % stride === 0 && depth >= 0.03) {
-          const u = field.u[index] || 0;
-          const v = field.v[index] || 0;
-          const speed = Math.hypot(u, v);
-          if (speed > 0.02) {
-            const length = clamp(speed * 3, 1.5, field.dx * stride * 0.75);
-            const centerX = x0 + field.dx * 0.5;
-            const centerZ = z0 + field.dz * 0.5;
-            velocityPositions.push(
-              centerX, y + 0.28, centerZ,
-              centerX + u / speed * length, y + 0.28, centerZ + v / speed * length,
-            );
-          }
-        }
-      }
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    floodWaterMesh = new THREE.Mesh(geometry, new THREE.MeshPhongMaterial({
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.82,
-      shininess: 90,
-      specular: 0xa8e8ff,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    }));
-    floodWaterMesh.name = 'maximum-flood-depth';
-    floodWaterMesh.renderOrder = 5;
-    floodGroup.add(floodWaterMesh);
-
-    if (velocityPositions.length) {
-      const velocityGeometry = new THREE.BufferGeometry();
-      velocityGeometry.setAttribute('position', new THREE.Float32BufferAttribute(velocityPositions, 3));
-      floodVelocityLines = new THREE.LineSegments(velocityGeometry, new THREE.LineBasicMaterial({
-        color: 0xe8fbff,
-        transparent: true,
-        opacity: 0.8,
-        depthWrite: false,
-      }));
-      floodVelocityLines.name = 'final-flood-velocity';
-      floodVelocityLines.renderOrder = 6;
-      floodGroup.add(floodVelocityLines);
-    }
-  }
-
-  function playFloodAnimation() {
-    const field = floodState.field;
-    if (!field?.frames?.length) {
-      buildFloodSurface(field?.depth || null, true);
-      return;
-    }
-    stopFloodAnimation();
-    const started = performance.now();
-    const playbackMs = clamp(field.frames.length * 180, 2800, 6500);
-    let previousFrame = -1;
-    const animate = now => {
-      const progress = clamp((now - started) / playbackMs, 0, 1);
-      const frameIndex = Math.min(field.frames.length - 1, Math.floor(progress * field.frames.length));
-      if (frameIndex !== previousFrame) {
-        previousFrame = frameIndex;
-        buildFloodSurface(field.frames[frameIndex], frameIndex === field.frames.length - 1);
-        const minute = field.frame_times_min?.[frameIndex] ?? 0;
-        if (floodTime) floodTime.textContent = `Filling · ${Number(minute).toFixed(0)} min`;
-        requestRender();
-      }
-      if (progress < 1 && floodState.enabled) {
-        floodAnimationFrame = requestAnimationFrame(animate);
-      } else {
-        floodAnimationFrame = 0;
-        buildFloodSurface(field.depth, true);
-        if (floodTime) floodTime.textContent = `Full storm · ${field.forcing.duration_min.toFixed(0)} min`;
-        requestRender();
-      }
-    };
-    floodAnimationFrame = requestAnimationFrame(animate);
-  }
-
-  async function simulateFlood() {
-    floodState.validBox = boxInLidarFootprint(floodState.bounds);
-    updateFloodBox();
-    if (!floodState.validBox) {
-      floodStatus.textContent = 'Flood box crosses outside available terrain coverage · move or resize it onto visible terrain.';
-      return;
-    }
-    floodSimulate.disabled = true;
-    floodSimulate.textContent = 'Solving…';
-    floodStatus.textContent = 'Solving rainfall accumulation within the drawn box (most edges closed; downhill edges may drain)…';
-    clearFloodSimulation();
-    try {
-      const response = await fetch(`${windApi}/flood/preview`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          bounds_local: floodState.bounds,
-          center_local: floodState.center,
-          size_m: Number(floodSize.value),
-          resolution_m: Number(floodResolution.value),
-          rainfall_mm_h: Number(floodRain.value),
-          duration_min: Number(floodDuration.value),
-          infiltration_mm_h: Number(floodInfiltration.value),
-          manning_n: Number(floodRoughness.value),
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      floodState.field = payload;
-      floodState.enabled = true;
-      floodGroup.visible = true;
-      if (floodToggle) floodToggle.checked = true;
-      hideRoadsForFlood();
-      buildFloodCoverage();
-      playFloodAnimation();
-      const summary = payload.summary;
-      const openSides = payload.model?.boundary_open_sides || [];
-      floodLegendMax.textContent = `${summary.max_depth_m.toFixed(2)} m`;
-      floodResults.innerHTML = `
-        <span><b>${summary.max_depth_m.toFixed(2)} m</b>Maximum rainfall accumulation depth</span>
-        <span><b>${summary.max_speed_mps.toFixed(2)} m/s</b>Maximum velocity</span>
-        <span><b>${Math.round(summary.wet_area_m2).toLocaleString()} m²</b>Area ≥ 1 cm</span>
-        <span><b>${summary.retained_water_m3.toFixed(1)} m³</b>Water retained</span>
-        ${summary.drained_water_m3 > 0.05 ? `<span><b>${summary.drained_water_m3.toFixed(1)} m³</b>Drained off-domain</span>` : ''}
-      `;
-      floodResults.hidden = false;
-      const control = payload.model?.dem_control;
-      const boundaryNote = openSides.length ? ` · open to outflow: ${openSides.join(', ')}` : ' · closed box';
-      floodStatus.textContent = `Rainfall accumulation within the drawn box (no upstream inflow from outside it) · ${payload.width} × ${payload.height} cells${boundaryNote} · pale grid calculated dry · buildings impermeable · mapped road/green material classes applied · ${summary.coarse_terrain_pct.toFixed(0)}% coarse terrain · ${control?.usable_marks || 0} survey marks checked`;
-    } catch (error) {
-      floodStatus.textContent = `Flood simulation unavailable (${error.message})`;
-    } finally {
-      floodSimulate.disabled = false;
-      floodSimulate.textContent = 'Simulate flood';
-      requestRender();
-    }
-  }
-
   function clearWindSimulation() {
     for (const object of [windHeatMesh, windPoints]) {
       if (!object) continue;
@@ -5894,28 +5544,6 @@ export async function startWebGLScene(canvas, status) {
       return;
     }
     if (event.button === 2 && removeTrafficSelectionAt(event)) return;
-    if (floodState.enabled && floodState.moveMode && event.button === 0) {
-      const point = pointerGround(event);
-      if (point) {
-        const handleScreen = handleScreenPoint(floodHandle);
-        const handleDistance = handleScreen
-          ? Math.hypot(event.clientX - handleScreen.x, event.clientY - handleScreen.y)
-          : Infinity;
-        const handleTolerance = 20;
-        floodDrag = {
-          mode: handleDistance <= handleTolerance ? 'resize' : 'move',
-          start: point,
-          center: [...floodState.center],
-          bounds: [...floodState.bounds],
-        };
-        clearFloodSimulation();
-        floodStatus.textContent = floodDrag.mode === 'resize'
-          ? 'Resizing box · release, then simulate flood.'
-          : 'Moving box · release, then simulate flood.';
-        capturePointer(event);
-        return;
-      }
-    }
     if (shadowState.enabled && shadowState.mode === 'hours' && shadowState.moveMode && event.button === 0) {
       const point = pointerGround(event);
       if (point) {
@@ -5974,37 +5602,6 @@ export async function startWebGLScene(canvas, status) {
   canvas.addEventListener('pointermove', event => {
     if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
       appendTrafficClosurePoint(event);
-      return;
-    }
-    if (floodDrag) {
-      const point = pointerGround(event);
-      if (!point) return;
-      if (floodDrag.mode === 'resize') {
-        const requestedWidth = Math.abs(point.x - floodDrag.center[0]) * 2;
-        const requestedHeight = Math.abs(point.z - floodDrag.center[1]) * 2;
-        const maxWidth = Math.min(1200, 2 * (floodDrag.center[0] - left), 2 * (right - floodDrag.center[0]));
-        const maxHeight = Math.min(1200, 2 * (floodDrag.center[1] - minZ), 2 * (maxZ - floodDrag.center[1]));
-        const width = Math.round(clamp(requestedWidth, 100, maxWidth) / 25) * 25;
-        const height = Math.round(clamp(requestedHeight, 100, maxHeight) / 25) * 25;
-        floodState.bounds = [
-          floodDrag.center[0] - width / 2, floodDrag.center[1] - height / 2,
-          floodDrag.center[0] + width / 2, floodDrag.center[1] + height / 2,
-        ];
-        if (floodSize) floodSize.value = String(clamp(Math.max(width, height), Number(floodSize.min), Number(floodSize.max)));
-        if (floodSizeValue) floodSizeValue.textContent = `${width} × ${height} m`;
-      } else {
-        const width = floodDrag.bounds[2] - floodDrag.bounds[0];
-        const height = floodDrag.bounds[3] - floodDrag.bounds[1];
-        const centerX = clamp(floodDrag.center[0] + point.x - floodDrag.start.x, left + width / 2, right - width / 2);
-        const centerZ = clamp(floodDrag.center[1] + point.z - floodDrag.start.z, minZ + height / 2, maxZ - height / 2);
-        floodState.bounds = [centerX - width / 2, centerZ - height / 2, centerX + width / 2, centerZ + height / 2];
-      }
-      floodState.center = [
-        (floodState.bounds[0] + floodState.bounds[2]) / 2,
-        (floodState.bounds[1] + floodState.bounds[3]) / 2,
-      ];
-      floodState.validBox = boxInLidarFootprint(floodState.bounds);
-      updateFloodBox();
       return;
     }
     if (sunDrag) {
@@ -6074,15 +5671,6 @@ export async function startWebGLScene(canvas, status) {
       }
     }
     clickCandidate = null;
-    if (floodDrag) {
-      const width = Math.round(floodState.bounds[2] - floodState.bounds[0]);
-      const height = Math.round(floodState.bounds[3] - floodState.bounds[1]);
-      floodState.size = Math.max(width, height);
-      floodStatus.textContent = floodDrag.mode === 'resize'
-        ? `Box resized to ${width} × ${height} m · click Simulate flood.`
-        : 'Box moved · click Simulate flood.';
-    }
-    floodDrag = null;
     if (sunDrag) {
       sunStatus.textContent = `Analysis area updated to ${shadowState.size} m · calculate sun hours again.`;
     }
@@ -6105,7 +5693,6 @@ export async function startWebGLScene(canvas, status) {
     sunDrag = null;
     drag = null;
     windDrag = null;
-    floodDrag = null;
   });
   canvas.addEventListener('wheel', event => {
     event.preventDefault();
@@ -6113,7 +5700,7 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   }, { passive: false });
   canvas.addEventListener('dblclick', event => {
-    if (trafficState.drawing || floodState.moveMode) {
+    if (trafficState.drawing) {
       event.preventDefault();
     } else {
       fitScene();
@@ -6259,10 +5846,6 @@ export async function startWebGLScene(canvas, status) {
     windState.enabled = event.target.checked;
     windGroup.visible = windState.enabled;
     if (windState.enabled) {
-      floodState.enabled = false;
-      if (floodToggle) floodToggle.checked = false;
-      floodGroup.visible = false;
-      restoreRoadsAfterFlood();
       if (windState.field && windState.surfaceVisible) hideStreetLayersForWind();
     } else {
       restoreStreetLayersAfterWind();
@@ -6343,76 +5926,6 @@ export async function startWebGLScene(canvas, status) {
     updateWindBox();
   });
   windSimulate?.addEventListener('click', simulateWind);
-  floodToggle?.addEventListener('change', event => {
-    floodState.enabled = event.target.checked;
-    floodGroup.visible = floodState.enabled;
-    if (!floodState.enabled) {
-      stopFloodAnimation();
-      floodState.moveMode = false;
-      floodMoveDomain?.classList.remove('active');
-      floodMoveDomain?.setAttribute('aria-pressed', 'false');
-      if (floodMoveDomain) floodMoveDomain.textContent = 'Move / resize domain';
-    }
-    if (floodState.enabled) {
-      if (heatToggle?.checked) {
-        heatToggle.checked = false;
-        setHeatMode(false);
-      }
-      windState.enabled = false;
-      if (windToggle) windToggle.checked = false;
-      windGroup.visible = false;
-      restoreStreetLayersAfterWind();
-      hideRoadsForFlood();
-    } else {
-      restoreRoadsAfterFlood();
-    }
-    floodStatus.textContent = floodState.enabled
-      ? (floodState.field ? 'Animated flood result shown.' : 'Domain ready · position it, then simulate.')
-      : 'Flood display hidden.';
-    if (floodState.enabled) updateFloodBox();
-    requestRender();
-  });
-  const invalidateFlood = message => {
-    if (floodState.field) clearFloodSimulation();
-    floodStatus.textContent = message;
-    requestRender();
-  };
-  floodRain?.addEventListener('input', event => {
-    floodRainValue.textContent = `${event.target.value} mm/h`;
-    invalidateFlood('Rainfall changed · run the simulation again.');
-  });
-  floodDuration?.addEventListener('input', event => {
-    floodDurationValue.textContent = `${event.target.value} min`;
-    invalidateFlood('Storm duration changed · run the simulation again.');
-  });
-  floodInfiltration?.addEventListener('input', event => {
-    floodInfiltrationValue.textContent = `${event.target.value} mm/h`;
-    invalidateFlood('Infiltration changed · run the simulation again.');
-  });
-  floodRoughness?.addEventListener('change', () => invalidateFlood('Roughness changed · run the simulation again.'));
-  floodResolution?.addEventListener('change', () => invalidateFlood('Grid resolution changed · run the simulation again.'));
-  floodSize?.addEventListener('input', event => {
-    floodState.size = Number(event.target.value);
-    floodSizeValue.textContent = `${event.target.value} m`;
-    const [centerX, centerZ] = floodState.center;
-    const half = floodState.size / 2;
-    floodState.bounds = [centerX - half, centerZ - half, centerX + half, centerZ + half];
-    floodState.validBox = boxInLidarFootprint(floodState.bounds);
-    updateFloodBox();
-    invalidateFlood('Domain resized · simulate again, or fine-tune with Move / resize domain.');
-  });
-  floodMoveDomain?.addEventListener('click', () => {
-    if (!floodState.moveMode && !floodState.enabled && floodToggle) {
-      floodToggle.checked = true;
-      floodToggle.dispatchEvent(new Event('change'));
-    }
-    floodState.moveMode = !floodState.moveMode;
-    floodMoveDomain.classList.toggle('active', floodState.moveMode);
-    floodMoveDomain.setAttribute('aria-pressed', String(floodState.moveMode));
-    floodMoveDomain.textContent = floodState.moveMode ? 'Done moving' : 'Move / resize domain';
-    updateFloodBox();
-  });
-  floodSimulate?.addEventListener('click', simulateFlood);
   trafficDuration?.addEventListener('input', () => {
     if (trafficDurationValue) trafficDurationValue.textContent = `${trafficDuration.value} min`;
     invalidateTrafficResult('Duration changed · run the comparison again.');
@@ -6478,10 +5991,6 @@ export async function startWebGLScene(canvas, status) {
       windToggle.checked = false;
       windToggle.dispatchEvent(new Event('change'));
     }
-    if (name !== 'flood' && floodToggle?.checked) {
-      floodToggle.checked = false;
-      floodToggle.dispatchEvent(new Event('change'));
-    }
     if (name !== 'traffic' && trafficToggle?.checked) {
       trafficToggle.checked = false;
       trafficToggle.dispatchEvent(new Event('change'));
@@ -6494,9 +6003,6 @@ export async function startWebGLScene(canvas, status) {
     } else if (name === 'wind' && windToggle && !windToggle.checked) {
       windToggle.checked = true;
       windToggle.dispatchEvent(new Event('change'));
-    } else if (name === 'flood' && floodToggle && !floodToggle.checked) {
-      floodToggle.checked = true;
-      floodToggle.dispatchEvent(new Event('change'));
     } else if (name === 'traffic' && trafficToggle && !trafficToggle.checked) {
       trafficToggle.checked = true;
       trafficToggle.dispatchEvent(new Event('change'));
@@ -6597,9 +6103,6 @@ export async function startWebGLScene(canvas, status) {
   fitScene();
   updateWindBox();
   windGroup.visible = windState.enabled;
-  floodGroup.visible = floodState.enabled;
-  floodState.validBox = boxInLidarFootprint(floodState.bounds);
-  updateFloodBox();
   syncTrafficSceneVisibility();
   const roofTriangles = roofSurfaceBuffer ? manifest.layers?.roof_surface?.triangles : 0;
   status.textContent = `${data.buildings.length} buildings · ${(data.water || []).length} water bodies · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
