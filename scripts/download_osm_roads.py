@@ -21,7 +21,14 @@ WAYFINDING_OUTPUT = ROOT / "data/osm_cbd_wayfinding.geojson"
 def feature_from_way(tags, coordinates):
     return {
         "type": "Feature",
-        "properties": {"highway": tags.get("highway", "residential"), "name": tags.get("name"), "oneway": tags.get("oneway")},
+        "properties": {
+            "highway": tags.get("highway", "residential"),
+            "name": tags.get("name"),
+            "oneway": tags.get("oneway"),
+            "surface": tags.get("surface"),
+            "lanes": tags.get("lanes"),
+            "maxspeed": tags.get("maxspeed"),
+        },
         "geometry": {"type": "LineString", "coordinates": coordinates},
     }
 
