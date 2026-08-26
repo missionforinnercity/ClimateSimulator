@@ -8,7 +8,7 @@ WORKDIR /app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        libgl1 libglx0 libx11-6 libxext6 libxrender1 \
+        libgl1 libglx0 libx11-6 libxext6 libxrender1 libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.lock requirements.txt
