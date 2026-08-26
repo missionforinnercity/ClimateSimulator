@@ -5,6 +5,8 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8000}
       CLIMATE_EXPLORER_API_KEY: ${CLIMATE_EXPLORER_API_KEY:-}
       DATABASE_URL: ${DATABASE_URL:-}
+      TOMTOM_API: ${TOMTOM_API:-}
+      ERA5API: ${ERA5API:-}
     restart: unless-stopped
 
   web:
