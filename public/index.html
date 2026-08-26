@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Climate Explorer — See Cape Town differently</title>
-  <meta name="description" content="Explore heat, sunlight, wind, traffic and public transport in a living 3D model of Cape Town CBD.">
+  <meta name="description" content="See how heat, sunlight, wind and movement shape Cape Town's Inner City—and turn shared evidence into better public space.">
   <meta name="theme-color" content="#11120f">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%230e322c'/%3E%3Ccircle cx='32' cy='32' r='17' fill='%2311120f'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/webp" href="/branding/MisisonFavicon.webp">
   <link rel="preload" as="image" href="/assets/landing/heat.webp" fetchpriority="high">
   <link rel="stylesheet" href="/landing.css?v=2">
   <script src="/landing.js?v=2" defer></script>
@@ -14,7 +14,7 @@
 <body>
   <header class="site-header">
     <a class="brand" href="/" aria-label="Climate Explorer home">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <img class="brand-mark" src="/branding/MisisonFavicon.webp" alt="">
       <span>Climate Explorer</span>
     </a>
     <nav class="site-nav" aria-label="Primary navigation">
@@ -32,16 +32,19 @@
       </div>
       <div class="hero-shade" aria-hidden="true"></div>
       <div class="hero-content page-shell">
-        <p class="kicker"><span></span> Cape Town CBD · living city model</p>
-        <h1 id="hero-title">Read the city.<br><em>Shape it better.</em></h1>
-        <p class="hero-copy">A clear, interactive view of how heat, sunlight, wind and movement shape the streets around us.</p>
+        <p class="kicker"><span></span> Made for Cape Town's Inner City</p>
+        <h1 id="hero-title">See the city.<br><em>Shape it together.</em></h1>
+        <p class="hero-copy">Explore how heat, sunlight, wind and movement shape the street-level experience—and turn shared evidence into better public space for everyone.</p>
         <div class="actions">
           <a class="button button-solid" href="/app">Explore the city <span aria-hidden="true">↗</span></a>
           <a class="button button-glass" href="#explore">See what it does <span aria-hidden="true">↓</span></a>
         </div>
       </div>
       <div class="hero-foot page-shell" aria-label="Core data sources">
-        <p>Built from the city, not a generic model</p>
+        <a class="mission-lockup" href="https://www.missionforinnercity.org/" target="_blank" rel="noopener noreferrer" aria-label="A project by Mission for Inner City Cape Town">
+          <span>A project by</span>
+          <img src="/branding/MissionWordmark.webp" alt="Mission for Inner City Cape Town">
+        </a>
         <ul>
           <li>2025 LiDAR</li>
           <li>OpenStreetMap</li>
@@ -57,8 +60,8 @@
         <p>The explorer</p>
       </div>
       <div class="intro-copy">
-        <h2>One city.<br>Five ways to see it.</h2>
-        <p>Move through a shared 3D model and switch lenses without losing context. Each view turns complex urban data into something you can understand at a glance.</p>
+        <h2>One shared city.<br>Five ways to understand it.</h2>
+        <p>Move through a shared 3D model and switch lenses without losing context. Each view makes urban conditions visible, helping partners ask better questions and act with confidence.</p>
       </div>
     </section>
 
@@ -71,7 +74,7 @@
         <div class="portal-top"><span>01</span><span class="portal-arrow" aria-hidden="true">↗</span></div>
         <div class="portal-copy">
           <h3>Urban heat</h3>
-          <p>Find hotter surfaces, shade gaps and priority places for cooling.</p>
+          <p>Find hotter surfaces, shade gaps and the public places where cooling can make a difference.</p>
           <ul><li>temperature</li><li>shade</li><li>priority</li></ul>
         </div>
       </a>
@@ -84,7 +87,7 @@
         <div class="portal-top"><span>02</span><span class="portal-arrow" aria-hidden="true">↗</span></div>
         <div class="portal-copy">
           <h3>Sunlight</h3>
-          <p>Watch shadows move or calculate cumulative sun hours.</p>
+          <p>See where sunlight and shade support more comfortable streets and spaces.</p>
           <ul><li>shadows</li><li>sun hours</li><li>seasons</li></ul>
         </div>
       </a>
@@ -97,8 +100,8 @@
         <div class="portal-top"><span>03</span><span class="portal-arrow" aria-hidden="true">↗</span></div>
         <div class="portal-copy">
           <h3>Wind</h3>
-          <p>Assess pedestrian comfort across directions and seasons.</p>
-          <ul><li>comfort</li><li>direction</li><li>ERA5</li></ul>
+          <p>Resolved OpenFOAM airflow through the streets, with comfort weighted by real wind-rose frequency.</p>
+          <ul><li>OpenFOAM CFD</li><li>comfort</li><li>ERA5</li></ul>
         </div>
       </a>
 
@@ -110,7 +113,7 @@
         <div class="portal-top"><span>04</span><span class="portal-arrow" aria-hidden="true">↗</span></div>
         <div class="portal-copy">
           <h3>Traffic</h3>
-          <p>Draw a closure and compare its network-wide impact.</p>
+          <p>Test a street closure and see what it could mean across the wider network.</p>
           <ul><li>closures</li><li>delay</li><li>SUMO</li></ul>
         </div>
       </a>
@@ -123,7 +126,7 @@
         <div class="portal-top"><span>05</span><span class="portal-arrow" aria-hidden="true">↗</span></div>
         <div class="portal-copy">
           <h3>Public transport</h3>
-          <p>See routes, stops, timetables and event access together.</p>
+          <p>Bring routes, stops and timetables together to understand everyday access.</p>
           <ul><li>MyCiTi</li><li>Metrorail</li><li>access</li></ul>
         </div>
       </a>
@@ -136,23 +139,23 @@
             <span>02</span>
             <p>How it works</p>
           </div>
-          <h2>Serious inputs.<br>Honest outputs.</h2>
+          <h2>Shared evidence.<br>Better public space.</h2>
         </div>
         <div class="method-grid">
           <article>
             <span>01</span>
-            <h3>A city model from many sources</h3>
+            <h3>Built from the city itself</h3>
             <p>LiDAR, OpenStreetMap, municipal datasets, terrain imagery and transport schedules are combined into one detailed, spatially aligned model of the city.</p>
           </article>
           <article>
             <span>02</span>
-            <h3>Purpose-built analysis</h3>
-            <p>Ray studies, wind fields and traffic microsimulation answer real planning questions.</p>
+            <h3>Made for real questions</h3>
+            <p>Ray studies, wind fields and traffic microsimulation help people explore real planning choices.</p>
           </article>
           <article>
             <span>03</span>
-            <h3>From insight to placemaking action</h3>
-            <p>Turn environmental and mobility evidence into clear placemaking priorities—from cooler public spaces and better walking conditions to more resilient streets and connections.</p>
+            <h3>Ready for collective action</h3>
+            <p>Turn environmental and mobility evidence into shared priorities—from cooler public spaces and better walking conditions to more resilient streets and connections.</p>
           </article>
         </div>
         <a class="text-link" href="/docs">Read the methods and validation <span aria-hidden="true">↗</span></a>
@@ -161,8 +164,8 @@
 
     <section class="closing">
       <div class="page-shell closing-inner">
-        <p class="kicker"><span></span> Ready when you are</p>
-        <h2>See your city<br>in a new light.</h2>
+        <p class="kicker"><span></span> Explore the possibilities</p>
+        <h2>Better streets start<br>with seeing clearly.</h2>
         <a class="button button-solid" href="/app">Open Climate Explorer <span aria-hidden="true">↗</span></a>
         <p class="closing-note">No account required · Runs directly in your browser</p>
       </div>
@@ -170,8 +173,8 @@
   </main>
 
   <footer class="site-footer page-shell">
-    <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span><span>Climate Explorer</span></a>
-    <p>Cape Town CBD environmental and mobility planning insights.</p>
+    <a class="brand" href="/"><img class="brand-mark" src="/branding/MisisonFavicon.webp" alt=""><span>Climate Explorer</span></a>
+    <p>A Mission for Inner City Cape Town project for better public space.</p>
     <nav aria-label="Footer navigation">
       <a href="/app">Explorer</a>
       <a href="/docs">Documentation</a>

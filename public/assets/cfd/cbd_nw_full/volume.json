@@ -1,0 +1,96 @@
+{
+  "schema": "climate-explorer-cfd-volume/1",
+  "solver": {
+    "name": "OpenFOAM",
+    "version": "14",
+    "case_id": "cbd_nw_full",
+    "model": "steady incompressible RANS k-epsilon; uniform neutral inlet"
+  },
+  "validation_status": "exploratory_unvalidated_pilot",
+  "result_time": "500",
+  "direction_deg_from": 315.0,
+  "reference_speed_mps": 10.0,
+  "coordinates": {
+    "grid": "OpenFOAM wind-aligned x/y/z metres",
+    "viewer_center_xz": [
+      0.0,
+      0.0
+    ],
+    "x_downwind_in_viewer_xz": [
+      0.7071067811865477,
+      0.7071067811865474
+    ],
+    "y_crosswind_in_viewer_xz": [
+      -0.7071067811865474,
+      0.7071067811865477
+    ],
+    "vertical_datum_m": -4.0
+  },
+  "origin_foam_m": [
+    -1117.0,
+    -1277.0,
+    0.0
+  ],
+  "dimensions": [
+    246,
+    260,
+    37
+  ],
+  "spacing_foam_m": [
+    10.008163265306122,
+    10.011583011583012,
+    6.111111111111111
+  ],
+  "channels": [
+    "u_viewer_x",
+    "w_up",
+    "v_viewer_z",
+    "speed",
+    "p",
+    "k",
+    "epsilon"
+  ],
+  "fields": "fields.f32",
+  "valid_mask": "valid.u8",
+  "ranges": {
+    "u_viewer_x": [
+      -0.49028261601924894,
+      9.159770698547362
+    ],
+    "w_up": [
+      -1.0873733139038086,
+      1.2877877402305602
+    ],
+    "v_viewer_z": [
+      -0.4606632697582245,
+      9.630745964050293
+    ],
+    "speed": [
+      0.5181093227863312,
+      12.99292043685913
+    ],
+    "p": [
+      -16.18472774505615,
+      29.017369689941404
+    ],
+    "k": [
+      0.06729242071509361,
+      1.5
+    ],
+    "epsilon": [
+      0.00033351721824146805,
+      0.15997234016656822
+    ]
+  },
+  "valid_fraction": 0.8812446123421733,
+  "building_coverage": {
+    "scene_buildings": 1891,
+    "centroids_in_domain": 1891,
+    "fraction": 1.0
+  },
+  "limitations": [
+    "flat roof envelopes; detailed roof_surface.bin is not yet exported",
+    "uniform inlet pilot, not a validated atmospheric boundary layer",
+    "trees are not yet represented as porous zones"
+  ]
+}

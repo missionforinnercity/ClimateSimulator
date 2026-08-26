@@ -3,3 +3,6 @@ iniconfig==2.3.0
 pluggy==1.6.0
 Pygments==2.21.0
 pytest==9.1.1
+# Only needed to run scripts/convert_openfoam_vtk.py (offline OpenFOAM ->
+# browser-asset conversion); never imported at runtime.
+vtk==9.7.0

@@ -57,7 +57,7 @@ from .traffic import (
     traffic_calibration_status,
 )
 from .wind_metrics import COMFORT_CATEGORIES, STABILITY_PROFILES, validate_against_observations
-from .era5_wind import climatology_summary
+from .era5_wind import SECTORS, climatology_summary, forcing_profile
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(
@@ -443,6 +443,34 @@ def scenarios() -> dict[str, Any]:
     }
 
 
+@app.get("/api/wind/climatology/sectors")
+def wind_climatology_sectors(season: str = "annual", stability: str = "neutral") -> dict[str, Any]:
+    """Sixteen-sector ERA5 wind rose: frequency and Weibull shape only.
+
+    Lighter than /api/wind/preview or /api/wind/comfort — it skips the
+    polygon query and screening field entirely, so a client that already has
+    its own directional speed source (e.g. a solved OpenFOAM case) can weight
+    that source by observed sector frequency without running the screening
+    proxy at all.
+    """
+    sectors = []
+    for name, azimuth in SECTORS.items():
+        profile = forcing_profile(season, azimuth, stability)
+        if profile is None:
+            continue
+        sectors.append({
+            "sector": name,
+            "direction_deg": azimuth,
+            "frequency_fraction": profile["frequency_fraction"],
+            "mean_speed_mps": profile["mean_speed_mps"],
+            "weibull_shape": profile["weibull_shape"],
+            "weibull_scale_mps": profile["weibull_scale_mps"],
+        })
+    if not sectors:
+        raise HTTPException(status_code=503, detail="ERA5 climatology unavailable")
+    return {"season": season, "stability": stability, "sectors": sectors}
+
+
 @app.post("/api/wind/preview")
 def preview(payload: PreviewPayload) -> dict[str, Any]:
     config = load_viewer_config()
@@ -548,14 +576,6 @@ def traffic_closure_preview(payload: TrafficClosurePayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"traffic closure preview unavailable: {error}") from error
-
-
-@app.get("/api/wind/field/{direction}/{tile}")
-def field_tile(direction: str, tile: str) -> dict[str, str]:
-    """Reserved tile endpoint; preview is the supported first-release path."""
-    if direction.upper() not in VALID_DIRECTIONS and not direction.startswith("az_"):
-        raise HTTPException(status_code=404, detail="unknown direction")
-    return {"status": "use_preview", "direction": direction, "tile": tile}
 
 
 # Brand assets live with the source data rather than the generated viewer

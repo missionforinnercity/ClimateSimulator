@@ -1,0 +1,96 @@
+{
+  "schema": "climate-explorer-cfd-volume/1",
+  "solver": {
+    "name": "OpenFOAM",
+    "version": "14",
+    "case_id": "cbd_se_full",
+    "model": "steady incompressible RANS k-epsilon; uniform neutral inlet"
+  },
+  "validation_status": "exploratory_unvalidated_pilot",
+  "result_time": "500",
+  "direction_deg_from": 135.0,
+  "reference_speed_mps": 10.0,
+  "coordinates": {
+    "grid": "OpenFOAM wind-aligned x/y/z metres",
+    "viewer_center_xz": [
+      0.0,
+      0.0
+    ],
+    "x_downwind_in_viewer_xz": [
+      -0.7071067811865476,
+      -0.7071067811865475
+    ],
+    "y_crosswind_in_viewer_xz": [
+      0.7071067811865475,
+      -0.7071067811865476
+    ],
+    "vertical_datum_m": -4.0
+  },
+  "origin_foam_m": [
+    -1035.0,
+    -1316.0,
+    0.0
+  ],
+  "dimensions": [
+    123,
+    130,
+    28
+  ],
+  "spacing_foam_m": [
+    20.098360655737704,
+    20.100775193798448,
+    8.148148148148149
+  ],
+  "channels": [
+    "u_viewer_x",
+    "w_up",
+    "v_viewer_z",
+    "speed",
+    "p",
+    "k",
+    "epsilon"
+  ],
+  "fields": "fields.f32",
+  "valid_mask": "valid.u8",
+  "ranges": {
+    "u_viewer_x": [
+      -10.431204147338867,
+      0.516592688560488
+    ],
+    "w_up": [
+      -1.0505403470993042,
+      1.6785322690010072
+    ],
+    "v_viewer_z": [
+      -10.738821105957031,
+      0.560594637393955
+    ],
+    "speed": [
+      0.41674094140529633,
+      14.083722114562988
+    ],
+    "p": [
+      -8.913798236846924,
+      48.13062118530274
+    ],
+    "k": [
+      0.07413217663764954,
+      1.6436426210403448
+    ],
+    "epsilon": [
+      0.00040287101932335646,
+      0.20672502070665388
+    ]
+  },
+  "valid_fraction": 0.8344478692039667,
+  "building_coverage": {
+    "scene_buildings": 1891,
+    "centroids_in_domain": 1891,
+    "fraction": 1.0
+  },
+  "limitations": [
+    "flat roof envelopes; detailed roof_surface.bin is not yet exported",
+    "uniform inlet pilot, not a validated atmospheric boundary layer",
+    "trees are not yet represented as porous zones"
+  ]
+}

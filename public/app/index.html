@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=35">
+    <link rel="stylesheet" href="/style.css?v=37">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -233,68 +233,124 @@
         <details class="sun-advanced"><summary>Method &amp; limitations</summary><p>Binary clear-sky 3D rays are cast from ground zones and roof/façade cells inside the selected area toward each sampled sun position. All mapped buildings and canopies remain shadow blockers. Roof results use simplified planes and do not include diffuse or reflected light.</p></details>
         <p class="sun-note">Planning-grade solar geometry · mapped buildings and canopies</p>
       </section>
-      <section id="menu-wind" class="wind-panel menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
-        <div class="wind-heading"><span>Wind <b class="wind-mode-badge">SCREENING</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
-        <div class="wind-lenses" role="tablist" aria-label="Wind analysis lens">
+      <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
+        <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · FULL CBD</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
+        <div class="wind-data-banner"><i></i><span><b id="wind-source-title">OpenFOAM urban airflow</b><small id="wind-source-detail">SE 135° · RANS k–ε · iteration 500</small></span></div>
+
+        <div class="wind-analysis-tabs" role="tablist" aria-label="Wind data source">
           <button class="active" type="button" data-wind-lens="direction" role="tab" aria-selected="true">Direction</button>
           <button type="button" data-wind-lens="comfort" role="tab" aria-selected="false">Comfort</button>
-          <button class="active" type="button" data-wind-lens="surface" aria-pressed="true">Surface</button>
-          <button class="active" type="button" data-wind-lens="flowlines" aria-pressed="true">Flowlines</button>
         </div>
 
-        <div class="wind-control-section">
-          <b>Geometry</b>
-          <button id="wind-move-domain" class="secondary wind-domain-button" type="button" aria-pressed="false">Domain · <span id="wind-size-value">250</span> × <span id="wind-size-value-copy">250</span> m</button>
-          <div class="wind-control-grid">
-            <label>Result height
-              <select id="wind-height">
-                <option value="1.5">1.5 m · seated/head</option>
+        <div class="wind-control-section" data-wind-direction-controls hidden>
+          <b>Wind direction</b>
+          <div class="wind-compass-presets" aria-label="Solved OpenFOAM directions">
+            <button type="button" data-wind-direction="0" disabled title="No solved OpenFOAM case yet">N</button><button type="button" data-wind-direction="45" disabled title="No solved OpenFOAM case yet">NE</button>
+            <button type="button" data-wind-direction="90" disabled title="No solved OpenFOAM case yet">E</button><button class="active" type="button" data-wind-direction="135">SE</button>
+            <button type="button" data-wind-direction="180" disabled title="No solved OpenFOAM case yet">S</button><button type="button" data-wind-direction="225" disabled title="No solved OpenFOAM case yet">SW</button>
+            <button type="button" data-wind-direction="270" disabled title="No solved OpenFOAM case yet">W</button><button type="button" data-wind-direction="315">NW</button>
+          </div>
+          <p class="wind-cfd-hint">SE 135° and NW 315° have solved OpenFOAM cases today. Other directions light up here as more cases are meshed, solved and converted.</p>
+          <!-- Hidden in the normal WebGL/OpenFOAM path — the compass presets
+               above replace this as the direction picker there. The Canvas
+               fallback renderer (sceneRenderer.js, used only when WebGL2 is
+               unavailable) has no OpenFOAM cases to pick between, so it
+               un-hides this block itself and uses these as its real
+               screening-model controls. -->
+          <div id="wind-legacy-controls" hidden>
+            <label>Direction
+              <select id="wind-direction">
+                <option value="0">N · 0°</option><option value="22.5">NNE · 22.5°</option><option value="45">NE · 45°</option><option value="67.5">ENE · 67.5°</option>
+                <option value="90">E · 90°</option><option value="112.5">ESE · 112.5°</option><option value="135" selected>SE · 135°</option><option value="150">Cape Doctor · 150°</option>
+                <option value="157.5">SSE · 157.5°</option><option value="180">S · 180°</option><option value="202.5">SSW · 202.5°</option><option value="225">SW · 225°</option>
+                <option value="247.5">WSW · 247.5°</option><option value="270">W · 270°</option><option value="292.5">WNW · 292.5°</option><option value="315">NW · 315°</option><option value="337.5">NNW · 337.5°</option>
+              </select>
+            </label>
+            <label>Forcing source
+              <select id="wind-forcing-mode">
+                <option value="era5_climatology" selected>ERA5 Cape Town profile</option>
+                <option value="manual">Manual mean speed</option>
+              </select>
+            </label>
+            <label>Mean forcing speed <span id="wind-speed-value">36 km/h</span>
+              <input id="wind-speed" type="range" min="0" max="180" step="1" value="36">
+            </label>
+          </div>
+        </div>
+
+        <div id="wind-cfd-controls" class="wind-control-section wind-cfd-controls">
+          <b>Diagnostic view</b>
+          <label>Field
+            <select id="wind-cfd-field">
+              <option value="speed">Velocity magnitude</option>
+              <option value="p">Pressure</option>
+              <option value="k">Turbulence kinetic energy</option>
+            </select>
+          </label>
+          <div class="wind-cfd-view-tabs" role="group" aria-label="CFD view">
+            <button class="active" type="button" data-cfd-view="ground" aria-pressed="true">Pedestrian</button>
+            <button type="button" data-cfd-view="flow" aria-pressed="false">Flow</button>
+            <button type="button" data-cfd-view="slice" aria-pressed="false">Slice</button>
+            <button type="button" data-cfd-view="facade" aria-pressed="false">Façades</button>
+          </div>
+          <div id="wind-ground-controls">
+            <label>Height above terrain
+              <select id="wind-cfd-ground-height">
+                <option value="1.5">1.5 m · seated / child</option>
                 <option value="2" selected>2.0 m · pedestrian</option>
                 <option value="4">4.0 m · elevated</option>
               </select>
             </label>
-            <label>Grid
-              <select id="wind-resolution">
-                <option value="2">2 m · detailed</option>
-                <option value="3">3 m · balanced</option>
-                <option value="5" selected>5 m · preview</option>
-                <option value="10">10 m · fast</option>
+          </div>
+          <div id="wind-slice-controls" hidden>
+            <label>Slice plane
+              <select id="wind-slice-plane">
+                <option value="vertical-crosswind">Across the wind</option>
+                <option value="vertical-downwind">Along the wind</option>
+                <option value="horizontal">Horizontal</option>
               </select>
             </label>
+            <label>Position <span id="wind-slice-position-value">50%</span>
+              <input id="wind-slice-position" type="range" min="0" max="100" value="50">
+            </label>
+            <label>Slice width <span id="wind-slice-width-value">100%</span>
+              <input id="wind-slice-width" type="range" min="10" max="100" step="5" value="100">
+            </label>
+            <label>Slice height <span id="wind-slice-height-value">35%</span>
+              <input id="wind-slice-height" type="range" min="10" max="100" step="5" value="35">
+            </label>
+            <label>Horizontal crop centre <span id="wind-slice-center-x-value">50%</span>
+              <input id="wind-slice-center-x" type="range" min="0" max="100" value="50">
+            </label>
+            <label>Vertical crop centre <span id="wind-slice-center-y-value">0%</span>
+              <input id="wind-slice-center-y" type="range" min="0" max="100" value="0">
+            </label>
+            <button id="wind-slice-reset" class="secondary" type="button">Reset full slice</button>
           </div>
-          <label class="wind-size-control">Domain size
-            <input id="wind-size" type="range" min="100" max="1200" step="25" value="250">
-          </label>
+          <p class="wind-cfd-hint" id="wind-cfd-view-hint">Pedestrian is terrain-following CFD. Drag the slice directly in the scene, or use Pressure on Façades.</p>
         </div>
 
-        <div class="wind-control-section" data-wind-direction-controls>
-          <b>Direction study</b>
-          <div class="wind-compass-presets" aria-label="Wind direction presets">
-            <button type="button" data-wind-direction="0">N</button><button type="button" data-wind-direction="45">NE</button>
-            <button type="button" data-wind-direction="90">E</button><button class="active" type="button" data-wind-direction="135">SE</button>
-            <button type="button" data-wind-direction="180">S</button><button type="button" data-wind-direction="225">SW</button>
-            <button type="button" data-wind-direction="270">W</button><button type="button" data-wind-direction="315">NW</button>
-          </div>
-          <label>Direction
-            <select id="wind-direction">
-              <option value="0">N · 0°</option><option value="22.5">NNE · 22.5°</option><option value="45">NE · 45°</option><option value="67.5">ENE · 67.5°</option>
-              <option value="90">E · 90°</option><option value="112.5">ESE · 112.5°</option><option value="135" selected>SE · 135°</option><option value="150">Cape Doctor · 150°</option>
-              <option value="157.5">SSE · 157.5°</option><option value="180">S · 180°</option><option value="202.5">SSW · 202.5°</option><option value="225">SW · 225°</option>
-              <option value="247.5">WSW · 247.5°</option><option value="270">W · 270°</option><option value="292.5">WNW · 292.5°</option><option value="315">NW · 315°</option><option value="337.5">NNW · 337.5°</option>
-            </select>
+        <div id="wind-flow-box-controls" class="wind-control-section" hidden>
+          <b>Flow region</b>
+          <button id="wind-move-domain" class="secondary wind-domain-button" type="button" aria-pressed="false">Box · <span id="wind-size-value">300</span> × <span id="wind-size-value-copy">300</span> m</button>
+          <label class="wind-size-control">Box size
+            <input id="wind-size" type="range" min="100" max="1200" step="25" value="300">
           </label>
-          <label>Forcing source
-            <select id="wind-forcing-mode">
-              <option value="era5_climatology" selected>ERA5 Cape Town profile</option>
-              <option value="manual">Manual mean speed</option>
-            </select>
+          <div id="wind-volume-row" class="wind-appearance-row"><span>3D volume <small>seeds through the box height below, not just ground level</small></span><label class="wind-inline-switch"><input id="wind-volume-visible" type="checkbox"> Visible</label></div>
+          <label id="wind-flow-box-height-row" class="wind-size-control" hidden>Box height <span id="wind-flow-box-height-value">80</span> m
+            <input id="wind-flow-box-height" type="range" min="20" max="220" step="10" value="80">
           </label>
-          <label>Mean forcing speed <span id="wind-speed-value">36 km/h</span>
-            <input id="wind-speed" type="range" min="0" max="180" step="1" value="36">
+          <div class="wind-appearance-row"><span>Flowlines</span><label class="wind-inline-switch"><input id="wind-flowlines-visible" type="checkbox" checked> Visible</label></div>
+          <label>Flowline count
+            <select id="wind-flowline-count"><option value="500">500</option><option value="800" selected>800</option><option value="1200">1,200</option></select>
           </label>
+          <label>Animation speed <span id="wind-animation-speed-value">100%</span>
+            <input id="wind-animation-speed" type="range" min="25" max="200" step="25" value="100">
+          </label>
+          <p class="wind-cfd-hint">Drag this box directly in the scene (or use the handle to resize); flowlines seed and stay inside it, sampled live from the OpenFOAM volume.</p>
         </div>
 
-        <div class="wind-control-section">
+        <div id="wind-climate-controls" class="wind-control-section" hidden>
           <b>Date &amp; climate</b>
           <label>Period
             <select id="wind-season">
@@ -307,35 +363,21 @@
               <option value="unstable">Unstable / convective</option><option value="neutral" selected>Neutral urban</option><option value="stable">Stable</option>
             </select>
           </label>
-          <label>Comfort activity
-            <select id="wind-exceedance-threshold">
-              <option value="2.5">2.5 m/s · long sitting</option><option value="4">4 m/s · short sitting</option>
-              <option value="6" selected>6 m/s · standing</option><option value="8">8 m/s · strolling</option><option value="10">10 m/s · business walking</option>
-            </select>
-          </label>
         </div>
 
-        <div class="wind-control-section">
-          <b>Appearance</b>
-          <div class="wind-appearance-row"><span>Surface</span><label class="wind-inline-switch"><input id="wind-surface-visible" type="checkbox" checked> Visible</label></div>
-          <div class="wind-appearance-row"><span>Flowlines</span><label class="wind-inline-switch"><input id="wind-flowlines-visible" type="checkbox" checked> Visible</label></div>
-          <label>Flowline count
-            <select id="wind-flowline-count"><option value="500">500</option><option value="800" selected>800</option><option value="1200">1,200</option></select>
-          </label>
-          <label>Animation speed <span id="wind-animation-speed-value">100%</span>
-            <input id="wind-animation-speed" type="range" min="25" max="200" step="25" value="100">
-          </label>
-        </div>
-
-        <button id="wind-simulate" class="wind-run-button" type="button">Run direction study</button>
-        <p id="wind-status" class="wind-status">Choose Move / resize domain to reposition the orange box.</p>
+        <button id="wind-simulate" class="wind-run-button" type="button">Load OpenFOAM result</button>
+        <p id="wind-status" class="wind-status">Show wind to load the terrain-following CFD result.</p>
         <div id="wind-results" class="wind-results" hidden></div>
-        <button id="wind-report" class="wind-report-button secondary" type="button" disabled>Generate detailed wind report</button>
-        <div class="wind-legend-scale" aria-label="Wind speed colour scale">
+        <button id="wind-report" class="wind-report-button secondary" type="button" disabled hidden>Generate detailed wind report</button>
+
+        <div class="wind-legend-scale" aria-label="Wind colour scale">
+          <div class="wind-legend-heading"><b id="wind-legend-field">Velocity magnitude</b></div>
           <div class="wind-gradient"></div>
           <div class="wind-legend-labels"><span id="wind-legend-low"><b id="wind-legend-min">0.0</b> m/s · low</span><span id="wind-legend-high"><b id="wind-legend-max">—</b> m/s · high</span></div>
+          <div id="wind-comfort-chips" class="wind-comfort-chips" hidden></div>
         </div>
-        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction mode is a terrain/building-aware mass-conserving proxy, not transient CFD. Comfort mode combines 16 direction fields with ERA5 sector frequencies and Weibull exceedance. The archive covers 35.4% of possible hours, so comfort is provisional and not suitable for certification.</p></details>
+
+        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for all mapped buildings. SE 135° and NW 315° are solved today; other directions will appear as their cases are meshed, solved and converted. Comfort weights each <em>solved</em> OpenFOAM direction's pedestrian-height field by its ERA5 wind-rose frequency and Weibull exceedance; directions without a solved case are excluded from the weighted sum rather than interpolated or assumed calm, so today's comfort result is a lower-bound estimate covering only the resolved sector(s), not a complete annual study. Neither mode has passed domain/mesh sensitivity or field validation and must not be used for certification.</p></details>
       </section>
       <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
         <div class="transport-heading">
@@ -565,6 +607,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=webgl-85"></script>
+    <script type="module" src="/app.js?v=webgl-86"></script>
 </body>
 </html>

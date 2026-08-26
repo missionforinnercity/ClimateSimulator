@@ -765,7 +765,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .heat-metric-label { margin: 0; color: #dbdbd8; font-size: 11px; line-height: 1.4; }
 .heat-gradient, .wind-gradient { height: 9px; border-radius: 2px; box-shadow: inset 0 0 0 1px #ffffff35; }
 .heat-gradient { background: linear-gradient(90deg, #2c56c7 0%, #38bde5 22%, #7bd34a 45%, #ffe44b 65%, #ff9f1c 82%, #e63924 100%); }
-.wind-gradient { background: linear-gradient(90deg, #2055d6 0%, #22c7ee 25%, #3dd579 50%, #f4da45 75%, #ef3b2d 100%); }
+.wind-gradient { background: linear-gradient(90deg, #1c2b8c 0%, #1f7fe0 16%, #1fd0d8 34%, #3ede6b 50%, #f4e03f 66%, #ff8a2e 82%, #e8203f 100%); }
+.wind-gradient.pressure { background: linear-gradient(90deg, #265bd7, #f2f4f5 50%, #e33b35); }
+.wind-gradient.turbulence { background: linear-gradient(90deg, #26145c, #8d257d 48%, #ee3a80 75%, #ffd55c); }
 .wind-gradient.comfort { background: linear-gradient(90deg, #287f69 0 16.66%, #55aa70 16.66% 33.33%, #a8c84c 33.33% 50%, #e5bd3f 50% 66.66%, #df8039 66.66% 83.33%, #c7473f 83.33% 100%); }
 .heat-legend-labels, .wind-legend-labels { display: flex; justify-content: space-between; gap: 8px; color: #d7d7d3; font-size: 9px; line-height: 1.25; }
 .heat-legend-labels span:last-child, .wind-legend-labels span:last-child { text-align: right; }
@@ -809,12 +811,34 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .heat-planning-card b, .section-response b { color: #e0e0dd; }
 .section-response { display: grid; gap: 4px; }
 .wind-legend-scale { display: grid; gap: 4px; color: var(--muted); font-size: 9px; }
+.wind-legend-heading b { color: #d2d2cf; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+.wind-comfort-chips { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 8px; margin-top: 4px; }
+.wind-comfort-chips span { display: flex; align-items: center; gap: 5px; color: #bbb; font-size: 8px; }
+.wind-comfort-chips i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .wind-legend-labels b { color: var(--ink); }
-.wind-mode-badge { margin-left: 4px; padding: 2px 5px; border: 1px solid #b47c3f; border-radius: 2px; color: #ffc477; font-size: 7px; letter-spacing: .08em; }
+.wind-mode-badge { margin-left: 4px; padding: 2px 5px; border: 1px solid #a8688d; border-radius: 2px; color: #f0c9de; font-size: 7px; letter-spacing: .08em; }
 .wind-panel { --wind-accent: #dd8bb8; }
-.wind-lenses { display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; border: 1px solid #555; border-radius: 16px; background: #3d3d3d; }
+.wind-analysis-tabs, .wind-lenses { display: grid; overflow: hidden; border: 1px solid #555; border-radius: 16px; background: #3d3d3d; }
+.wind-analysis-tabs { grid-template-columns: repeat(2, 1fr); }
+.wind-lenses { grid-template-columns: repeat(3, 1fr); }
+.wind-analysis-tabs button,
 .wind-lenses button { min-width: 0; min-height: 28px; padding: 5px 2px; border: 0; border-radius: 0; background: transparent; color: #aaa; font-size: 8px; box-shadow: none; }
+.wind-analysis-tabs button.active,
 .wind-lenses button.active { background: #654859; color: #f4d9e8; box-shadow: inset 0 0 0 1px #a8688d; }
+.wind-data-banner { display: grid; grid-template-columns: 8px 1fr; gap: 8px; align-items: center; padding: 8px; border: 1px solid #4c4c4c; border-radius: 5px; background: #292d2f; }
+.wind-data-banner i { width: 8px; height: 8px; border-radius: 50%; background: #dd8bb8; box-shadow: 0 0 9px #dd8bb899; }
+.wind-data-banner span { display: grid; gap: 1px; }
+.wind-data-banner b { color: #eee; font-size: 9px; }
+.wind-data-banner small { color: #92999c; font-size: 8px; }
+.wind-panel.cfd-active #wind-report { display: none; }
+.wind-cfd-controls { border: 1px solid #4c4c4c; border-radius: 5px; padding: 9px; background: linear-gradient(145deg, #333030, #2b2929); }
+.wind-cfd-view-tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+.wind-cfd-view-tabs button { min-height: 27px; padding: 4px; border-color: #555; background: #464646; color: #aaa; font-size: 8px; }
+.wind-cfd-view-tabs button.active { border-color: #ae6b92; background: #654859; color: #f5ddeb; }
+#wind-slice-controls, #wind-ground-controls { display: grid; gap: 7px; padding: 7px; border-radius: 4px; background: #262424; }
+#wind-slice-controls[hidden], #wind-ground-controls[hidden] { display: none; }
+#wind-slice-reset { min-height: 28px; color: #ddd; border-color: #555; background: #3a3737; }
+.wind-cfd-hint { margin: 0; color: #a8a19f; font-size: 8px; line-height: 1.4; }
 .wind-control-section { display: grid; gap: 7px; padding-top: 5px; border-top: 1px solid #434343; }
 .wind-control-section > b { color: #d2d2cf; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .wind-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
@@ -824,16 +848,19 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .wind-compass-presets button { min-width: 0; min-height: 25px; padding: 3px 0; border-color: #555; background: #464646; color: #aaa; font-size: 8px; }
 .wind-compass-presets button.active { border-color: #ae6b92; background: #654859; color: #f5ddeb; }
 .wind-appearance-row { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 0 8px; border-radius: 3px; background: #414141; color: #bbb; font-size: 9px; }
+.wind-appearance-row small { display: block; color: #898986; font-size: 7px; }
 .wind-inline-switch { display: flex; flex-direction: row !important; align-items: center; gap: 5px; color: #ddd !important; }
 .wind-run-button { min-height: 36px; border-color: #b66d98; background: #784f67; color: #fff; }
 .wind-run-button:hover { border-color: #df96bf; background: #8b5b76; }
 .wind-method { padding: 7px 8px; border: 1px solid #4c4c4c; border-radius: 3px; background: #313131; color: #aaa; font-size: 9px; line-height: 1.45; }
 .wind-method summary { cursor: pointer; color: #c7c7c4; font-size: 10px; }
 .wind-method p { margin: 7px 0 0; }
-.wind-control-section [hidden] { display: none !important; }
+.wind-control-section[hidden], .wind-control-section [hidden], .wind-lenses[hidden], .wind-appearance-row[hidden] { display: none !important; }
 .wind-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .wind-results span { padding: 6px; border: 1px solid #39413f; border-radius: 3px; background: #1b2221; color: var(--muted); font-size: 8px; }
 .wind-results b { display: block; margin-bottom: 2px; color: var(--ink); font-size: 11px; }
+.wind-comfort-mini { grid-column: 1 / -1; display: flex; height: 7px; overflow: hidden; border-radius: 5px; background: #242827; }
+.wind-comfort-mini i { display: block; min-width: 1px; }
 .wind-report-button { border-color: #376f92; color: #bcecff; background: #203b4b; }
 .wind-report-button:hover { border-color: #55b7e8; background: #294d61; color: #effbff; }
 .wind-report-document .report-header { border-bottom-color: #287da8; }
@@ -846,7 +873,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .wind-report-field-map { padding: 14px; border: 1px solid #cad3d8; border-radius: 5px; background: #101b22; }
 .wind-report-field-map svg { display: block; width: 100%; height: auto; border-radius: 3px; }
 .wind-report-map-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; margin-top: 9px; color: #b4c8d2; font-size: 9px; }
-.wind-report-gradient { display: inline-block; width: 120px; height: 7px; margin: 0 6px; border-radius: 5px; background: linear-gradient(90deg, #2055d6, #22c7ee, #3dd579, #f4da45, #ef3b2d); vertical-align: middle; }
+.wind-report-gradient { display: inline-block; width: 120px; height: 7px; margin: 0 6px; border-radius: 5px; background: linear-gradient(90deg, #1c2b8c, #1f7fe0 16%, #1fd0d8 34%, #3ede6b 50%, #f4e03f 66%, #ff8a2e 82%, #e8203f 100%); vertical-align: middle; }
 .wind-report-scene { margin: 0; padding: 10px; border: 1px solid #cad3d8; border-radius: 5px; background: #fff; }
 .wind-report-scene img { display: block; width: 100%; max-height: 440px; object-fit: cover; border-radius: 3px; background: #18231f; }
 .wind-report-scene figcaption { margin-top: 7px; color: #68736e; font-size: 9px; }

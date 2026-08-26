@@ -184,43 +184,41 @@
           <h2>Wind analysis</h2>
           <span class="status-chip screening">Planning analysis</span>
         </div>
-        <p class="dek">Pedestrian-height wind comfort, from a single tested direction up to a full 16-direction wind-rose-weighted seasonal assessment.</p>
+        <p class="dek">Resolved OpenFOAM airflow for the directions that have a solved case, plus a comfort view weighted by real ERA5 wind-rose frequency.</p>
 
         <div class="doc-subhead">Quick workflow</div>
         <ol class="workflow">
-          <li>Move or resize the orange analysis domain and choose result height and grid.</li>
-          <li>Use <strong>Direction</strong> to inspect one inflow, or <strong>Comfort</strong> to combine the 16-direction wind rose.</li>
-          <li>Select period, atmospheric stability and the activity threshold you care about.</li>
-          <li>Run the study, then toggle the surface and flowlines or generate the detailed report.</li>
+          <li>Pick a solved wind direction (compass presets light up once a direction has a converted OpenFOAM case) and load the result.</li>
+          <li>Switch between the <strong>Pedestrian</strong>, <strong>Flow</strong>, <strong>Slice</strong> and <strong>Façades</strong> diagnostic views.</li>
+          <li>In Flow, drag the seed box directly in the scene (or use its handle to resize) and set its height; in Slice, drag the plane directly in the scene.</li>
+          <li>Switch to <strong>Comfort</strong> to combine every solved direction, weighted by its ERA5 wind-rose frequency.</li>
         </ol>
         <div class="doc-subhead">Controls and outputs</div>
         <div class="reference-table" role="table" aria-label="Wind controls and outputs">
           <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
-          <div class="reference-row" role="row"><b>Direction study</b><span>One of 16 compass sectors or the 150° Cape Doctor case, driven by ERA5 climatology or a manual mean speed.</span></div>
-          <div class="reference-row" role="row"><b>Comfort study</b><span>Frequency-weights all directional fields and assigns the first Lawson-LDDC-style activity class at no more than 5% exceedance.</span></div>
-          <div class="reference-row" role="row"><b>Height / grid / domain</b><span>1.5, 2 or 4 m results; 2–10 m cells; and a movable 100–1,200 m square.</span></div>
-          <div class="reference-row" role="row"><b>Stability</b><span>Unstable, neutral or stable height-profile assumptions used for pedestrian-height conversion.</span></div>
-          <div class="reference-row" role="row"><b>Activity threshold</b><span>2.5–10 m/s thresholds covering long sitting through business walking.</span></div>
-          <div class="reference-row" role="row"><b>Result</b><span>Speed or comfort surface, animated flowlines, threshold exceedance, planning ranges and model context.</span></div>
+          <div class="reference-row" role="row"><b>Direction</b><span>Loads the solved OpenFOAM volume for the picked compass direction; unsolved directions stay disabled until a case is generated for them.</span></div>
+          <div class="reference-row" role="row"><b>Pedestrian / Flow / Slice / Façades</b><span>Terrain-following speed at 1.5/2/4 m; seeded 3D flowlines in a movable box; a draggable speed/pressure/turbulence slice plane; kinematic pressure on building façades.</span></div>
+          <div class="reference-row" role="row"><b>Flow region</b><span>A resizable box (drag it, or its handle) that bounds where flowlines seed; its height and ground-only-vs-full-height seeding are both adjustable.</span></div>
+          <div class="reference-row" role="row"><b>Comfort</b><span>Weights every <em>solved</em> direction's pedestrian field by ERA5 frequency and Weibull exceedance; reports the actual annual-hours coverage achieved rather than assuming full coverage.</span></div>
         </div>
 
         <div class="doc-subhead">What it shows</div>
         <p>
-          Separates single-direction diagnostics from 16-direction wind-rose-weighted comfort
-          analysis, exposing an editable domain, result height, grid, period, stability,
-          activity threshold and surface layer. Results include stability-dependent
-          pedestrian-height conversion, Lawson-LDDC-style activity categories, conditional
-          threshold exceedance and lower-to-upper planning ranges.
+          Direction exposes a full OpenFOAM result per solved compass direction: terrain-following
+          pedestrian speed, 3D velocity, kinematic pressure and turbulence for every mapped building
+          in the solved domain. Comfort combines whichever directions are solved today, weighted by
+          ERA5 wind-rose frequency — it never interpolates a direction that hasn't actually been
+          solved, so its coverage percentage is an honest lower bound, not a full annual study.
         </p>
 
         <div class="doc-subhead">Data &amp; method</div>
         <ul>
-          <li>Combines local ventilation factors with a terrain-resolved, mass-conserving regional wind field so major slopes, gaps and sheltered areas influence the result.</li>
-          <li>ERA5 reanalysis supplies Cape Town direction frequencies, conditional speeds, gust factors and height profiles for annual and seasonal studies.</li>
-          <li>Building footprints and canopy are incorporated to communicate local acceleration, shelter and pedestrian-level flow patterns.</li>
+          <li>Each solved direction is a steady RANS k-epsilon OpenFOAM case over the full mapped CBD, with a uniform neutral inlet — exploratory, not yet validated against pedestrian-level observations.</li>
+          <li>ERA5 reanalysis supplies each sector's observed frequency and Weibull speed distribution for the Comfort weighting.</li>
+          <li>Mapped building geometry is meshed directly into the solved domain; tree canopy is not yet represented in the CFD mesh.</li>
         </ul>
 
-        <div class="caveat-box"><strong>Built for option comparison.</strong> Use the wind patterns and activity categories to locate exposed routes, sheltered spaces and areas that benefit from design refinement. Final structural or safety decisions should use a project-specific wind assessment.</div>
+        <div class="caveat-box"><strong>Built for option comparison.</strong> Use the flow and pressure patterns to locate exposed routes, sheltered spaces and areas that benefit from design refinement. Final structural or safety decisions should use a validated, project-specific wind assessment.</div>
 
         <div class="doc-links"><a href="/app?tool=wind">Open in the explorer →</a></div>
       </section>

@@ -7,3 +7,7 @@ __pycache__/
 # record_traffic_observation -- generated on the deployed server, not
 # checked-in source data.
 data/observations/
+
+# Generated OpenFOAM meshes, solver time directories and VTK exports are
+# reproducible but large (the first pilot is ~200 MB with VTK output).
+data/openfoam/cases/

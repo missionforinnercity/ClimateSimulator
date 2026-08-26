@@ -2207,6 +2207,29 @@ export async function startScene(canvas, status) {
     requestRender();
   }));
 
+  // This fallback renderer only ever runs the single screening-proxy
+  // preview (no OpenFOAM, no comfort mode), unlike the WebGL/CFD panel this
+  // HTML is shared with. Reveal the controls this mode actually uses —
+  // including the direction/forcing/speed select-based controls the CFD
+  // panel keeps hidden behind its compass presets — and hide the
+  // CFD-specific sections (diagnostic view, flow region) that have nothing
+  // to attach to here.
+  document.querySelector('#wind-legacy-controls')?.removeAttribute('hidden');
+  document.querySelector('.wind-analysis-tabs')?.setAttribute('hidden', '');
+  document.querySelector('#wind-cfd-controls')?.setAttribute('hidden', '');
+  document.querySelector('#wind-flow-box-controls')?.setAttribute('hidden', '');
+  document.querySelector('#wind-climate-controls')?.removeAttribute('hidden');
+  const windDirectionPresets = [...document.querySelectorAll('[data-wind-direction]')];
+  windDirectionPresets.forEach(button => {
+    button.disabled = false;
+    button.removeAttribute('title');
+    button.addEventListener('click', () => {
+      windDirection.value = button.dataset.windDirection;
+      windDirection.dispatchEvent(new Event('change', { bubbles: true }));
+      windDirectionPresets.forEach(item => item.classList.toggle('active', item === button));
+    });
+  });
+
   windToggle.addEventListener('change', event => {
     windState.enabled = event.target.checked;
     if (windState.enabled && windState.field) hideStreetLayersForWind();

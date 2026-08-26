@@ -125,7 +125,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=79');
+    const module = await import('./webglRenderer.js?v=88');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -374,7 +374,7 @@ function setupWindResults() {
     latestField = null;
     if (reportButton) reportButton.disabled = true;
   };
-  ['wind-direction', 'wind-season', 'wind-stability', 'wind-height', 'wind-resolution', 'wind-exceedance-threshold', 'wind-forcing-mode', 'wind-speed', 'wind-size']
+  ['wind-direction', 'wind-season', 'wind-stability', 'wind-size']
     .forEach(id => document.querySelector(`#${id}`)?.addEventListener('input', invalidate));
   document.querySelectorAll('[data-wind-lens="direction"], [data-wind-lens="comfort"]').forEach(button => button.addEventListener('click', invalidate));
   addEventListener('climate-wind-result', event => {
@@ -385,17 +385,36 @@ function setupWindResults() {
     }
     latestField = field;
     if (reportButton) reportButton.disabled = false;
+    // Cells the source field never actually sampled (field.valid[i] === 0)
+    // must not silently count as "comfortable" in these stats — they're
+    // absent from the CFD-solved area entirely, not a calm measurement.
+    const isValid = index => !field.valid || field.valid[index];
     const counts = new Map();
-    field.comfort_category.forEach(code => counts.set(code, (counts.get(code) || 0) + 1));
+    field.comfort_category.forEach((code, index) => {
+      if (!isValid(index)) return;
+      counts.set(code, (counts.get(code) || 0) + 1);
+    });
     const dominantCode = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
     const category = field.comfort_categories.find(item => item.code === dominantCode);
-    const probabilities = field.exceedance.probability;
+    const probabilities = (field.exceedance.probability || []).filter((_, index) => isValid(index));
     const meanExceedance = probabilities.reduce((sum, value) => sum + value, 0) / Math.max(1, probabilities.length);
-    const speeds = field.speed || [];
+    const speeds = (field.speed || []).filter((_, index) => isValid(index));
     const meanSpeed = speeds.reduce((sum, value) => sum + value, 0) / Math.max(1, speeds.length);
     const relative = (field.uncertainty?.relative_fraction || 0) * 100;
+    const totalCells = Math.max([...counts.values()].reduce((sum, value) => sum + value, 0), 1);
+    const categoryShares = field.comfort_categories.map(item => ({
+      ...item,
+      share: (counts.get(item.code) || 0) * 100 / totalCells,
+    }));
+    const sittingStanding = categoryShares.filter(item => item.code <= 2).reduce((sum, item) => sum + item.share, 0);
+    const walkingOnly = categoryShares.filter(item => item.code >= 4).reduce((sum, item) => sum + item.share, 0);
+    const worstExceedance = Math.max(...probabilities, 0) * 100;
+    const comfortColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
+    const breakdown = categoryShares.filter(item => item.share >= 0.05).map(item =>
+      `<i style="flex:${item.share};background:${comfortColors[item.code]}" title="${windReportEscape(item.label)} · ${item.share.toFixed(1)}%"></i>`
+    ).join('');
     const forcingLabel = field.analysis_mode === 'comfort'
-      ? `${field.direction_count || 16} directions · ${field.season} wind rose`
+      ? `${field.direction_count || 16} ${(field.direction_count || 16) === 1 ? 'direction' : 'directions'} resolved · ${field.season} wind rose`
       : field.era5_profile
       ? `ERA5 ${field.era5_profile.sector.toUpperCase()} · ${(field.era5_profile.frequency_fraction * 100).toFixed(1)}% sampled group hours`
       : 'Manual mean forcing';
@@ -404,9 +423,13 @@ function setupWindResults() {
       <span><b>${meanSpeed.toFixed(1)} m/s</b>Mean spatial speed</span>
       <span><b>${category?.label || '—'}</b>Most common comfort class</span>
       <span><b>${(meanExceedance * 100).toFixed(1)}%</b>Mean area exceedance · ${field.exceedance.threshold_mps} m/s</span>
+      <span><b>${sittingStanding.toFixed(1)}%</b>Suitable for sitting or standing</span>
+      <span><b>${walkingOnly.toFixed(1)}%</b>Walking-only or uncomfortable</span>
+      <span><b>${worstExceedance.toFixed(1)}%</b>Worst-cell threshold exceedance</span>
       <span><b>±${relative.toFixed(0)}%</b>Screening uncertainty</span>
       <span><b>${forcingLabel}</b>Forcing source</span>
-      <span><b>${field.analysis_mode.toUpperCase()}</b>${field.validation_status.replaceAll('_', ' ')}</span>`;
+      <span><b>${field.analysis_mode.toUpperCase()}</b>${field.validation_status.replaceAll('_', ' ')}</span>
+      <div class="wind-comfort-mini" aria-label="Comfort category distribution">${breakdown}</div>`;
     results.hidden = false;
   });
 

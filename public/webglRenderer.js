@@ -2133,9 +2133,6 @@ export async function startWebGLScene(canvas, status) {
   const windDirection = document.querySelector('#wind-direction');
   const windSeason = document.querySelector('#wind-season');
   const windStability = document.querySelector('#wind-stability');
-  const windHeight = document.querySelector('#wind-height');
-  const windResolution = document.querySelector('#wind-resolution');
-  const windExceedanceThreshold = document.querySelector('#wind-exceedance-threshold');
   const windForcingMode = document.querySelector('#wind-forcing-mode');
   const windSpeed = document.querySelector('#wind-speed');
   const windSize = document.querySelector('#wind-size');
@@ -2148,13 +2145,42 @@ export async function startWebGLScene(canvas, status) {
   const windLegendMax = document.querySelector('#wind-legend-max');
   const windLegendLow = document.querySelector('#wind-legend-low');
   const windLegendHigh = document.querySelector('#wind-legend-high');
+  const windLegendField = document.querySelector('#wind-legend-field');
+  const windComfortChips = document.querySelector('#wind-comfort-chips');
   const windGradient = document.querySelector('.wind-panel .wind-gradient');
-  const windSurfaceVisible = document.querySelector('#wind-surface-visible');
   const windFlowlinesVisible = document.querySelector('#wind-flowlines-visible');
+  const windVolumeVisible = document.querySelector('#wind-volume-visible');
+  const windFlowBoxHeightRow = document.querySelector('#wind-flow-box-height-row');
+  const windFlowBoxHeight = document.querySelector('#wind-flow-box-height');
+  const windFlowBoxHeightValue = document.querySelector('#wind-flow-box-height-value');
   const windFlowlineCount = document.querySelector('#wind-flowline-count');
   const windAnimationSpeed = document.querySelector('#wind-animation-speed');
   const windAnimationSpeedValue = document.querySelector('#wind-animation-speed-value');
   const windLensButtons = [...document.querySelectorAll('[data-wind-lens]')];
+  const windPanel = document.querySelector('.wind-panel');
+  const windModeBadge = document.querySelector('.wind-mode-badge');
+  const windSourceTitle = document.querySelector('#wind-source-title');
+  const windSourceDetail = document.querySelector('#wind-source-detail');
+  const windCfdControls = document.querySelector('#wind-cfd-controls');
+  const windFlowBoxControls = document.querySelector('#wind-flow-box-controls');
+  const windClimateControls = document.querySelector('#wind-climate-controls');
+  const windCfdField = document.querySelector('#wind-cfd-field');
+  const windCfdViewButtons = [...document.querySelectorAll('[data-cfd-view]')];
+  const windGroundControls = document.querySelector('#wind-ground-controls');
+  const windCfdGroundHeight = document.querySelector('#wind-cfd-ground-height');
+  const windSliceControls = document.querySelector('#wind-slice-controls');
+  const windSlicePlane = document.querySelector('#wind-slice-plane');
+  const windSlicePosition = document.querySelector('#wind-slice-position');
+  const windSlicePositionValue = document.querySelector('#wind-slice-position-value');
+  const windSliceWidth = document.querySelector('#wind-slice-width');
+  const windSliceHeight = document.querySelector('#wind-slice-height');
+  const windSliceWidthValue = document.querySelector('#wind-slice-width-value');
+  const windSliceHeightValue = document.querySelector('#wind-slice-height-value');
+  const windSliceCenterX = document.querySelector('#wind-slice-center-x');
+  const windSliceCenterY = document.querySelector('#wind-slice-center-y');
+  const windSliceCenterXValue = document.querySelector('#wind-slice-center-x-value');
+  const windSliceCenterYValue = document.querySelector('#wind-slice-center-y-value');
+  const windSliceReset = document.querySelector('#wind-slice-reset');
   const windDirectionControls = document.querySelector('[data-wind-direction-controls]');
   const windDirectionPresets = [...document.querySelectorAll('[data-wind-direction]')];
   const trafficToggle = document.querySelector('#traffic-toggle');
@@ -2210,18 +2236,52 @@ export async function startWebGLScene(canvas, status) {
   let liveShadowTimer = 0;
   const windState = {
     enabled: Boolean(windToggle?.checked),
+    // center/size is the interactive, user-drawn flow-seed box (the old
+    // "draw a box" domain), independent of the solved CFD case's own
+    // footprint. domainCenter/domainSize below track the latter — used for
+    // camera framing and the Comfort grid, never overwritten by dragging.
     center: [0, 0],
-    size: Number(windSize?.value) || 250,
+    size: Number(windSize?.value) || 300,
+    domainCenter: [0, 0],
+    domainSize: 300,
     direction: Number(windDirection?.value) || 135,
     season: windSeason?.value || 'annual',
     stability: windStability?.value || 'neutral',
-    height: Number(windHeight?.value) || 2,
-    resolution: Number(windResolution?.value) || 5,
-    exceedanceThreshold: Number(windExceedanceThreshold?.value) || 6,
+    height: 2,
     forcingMode: windForcingMode?.value || 'era5_climatology',
     analysisMode: 'direction',
-    surfaceVisible: Boolean(windSurfaceVisible?.checked),
+    dataMode: 'cfd',
+    cfd: null,
+    cfdView: 'ground',
+    cfdField: 'speed',
+    cfdGroundHeight: 2,
+    slicePlane: 'vertical-crosswind',
+    slicePosition: 0.5,
+    sliceWidth: 1,
+    // A full-height slice is dominated by uniform free-stream flow above roof
+    // level (the solved domain reaches ~220 m), which reduces the pedestrian-
+    // and canopy-height detail people actually open this view for to a thin
+    // sliver. Default to the near-ground band; "Reset full slice" still
+    // restores the complete domain height on request.
+    sliceHeight: 0.35,
+    sliceCenterX: 0.5,
+    sliceCenterY: 0,
+    // Colour range actually visible in the current CFD view, keyed by field
+    // name — set by whichever builder last ran (ground/slice) so the legend
+    // and colours always agree. Falls back to the whole-domain manifest
+    // range (dominated by free-stream speed well above roof height) when
+    // null, which is why Ground/Slice recompute it: without this, most
+    // pedestrian-height speed differences were squeezed into a sliver of the
+    // colour scale and read as a uniform blue/cyan wash.
+    cfdLocalRange: null,
+    surfaceVisible: true,
     flowlinesVisible: Boolean(windFlowlinesVisible?.checked),
+    volumeVisible: Boolean(windVolumeVisible?.checked),
+    volumeHeight: 80,
+    // How tall the flow box's 3D seeding actually extends, user-adjustable
+    // and independent of volumeHeight (the solved domain's real ceiling,
+    // ~220 m, which flowBoxHeight is clamped to).
+    flowBoxHeight: Number(windFlowBoxHeight?.value) || 80,
     particleCount: Number(windFlowlineCount?.value) || 800,
     animationSpeed: (Number(windAnimationSpeed?.value) || 100) / 100,
     speed: (Number(windSpeed?.value) || 36) / 3.6,
@@ -2274,6 +2334,8 @@ export async function startWebGLScene(canvas, status) {
   let sunAnalysisId = null;
   let windHeatMesh = null;
   let windPoints = null;
+  let windCfdSlice = null;
+  let windFacadePressure = null;
   let trafficCars = null;
   let windBox = null;
   let windEdges = null;
@@ -2282,10 +2344,11 @@ export async function startWebGLScene(canvas, status) {
   let sunEdges = null;
   let sunHandle = null;
   let streetLayersVisibleBeforeWind = null;
-  const windTrailPoints = 5;
+  const windTrailPoints = 56;
   let drag = null;
   let windDrag = null;
   let sunDrag = null;
+  let sliceDrag = null;
   const windBuildingCellSize = 60;
   const windBuildingGrid = new Map();
   const savedVisibility = Object.fromEntries(
@@ -2368,6 +2431,7 @@ export async function startWebGLScene(canvas, status) {
     const building = {
       ring, holes, rings: [ring, ...holes], minX, maxX, minZ, maxZ, centroid,
       roofY: ground + Math.max(height, wallHeight),
+      baseY: ground + Math.max(0, Number(minHeight) || 0),
       minHeight: Math.max(0, Number(minHeight) || 0),
     };
     const minColumn = Math.floor(minX / windBuildingCellSize);
@@ -2383,12 +2447,12 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
-  function windPointInsideBuilding(x, z) {
+  function windPointInsideBuilding(x, z, worldY = null) {
     const column = Math.floor(x / windBuildingCellSize);
     const row = Math.floor(z / windBuildingCellSize);
     const candidates = windBuildingGrid.get(windCellKey(column, row)) || [];
     return candidates.some(building => (
-      building.minHeight <= windState.height
+      (worldY === null ? building.minHeight <= windState.height : worldY >= building.baseY && worldY <= building.roofY)
       && x >= building.minX && x <= building.maxX
       && z >= building.minZ && z <= building.maxZ
       && pointInWindRing(x, z, building.ring)
@@ -2410,7 +2474,7 @@ export async function startWebGLScene(canvas, status) {
     return Number.isFinite(roofY) ? roofY + 0.08 : terrainHeightAt(x, z) + 0.48;
   }
 
-  function nearestWindBoundary(x, z) {
+  function nearestWindBoundary(x, z, worldY = null) {
     const column = Math.floor(x / windBuildingCellSize);
     const row = Math.floor(z / windBuildingCellSize);
     const candidates = new Set();
@@ -2421,7 +2485,7 @@ export async function startWebGLScene(canvas, status) {
     }
     let nearest = null;
     for (const building of candidates) {
-      if (building.minHeight > windState.height) continue;
+      if (worldY === null ? building.minHeight > windState.height : worldY < building.baseY || worldY > building.roofY) continue;
       if (x < building.minX - 30 || x > building.maxX + 30 || z < building.minZ - 30 || z > building.maxZ + 30) continue;
       for (const boundaryRing of building.rings) {
        for (let index = 0; index < boundaryRing.length; index += 1) {
@@ -2443,8 +2507,8 @@ export async function startWebGLScene(canvas, status) {
     return nearest;
   }
 
-  function redirectWindFlow(x, z, flow, force = false) {
-    const boundary = nearestWindBoundary(x, z);
+  function redirectWindFlow(x, z, flow, force = false, worldY = null) {
+    const boundary = nearestWindBoundary(x, z, worldY);
     if (!boundary || (!force && boundary.distance > 24)) return flow;
     const speed = Math.max(0.1, Math.hypot(flow.u, flow.v));
     let normalX = x - boundary.pointX;
@@ -2470,7 +2534,7 @@ export async function startWebGLScene(canvas, status) {
       tangentZ = -tangentZ;
     }
     const proximity = clamp((24 - boundary.distance) / 24, 0, 1);
-    const inside = windPointInsideBuilding(x, z);
+    const inside = windPointInsideBuilding(x, z, worldY);
     const tangentialSpeed = Math.abs(incomingTangent);
     // Preserve the component parallel to the facade and add only a small
     // outward bias. This is a sliding collision response, not a vortex.
@@ -2478,13 +2542,14 @@ export async function startWebGLScene(canvas, status) {
     const length = Math.hypot(tangentialSpeed, outwardSpeed) || 1;
     return {
       u: (tangentX * tangentialSpeed + normalX * outwardSpeed) * speed / length,
+      w: flow.w || 0,
       v: (tangentZ * tangentialSpeed + normalZ * outwardSpeed) * speed / length,
       speed,
     };
   }
 
-  function pushWindPointOutsideBuilding(x, z) {
-    const boundary = nearestWindBoundary(x, z);
+  function pushWindPointOutsideBuilding(x, z, worldY = null) {
+    const boundary = nearestWindBoundary(x, z, worldY);
     if (!boundary) return [x, z];
     let normalX = x - boundary.pointX;
     let normalZ = z - boundary.pointZ;
@@ -3005,6 +3070,14 @@ export async function startWebGLScene(canvas, status) {
       opacity: 0.86,
       side: THREE.DoubleSide,
       depthWrite: false,
+      // Without this, the mesh z-fights with the terrain it sits 0.48 m
+      // above — the depth buffer's precision thins out with distance, so at
+      // typical city-block camera distances random patches of the surface
+      // lose the fight and show bare terrain through instead, looking like
+      // unexplained gaps in coverage that scale with view distance/angle
+      // rather than with the underlying (actually complete) zone data.
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
     }));
     heatGroup.add(heatMesh);
   }
@@ -5094,25 +5167,245 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
-  function fallbackWindField() {
-    const resolution = windState.resolution;
-    const width = Math.ceil(windState.size / resolution);
-    const angle = windState.direction * Math.PI / 180;
-    const flowX = -Math.sin(angle);
-    const flowZ = Math.cos(angle);
-    const u = [], v = [], speed = [];
-    for (let row = 0; row < width; row += 1) {
-      for (let column = 0; column < width; column += 1) {
-        const localSpeed = windState.speed * (0.68 + 0.22 * Math.sin(column * 0.32 + row * 0.17));
-        u.push(flowX * localSpeed);
-        v.push(flowZ * localSpeed);
-        speed.push(localSpeed);
+  function foamToViewerPoint(foamX, foamY, foamZ) {
+    const coordinates = windState.cfd.manifest.coordinates;
+    const center = coordinates.viewer_center_xz;
+    const downwind = coordinates.x_downwind_in_viewer_xz;
+    const crosswind = coordinates.y_crosswind_in_viewer_xz;
+    return [
+      center[0] + foamX * downwind[0] + foamY * crosswind[0],
+      foamZ + coordinates.vertical_datum_m,
+      center[1] + foamX * downwind[1] + foamY * crosswind[1],
+    ];
+  }
+
+  function viewerToFoamPoint(x, worldY, z) {
+    const coordinates = windState.cfd.manifest.coordinates;
+    const relativeX = x - coordinates.viewer_center_xz[0];
+    const relativeZ = z - coordinates.viewer_center_xz[1];
+    return [
+      relativeX * coordinates.x_downwind_in_viewer_xz[0] + relativeZ * coordinates.x_downwind_in_viewer_xz[1],
+      relativeX * coordinates.y_crosswind_in_viewer_xz[0] + relativeZ * coordinates.y_crosswind_in_viewer_xz[1],
+      worldY - coordinates.vertical_datum_m,
+    ];
+  }
+
+  function sampleCfd(x, worldY, z) {
+    const cfd = windState.cfd;
+    if (!cfd) return null;
+    const foam = viewerToFoamPoint(x, worldY, z);
+    const { origin_foam_m: origin, spacing_foam_m: spacing, dimensions } = cfd.manifest;
+    const coordinate = foam.map((value, axis) => (value - origin[axis]) / spacing[axis]);
+    if (coordinate.some((value, axis) => value < 0 || value > dimensions[axis] - 1)) return null;
+    const lower = coordinate.map((value, axis) => Math.min(Math.floor(value), dimensions[axis] - 2));
+    const fraction = coordinate.map((value, axis) => clamp(value - lower[axis], 0, 1));
+    const result = new Float32Array(cfd.channelCount);
+    let weightTotal = 0;
+    for (let dz = 0; dz <= 1; dz += 1) {
+      for (let dy = 0; dy <= 1; dy += 1) {
+        for (let dx = 0; dx <= 1; dx += 1) {
+          const ix = lower[0] + dx;
+          const iy = lower[1] + dy;
+          const iz = lower[2] + dz;
+          const sampleIndex = iz * dimensions[0] * dimensions[1] + iy * dimensions[0] + ix;
+          if (!cfd.mask[sampleIndex]) continue;
+          const weight = (dx ? fraction[0] : 1 - fraction[0])
+            * (dy ? fraction[1] : 1 - fraction[1])
+            * (dz ? fraction[2] : 1 - fraction[2]);
+          for (let channel = 0; channel < cfd.channelCount; channel += 1) {
+            result[channel] += cfd.fields[sampleIndex * cfd.channelCount + channel] * weight;
+          }
+          weightTotal += weight;
+        }
       }
     }
+    if (weightTotal < 0.05) return null;
+    for (let channel = 0; channel < result.length; channel += 1) result[channel] /= weightTotal;
     return {
-      origin: [windState.center[0] - windState.size / 2, windState.center[1] - windState.size / 2],
-      width, height: width, dx: resolution, dz: resolution, u, v, speed,
+      u: result[cfd.channels.u_viewer_x],
+      w: result[cfd.channels.w_up],
+      v: result[cfd.channels.v_viewer_z],
+      speed: result[cfd.channels.speed],
+      p: result[cfd.channels.p],
+      k: result[cfd.channels.k],
+      epsilon: result[cfd.channels.epsilon],
     };
+  }
+
+  function cfdFieldRange(name) {
+    return windState.cfdLocalRange?.[name] || windState.cfd?.manifest.ranges?.[name] || [0, 1];
+  }
+
+  // A minimum span keeps colour contrast meaningful when a view happens to
+  // be almost uniformly calm (a near-zero span would blow tiny noise up into
+  // the full colour range) and floors speed at zero rather than the sampled
+  // minimum, since "no wind" is a real, meaningful value to show distinctly.
+  function computeLocalRange(field, values) {
+    if (!values.length) return null;
+    const minimumSpan = field === 'speed' ? 1.5 : field === 'p' ? 4 : 0.05;
+    let sampledMinimum = Infinity;
+    let maximum = -Infinity;
+    for (const value of values) {
+      if (value < sampledMinimum) sampledMinimum = value;
+      if (value > maximum) maximum = value;
+    }
+    const minimum = field === 'speed' ? 0 : sampledMinimum;
+    if (maximum - minimum < minimumSpan) maximum = minimum + minimumSpan;
+    return [minimum, maximum];
+  }
+
+  function cfdColor(value, field = windState.cfdField) {
+    const [minimum, maximum] = cfdFieldRange(field);
+    if (field === 'p') {
+      const extent = Math.max(Math.abs(minimum), Math.abs(maximum), 1);
+      const t = clamp(value / extent * 0.5 + 0.5, 0, 1);
+      return t < 0.5
+        ? new THREE.Color(0x265bd7).lerp(new THREE.Color(0xf2f4f5), t * 2)
+        : new THREE.Color(0xf2f4f5).lerp(new THREE.Color(0xe33b35), (t - 0.5) * 2);
+    }
+    if (field === 'k') {
+      const t = clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
+      return new THREE.Color(0x26145c).lerp(new THREE.Color(0xee3a80), Math.sqrt(t)).lerp(new THREE.Color(0xffd55c), t * t);
+    }
+    return windColor(value, minimum, maximum);
+  }
+
+  const CFD_FIELD_LABELS = { speed: 'Velocity magnitude', p: 'Pressure', k: 'Turbulence kinetic energy' };
+
+  function updateCfdLegend() {
+    if (!windState.cfd) return;
+    const [minimum, maximum] = cfdFieldRange(windState.cfdField);
+    const units = windState.cfdField === 'speed' ? 'm/s' : 'm²/s²';
+    if (windLegendField) windLegendField.textContent = CFD_FIELD_LABELS[windState.cfdField] || windState.cfdField;
+    windLegendLow.innerHTML = `<b>${minimum.toFixed(2)}</b> ${units} · low`;
+    windLegendHigh.innerHTML = `<b>${maximum.toFixed(2)}</b> ${units} · high`;
+    windGradient?.classList.remove('comfort');
+    windGradient?.classList.toggle('pressure', windState.cfdField === 'p');
+    windGradient?.classList.toggle('turbulence', windState.cfdField === 'k');
+    if (windComfortChips) windComfortChips.hidden = true;
+  }
+
+  const COMFORT_CHIP_COLORS = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
+
+  function renderComfortLegend() {
+    if (windLegendField) windLegendField.textContent = 'Comfort category';
+    if (!windComfortChips) return;
+    windComfortChips.hidden = false;
+    windComfortChips.innerHTML = COMFORT_CATEGORY_DEFS.map(category => `
+      <span><i style="background:${COMFORT_CHIP_COLORS[category.code]}"></i>${category.label}${
+        category.max_speed_mps ? ` ≤${category.max_speed_mps} m/s` : ''}</span>`).join('');
+  }
+
+  // Registry of solved OpenFOAM cases available to the browser. Only SE is
+  // meshed and solved today; append entries here (and enable the matching
+  // compass button in index.html) as more directions are converted with
+  // scripts/convert_openfoam_vtk.py. Direction and Comfort both read this —
+  // neither ever synthesizes a direction that isn't listed here.
+  const CFD_CASES = [
+    { direction_deg: 135, sector: 'se', label: 'SE 135°', base: '/assets/cfd/cbd_se_pilot/' },
+    { direction_deg: 315, sector: 'nw', label: 'NW 315°', base: '/assets/cfd/cbd_nw_full/' },
+  ];
+
+  function findCfdCase(directionDeg) {
+    return CFD_CASES.find(item => item.direction_deg === directionDeg) || null;
+  }
+
+  // Fetches and decodes one case's volume into windState.cfd only — no view
+  // building, no camera framing, no status/badge text. Direction's own
+  // loadCfdWind() below layers all of that on top for its interactive 3D
+  // view; Comfort calls this directly because it only needs to *sample* the
+  // volume onto a 2D grid and must not disturb Direction's view state
+  // (surfaceVisible, cfdView meshes, camera framing) when it runs.
+  async function ensureCfdCaseLoaded(directionDeg) {
+    const cfdCase = findCfdCase(directionDeg);
+    if (!cfdCase) throw new Error(`no solved OpenFOAM case for ${directionDeg}°`);
+    const base = cfdCase.base;
+    const manifest = await fetch(`${base}volume.json`, { cache: 'no-store' }).then(response => {
+      if (!response.ok) throw new Error(`manifest HTTP ${response.status}`);
+      return response.json();
+    });
+    const assetVersion = `${manifest.solver.case_id}-${manifest.result_time}-${manifest.dimensions.join('x')}`;
+    const [fieldBuffer, maskBuffer] = await Promise.all([
+      fetch(`${base}${manifest.fields}?v=${assetVersion}`).then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`fields HTTP ${response.status}`))),
+      fetch(`${base}${manifest.valid_mask}?v=${assetVersion}`).then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`mask HTTP ${response.status}`))),
+    ]);
+    const channels = Object.fromEntries(manifest.channels.map((name, index) => [name, index]));
+    const sampleCount = manifest.dimensions.reduce((total, value) => total * value, 1);
+    const fields = new Float32Array(fieldBuffer);
+    const mask = new Uint8Array(maskBuffer);
+    if (fields.length !== sampleCount * manifest.channels.length || mask.length !== sampleCount) {
+      throw new Error('CFD asset dimensions do not match its manifest');
+    }
+    windState.cfd = { manifest, fields, mask, channels, channelCount: manifest.channels.length };
+    windState.dataMode = 'cfd';
+    return cfdCase;
+  }
+
+  async function loadCfdWind(directionDeg = windState.direction) {
+    windSimulate.disabled = true;
+    windSimulate.textContent = 'Loading CFD volume…';
+    windStatus.textContent = 'Loading compact OpenFOAM fields…';
+    try {
+      const cfdCase = await ensureCfdCaseLoaded(directionDeg);
+      const manifest = windState.cfd.manifest;
+      windState.direction = manifest.direction_deg_from;
+      windState.domainCenter = [...manifest.coordinates.viewer_center_xz];
+      windState.domainSize = Math.max(
+        manifest.spacing_foam_m[0] * (manifest.dimensions[0] - 1),
+        manifest.spacing_foam_m[1] * (manifest.dimensions[1] - 1),
+      );
+      // Only give the flow box a starting position the first time a case
+      // loads. After that it's the user's box — reloading or switching
+      // direction must not snap it back to the domain centre.
+      if (!windState.flowBoxInitialized) {
+        windState.center = [...windState.domainCenter];
+        windState.flowBoxInitialized = true;
+      }
+      windState.volumeHeight = manifest.spacing_foam_m[2] * (manifest.dimensions[2] - 1);
+      if (windFlowBoxHeight) {
+        windFlowBoxHeight.max = String(Math.round(windState.volumeHeight));
+        if (windState.flowBoxHeight > windState.volumeHeight) {
+          windState.flowBoxHeight = windState.volumeHeight;
+          windFlowBoxHeight.value = String(Math.round(windState.volumeHeight));
+          if (windFlowBoxHeightValue) windFlowBoxHeightValue.textContent = String(Math.round(windState.volumeHeight));
+        }
+      }
+      windState.volumeVisible = true;
+      windState.surfaceVisible = false;
+      windState.field = {
+        cfd: true,
+        speed: manifest.ranges.speed,
+        origin: [-windState.domainSize / 2, -windState.domainSize / 2],
+        width: manifest.dimensions[0], height: manifest.dimensions[1],
+        dx: manifest.spacing_foam_m[0], dz: manifest.spacing_foam_m[1],
+      };
+      if (windVolumeVisible) windVolumeVisible.checked = true;
+      if (windFlowBoxHeightRow) windFlowBoxHeightRow.hidden = false;
+      buildCfdView();
+      resetWindParticles();
+      updateCfdLegend();
+      updateWindBox();
+      const solver = manifest.solver;
+      const coverage = manifest.building_coverage;
+      const coverageLabel = coverage
+        ? `${coverage.centroids_in_domain}/${coverage.scene_buildings} buildings in solved domain`
+        : 'solved domain only';
+      if (windModeBadge) windModeBadge.textContent = coverage?.fraction >= 0.99 ? 'CFD · FULL CBD' : 'CFD · PILOT';
+      if (windSourceDetail) windSourceDetail.textContent = `${cfdCase.label} · iteration ${manifest.result_time} · ${coverageLabel}`;
+      windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
+      windStatus.textContent = `OpenFOAM ${solver.version} · ${windState.cfdGroundHeight.toFixed(1)} m pedestrian field · ${coverageLabel}`;
+      const half = windState.domainSize * 0.52;
+      frameBounds([
+        windState.domainCenter[0] - half, windState.domainCenter[1] - half,
+        windState.domainCenter[0] + half, windState.domainCenter[1] + half,
+      ], { elevation: 0.38 });
+    } catch (error) {
+      windStatus.textContent = `CFD volume unavailable (${error.message})`;
+    } finally {
+      windSimulate.disabled = false;
+      windSimulate.textContent = 'Reload OpenFOAM result';
+      requestRender();
+    }
   }
 
   function sampleWind(x, z) {
@@ -5135,13 +5428,41 @@ export async function startWebGLScene(canvas, status) {
     return { u: interpolate(field.u), v: interpolate(field.v), speed: interpolate(field.speed) };
   }
 
+  function sampleWindAtHeight(x, z, heightAboveGround, worldY = null) {
+    if (windState.dataMode === 'cfd' && windState.cfd) {
+      // heightAboveGround is only set once, at particle spawn; a particle's
+      // real world-Y drifts from terrain-relative height as vertical velocity
+      // (w) accumulates. Sampling at the caller's live worldY keeps the
+      // velocity query at the same point the particle is actually drawn at —
+      // recomputing it from the stale spawn height sampled the wrong cell
+      // (often outside the valid mask) and froze particles mid-air.
+      const y = worldY != null ? worldY : terrainHeightAt(x, z) + heightAboveGround;
+      return sampleCfd(x, y, z) || { u: 0, w: 0, v: 0, speed: 0, p: 0, k: 0 };
+    }
+    const sampled = sampleWind(x, z);
+    if (!windState.volumeVisible) return sampled;
+    // The current screening model supplies one horizontal slice. For the
+    // volume preview only, extend it with the same stability/profile exponent
+    // used by the API. A real CFD volume will replace this with sampled Ux/Uy/Uz.
+    const sourceHeight = Math.max(0.5, Number(windState.field?.height_m) || windState.height || 2);
+    const exponent = Number(windState.field?.height_profile_exponent) || 0.28;
+    const factor = clamp((Math.max(heightAboveGround, 0.5) / sourceHeight) ** exponent, 0.55, 2.4);
+    return { u: sampled.u * factor, v: sampled.v * factor, speed: sampled.speed * factor };
+  }
+
   function windColor(value, minimum, maximum) {
+    // A wider, more saturated 7-stop ramp than a plain 5-stop blue-red gives
+    // calm and gale-force speeds visibly distinct bands rather than a wash
+    // of similar blues/reds — deep indigo (still air) through cyan, green,
+    // yellow, orange, to near-magenta red (strongest wind) at the top.
     const stops = [
-      [0, 0x2055d6],
-      [0.25, 0x22c7ee],
-      [0.5, 0x3dd579],
-      [0.75, 0xf4da45],
-      [1, 0xef3b2d],
+      [0, 0x1c2b8c],
+      [0.16, 0x1f7fe0],
+      [0.34, 0x1fd0d8],
+      [0.5, 0x3ede6b],
+      [0.66, 0xf4e03f],
+      [0.82, 0xff8a2e],
+      [1, 0xe8203f],
     ];
     const t = clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
     let upper = 1;
@@ -5153,21 +5474,307 @@ export async function startWebGLScene(canvas, status) {
 
   function disposeObject(object) {
     if (!object) return;
+    for (const child of object.children || []) disposeObject(child);
     object.geometry?.dispose();
     if (Array.isArray(object.material)) object.material.forEach(material => material.dispose());
     else object.material?.dispose();
   }
 
   function clearWindSimulation() {
-    for (const object of [windHeatMesh, windPoints]) {
+    for (const object of [windHeatMesh, windPoints, windCfdSlice, windFacadePressure]) {
       if (!object) continue;
       windGroup.remove(object);
       disposeObject(object);
     }
     windHeatMesh = null;
     windPoints = null;
+    windCfdSlice = null;
+    windFacadePressure = null;
     windState.particles = [];
     restoreStreetLayersAfterWind();
+  }
+
+  function cfdGridSample(ix, iy, iz) {
+    const cfd = windState.cfd;
+    const dimensions = cfd.manifest.dimensions;
+    const sampleIndex = iz * dimensions[0] * dimensions[1] + iy * dimensions[0] + ix;
+    if (!cfd.mask[sampleIndex]) return null;
+    const base = sampleIndex * cfd.channelCount;
+    return {
+      speed: cfd.fields[base + cfd.channels.speed],
+      p: cfd.fields[base + cfd.channels.p],
+      k: cfd.fields[base + cfd.channels.k],
+    };
+  }
+
+  function buildCfdPedestrianSurface() {
+    if (windHeatMesh) {
+      windGroup.remove(windHeatMesh);
+      disposeObject(windHeatMesh);
+      windHeatMesh = null;
+    }
+    if (!windState.cfd || windState.cfdView !== 'ground') return;
+    const manifest = windState.cfd.manifest;
+    const nativeSpacing = manifest.spacing_foam_m;
+    const domainSizeX = nativeSpacing[0] * (manifest.dimensions[0] - 1);
+    const domainSizeY = nativeSpacing[1] * (manifest.dimensions[1] - 1);
+    const origin = manifest.origin_foam_m;
+    // Sample finer than the native ~20 m OpenFOAM grid. That grid is coarser
+    // than most street canyons, so a narrow street often has zero native
+    // grid points landing inside it — every corner check then fails and the
+    // whole street draws as a hole, even though sampleCfd (trilinear) can
+    // interpolate a perfectly good value at any point in between. Only the
+    // wide main streets happened to catch enough native points to look
+    // continuous.
+    const groundResolution = 12;
+    const columns = Math.max(2, Math.round(domainSizeX / groundResolution));
+    const rows = Math.max(2, Math.round(domainSizeY / groundResolution));
+    const spacing = [domainSizeX / columns, domainSizeY / rows];
+    const points = [];
+    const samples = [];
+    for (let row = 0; row <= rows; row += 1) {
+      for (let column = 0; column <= columns; column += 1) {
+        const foamX = origin[0] + column * spacing[0];
+        const foamY = origin[1] + row * spacing[1];
+        const [x, , z] = foamToViewerPoint(foamX, foamY, 0);
+        const worldY = terrainHeightAt(x, z) + windState.cfdGroundHeight;
+        const sample = pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, worldY)
+          ? sampleCfd(x, worldY, z) : null;
+        points.push([x, worldY, z]);
+        samples.push(sample);
+      }
+    }
+    windState.cfdLocalRange = {
+      [windState.cfdField]: computeLocalRange(
+        windState.cfdField,
+        samples.filter(Boolean).map(sample => sample[windState.cfdField]),
+      ),
+    };
+    const positions = [];
+    const colors = [];
+    const valid = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const [x, worldY, z] = points[index];
+      const sample = samples[index];
+      positions.push(x, worldY + 0.12, z);
+      const color = sample ? cfdColor(sample[windState.cfdField]) : new THREE.Color(0x202729);
+      colors.push(color.r, color.g, color.b);
+      valid.push(Boolean(sample));
+    }
+    const indices = [];
+    const rowWidth = columns + 1;
+    for (let row = 0; row < rows; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        const a = row * rowWidth + column;
+        const b = a + 1;
+        const c = a + rowWidth;
+        const d = c + 1;
+        if (valid[a] && valid[b] && valid[c]) indices.push(a, c, b);
+        if (valid[b] && valid[c] && valid[d]) indices.push(b, c, d);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    windHeatMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.82, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
+    }));
+    windHeatMesh.name = `cfd-terrain-following-${windState.cfdGroundHeight}m-${windState.cfdField}`;
+    windHeatMesh.renderOrder = 3;
+    windGroup.add(windHeatMesh);
+    hideStreetLayersForWind();
+  }
+
+  function updateCfdSliceLabels(fixedAxis, axes, fixedIndex, centerA, centerB) {
+    if (!windState.cfd) return;
+    const manifest = windState.cfd.manifest;
+    const coordinate = manifest.origin_foam_m[fixedAxis] + fixedIndex * manifest.spacing_foam_m[fixedAxis];
+    const axisName = fixedAxis === 0 ? 'downwind x' : fixedAxis === 1 ? 'crosswind y' : 'height z';
+    if (windSlicePositionValue) windSlicePositionValue.textContent = `${axisName} ${coordinate.toFixed(0)} m`;
+    const spanA = manifest.spacing_foam_m[axes[0]] * (manifest.dimensions[axes[0]] - 1) * windState.sliceWidth;
+    const spanB = manifest.spacing_foam_m[axes[1]] * (manifest.dimensions[axes[1]] - 1) * windState.sliceHeight;
+    if (windSliceWidthValue) windSliceWidthValue.textContent = `${spanA.toFixed(0)} m`;
+    if (windSliceHeightValue) windSliceHeightValue.textContent = `${spanB.toFixed(0)} m`;
+    const coordinateA = manifest.origin_foam_m[axes[0]] + centerA * manifest.spacing_foam_m[axes[0]];
+    const coordinateB = manifest.origin_foam_m[axes[1]] + centerB * manifest.spacing_foam_m[axes[1]];
+    if (windSliceCenterXValue) windSliceCenterXValue.textContent = `${coordinateA.toFixed(0)} m`;
+    if (windSliceCenterYValue) windSliceCenterYValue.textContent = `${coordinateB.toFixed(0)} m`;
+  }
+
+  // The fixed (sliced-along) axis for the current slice plane choice, plus
+  // the world-space unit direction and total length of that axis — shared by
+  // buildCfdSlice (to lay out the plane) and the click-and-drag handler
+  // below (to turn mouse movement into a slicePosition change).
+  function sliceFixedAxis() {
+    return windState.slicePlane === 'vertical-crosswind' ? 0 : windState.slicePlane === 'vertical-downwind' ? 1 : 2;
+  }
+  function sliceAxisWorldDirection(fixedAxis) {
+    if (fixedAxis === 2) return new THREE.Vector3(0, 1, 0);
+    const coordinates = windState.cfd.manifest.coordinates;
+    const vector = fixedAxis === 0 ? coordinates.x_downwind_in_viewer_xz : coordinates.y_crosswind_in_viewer_xz;
+    return new THREE.Vector3(vector[0], 0, vector[1]).normalize();
+  }
+  function sliceAxisWorldLength(fixedAxis) {
+    const manifest = windState.cfd.manifest;
+    return manifest.spacing_foam_m[fixedAxis] * (manifest.dimensions[fixedAxis] - 1);
+  }
+
+  function buildCfdSlice() {
+    if (windCfdSlice) {
+      windGroup.remove(windCfdSlice);
+      disposeObject(windCfdSlice);
+      windCfdSlice = null;
+    }
+    if (!windState.cfd || windState.cfdView !== 'slice') return;
+    const manifest = windState.cfd.manifest;
+    const dimensions = manifest.dimensions;
+    const origin = manifest.origin_foam_m;
+    const spacing = manifest.spacing_foam_m;
+    const fixedAxis = sliceFixedAxis();
+    const axes = fixedAxis === 0 ? [1, 2] : fixedAxis === 1 ? [0, 2] : [0, 1];
+    const fixed = Math.round(windState.slicePosition * (dimensions[fixedAxis] - 1));
+    const countA = Math.max(2, Math.round((dimensions[axes[0]] - 1) * windState.sliceWidth) + 1);
+    const countB = Math.max(2, Math.round((dimensions[axes[1]] - 1) * windState.sliceHeight) + 1);
+    if (windSliceCenterX) windSliceCenterX.disabled = countA === dimensions[axes[0]];
+    if (windSliceCenterY) windSliceCenterY.disabled = countB === dimensions[axes[1]];
+    const startA = Math.round((dimensions[axes[0]] - countA) * windState.sliceCenterX);
+    const startB = Math.round((dimensions[axes[1]] - countB) * windState.sliceCenterY);
+    const width = countA;
+    const height = countB;
+    updateCfdSliceLabels(fixedAxis, axes, fixed, startA + (countA - 1) / 2, startB + (countB - 1) / 2);
+    const points = [];
+    const samples = [];
+    for (let row = 0; row < height; row += 1) {
+      for (let column = 0; column < width; column += 1) {
+        const index = [0, 0, 0];
+        index[fixedAxis] = fixed;
+        index[axes[0]] = startA + column;
+        index[axes[1]] = startB + row;
+        const foam = index.map((value, axis) => origin[axis] + value * spacing[axis]);
+        points.push(foamToViewerPoint(...foam));
+        samples.push(cfdGridSample(...index));
+      }
+    }
+    windState.cfdLocalRange = {
+      [windState.cfdField]: computeLocalRange(
+        windState.cfdField,
+        samples.filter(Boolean).map(sample => sample[windState.cfdField]),
+      ),
+    };
+    const positions = [];
+    const colors = [];
+    const valid = [];
+    for (let index = 0; index < points.length; index += 1) {
+      const sample = samples[index];
+      positions.push(...points[index]);
+      const color = sample ? cfdColor(sample[windState.cfdField]) : new THREE.Color(0x252a2c);
+      colors.push(color.r, color.g, color.b);
+      valid.push(Boolean(sample));
+    }
+    const indices = [];
+    for (let row = 0; row < height - 1; row += 1) {
+      for (let column = 0; column < width - 1; column += 1) {
+        const a = row * width + column;
+        const b = a + 1;
+        const c = a + width;
+        const d = c + 1;
+        if (valid[a] && valid[b] && valid[c]) indices.push(a, c, b);
+        if (valid[b] && valid[c] && valid[d]) indices.push(b, c, d);
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    const sliceMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.88, side: THREE.DoubleSide,
+      depthWrite: false, blending: THREE.NormalBlending,
+    }));
+    sliceMesh.renderOrder = 4;
+    const corners = [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]].map(([column, row]) => {
+      const index = [0, 0, 0];
+      index[fixedAxis] = fixed;
+      index[axes[0]] = startA + column;
+      index[axes[1]] = startB + row;
+      return foamToViewerPoint(...index.map((value, axis) => origin[axis] + value * spacing[axis]));
+    });
+    const outlineGeometry = new THREE.BufferGeometry().setFromPoints(corners.map(point => new THREE.Vector3(...point)));
+    const outline = new THREE.LineLoop(outlineGeometry, new THREE.LineBasicMaterial({
+      color: 0xe8fbff, transparent: true, opacity: 0.9, depthTest: false,
+    }));
+    outline.renderOrder = 6;
+    windCfdSlice = new THREE.Group();
+    windCfdSlice.add(sliceMesh, outline);
+    windCfdSlice.name = `cfd-${windState.cfdField}-${windState.slicePlane}-slice`;
+    windGroup.add(windCfdSlice);
+  }
+
+  function buildCfdFacadePressure() {
+    if (windFacadePressure) {
+      windGroup.remove(windFacadePressure);
+      disposeObject(windFacadePressure);
+      windFacadePressure = null;
+    }
+    if (!windState.cfd || windState.cfdView !== 'facade') return;
+    const positions = [];
+    const colors = [];
+    const indices = [];
+    for (const [ground, height, ring, , , wallHeight = height, , , , , minHeight = 0] of data.buildings) {
+      if (!ring?.length) continue;
+      const baseY = ground + Math.max(0, Number(minHeight) || 0);
+      const roofY = ground + Math.max(height, wallHeight);
+      if (roofY <= baseY + 0.5) continue;
+      const centroid = ring.reduce((sum, point) => [sum[0] + point[0], sum[1] + point[1]], [0, 0]);
+      centroid[0] /= ring.length;
+      centroid[1] /= ring.length;
+      for (let edge = 0; edge < ring.length; edge += 1) {
+        const a = ring[edge];
+        const b = ring[(edge + 1) % ring.length];
+        const ax = centroid[0] + (a[0] - centroid[0]) * 1.006;
+        const az = centroid[1] + (a[1] - centroid[1]) * 1.006;
+        const bx = centroid[0] + (b[0] - centroid[0]) * 1.006;
+        const bz = centroid[1] + (b[1] - centroid[1]) * 1.006;
+        const bands = Math.max(1, Math.min(5, Math.ceil((roofY - baseY) / 12)));
+        for (let band = 0; band < bands; band += 1) {
+          const lowY = baseY + (roofY - baseY) * band / bands;
+          const highY = baseY + (roofY - baseY) * (band + 1) / bands;
+          const sample = sampleCfd((ax + bx) / 2, (lowY + highY) / 2, (az + bz) / 2);
+          if (!sample) continue;
+          const color = cfdColor(sample.p, 'p');
+          const offset = positions.length / 3;
+          positions.push(ax, lowY, az, bx, lowY, bz, ax, highY, az, bx, highY, bz);
+          for (let vertex = 0; vertex < 4; vertex += 1) colors.push(color.r, color.g, color.b);
+          indices.push(offset, offset + 1, offset + 2, offset + 1, offset + 3, offset + 2);
+        }
+      }
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    windFacadePressure = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3,
+    }));
+    windFacadePressure.name = 'cfd-facade-pressure';
+    windFacadePressure.renderOrder = 5;
+    windGroup.add(windFacadePressure);
+  }
+
+  function buildCfdView() {
+    if (windState.cfdView !== 'ground') restoreStreetLayersAfterWind();
+    // Ground/slice recompute this for whichever field is showing; reset
+    // first so switching to Flow/Façades never colours with a stale range
+    // left over from a different view (that range can be much narrower than
+    // what those views actually span, which would blow the colours out).
+    windState.cfdLocalRange = null;
+    buildCfdPedestrianSurface();
+    buildCfdSlice();
+    buildCfdFacadePressure();
+    if (windPoints) windPoints.visible = windState.cfdView === 'flow' && windState.flowlinesVisible;
+    updateCfdLegend();
   }
 
   function buildWindHeatmap() {
@@ -5208,9 +5815,22 @@ export async function startWebGLScene(canvas, status) {
     const rowWidth = field.width + 1;
     for (let row = 0; row < field.height; row += 1) {
       for (let column = 0; column < field.width; column += 1) {
-        const centerX = field.origin[0] + (column + 0.5) * field.dx;
-        const centerZ = field.origin[1] + (row + 0.5) * field.dz;
-        if (!pointInLidarFootprint(centerX, centerZ)) continue;
+        if (comfortMode) {
+          // Require both: a real CFD sample (excludes the lidar-footprint
+          // holes for water bodies etc. wrongly leaving false-comfortable
+          // gaps) AND inside the mapped city footprint (excludes the wide
+          // upstream/downstream clearance buffer the solved wind-aligned
+          // domain carries beyond the actual mapped terrain — that buffer is
+          // real CFD data, but rendering it read as the study spilling out
+          // past its own bounds since it's ocean/unmapped land, not city).
+          const centerX = field.origin[0] + (column + 0.5) * field.dx;
+          const centerZ = field.origin[1] + (row + 0.5) * field.dz;
+          if (!field.valid?.[row * field.width + column] || !pointInLidarFootprint(centerX, centerZ)) continue;
+        } else {
+          const centerX = field.origin[0] + (column + 0.5) * field.dx;
+          const centerZ = field.origin[1] + (row + 0.5) * field.dz;
+          if (!pointInLidarFootprint(centerX, centerZ)) continue;
+        }
         const a = row * rowWidth + column;
         const b = a + 1;
         const c = a + rowWidth;
@@ -5239,10 +5859,30 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function spawnWindParticle(field) {
-    const makeParticle = (x, z, age) => ({
-      x, z, spawnX: x, spawnZ: z, age, u: 0, v: 0,
-      trail: Array.from({ length: windTrailPoints }, () => [x, z]),
+    const makeParticle = (x, worldY, z, age, heightAboveGround) => ({
+      x, worldY, z, spawnX: x, spawnY: worldY, spawnZ: z, age, heightAboveGround, u: 0, w: 0, v: 0,
+      trail: Array.from({ length: windTrailPoints }, () => [x, worldY, z]),
     });
+    if (windState.dataMode === 'cfd' && windState.cfd) {
+      // Seed across the user's flow box (like the old "draw a box, then
+      // simulate" domain), not a fixed curtain over the whole ~2600 m solved
+      // domain — that mostly seeded particles far upstream of the streets
+      // anyone actually wanted to look at, so they read as a small,
+      // disconnected patch of dashes rather than flow through the city.
+      const half = windState.size / 2;
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        const x = windState.center[0] + (Math.random() * 2 - 1) * half;
+        const z = windState.center[1] + (Math.random() * 2 - 1) * half;
+        const groundY = terrainHeightAt(x, z);
+        const heightAboveGround = windState.volumeVisible
+          ? 2 + Math.random() ** 1.5 * Math.max(3, windState.flowBoxHeight - 2)
+          : windState.cfdGroundHeight + Math.random() * 3;
+        const worldY = groundY + heightAboveGround;
+        if (sampleCfd(x, worldY, z) && !windPointInsideBuilding(x, z, worldY)) {
+          return makeParticle(x, worldY, z, Math.random() * 7, heightAboveGround);
+        }
+      }
+    }
     const minX = field.origin[0];
     const maxX = minX + field.width * field.dx;
     const minZ = field.origin[1];
@@ -5250,15 +5890,20 @@ export async function startWebGLScene(canvas, status) {
     for (let attempt = 0; attempt < 48; attempt += 1) {
       const x = minX + Math.random() * (maxX - minX);
       const z = minZ + Math.random() * (maxZ - minZ);
-      if (pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z)) {
-        return makeParticle(x, z, Math.random() * 8);
+      const heightAboveGround = windState.volumeVisible
+        ? 3 + Math.random() ** 1.35 * Math.max(3, windState.volumeHeight - 3)
+        : 5;
+      const worldY = terrainHeightAt(x, z) + heightAboveGround;
+      if (pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, worldY)) {
+        return makeParticle(x, worldY, z, Math.random() * 8, heightAboveGround);
       }
     }
     // A deterministic fallback keeps the particle count stable even if a very
     // small analysis box happens to be mostly occupied by a large footprint.
     const fallbackX = clamp(windState.center[0], minX, maxX);
     const fallbackZ = clamp(windState.center[1], minZ, maxZ);
-    return makeParticle(fallbackX, fallbackZ, 0);
+    const fallbackHeight = windState.volumeVisible ? windState.volumeHeight : 5;
+    return makeParticle(fallbackX, terrainHeightAt(fallbackX, fallbackZ) + fallbackHeight, fallbackZ, 0, fallbackHeight);
   }
 
   function resetWindParticles() {
@@ -5266,12 +5911,13 @@ export async function startWebGLScene(canvas, status) {
     windState.particles = Array.from({ length: count }, () => spawnWindParticle(windState.field));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(count * (windTrailPoints - 1) * 6), 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(count * (windTrailPoints - 1) * 6), 3));
     if (windPoints) {
       windGroup.remove(windPoints);
       disposeObject(windPoints);
     }
     windPoints = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({
-      color: 0xffffff,
+      vertexColors: true,
       transparent: true,
       opacity: 0.86,
       depthTest: true,
@@ -5280,7 +5926,7 @@ export async function startWebGLScene(canvas, status) {
     }));
     windPoints.name = 'wind-gusts';
     windPoints.renderOrder = 3;
-    windPoints.visible = windState.flowlinesVisible && windState.analysisMode === 'direction';
+    windPoints.visible = windState.flowlinesVisible && windState.analysisMode !== 'comfort' && windState.cfdView === 'flow';
     windGroup.add(windPoints);
   }
 
@@ -5297,75 +5943,195 @@ export async function startWebGLScene(canvas, status) {
       windHandle.name = 'wind-resize-handle';
       windGroup.add(windBox, windEdges, windHandle);
     }
-    windBox.scale.set(windState.size, 1, windState.size);
+    const boxHeight = windState.volumeVisible ? windState.flowBoxHeight : 45;
+    windBox.scale.set(windState.size, boxHeight / 45, windState.size);
     windBox.material.opacity = windState.moveMode ? 0.14 : 0.035;
-    const y = terrainHeightAt(windState.center[0], windState.center[1]) + 24;
+    const y = terrainHeightAt(windState.center[0], windState.center[1]) + boxHeight * 0.5 + 1;
     windBox.position.set(windState.center[0], y, windState.center[1]);
     windEdges.position.copy(windBox.position);
     windEdges.scale.copy(windBox.scale);
     const half = windState.size * 0.5;
-    windHandle.position.set(windState.center[0] + half, y + 22, windState.center[1] + half);
+    windHandle.position.set(windState.center[0] + half, y + boxHeight * 0.5, windState.center[1] + half);
     windHandle.visible = windState.moveMode;
+    const showPreviewBox = windState.analysisMode === 'direction' && windState.cfdView === 'flow';
+    windBox.visible = showPreviewBox;
+    windEdges.visible = showPreviewBox;
+    windHandle.visible = showPreviewBox && windState.moveMode;
     requestRender();
   }
 
   async function simulateWind() {
+    if (windState.analysisMode === 'comfort') {
+      await runComfortStudy();
+      return;
+    }
+    await loadCfdWind(windState.direction);
+  }
+
+  // Lanczos approximation of Γ(x), g=7, n=9 — accurate to ~1e-10 over the
+  // shape-parameter range (~1.5–6) the ERA5 Weibull fits use.
+  const GAMMA_COEFFICIENTS = [
+    0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+    771.32342877765313, -176.61502916214059, 12.507343278686905,
+    -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+  ];
+  function gamma(x) {
+    if (x < 0.5) return Math.PI / (Math.sin(Math.PI * x) * gamma(1 - x));
+    const z = x - 1;
+    let sum = GAMMA_COEFFICIENTS[0];
+    for (let index = 1; index < 9; index += 1) sum += GAMMA_COEFFICIENTS[index] / (z + index);
+    const t = z + 7.5;
+    return Math.sqrt(2 * Math.PI) * Math.pow(t, z + 0.5) * Math.exp(-t) * sum;
+  }
+  function weibullExceedance(meanSpeed, thresholdMps, shape) {
+    if (!(meanSpeed > 1e-9)) return 0;
+    const scale = meanSpeed / gamma(1 + 1 / shape);
+    return Math.exp(-Math.pow(thresholdMps / scale, shape));
+  }
+
+  const COMFORT_THRESHOLDS_MPS = [2.5, 4, 6, 8, 10];
+  // Matches server/wind_metrics.py COMFORT_CATEGORIES so the inline results
+  // summary (setupWindResults in app.js) can read field.comfort_categories
+  // the same way it already does for the old screening comfort field.
+  const COMFORT_CATEGORY_DEFS = [
+    { code: 0, key: 'long_sitting', label: 'Long sitting', max_speed_mps: 2.5 },
+    { code: 1, key: 'short_sitting', label: 'Short sitting', max_speed_mps: 4.0 },
+    { code: 2, key: 'standing', label: 'Standing', max_speed_mps: 6.0 },
+    { code: 3, key: 'strolling', label: 'Strolling', max_speed_mps: 8.0 },
+    { code: 4, key: 'business_walking', label: 'Business walking', max_speed_mps: 10.0 },
+    { code: 5, key: 'uncomfortable', label: 'Uncomfortable', max_speed_mps: null },
+  ];
+
+  // Comfort as "weighted screening across 16 directions" only made sense
+  // while every direction shared one fast proxy solver. Now that Direction
+  // is OpenFOAM, Comfort weights whichever directions actually have a solved
+  // case by their ERA5 wind-rose frequency and Weibull exceedance — the same
+  // math server/field.py used, just summed over 1 term instead of 16. It
+  // never interpolates or assumes calm for the missing sectors; it excludes
+  // them, so the result is an honest lower bound, not a full annual study.
+  async function runComfortStudy() {
     windSimulate.disabled = true;
-    windSimulate.textContent = 'Simulating…';
-    const payload = {
-      center_local: [...windState.center],
-      size_m: windState.size,
-      direction_deg: windState.direction,
-      season: windState.season,
-      reference_speed_mps: windState.speed,
-      reference_height_m: windState.referenceHeight,
-      height_m: windState.height,
-      resolution_m: windState.resolution,
-      stability: windState.stability,
-      exceedance_threshold_mps: windState.exceedanceThreshold,
-      forcing_mode: windState.forcingMode,
-    };
+    windSimulate.textContent = 'Weighting OpenFOAM sectors…';
+    windStatus.textContent = 'Loading ERA5 sector frequencies…';
     try {
-      const endpoint = windState.analysisMode === 'comfort' ? 'comfort' : 'preview';
-      const response = await fetch(`${windApi}/wind/${endpoint}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const params = new URLSearchParams({ season: windState.season, stability: windState.stability });
+      const response = await fetch(`${windApi}/wind/climatology/sectors?${params}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      windState.field = await response.json();
-      const forcingNote = windState.analysisMode === 'comfort'
-        ? `${windState.field.direction_count || 16}-direction ${windState.season} wind rose`
-        : windState.field.era5_profile
-        ? `ERA5 ${windState.field.era5_profile.season} ${windState.field.era5_profile.sector.toUpperCase()}`
-        : 'manual forcing';
-      windStatus.textContent = `${forcingNote} · ${windState.field.polygon_count || 0} zones · preview`;
-    } catch (error) {
-      if (windState.analysisMode === 'comfort') {
-        windState.field = null;
-        windStatus.textContent = `Comfort study unavailable (${error.message})`;
-      } else {
-        windState.field = fallbackWindField();
-        windStatus.textContent = `Local visual fallback · API unavailable (${error.message})`;
+      const climatology = await response.json();
+      const resolved = CFD_CASES
+        .map(cfdCase => ({ cfdCase, sector: climatology.sectors.find(item => item.sector === cfdCase.sector) }))
+        .filter(entry => entry.sector);
+      if (!resolved.length) throw new Error('no ERA5 sector data for any solved OpenFOAM case');
+      const coverage = resolved.reduce((sum, entry) => sum + entry.sector.frequency_fraction, 0);
+
+      // A fixed grid, independent of any one case's own solved-domain framing
+      // (which shifts slightly per direction), so every resolved case's
+      // contribution samples the exact same cells and can be summed directly.
+      const domainCenter = [0, 0];
+      const domainSize = 2600;
+      const half = domainSize / 2;
+      const resolution = 20;
+      const width = Math.max(4, Math.round(domainSize / resolution));
+      const height = width;
+      const dx = domainSize / width;
+      const dz = domainSize / height;
+      const originX = domainCenter[0] - half;
+      const originZ = domainCenter[1] - half;
+      const cellCount = width * height;
+      const speed = new Array(cellCount).fill(0);
+      const u = new Array(cellCount).fill(0);
+      const v = new Array(cellCount).fill(0);
+      // Tracks cells that got an OpenFOAM sample from at least one resolved
+      // case. Each case's own wind-aligned solved volume rotated inside this
+      // axis-aligned sampling grid leaves its corners — and the odd internal
+      // cell that landed outside the valid mesh — unsampled; without this,
+      // those cells defaulted to "long sitting" (the first exceedance loop
+      // below sees all-zero exceedance and picks the calmest category),
+      // which both drew as a false-comfortable colour and inflated the
+      // comfort share stats.
+      const valid = new Uint8Array(cellCount);
+      const exceedanceByThreshold = COMFORT_THRESHOLDS_MPS.map(() => new Array(cellCount).fill(0));
+      // Load and sample one case's volume at a time — every resolved
+      // direction contributes its own weighted share to the same grid, never
+      // interpolated with the others, only summed.
+      for (const { cfdCase, sector } of resolved) {
+        windStatus.textContent = `Sampling ${cfdCase.label}…`;
+        await ensureCfdCaseLoaded(cfdCase.direction_deg);
+        for (let row = 0; row < height; row += 1) {
+          for (let column = 0; column < width; column += 1) {
+            const x = originX + (column + 0.5) * dx;
+            const z = originZ + (row + 0.5) * dz;
+            const worldY = terrainHeightAt(x, z) + windState.cfdGroundHeight;
+            const index = row * width + column;
+            const sample = sampleCfd(x, worldY, z);
+            if (!sample) continue;
+            valid[index] = 1;
+            speed[index] += sample.speed * sector.frequency_fraction;
+            u[index] += sample.u * sector.frequency_fraction;
+            v[index] += sample.v * sector.frequency_fraction;
+            COMFORT_THRESHOLDS_MPS.forEach((threshold, thresholdIndex) => {
+              exceedanceByThreshold[thresholdIndex][index]
+                += weibullExceedance(sample.speed, threshold, sector.weibull_shape) * sector.frequency_fraction;
+            });
+          }
+        }
       }
+      const comfortCategory = new Array(cellCount).fill(5);
+      for (let index = 0; index < cellCount; index += 1) {
+        if (!valid[index]) continue;
+        for (let thresholdIndex = 0; thresholdIndex < COMFORT_THRESHOLDS_MPS.length; thresholdIndex += 1) {
+          if (exceedanceByThreshold[thresholdIndex][index] <= 0.05) {
+            comfortCategory[index] = thresholdIndex;
+            break;
+          }
+        }
+      }
+      // "Standing" (6 m/s) is the representative single-threshold exceedance
+      // reported in the inline summary below; the category breakdown above
+      // already covers all five activity thresholds at once.
+      const standingIndex = COMFORT_THRESHOLDS_MPS.indexOf(6);
+      windState.field = {
+        analysis_mode: 'comfort',
+        cfd: true,
+        version: 'cfd-comfort-v1',
+        validation_status: windState.cfd?.manifest.validation_status || 'exploratory_unvalidated_pilot',
+        comfort_standard: 'Lawson-LDDC-style activity thresholds, OpenFOAM + ERA5 wind-rose weighted (resolved sectors only)',
+        season: windState.season,
+        height_m: windState.cfdGroundHeight,
+        origin: [originX, originZ], width, height, dx, dz,
+        speed, u, v, valid, comfort_category: comfortCategory,
+        comfort_categories: COMFORT_CATEGORY_DEFS,
+        exceedance: { threshold_mps: 6, probability: exceedanceByThreshold[standingIndex] },
+        uncertainty: { relative_fraction: 0.35 },
+        direction_count: resolved.length,
+        coverage_fraction: coverage,
+      };
+      const sectorList = resolved.map(entry => entry.sector.sector.toUpperCase()).join(', ');
+      windStatus.textContent = `OpenFOAM comfort · ${resolved.length}/16 sectors resolved (${sectorList}) · `
+        + `${(coverage * 100).toFixed(1)}% of ${windState.season} wind hours covered · lower-bound estimate, `
+        + `unsolved directions excluded.`;
+    } catch (error) {
+      windState.field = null;
+      windStatus.textContent = `Comfort study unavailable (${error.message})`;
     }
     windSimulate.disabled = false;
-    windSimulate.textContent = windState.analysisMode === 'comfort' ? 'Run 16-direction comfort study' : 'Run direction study';
-    const values = windState.field?.speed || [];
-    if (windState.field?.analysis_mode === 'comfort') {
-      windGradient?.classList.add('comfort');
-      windLegendLow.innerHTML = '<b>Long sitting</b> · suitable';
-      windLegendHigh.innerHTML = '<b>Uncomfortable</b> · mitigate';
-    } else {
-      windGradient?.classList.remove('comfort');
-      windLegendLow.innerHTML = `<b id="wind-legend-min">${values.length ? Math.min(...values).toFixed(1) : '—'}</b> m/s · low`;
-      windLegendHigh.innerHTML = `<b id="wind-legend-max">${values.length ? Math.max(...values).toFixed(1) : '—'}</b> m/s · high`;
-    }
+    windSimulate.textContent = 'Run OpenFOAM-weighted comfort study';
+    windGradient?.classList.add('comfort');
+    windLegendLow.innerHTML = '<b>Long sitting</b> · suitable';
+    windLegendHigh.innerHTML = '<b>Uncomfortable</b> · mitigate';
+    renderComfortLegend();
     windState.lastTime = performance.now();
-    if (!windState.field) return;
+    if (!windState.field) {
+      requestRender();
+      return;
+    }
+    // Comfort has no surface-visibility toggle of its own (the Appearance
+    // section is Direction-only); its heatmap is the entire display, so it
+    // must be visible regardless of what Direction last left surfaceVisible
+    // at.
+    windState.surfaceVisible = true;
     dispatchEvent(new CustomEvent('climate-wind-result', { detail: windState.field }));
     buildWindHeatmap();
-    if (windState.analysisMode === 'direction') resetWindParticles();
     requestRender();
   }
 
@@ -5375,67 +6141,111 @@ export async function startWebGLScene(canvas, status) {
     windState.lastTime = now;
     const half = windState.size * 0.5;
     const positions = windPoints.geometry.attributes.position.array;
+    const colors = windPoints.geometry.attributes.color.array;
+    const fieldSpeeds = windState.field.speed || [];
+    const minimumSpeed = fieldSpeeds.length ? Math.min(...fieldSpeeds) : 0;
+    const maximumSpeed = Math.max(...fieldSpeeds, windState.speed, 0.1) * (windState.volumeVisible ? 1.8 : 1);
     windState.particles.forEach((particle, index) => {
-      const target = redirectWindFlow(particle.x, particle.z, sampleWind(particle.x, particle.z));
+      const cfdMode = windState.dataMode === 'cfd' && windState.cfd;
+      const worldY = cfdMode ? particle.worldY : terrainHeightAt(particle.x, particle.z) + particle.heightAboveGround;
+      const target = redirectWindFlow(
+        particle.x, particle.z,
+        sampleWindAtHeight(particle.x, particle.z, particle.heightAboveGround, worldY),
+        false, worldY,
+      );
       // Relax toward the redirected vector over several frames. Instant
       // reflections look like teleports at corners; this gives each gust a
       // short, stable turn radius while preserving the field's speed.
       const blend = 1 - Math.exp(-elapsed * 7);
       particle.u += (target.u - particle.u) * blend;
+      particle.w += ((target.w || 0) - particle.w) * blend;
       particle.v += (target.v - particle.v) * blend;
-      let sampled = { u: particle.u, v: particle.v, speed: Math.hypot(particle.u, particle.v) };
+      let sampled = { u: particle.u, w: particle.w, v: particle.v, speed: Math.hypot(particle.u, particle.w, particle.v) };
       const nextX = particle.x + sampled.u * elapsed * 5.5;
+      const nextY = worldY + sampled.w * elapsed * 5.5;
       const nextZ = particle.z + sampled.v * elapsed * 5.5;
       particle.age += elapsed;
-      const outsideDomain = Math.abs(nextX - windState.center[0]) > half || Math.abs(nextZ - windState.center[1]) > half;
-      const midpointBlocked = windPointInsideBuilding((particle.x + nextX) * 0.5, (particle.z + nextZ) * 0.5);
+      // Bound CFD particles to the flow box (with a little overshoot so a
+      // wake can visibly clear the edge) rather than the whole ~2600 m
+      // solved domain — otherwise a fast respawn near the box reads as
+      // "dies after a small section" while the rest of the domain sits empty.
+      const outsideDomain = cfdMode
+        ? !sampleCfd(nextX, nextY, nextZ)
+          || Math.abs(nextX - windState.center[0]) > half + 60
+          || Math.abs(nextZ - windState.center[1]) > half + 60
+        : Math.abs(nextX - windState.center[0]) > half || Math.abs(nextZ - windState.center[1]) > half;
+      const nextWorldY = cfdMode ? nextY : terrainHeightAt(nextX, nextZ) + particle.heightAboveGround;
+      const midpointX = (particle.x + nextX) * 0.5;
+      const midpointZ = (particle.z + nextZ) * 0.5;
+      const midpointWorldY = cfdMode ? (worldY + nextY) * 0.5 : terrainHeightAt(midpointX, midpointZ) + particle.heightAboveGround;
+      const midpointBlocked = windPointInsideBuilding(midpointX, midpointZ, midpointWorldY);
       const displacementFromSpawn = Math.hypot(particle.x - particle.spawnX, particle.z - particle.spawnZ);
       // A numerical recirculation or a narrow collision pocket should not
       // keep the same streak alive forever. Re-seed particles that have not
       // made meaningful downstream progress after several seconds.
       if (outsideDomain || particle.age > 9 || (particle.age > 6 && displacementFromSpawn < 20)) {
         Object.assign(particle, spawnWindParticle(windState.field));
-        const respawnTarget = redirectWindFlow(particle.x, particle.z, sampleWind(particle.x, particle.z));
+        const respawnWorldY = cfdMode ? particle.worldY : terrainHeightAt(particle.x, particle.z) + particle.heightAboveGround;
+        const respawnTarget = redirectWindFlow(
+          particle.x, particle.z,
+          sampleWindAtHeight(particle.x, particle.z, particle.heightAboveGround, respawnWorldY),
+          false, respawnWorldY,
+        );
         particle.u = respawnTarget.u;
+        particle.w = respawnTarget.w || 0;
         particle.v = respawnTarget.v;
-        sampled = { u: particle.u, v: particle.v, speed: Math.hypot(particle.u, particle.v) };
-      } else if (windPointInsideBuilding(nextX, nextZ) || midpointBlocked) {
+        sampled = { u: particle.u, w: particle.w, v: particle.v, speed: Math.hypot(particle.u, particle.w, particle.v) };
+      } else if (windPointInsideBuilding(nextX, nextZ, nextWorldY) || midpointBlocked) {
         // Reflect the attempted step into a wall onto the nearest facade
         // tangent, then push the point just outside the footprint. This is a
         // stable pedestrian-height collision response rather than a respawn.
-        sampled = redirectWindFlow(particle.x, particle.z, sampled, true);
+        sampled = redirectWindFlow(particle.x, particle.z, sampled, true, worldY);
         particle.u += (sampled.u - particle.u) * blend;
         particle.v += (sampled.v - particle.v) * blend;
-        sampled = { u: particle.u, v: particle.v, speed: Math.hypot(particle.u, particle.v) };
+        sampled = { u: particle.u, w: particle.w, v: particle.v, speed: Math.hypot(particle.u, particle.w, particle.v) };
         const redirectedX = particle.x + sampled.u * elapsed * 5.5;
         const redirectedZ = particle.z + sampled.v * elapsed * 5.5;
-        if (windPointInsideBuilding(redirectedX, redirectedZ)) {
-          [particle.x, particle.z] = pushWindPointOutsideBuilding(particle.x, particle.z);
+        const redirectedWorldY = terrainHeightAt(redirectedX, redirectedZ) + particle.heightAboveGround;
+        if (windPointInsideBuilding(redirectedX, redirectedZ, redirectedWorldY)) {
+          [particle.x, particle.z] = pushWindPointOutsideBuilding(particle.x, particle.z, worldY);
         } else {
           particle.x = redirectedX;
           particle.z = redirectedZ;
         }
-        particle.trail = Array.from({ length: windTrailPoints }, () => [particle.x, particle.z]);
+        particle.worldY = cfdMode ? worldY : terrainHeightAt(particle.x, particle.z) + particle.heightAboveGround;
+        particle.trail = Array.from({ length: windTrailPoints }, () => [particle.x, particle.worldY, particle.z]);
       } else {
         particle.x = nextX;
+        particle.worldY = nextWorldY;
         particle.z = nextZ;
       }
       particle.trail.shift();
-      particle.trail.push([particle.x, particle.z]);
+      particle.trail.push([particle.x, particle.worldY, particle.z]);
       const baseOffset = index * (windTrailPoints - 1) * 6;
       for (let trailIndex = 0; trailIndex < windTrailPoints - 1; trailIndex += 1) {
-        const [tailX, tailZ] = particle.trail[trailIndex];
-        const [headX, headZ] = particle.trail[trailIndex + 1];
+        const [tailX, tailY, tailZ] = particle.trail[trailIndex];
+        const [headX, headY, headZ] = particle.trail[trailIndex + 1];
         const offset = baseOffset + trailIndex * 6;
         positions[offset] = tailX;
-        positions[offset + 1] = terrainHeightAt(tailX, tailZ) + 5;
+        positions[offset + 1] = cfdMode ? tailY : terrainHeightAt(tailX, tailZ) + particle.heightAboveGround;
         positions[offset + 2] = tailZ;
         positions[offset + 3] = headX;
-        positions[offset + 4] = terrainHeightAt(headX, headZ) + 5;
+        positions[offset + 4] = cfdMode ? headY : terrainHeightAt(headX, headZ) + particle.heightAboveGround;
         positions[offset + 5] = headZ;
+        const segmentSample = cfdMode ? sampleCfd(headX, headY, headZ) : sampleWindAtHeight(headX, headZ, particle.heightAboveGround);
+        const color = windState.dataMode === 'cfd'
+          ? cfdColor(segmentSample?.speed || 0, 'speed')
+          : windColor(segmentSample.speed, minimumSpeed, maximumSpeed);
+        const fade = 0.24 + 0.76 * (trailIndex / (windTrailPoints - 2));
+        for (let colorOffset = 0; colorOffset < 6; colorOffset += 3) {
+          colors[offset + colorOffset] = color.r * fade;
+          colors[offset + colorOffset + 1] = color.g * fade;
+          colors[offset + colorOffset + 2] = color.b * fade;
+        }
       }
     });
     windPoints.geometry.attributes.position.needsUpdate = true;
+    windPoints.geometry.attributes.color.needsUpdate = true;
   }
 
   function pointerGround(event) {
@@ -5606,11 +6416,28 @@ export async function startWebGLScene(canvas, status) {
           center: [...windState.center],
           size: windState.size,
         };
-        windState.field = null;
-        clearWindSimulation();
         windStatus.textContent = windDrag.mode === 'resize'
-          ? 'Resizing domain · release, then simulate wind.'
-          : 'Moving domain · release, then simulate wind.';
+          ? 'Resizing flow box…'
+          : 'Moving flow box…';
+        capturePointer(event);
+        return;
+      }
+    }
+    if (windState.enabled && windState.analysisMode === 'direction' && windState.cfdView === 'slice'
+      && windCfdSlice && event.button === 0) {
+      const hit = pointerRaycaster(event).intersectObject(windCfdSlice, true)[0];
+      if (hit) {
+        const fixedAxis = sliceFixedAxis();
+        sliceDrag = {
+          axisDirection: sliceAxisWorldDirection(fixedAxis),
+          axisLength: sliceAxisWorldLength(fixedAxis),
+          dragPlane: new THREE.Plane().setFromNormalAndCoplanarPoint(
+            camera.getWorldDirection(new THREE.Vector3()), hit.point,
+          ),
+          startPoint: hit.point.clone(),
+          startPosition: windState.slicePosition,
+        };
+        windStatus.textContent = 'Moving slice…';
         capturePointer(event);
         return;
       }
@@ -5664,8 +6491,17 @@ export async function startWebGLScene(canvas, status) {
         windState.center[0] = clamp(windDrag.center[0] + point.x - windDrag.start.x, left + windState.size / 2, right - windState.size / 2);
         windState.center[1] = clamp(windDrag.center[1] + point.z - windDrag.start.z, minZ + windState.size / 2, maxZ - windState.size / 2);
       }
-      windState.field = null;
       updateWindBox();
+      return;
+    }
+    if (sliceDrag) {
+      const point = new THREE.Vector3();
+      if (!pointerRaycaster(event).ray.intersectPlane(sliceDrag.dragPlane, point)) return;
+      const distanceAlongAxis = point.clone().sub(sliceDrag.startPoint).dot(sliceDrag.axisDirection);
+      windState.slicePosition = clamp(sliceDrag.startPosition + distanceAlongAxis / sliceDrag.axisLength, 0, 1);
+      if (windSlicePosition) windSlicePosition.value = String(Math.round(windState.slicePosition * 100));
+      buildCfdSlice();
+      requestRender();
       return;
     }
     if (!drag) return;
@@ -5702,11 +6538,19 @@ export async function startWebGLScene(canvas, status) {
     }
     sunDrag = null;
     if (windDrag && windState.moveMode) {
+      // The OpenFOAM volume is already loaded; moving the box only changes
+      // where flowlines seed, so reseed immediately instead of asking for a
+      // full "Simulate" reload.
+      if (windState.field && windState.analysisMode === 'direction') resetWindParticles();
       windStatus.textContent = windDrag.mode === 'resize'
-        ? `Domain resized to ${windState.size} m · click Simulate wind.`
-        : 'Domain moved · click Simulate wind.';
+        ? `Flow box resized to ${windState.size} m.`
+        : 'Flow box moved.';
     }
     windDrag = null;
+    if (sliceDrag) {
+      windStatus.textContent = 'Slice moved.';
+    }
+    sliceDrag = null;
   });
   canvas.addEventListener('pointercancel', event => {
     if (event.pointerId === trafficState.pointerId) {
@@ -5719,6 +6563,7 @@ export async function startWebGLScene(canvas, status) {
     sunDrag = null;
     drag = null;
     windDrag = null;
+    sliceDrag = null;
   });
   canvas.addEventListener('wheel', event => {
     event.preventDefault();
@@ -5790,78 +6635,181 @@ export async function startWebGLScene(canvas, status) {
   function setWindAnalysisMode(mode) {
     if (!['direction', 'comfort'].includes(mode)) return;
     windState.analysisMode = mode;
+    // Both lenses are OpenFOAM-sourced now; the screening proxy is retired
+    // from this UI. dataMode stays 'cfd' so the particle/sampling code paths
+    // that already special-case CFD keep working unchanged.
+    windState.dataMode = 'cfd';
     windLensButtons.filter(button => ['direction', 'comfort'].includes(button.dataset.windLens)).forEach(button => {
       const active = button.dataset.windLens === mode;
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', String(active));
     });
-    if (windDirectionControls) windDirectionControls.hidden = mode === 'comfort';
+    if (windDirectionControls) windDirectionControls.hidden = mode !== 'direction';
+    if (windCfdControls) windCfdControls.hidden = mode !== 'direction';
+    if (windClimateControls) windClimateControls.hidden = mode !== 'comfort';
+    // Flow region (box move/resize + flowline appearance) only applies to
+    // Direction's Flow view.
+    if (windFlowBoxControls) windFlowBoxControls.hidden = mode !== 'direction' || windState.cfdView !== 'flow';
+    updateWindBox();
+    windPanel?.classList.add('cfd-active');
+    if (windModeBadge) windModeBadge.textContent = mode === 'comfort' ? 'CFD · COMFORT (PARTIAL)' : 'CFD · FULL CBD';
+    if (windSourceTitle) windSourceTitle.textContent = mode === 'comfort' ? 'OpenFOAM-weighted comfort' : 'OpenFOAM urban airflow';
+    if (windSourceDetail) windSourceDetail.textContent = mode === 'comfort'
+      ? 'ERA5 wind rose · resolved OpenFOAM sectors only'
+      : 'Pick a solved direction, then load the result';
     if (windFlowlinesVisible) windFlowlinesVisible.disabled = mode === 'comfort';
-    const flowlinesLens = windLensButtons.find(button => button.dataset.windLens === 'flowlines');
-    if (flowlinesLens) flowlinesLens.disabled = mode === 'comfort';
-    windSimulate.textContent = mode === 'comfort' ? 'Run 16-direction comfort study' : 'Run direction study';
+    if (windVolumeVisible) windVolumeVisible.disabled = mode === 'comfort';
+    if (mode === 'comfort' && windState.volumeVisible) {
+      windState.volumeVisible = false;
+      if (windVolumeVisible) windVolumeVisible.checked = false;
+    }
+    windSimulate.textContent = mode === 'comfort' ? 'Run OpenFOAM-weighted comfort study' : 'Load OpenFOAM result';
     windState.field = null;
     clearWindSimulation();
     windStatus.textContent = mode === 'comfort'
-      ? 'Comfort combines 16 directional fields with the selected ERA5 wind rose.'
-      : 'Choose a wind direction, then run the study.';
+      ? 'Weights each solved OpenFOAM direction by its ERA5 wind-rose frequency. Unsolved directions are excluded, not assumed calm.'
+      : 'Pick a solved wind direction, then load the OpenFOAM result.';
     requestRender();
   }
 
   windLensButtons.forEach(button => button.addEventListener('click', () => {
     const lens = button.dataset.windLens;
-    if (lens === 'direction' || lens === 'comfort') {
-      setWindAnalysisMode(lens);
-    } else if (lens === 'surface') {
-      windState.surfaceVisible = !windState.surfaceVisible;
-      if (windSurfaceVisible) windSurfaceVisible.checked = windState.surfaceVisible;
-      button.classList.toggle('active', windState.surfaceVisible);
-      button.setAttribute('aria-pressed', String(windState.surfaceVisible));
-      if (windHeatMesh) windHeatMesh.visible = windState.surfaceVisible;
-      if (windState.field && windState.enabled && windState.surfaceVisible) hideStreetLayersForWind();
-      else restoreStreetLayersAfterWind();
-      requestRender();
-    } else if (lens === 'flowlines') {
-      windState.flowlinesVisible = !windState.flowlinesVisible;
-      if (windFlowlinesVisible) windFlowlinesVisible.checked = windState.flowlinesVisible;
-      button.classList.toggle('active', windState.flowlinesVisible);
-      button.setAttribute('aria-pressed', String(windState.flowlinesVisible));
-      if (windPoints) windPoints.visible = windState.flowlinesVisible && windState.analysisMode === 'direction';
-      requestRender();
-    }
+    if (lens === 'direction' || lens === 'comfort') setWindAnalysisMode(lens);
   }));
 
   windDirectionPresets.forEach(button => button.addEventListener('click', () => {
-    if (!windDirection) return;
-    windDirection.value = button.dataset.windDirection;
-    windDirection.dispatchEvent(new Event('change', { bubbles: true }));
-  }));
-  windSurfaceVisible?.addEventListener('change', event => {
-    windState.surfaceVisible = event.target.checked;
-    const button = windLensButtons.find(item => item.dataset.windLens === 'surface');
-    button?.classList.toggle('active', windState.surfaceVisible);
-    button?.setAttribute('aria-pressed', String(windState.surfaceVisible));
-    if (windHeatMesh) windHeatMesh.visible = windState.surfaceVisible;
-    if (windState.field && windState.enabled && windState.surfaceVisible) hideStreetLayersForWind();
-    else restoreStreetLayersAfterWind();
+    const directionDeg = Number(button.dataset.windDirection);
+    if (!findCfdCase(directionDeg)) return;
+    windState.direction = directionDeg;
+    windDirectionPresets.forEach(item => item.classList.toggle('active', Number(item.dataset.windDirection) === directionDeg));
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = `${button.textContent} selected · click Load OpenFOAM result.`;
     requestRender();
-  });
+  }));
   windFlowlinesVisible?.addEventListener('change', event => {
     windState.flowlinesVisible = event.target.checked;
-    const button = windLensButtons.find(item => item.dataset.windLens === 'flowlines');
-    button?.classList.toggle('active', windState.flowlinesVisible);
-    button?.setAttribute('aria-pressed', String(windState.flowlinesVisible));
-    if (windPoints) windPoints.visible = windState.flowlinesVisible && windState.analysisMode === 'direction';
+    if (windPoints) windPoints.visible = windState.flowlinesVisible && windState.analysisMode !== 'comfort' && windState.cfdView === 'flow';
+    requestRender();
+  });
+  windVolumeVisible?.addEventListener('change', event => {
+    windState.volumeVisible = event.target.checked;
+    if (windFlowBoxHeightRow) windFlowBoxHeightRow.hidden = !windState.volumeVisible;
+    if (windState.field && windState.analysisMode !== 'comfort') resetWindParticles();
+    updateWindBox();
+    windStatus.textContent = windState.volumeVisible
+      ? `Flowlines seed through ${windState.flowBoxHeight} m of box height.`
+      : 'Flowlines seed at pedestrian height only.';
+    requestRender();
+  });
+  windFlowBoxHeight?.addEventListener('input', event => {
+    windState.flowBoxHeight = Number(event.target.value) || 80;
+    if (windFlowBoxHeightValue) windFlowBoxHeightValue.textContent = String(windState.flowBoxHeight);
+    if (windState.field && windState.volumeVisible && windState.analysisMode !== 'comfort') resetWindParticles();
+    updateWindBox();
     requestRender();
   });
   windFlowlineCount?.addEventListener('change', event => {
     windState.particleCount = Number(event.target.value) || 800;
-    if (windState.field && windState.analysisMode === 'direction') resetWindParticles();
+    if (windState.field && windState.analysisMode !== 'comfort') resetWindParticles();
     requestRender();
   });
   windAnimationSpeed?.addEventListener('input', event => {
     windState.animationSpeed = Number(event.target.value) / 100;
     if (windAnimationSpeedValue) windAnimationSpeedValue.textContent = `${event.target.value}%`;
+  });
+  windCfdViewButtons.forEach(button => button.addEventListener('click', () => {
+    windState.cfdView = button.dataset.cfdView;
+    windCfdViewButtons.forEach(candidate => {
+      const active = candidate === button;
+      candidate.classList.toggle('active', active);
+      candidate.setAttribute('aria-pressed', String(active));
+    });
+    if (windState.cfdView === 'facade') {
+      windState.cfdField = 'p';
+      if (windCfdField) windCfdField.value = 'p';
+    }
+    if (windSliceControls) windSliceControls.hidden = windState.cfdView !== 'slice';
+    if (windGroundControls) windGroundControls.hidden = windState.cfdView !== 'ground';
+    if (windFlowBoxControls) windFlowBoxControls.hidden = windState.cfdView !== 'flow';
+    if (windState.cfd && windState.cfdView === 'flow') resetWindParticles();
+    updateWindBox();
+    buildCfdView();
+    if (windState.cfd) {
+      windStatus.textContent = windState.cfdView === 'ground'
+        ? `${windState.cfdGroundHeight.toFixed(1)} m terrain-following OpenFOAM field · solved cells only.`
+        : windState.cfdView === 'slice'
+          ? 'Move the plane and crop its two dimensions with the slice controls.'
+          : windState.cfdView === 'facade'
+            ? 'OpenFOAM kinematic pressure mapped to façades inside the solved domain.'
+            : 'Resolved 3D pathlines through the OpenFOAM velocity volume.';
+    }
+    requestRender();
+  }));
+  windCfdField?.addEventListener('change', event => {
+    windState.cfdField = event.target.value;
+    if (windState.cfdView === 'facade' && windState.cfdField !== 'p') {
+      windState.cfdView = 'slice';
+      windCfdViewButtons.forEach(button => {
+        const active = button.dataset.cfdView === 'slice';
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', String(active));
+      });
+      if (windSliceControls) windSliceControls.hidden = false;
+    }
+    buildCfdView();
+    requestRender();
+  });
+  windCfdGroundHeight?.addEventListener('change', event => {
+    windState.cfdGroundHeight = Number(event.target.value) || 2;
+    buildCfdPedestrianSurface();
+    windStatus.textContent = `${windState.cfdGroundHeight.toFixed(1)} m terrain-following OpenFOAM field · solved cells only.`;
+    requestRender();
+  });
+  windSlicePlane?.addEventListener('change', event => {
+    windState.slicePlane = event.target.value;
+    buildCfdSlice();
+    requestRender();
+  });
+  windSlicePosition?.addEventListener('input', event => {
+    windState.slicePosition = Number(event.target.value) / 100;
+    if (windSlicePositionValue) windSlicePositionValue.textContent = `${event.target.value}%`;
+    buildCfdSlice();
+    requestRender();
+  });
+  windSliceWidth?.addEventListener('input', event => {
+    windState.sliceWidth = Number(event.target.value) / 100;
+    buildCfdSlice();
+    requestRender();
+  });
+  windSliceHeight?.addEventListener('input', event => {
+    windState.sliceHeight = Number(event.target.value) / 100;
+    buildCfdSlice();
+    requestRender();
+  });
+  windSliceCenterX?.addEventListener('input', event => {
+    windState.sliceCenterX = Number(event.target.value) / 100;
+    buildCfdSlice();
+    requestRender();
+  });
+  windSliceCenterY?.addEventListener('input', event => {
+    windState.sliceCenterY = Number(event.target.value) / 100;
+    buildCfdSlice();
+    requestRender();
+  });
+  windSliceReset?.addEventListener('click', () => {
+    windState.slicePosition = 0.5;
+    windState.sliceWidth = 1;
+    windState.sliceHeight = 1;
+    windState.sliceCenterX = 0.5;
+    windState.sliceCenterY = 0.5;
+    if (windSlicePosition) windSlicePosition.value = '50';
+    if (windSliceWidth) windSliceWidth.value = '100';
+    if (windSliceHeight) windSliceHeight.value = '100';
+    if (windSliceCenterX) windSliceCenterX.value = '50';
+    if (windSliceCenterY) windSliceCenterY.value = '50';
+    buildCfdSlice();
+    requestRender();
   });
 
   windToggle?.addEventListener('change', event => {
@@ -5873,21 +6821,13 @@ export async function startWebGLScene(canvas, status) {
     windGroup.visible = windState.enabled;
     if (windState.enabled) {
       if (windState.field && windState.surfaceVisible) hideStreetLayersForWind();
+      if (windState.analysisMode === 'direction' && !windState.cfd) loadCfdWind();
     } else {
       restoreStreetLayersAfterWind();
     }
     windStatus.textContent = windState.enabled
       ? (windState.field ? 'Existing wind heatmap and gusts shown.' : '3D domain ready · position it, then simulate.')
       : 'Wind display hidden.';
-    requestRender();
-  });
-  windDirection?.addEventListener('change', event => {
-    windState.direction = Number(event.target.value);
-    windState.referenceHeight = 2;
-    windState.field = null;
-    clearWindSimulation();
-    windStatus.textContent = 'Direction changed · click Simulate wind.';
-    windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
     requestRender();
   });
   windSeason?.addEventListener('change', event => {
@@ -5903,24 +6843,6 @@ export async function startWebGLScene(canvas, status) {
     clearWindSimulation();
     windStatus.textContent = 'Stability changed · click Simulate wind.';
   });
-  windHeight?.addEventListener('change', event => {
-    windState.height = Number(event.target.value);
-    windState.field = null;
-    clearWindSimulation();
-    windStatus.textContent = 'Result height changed · click Simulate wind.';
-  });
-  windResolution?.addEventListener('change', event => {
-    windState.resolution = Number(event.target.value) || 5;
-    windState.field = null;
-    clearWindSimulation();
-    windStatus.textContent = 'Grid resolution changed · run the study again.';
-  });
-  windExceedanceThreshold?.addEventListener('change', event => {
-    windState.exceedanceThreshold = Number(event.target.value);
-    windState.field = null;
-    clearWindSimulation();
-    windStatus.textContent = 'Comfort threshold changed · click Simulate wind.';
-  });
   windForcingMode?.addEventListener('change', event => {
     windState.forcingMode = event.target.value;
     windSpeed.disabled = windState.forcingMode === 'era5_climatology';
@@ -5932,23 +6854,22 @@ export async function startWebGLScene(canvas, status) {
   windSpeed?.addEventListener('input', event => {
     windState.speed = Number(event.target.value) / 3.6;
     windState.referenceHeight = 2;
-    windSpeedValue.textContent = `${Math.round(windState.speed * 3.6)} km/h`;
+    if (windSpeedValue) windSpeedValue.textContent = `${Math.round(windState.speed * 3.6)} km/h`;
   });
   windSize?.addEventListener('input', event => {
     windState.size = Number(event.target.value);
     windSizeValue.textContent = String(windState.size);
     const sizeCopy = document.querySelector('#wind-size-value-copy');
     if (sizeCopy) sizeCopy.textContent = String(windState.size);
-    windState.field = null;
-    clearWindSimulation();
-    windStatus.textContent = 'Domain resized · click Simulate wind.';
+    if (windState.field && windState.analysisMode === 'direction') resetWindParticles();
+    windStatus.textContent = `Flow box resized to ${windState.size} m.`;
     updateWindBox();
   });
   windMoveDomain?.addEventListener('click', () => {
     windState.moveMode = !windState.moveMode;
     windMoveDomain.classList.toggle('active', windState.moveMode);
     windMoveDomain.setAttribute('aria-pressed', String(windState.moveMode));
-    windMoveDomain.title = windState.moveMode ? 'Click when the domain position is set' : 'Move or resize the wind analysis domain';
+    windMoveDomain.title = windState.moveMode ? 'Click when the flow box position is set' : 'Move or resize the flow box';
     updateWindBox();
   });
   windSimulate?.addEventListener('click', simulateWind);
@@ -6008,30 +6929,36 @@ export async function startWebGLScene(canvas, status) {
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
     transportLayer?.setPanelActive(name === 'transport');
-    if (name !== 'sun' && shadowState.enabled) setShadowMode(false);
-    if (name !== 'heat' && heatToggle?.checked) {
-      heatToggle.checked = false;
-      setHeatMode(false);
-    }
-    if (name !== 'wind' && windToggle?.checked) {
-      windToggle.checked = false;
-      windToggle.dispatchEvent(new Event('change'));
-    }
-    if (name !== 'traffic' && trafficToggle?.checked) {
-      trafficToggle.checked = false;
-      trafficToggle.dispatchEvent(new Event('change'));
-    }
-    if (name === 'heat' && heatToggle && !heatToggle.checked) {
-      heatToggle.checked = true;
-      setHeatMode(true);
-    } else if (name === 'sun' && !shadowState.enabled) {
-      setShadowMode(true);
-    } else if (name === 'wind' && windToggle && !windToggle.checked) {
-      windToggle.checked = true;
-      windToggle.dispatchEvent(new Event('change'));
-    } else if (name === 'traffic' && trafficToggle && !trafficToggle.checked) {
-      trafficToggle.checked = true;
-      trafficToggle.dispatchEvent(new Event('change'));
+    // Tools is a utility panel, not its own exclusive visualization — switch
+    // away from whatever layer (heat/sun/wind/traffic) is active only when
+    // moving to a tab that has one, so opening Tools to reach a shared
+    // control doesn't silently turn off the layer you were looking at.
+    if (name !== 'tools') {
+      if (name !== 'sun' && shadowState.enabled) setShadowMode(false);
+      if (name !== 'heat' && heatToggle?.checked) {
+        heatToggle.checked = false;
+        setHeatMode(false);
+      }
+      if (name !== 'wind' && windToggle?.checked) {
+        windToggle.checked = false;
+        windToggle.dispatchEvent(new Event('change'));
+      }
+      if (name !== 'traffic' && trafficToggle?.checked) {
+        trafficToggle.checked = false;
+        trafficToggle.dispatchEvent(new Event('change'));
+      }
+      if (name === 'heat' && heatToggle && !heatToggle.checked) {
+        heatToggle.checked = true;
+        setHeatMode(true);
+      } else if (name === 'sun' && !shadowState.enabled) {
+        setShadowMode(true);
+      } else if (name === 'wind' && windToggle && !windToggle.checked) {
+        windToggle.checked = true;
+        windToggle.dispatchEvent(new Event('change'));
+      } else if (name === 'traffic' && trafficToggle && !trafficToggle.checked) {
+        trafficToggle.checked = true;
+        trafficToggle.dispatchEvent(new Event('change'));
+      }
     }
     trafficState.sceneActive = name === 'traffic';
     if (!trafficState.sceneActive && trafficState.drawing) {
@@ -6127,6 +7054,7 @@ export async function startWebGLScene(canvas, status) {
 
   addEventListener('resize', requestRender);
   fitScene();
+  setWindAnalysisMode(windState.analysisMode);
   updateWindBox();
   windGroup.visible = windState.enabled;
   syncTrafficSceneVisibility();

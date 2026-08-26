@@ -49,6 +49,26 @@ GPU gusts, heat geometry, and directional-light shadow maps. The existing
 Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
 is unavailable.
 
+The Wind panel's Direction and Comfort lenses are both driven by full-CBD
+OpenFOAM volumes, not the older screening proxy — Direction loads whichever
+solved directional case you pick (SE 135° and NW 315° today; a compass preset
+lights up once a direction has a solved case) and shows resolved 3D
+flowlines, a movable/resizable flow box with an adjustable seed height,
+horizontal/vertical speed and turbulence slices you can drag directly in the
+scene, and pressure mapped onto building façades. Its pedestrian view is
+sampled from the same 3D CFD volume at a terrain-following 1.5, 2 or 4 m
+height. Comfort weights every *solved* direction's pedestrian field by its
+ERA5 wind-rose frequency and Weibull exceedance and reports the resulting
+annual-hours coverage explicitly — unsolved directions are excluded from the
+weighted sum, never interpolated or assumed calm, so today's Comfort result is
+a labelled lower bound, not a complete annual study. The fast horizontal
+screening proxy (mass-conserving terrain + building/canopy drag) still powers
+the Canvas 2D compatibility fallback, `/api/wind/preview`, and
+`/api/wind/validate`, but no longer drives the main WebGL wind panel. Both
+CFD cases are explicitly exploratory rather than validated planning evidence.
+Case generation, result refresh and validation requirements are documented in
+[docs/OPENFOAM.md](docs/OPENFOAM.md).
+
 The semantic model gives each object a stable `identifier` and version-specific
 `featureId`, named geometry, source records, lifecycle fields, geometry quality,
 and an LoD. It separates buildings from their roof surfaces and represents
@@ -261,16 +281,21 @@ from `.env` on the server only; the database URL is never sent to the browser.
 uvicorn server.app:app --reload --port 8000
 ```
 
-Open http://localhost:8000. The Wind explorer separates single-direction
-diagnostics from 16-direction wind-rose-weighted comfort screening. The
-controls expose the editable domain, result height, grid, period, stability,
-activity threshold, surface layer and flowline appearance.
-Clicking the city
-normally orbits the camera; use **Move / resize domain** when repositioning the
-box, or drag its corner handle to resize it. Gusts are constrained to free
-pedestrian ground and use a wall-normal/tangential response to slide around
-building footprints. Editing clears the old field; click **Run direction
-study** or **Run 16-direction comfort study** to calculate the new domain.
+Open http://localhost:8000. The Wind explorer's **Direction** lens loads a
+solved OpenFOAM volume for the picked compass direction (only directions with
+a converted case are selectable) and exposes four diagnostic views: a
+terrain-following pedestrian surface at 1.5/2/4 m, resolved 3D flowlines
+seeded inside a movable/resizable **flow region** box (drag it directly in
+the scene, or use its handle to resize; its height and whether it seeds
+ground-level-only or through the box's full height are both adjustable),
+horizontal/vertical **slice** planes you can drag directly in the 3D scene as
+well as from the panel controls, and kinematic **pressure** mapped onto
+building façades. **Comfort** instead weights every solved direction's
+pedestrian field by ERA5 wind-rose frequency and Weibull exceedance and
+reports its actual annual-hours coverage — it never interpolates a direction
+that hasn't been solved. Clicking the city normally orbits the camera;
+dragging the flow box or a slice plane takes over only when the click lands
+on that object.
 
 The **Urban heat** layer reads the generated local product in
 `data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a
@@ -313,27 +338,32 @@ claims. Rooftop values are the source model's land-surface temperature painted
 directly onto the detailed roof triangles; they are not measured roof-membrane
 temperatures.
 
-Wind results include stability-dependent pedestrian-height conversion,
-Lawson-LDDC-style screening categories, conditional threshold exceedance,
-wind-rose-weighted seasonal/annual comfort, and model-form uncertainty bands.
-The interface and API label these outputs **Screening**. The installed ERA5
+The retained screening proxy (fast horizontal mass-conserving model, still
+used by `/api/wind/preview`, `/api/wind/comfort`, `/api/wind/validate`, and
+the Canvas fallback renderer) applies stability-dependent pedestrian-height
+conversion, Lawson-LDDC-style screening categories, conditional threshold
+exceedance, wind-rose-weighted seasonal/annual comfort, and model-form
+uncertainty bands. The API labels these outputs **Screening**; they are not
+the OpenFOAM Direction/Comfort lenses described above. The installed ERA5
 archive covers only 35.4% of possible hours, so its directional frequencies
-and comfort results remain provisional. See `docs/WIND_VALIDATION.md` for the
-calculation, benchmark workflow, observation schema, error maps, and promotion
-criteria for a future validated mode.
+and comfort results remain provisional either way. See `docs/WIND_VALIDATION.md`
+for the calculation, benchmark workflow, observation schema, error maps, and
+promotion criteria for a future validated mode.
 
-When `data/wind_climatology/cape_town_era5.json` is present, the Wind panel
-defaults to ERA5 forcing. Direction, season and stability select the measured
-reanalysis subset; its conditional mean speed, Weibull distribution, gust
-factor and 10–100 m shear replace the generic forcing assumptions. Rebuild the
-compact profile with `python scripts/build_era5_wind_climatology.py` after
-updating the GRIB archive.
+`data/wind_climatology/cape_town_era5.json` backs both wind paths: the
+screening proxy's default forcing (conditional mean speed, Weibull
+distribution, gust factor and 10–100 m shear replacing generic assumptions)
+and the lightweight `GET /api/wind/climatology/sectors` endpoint the
+OpenFOAM Comfort lens calls to weight each solved direction by its observed
+frequency. Rebuild the compact profile with
+`python scripts/build_era5_wind_climatology.py` after updating the GRIB
+archive.
 
-After a wind simulation completes, **Generate detailed wind report** opens a
-print-ready assessment containing the scenario definition, captured 3D view,
-reproducible pedestrian-speed field map, comfort distribution, exceedance and
-uncertainty indicators, ERA5 evidence, data-quality notes, and model
-limitations. Use **Print / Save PDF** in the report toolbar for an A4 report.
+**Generate detailed wind report** (screening's print-ready assessment with
+the scenario definition, a reproducible pedestrian-speed field map, comfort
+distribution, exceedance/uncertainty indicators, ERA5 evidence and
+data-quality notes) is wired to the screening proxy's output shape and is not
+currently offered for the OpenFOAM Direction/Comfort lenses.
 
 ## Current conditions and planning guidance
 
