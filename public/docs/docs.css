@@ -284,4 +284,17 @@ body > footer .wrap {
   .workflow, .doc-grid { grid-template-columns: 1fr; }
   .reference-row { grid-template-columns: 1fr; gap: 7px; }
   .footer-inner { align-items: flex-start; flex-direction: column; justify-content: center; gap: 14px; padding-block: 28px; }
+  .topnav-inner, .docs-shell, body > footer .wrap { width: min(100% - 24px, 1260px); }
+  .docs-shell { gap: 28px; }
+  .docs-main > h1 { font-size: clamp(3rem, 16vw, 5rem); }
+  .lede { font-size: 17px; }
+  .tool-doc-head h2 { font-size: clamp(2rem, 11vw, 3.2rem); overflow-wrap: anywhere; }
+  .status-chip { margin-left: 0; }
+  .caveat-box { padding: 18px; }
+}
+
+@media (pointer: coarse) {
+  .nav-links a, .docs-side a, .doc-links a, .footer-links a { min-height: 44px; }
+  .docs-side a, .doc-links a { display: inline-flex; align-items: center; }
+  a:focus-visible { outline: 3px solid var(--doc-green); outline-offset: 3px; }
 }

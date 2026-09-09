@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=37">
+    <link rel="stylesheet" href="/style.css?v=38">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -38,7 +39,7 @@
         <span id="traffic-draw-popup-title">Edit road closure</span>
         <kbd>Esc</kbd>
       </div>
-      <p id="traffic-draw-popup-status">Drag to add · right-click to remove</p>
+      <p id="traffic-draw-popup-status">Draw to add · tap selected to remove</p>
       <div class="traffic-draw-popup-count"><strong id="traffic-draw-popup-count">0</strong><span>sections</span></div>
       <div class="traffic-draw-popup-actions">
         <button id="traffic-draw-confirm" type="button" disabled>Apply</button>
@@ -52,6 +53,7 @@
             <p class="eyebrow">CLIMATE EXPLORER</p>
           </a>
           <p class="place-name">Cape Town CBD</p>
+          <button id="panel-toggle" class="panel-toggle" type="button" aria-expanded="true" aria-controls="explorer-panel-body">Map view</button>
         </div>
         <nav class="menu-tabs" aria-label="Explorer tools" role="tablist">
           <button class="menu-tab active" type="button" role="tab" aria-selected="true" aria-controls="menu-tools" data-menu-target="tools" title="Tools">
@@ -80,7 +82,7 @@
           </button>
         </nav>
       </header>
-      <div class="panel-body">
+      <div id="explorer-panel-body" class="panel-body">
       <section id="menu-tools" class="tools-panel menu-section menu-active" data-menu-panel="tools" role="tabpanel" aria-label="Map tools">
         <div class="tools-heading"><span>Tools</span></div>
         <section class="tool-section">
@@ -546,7 +548,7 @@
         <p id="status" class="status">Loading scene…</p>
         <details class="help">
           <summary>Controls &amp; sources</summary>
-          <p class="hint">Left-drag orbit · Right/Shift-drag pan · Scroll zoom · Double-click reset</p>
+          <p class="hint">Drag to orbit · Two-finger drag to pan · Pinch or scroll to zoom · Double-tap/click to reset</p>
           <p class="source">Supplied LiDAR layers · Building and street geometry © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors · ODbL</a></p>
         </details>
       </footer>
@@ -607,6 +609,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=webgl-86"></script>
+    <script type="module" src="/app.js?v=webgl-87"></script>
 </body>
 </html>

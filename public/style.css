@@ -232,8 +232,9 @@ button, select, input { font: inherit; }
 .eyebrow, .place-name { margin: 0; }
 .eyebrow { color: var(--ink); font-size: 9px; font-weight: 800; letter-spacing: .16em; }
 .place-name { color: var(--quiet); font-size: 10px; }
+.panel-toggle { display: none; }
 
-.menu-tabs { display: grid; grid-template-columns: repeat(7, 1fr); padding: 0 5px; }
+.menu-tabs { display: grid; grid-template-columns: repeat(6, 1fr); padding: 0 5px; }
 .menu-tab {
   position: relative;
   width: auto;
@@ -1294,4 +1295,120 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media (max-width: 700px) {
   .panel { top: 8px; right: 8px; bottom: 8px; width: min(326px, calc(100vw - 16px)); }
   .panel-brand { padding-top: 8px; }
+}
+
+/* Touch and small-screen ergonomics. The map remains visible above a bottom
+   control sheet in portrait, while landscape retains the compact side panel. */
+@media (max-width: 700px) and (orientation: portrait) {
+  .panel {
+    top: auto;
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    left: max(8px, env(safe-area-inset-left));
+    width: auto;
+    height: min(58svh, 560px);
+    border-radius: 10px;
+  }
+  .panel-brand { padding: 8px 12px 7px; }
+  .place-name { display: none; }
+  .panel-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    min-height: 32px;
+    padding: 5px 10px;
+    border-color: var(--line-light);
+    background: var(--control);
+    color: var(--ink);
+    font-size: 11px;
+  }
+  .panel.panel-collapsed { height: 112px; }
+  .panel.panel-collapsed .panel-body,
+  .panel.panel-collapsed .panel-footer { display: none; }
+  #app:has(.panel.panel-collapsed) .transport-stop-card,
+  #app:has(.panel.panel-collapsed) .traffic-draw-popup,
+  .panel.panel-collapsed ~ .transport-results-tray { bottom: 120px; }
+  .panel-body {
+    padding: 12px;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .panel-footer { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  #wind-box-guide { top: 22%; width: min(210px, 55vw); }
+  .transport-stop-card {
+    right: max(8px, env(safe-area-inset-right)) !important;
+    bottom: calc(min(58svh, 560px) + 16px);
+    left: max(8px, env(safe-area-inset-left)) !important;
+    top: auto !important;
+    width: auto;
+    max-height: 34svh;
+    overflow: auto;
+  }
+  .traffic-draw-popup {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(min(58svh, 560px) + 16px);
+    left: max(8px, env(safe-area-inset-left));
+    width: auto;
+    max-height: 34svh;
+    overflow-y: auto;
+  }
+  .transport-results-tray {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(min(58svh, 560px) + 16px);
+    left: max(8px, env(safe-area-inset-left));
+    max-height: 36svh;
+  }
+}
+
+@media (pointer: coarse) {
+  button, .streetview-link, .transport-service-link, .compact-about summary,
+  .help summary, .wind-method summary, .sun-advanced summary,
+  .traffic-map-key summary, .transport-origin-details summary,
+  .transport-service-details > summary, .transport-event-planner > summary {
+    min-height: 44px;
+  }
+  select, input[type="date"], input[type="number"],
+  .transport-panel input[type="text"], .transport-panel input[type="date"],
+  .transport-panel input[type="time"] { font-size: 16px; }
+  select, input[type="date"], input[type="number"],
+  .heat-panel select, .heat-panel input[type="date"], .traffic-panel select,
+  .transport-panel select, .transport-panel input[type="text"],
+  .transport-panel input[type="date"], .transport-panel input[type="time"] {
+    min-height: 44px;
+  }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  input[type="range"] { height: 36px; }
+  .menu-tab { height: 48px; padding: 12px 7px; }
+  .menu-tab::after { right: 5px; left: 5px; }
+  .menu-tab svg { width: 22px; height: 22px; }
+  .controls label, .traffic-view-toggles label, .traffic-restrictions-switch,
+  .transport-map-controls .transport-chip, .compact-switch,
+  .transport-show-switch { min-height: 44px; }
+  .menu-section, .heat-panel label, .traffic-panel label,
+  .transport-panel label { font-size: 12px; }
+  .icon-button, .transport-results-header-actions button,
+  .transport-card-close { min-width: 44px; min-height: 44px; }
+  .transport-card-close { top: 0; right: 0; font-size: 22px; }
+  .transport-stop-card { padding: 14px; }
+  .transport-stop-card > b { padding-right: 36px; font-size: 13px; }
+  .transport-card-meta { font-size: 11px; }
+  .transport-card-note, .transport-card-list li,
+  .transport-card-list em { font-size: 10px; }
+  .traffic-report-toolbar { height: auto; min-height: 64px; gap: 8px; }
+  .traffic-report-toolbar button { min-width: 0; }
+  .report-table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  :focus-visible { outline: 3px solid var(--accent-pale); outline-offset: 2px; }
+}
+
+@media (max-width: 480px) {
+  .traffic-report-toolbar { align-items: stretch; flex-direction: column; padding: 10px 12px; }
+  .traffic-report-toolbar > div { display: grid; grid-template-columns: 1fr 1.4fr; }
+  .traffic-report-document { padding: 24px 14px 40px; }
+  .report-scenario-grid, .report-stat-grid { grid-template-columns: 1fr; }
+  .report-brand-title { flex-direction: column; }
+  .transport-playback { grid-template-columns: 1fr 1fr; }
+  .transport-map-controls { grid-template-columns: 1fr 1fr; }
+  .transport-map-controls > label:first-child { grid-column: 1 / -1; }
+  .transport-links { grid-template-columns: 1fr; }
 }

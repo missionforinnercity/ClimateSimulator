@@ -205,6 +205,9 @@ export async function startScene(canvas, status) {
   const water = (scene.water || []).map(item => item.rings || []).filter(rings => rings[0]?.length >= 3);
   const terrain = scene.terrain;
   let drag = null;
+  const cameraTouchPointers = new Map();
+  let cameraTouchGesture = null;
+  let lastCameraTouchTap = 0;
   let dirty = true;
   let frame = 0;
   let interactionUntil = 0;
@@ -2078,9 +2081,10 @@ export async function startScene(canvas, status) {
       const handle = project(sunDomainCorners()[2]);
       const planeY = terrainHeightAt(shadowState.center[0], shadowState.center[1]) + 2;
       const ground = screenToPlane(event.clientX, event.clientY, planeY);
-      const onHandle = handle && Math.hypot(event.clientX - handle[0], event.clientY - handle[1]) <= 18;
-      const inBounds = bounds && event.clientX >= bounds.left - 12 && event.clientX <= bounds.right + 12
-        && event.clientY >= bounds.top - 12 && event.clientY <= bounds.bottom + 12;
+      const touchPadding = event.pointerType === 'touch' ? 28 : 12;
+      const onHandle = handle && Math.hypot(event.clientX - handle[0], event.clientY - handle[1]) <= (event.pointerType === 'touch' ? 32 : 18);
+      const inBounds = bounds && event.clientX >= bounds.left - touchPadding && event.clientX <= bounds.right + touchPadding
+        && event.clientY >= bounds.top - touchPadding && event.clientY <= bounds.bottom + touchPadding;
       if ((onHandle || inBounds) && ground) {
         canvas.setPointerCapture(event.pointerId);
         sunDrag = {
@@ -2100,8 +2104,9 @@ export async function startScene(canvas, status) {
       const handle = windResizeHandle(project);
       const planeY = terrainHeightAt(windState.center[0], windState.center[1]) + 2;
       const ground = screenToPlane(event.clientX, event.clientY, planeY);
-      const onHandle = handle && Math.hypot(event.clientX - handle[0], event.clientY - handle[1]) <= 18;
-      const inBounds = bounds && event.clientX >= bounds.left - 12 && event.clientX <= bounds.right + 12 && event.clientY >= bounds.top - 12 && event.clientY <= bounds.bottom + 12;
+      const touchPadding = event.pointerType === 'touch' ? 28 : 12;
+      const onHandle = handle && Math.hypot(event.clientX - handle[0], event.clientY - handle[1]) <= (event.pointerType === 'touch' ? 32 : 18);
+      const inBounds = bounds && event.clientX >= bounds.left - touchPadding && event.clientX <= bounds.right + touchPadding && event.clientY >= bounds.top - touchPadding && event.clientY <= bounds.bottom + touchPadding;
       if ((onHandle || inBounds) && ground) {
         canvas.setPointerCapture(event.pointerId);
         windDrag = {
@@ -2122,11 +2127,50 @@ export async function startScene(canvas, status) {
         return;
       }
     }
-    canvas.setPointerCapture(event.pointerId);
+    if (event.pointerType === 'touch') {
+      cameraTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      canvas.setPointerCapture(event.pointerId);
+      if (cameraTouchPointers.size > 1) {
+        const points = [...cameraTouchPointers.values()].slice(0, 2);
+        cameraTouchGesture = {
+          centerX: (points[0].x + points[1].x) * 0.5,
+          centerY: (points[0].y + points[1].y) * 0.5,
+          spacing: Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)),
+          distance: camera.distance,
+          azimuth: camera.azimuth,
+          target: [...camera.target],
+        };
+        drag = null;
+        markInteraction();
+        return;
+      }
+    } else {
+      canvas.setPointerCapture(event.pointerId);
+    }
     drag = { x: event.clientX, y: event.clientY, azimuth: camera.azimuth, elevation: camera.elevation, target: [...camera.target], pan: event.shiftKey || event.button !== 0 };
     markInteraction();
   });
   canvas.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch' && cameraTouchPointers.has(event.pointerId)) {
+      cameraTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (cameraTouchGesture && cameraTouchPointers.size >= 2) {
+        const points = [...cameraTouchPointers.values()].slice(0, 2);
+        const centerX = (points[0].x + points[1].x) * 0.5;
+        const centerY = (points[0].y + points[1].y) * 0.5;
+        const spacing = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
+        camera.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, 80, 7000);
+        const scale = cameraTouchGesture.distance / 850;
+        const dx = centerX - cameraTouchGesture.centerX;
+        const dy = centerY - cameraTouchGesture.centerY;
+        const right = [Math.sin(cameraTouchGesture.azimuth), 0, -Math.cos(cameraTouchGesture.azimuth)];
+        const forward = [-Math.cos(cameraTouchGesture.azimuth), 0, -Math.sin(cameraTouchGesture.azimuth)];
+        camera.target[0] = cameraTouchGesture.target[0] - right[0] * dx * scale + forward[0] * dy * scale;
+        camera.target[2] = cameraTouchGesture.target[2] - right[2] * dx * scale + forward[2] * dy * scale;
+        markInteraction();
+        requestRender();
+        return;
+      }
+    }
     if (sunDrag) {
       const { screenToPlane } = cameraProjection();
       const ground = screenToPlane(event.clientX, event.clientY, sunDrag.planeY);
@@ -2181,13 +2225,38 @@ export async function startScene(canvas, status) {
   canvas.addEventListener('pointerup', event => {
     if (sunDrag) sunStatus.textContent = `Analysis area updated to ${shadowState.size} m · calculate sun hours again.`;
     if (windDrag) windStatus.textContent = `Domain updated · click Simulate wind for the ${windState.size} m domain.`;
+    if (event.pointerType === 'touch' && cameraTouchPointers.has(event.pointerId)) {
+      const wasGesture = Boolean(cameraTouchGesture);
+      cameraTouchPointers.delete(event.pointerId);
+      if (wasGesture) {
+        cameraTouchGesture = null;
+        drag = null;
+        if (cameraTouchPointers.size === 1) {
+          const remaining = [...cameraTouchPointers.values()][0];
+          drag = { x: remaining.x, y: remaining.y, azimuth: camera.azimuth, elevation: camera.elevation, target: [...camera.target], pan: false };
+        }
+        requestRender();
+        return;
+      }
+    }
+    const cameraTouchTap = event.pointerType === 'touch' && drag
+      && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 12;
+    if (cameraTouchTap && performance.now() - lastCameraTouchTap < 350) {
+      lastCameraTouchTap = 0;
+      drag = null;
+      fitScene();
+      return;
+    }
+    if (cameraTouchTap) lastCameraTouchTap = performance.now();
     drag = null;
     windDrag = null;
     sunDrag = null;
     interactionUntil = 0;
     requestRender();
   });
-  canvas.addEventListener('pointercancel', () => {
+  canvas.addEventListener('pointercancel', event => {
+    cameraTouchPointers.delete(event.pointerId);
+    cameraTouchGesture = null;
     drag = null;
     windDrag = null;
     sunDrag = null;

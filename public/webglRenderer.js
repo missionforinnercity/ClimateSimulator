@@ -2320,6 +2320,7 @@ export async function startWebGLScene(canvas, status) {
     stroking: false,
     pointerId: null,
     lastScreen: null,
+    strokeStartScreen: null,
     strokePoints: [],
     selectedEdgeIds: [],
   };
@@ -2349,6 +2350,9 @@ export async function startWebGLScene(canvas, status) {
   let windDrag = null;
   let sunDrag = null;
   let sliceDrag = null;
+  const cameraTouchPointers = new Map();
+  let cameraTouchGesture = null;
+  let lastCameraTouchTap = 0;
   const windBuildingCellSize = 60;
   const windBuildingGrid = new Map();
   const savedVisibility = Object.fromEntries(
@@ -4143,6 +4147,7 @@ export async function startWebGLScene(canvas, status) {
     trafficState.stroking = false;
     trafficState.pointerId = null;
     trafficState.lastScreen = null;
+    trafficState.strokeStartScreen = null;
     trafficState.strokePoints = [];
     trafficState.selectedEdgeIds = [];
     if (trafficDrawPopup) trafficDrawPopup.hidden = true;
@@ -4155,7 +4160,7 @@ export async function startWebGLScene(canvas, status) {
     trafficState.oneWayIntent = false;
     resetTrafficToolLabels();
     if (trafficRun) trafficRun.disabled = true;
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'Choose a closure tool. Add one or more freehand strokes, right-click sections to remove them, then confirm in the popup.';
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = 'Choose a closure tool. Draw to add sections; tap a selected section or right-click to remove it, then confirm.';
     if (trafficStatus) trafficStatus.textContent = 'Draw a closure to begin.';
     updateTrafficInterventionControls();
     setBuildingDrawTransparency(false);
@@ -4187,7 +4192,7 @@ export async function startWebGLScene(canvas, status) {
     updateTrafficInterventionControls();
     if (trafficDrawPopup) trafficDrawPopup.hidden = false;
     if (trafficDrawPopupStatus) {
-      trafficDrawPopupStatus.textContent = 'Draw a freehand stroke, lift your pointer, then draw again anywhere. Confirm when the selection is complete.';
+      trafficDrawPopupStatus.textContent = 'Draw to add road sections. Tap a selected section to remove it. Confirm when the selection is complete.';
     }
     updateTrafficDrawPopup();
     const button = mode === 'full' ? trafficDrawRoad : mode === 'oneway' ? trafficDrawOneWay : trafficDrawLane;
@@ -4258,7 +4263,7 @@ export async function startWebGLScene(canvas, status) {
     trafficState.strokePoints = [];
     if (trafficSelectionStatus) {
       trafficSelectionStatus.textContent = missReason || (added
-        ? `${added} ${added === 1 ? 'section' : 'sections'} added · ${count} total selected. Draw another stroke, right-click to remove, or confirm.`
+        ? `${added} ${added === 1 ? 'section' : 'sections'} added · ${count} total selected. Draw again, tap a selected section to remove it, or confirm.`
         : 'That stroke did not add a new road section. Draw closer to a road centreline or confirm the current selection.');
     }
     if (trafficStatus) trafficStatus.textContent = count
@@ -4290,7 +4295,7 @@ export async function startWebGLScene(canvas, status) {
     const directionHint = trafficState.oneWayIntent && trafficSelectionReverseIds()
       ? ' Traffic stays open in the drawn direction — use ⇄ below to reverse it.'
       : '';
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${trafficSelectionEffect()} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.${directionHint}`;
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${trafficSelectionEffect()} · ${label} · ${trafficSelectionDetails()}. Tap a selected section or right-click to remove it.${directionHint}`;
     if (trafficStatus) trafficStatus.textContent = `${label} confirmed · adjust the scenario or run the comparison.`;
     if (trafficRun) trafficRun.disabled = false;
     updateTrafficDrawing();
@@ -4307,7 +4312,7 @@ export async function startWebGLScene(canvas, status) {
     const closingWhat = trafficState.closureMode === 'full'
       ? `${trafficSelectionEffect()} · the other direction now stays open, one-way`
       : `${trafficSelectionEffect()} · now narrowing the opposite direction`;
-    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${closingWhat} · ${label} · ${trafficSelectionDetails()}. Right-click a section to remove it.`;
+    if (trafficSelectionStatus) trafficSelectionStatus.textContent = `${closingWhat} · ${label} · ${trafficSelectionDetails()}. Tap a selected section or right-click to remove it.`;
     if (trafficStatus) trafficStatus.textContent = `${label} confirmed (direction flipped) · adjust the scenario or run the comparison.`;
   }
 
@@ -6339,6 +6344,24 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
+  function beginCameraTouchGesture() {
+    if (cameraTouchPointers.size < 2) {
+      cameraTouchGesture = null;
+      return;
+    }
+    const points = [...cameraTouchPointers.values()].slice(0, 2);
+    cameraTouchGesture = {
+      centerX: (points[0].x + points[1].x) * 0.5,
+      centerY: (points[0].y + points[1].y) * 0.5,
+      spacing: Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)),
+      distance: cameraState.distance,
+      azimuth: cameraState.azimuth,
+      target: cameraState.target.clone(),
+    };
+    drag = null;
+    clickCandidate = null;
+  }
+
   canvas.addEventListener('contextmenu', event => {
     event.preventDefault();
   });
@@ -6374,6 +6397,7 @@ export async function startWebGLScene(canvas, status) {
       trafficState.stroking = true;
       trafficState.pointerId = event.pointerId;
       trafficState.lastScreen = null;
+      trafficState.strokeStartScreen = [event.clientX, event.clientY];
       updateTrafficDrawPopup('Drawing stroke… lift your pointer to snap and add these road sections.');
       appendTrafficClosurePoint(event, true);
       capturePointer(event);
@@ -6388,7 +6412,7 @@ export async function startWebGLScene(canvas, status) {
           ? Math.hypot(event.clientX - handleScreen.x, event.clientY - handleScreen.y)
           : Infinity;
         sunDrag = {
-          mode: handleDistance <= 20 ? 'resize' : 'move',
+          mode: handleDistance <= (event.pointerType === 'touch' ? 32 : 20) ? 'resize' : 'move',
           start: point,
           center: [...shadowState.center],
           size: shadowState.size,
@@ -6409,7 +6433,7 @@ export async function startWebGLScene(canvas, status) {
         const handleDistance = handleScreen
           ? Math.hypot(event.clientX - handleScreen.x, event.clientY - handleScreen.y)
           : Infinity;
-        const handleTolerance = 20;
+        const handleTolerance = event.pointerType === 'touch' ? 32 : 20;
         windDrag = {
           mode: handleDistance <= handleTolerance ? 'resize' : 'move',
           start: point,
@@ -6442,6 +6466,14 @@ export async function startWebGLScene(canvas, status) {
         return;
       }
     }
+    if (event.pointerType === 'touch') {
+      cameraTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      capturePointer(event);
+      if (cameraTouchPointers.size > 1) {
+        beginCameraTouchGesture();
+        return;
+      }
+    }
     drag = {
       x: event.clientX,
       y: event.clientY,
@@ -6453,6 +6485,26 @@ export async function startWebGLScene(canvas, status) {
     capturePointer(event);
   });
   canvas.addEventListener('pointermove', event => {
+    if (event.pointerType === 'touch' && cameraTouchPointers.has(event.pointerId)) {
+      cameraTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (cameraTouchGesture && cameraTouchPointers.size >= 2) {
+        const points = [...cameraTouchPointers.values()].slice(0, 2);
+        const centerX = (points[0].x + points[1].x) * 0.5;
+        const centerY = (points[0].y + points[1].y) * 0.5;
+        const spacing = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
+        cameraState.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, 80, 7000);
+        const scale = cameraTouchGesture.distance / 850;
+        const dx = centerX - cameraTouchGesture.centerX;
+        const dy = centerY - cameraTouchGesture.centerY;
+        const rightVector = new THREE.Vector3(Math.sin(cameraTouchGesture.azimuth), 0, -Math.cos(cameraTouchGesture.azimuth));
+        const forwardVector = new THREE.Vector3(-Math.cos(cameraTouchGesture.azimuth), 0, -Math.sin(cameraTouchGesture.azimuth));
+        cameraState.target.copy(cameraTouchGesture.target)
+          .addScaledVector(rightVector, -dx * scale)
+          .addScaledVector(forwardVector, dy * scale);
+        updateCamera();
+        return;
+      }
+    }
     if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
       appendTrafficClosurePoint(event);
       return;
@@ -6520,13 +6572,55 @@ export async function startWebGLScene(canvas, status) {
   });
   canvas.addEventListener('pointerup', event => {
     if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
-      appendTrafficClosurePoint(event, true);
+      const touchTap = event.pointerType === 'touch' && trafficState.strokeStartScreen
+        && Math.hypot(event.clientX - trafficState.strokeStartScreen[0], event.clientY - trafficState.strokeStartScreen[1]) <= 12;
+      if (touchTap) {
+        trafficState.stroking = false;
+        trafficState.pointerId = null;
+        trafficState.strokePoints = [];
+        trafficState.strokeStartScreen = null;
+        if (removeTrafficSelectionAt(event)) return;
+        trafficState.stroking = true;
+        trafficState.pointerId = event.pointerId;
+        appendTrafficClosurePoint(event, true);
+      } else {
+        appendTrafficClosurePoint(event, true);
+      }
       commitTrafficStroke();
+      trafficState.strokeStartScreen = null;
       return;
     }
+    if (event.pointerType === 'touch' && cameraTouchPointers.has(event.pointerId)) {
+      const wasGesture = Boolean(cameraTouchGesture);
+      cameraTouchPointers.delete(event.pointerId);
+      if (wasGesture) {
+        cameraTouchGesture = null;
+        drag = null;
+        clickCandidate = null;
+        if (cameraTouchPointers.size === 1) {
+          const remaining = [...cameraTouchPointers.values()][0];
+          drag = {
+            x: remaining.x, y: remaining.y,
+            azimuth: cameraState.azimuth, elevation: cameraState.elevation,
+            target: cameraState.target.clone(), pan: false,
+          };
+        }
+        return;
+      }
+    }
+    const cameraTouchTap = event.pointerType === 'touch' && clickCandidate
+      && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < 12;
+    if (cameraTouchTap && performance.now() - lastCameraTouchTap < 350) {
+      lastCameraTouchTap = 0;
+      clickCandidate = null;
+      drag = null;
+      fitScene();
+      return;
+    }
+    if (cameraTouchTap) lastCameraTouchTap = performance.now();
     drag = null;
     if (clickCandidate && scenePickHandlers.size
-      && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < 5) {
+      && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < (event.pointerType === 'touch' ? 12 : 5)) {
       const raycaster = pointerRaycaster(event);
       for (const handler of scenePickHandlers) {
         if (handler({ raycaster, event })) break;
@@ -6553,10 +6647,13 @@ export async function startWebGLScene(canvas, status) {
     sliceDrag = null;
   });
   canvas.addEventListener('pointercancel', event => {
+    cameraTouchPointers.delete(event.pointerId);
+    cameraTouchGesture = null;
     if (event.pointerId === trafficState.pointerId) {
       trafficState.stroking = false;
       trafficState.pointerId = null;
       trafficState.strokePoints = [];
+      trafficState.strokeStartScreen = null;
       updateTrafficDrawPopup('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');
       updateTrafficDrawing();
     }

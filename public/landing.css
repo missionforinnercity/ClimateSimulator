@@ -363,6 +363,20 @@ img, video { display: block; }
   .closing { min-height: 72vh; }
   .site-footer { grid-template-columns: 1fr; gap: 28px; padding-block: 32px; }
   .site-footer nav { justify-self: start; flex-wrap: wrap; gap: 18px; }
+  .page-shell { width: min(100% - 24px, 1380px); }
+  .site-header { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .hero-content { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .actions { align-items: stretch; flex-direction: column; }
+  .actions .button { width: 100%; min-height: 48px; }
+  .portal { min-height: min(132vw, 620px); }
+}
+
+@media (pointer: coarse) {
+  .brand, .site-nav a, .header-action, .button, .portal,
+  .mission-lockup, .text-link, .site-footer nav a { min-height: 44px; }
+  .portal-arrow { width: 44px; height: 44px; margin-top: -9px; }
+  .button:hover, .portal:hover .portal-arrow { transform: none; }
+  a:focus-visible { outline: 3px solid var(--mission-green); outline-offset: 3px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

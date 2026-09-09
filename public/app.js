@@ -6,7 +6,19 @@ const status = document.querySelector('#status');
 function setupMenuNavigation() {
   const tabs = [...document.querySelectorAll('[data-menu-target]')];
   const panels = [...document.querySelectorAll('[data-menu-panel]')];
+  const explorerPanel = document.querySelector('.panel');
+  const panelToggle = document.querySelector('#panel-toggle');
   if (!tabs.length || !panels.length) return;
+
+  const setPanelCollapsed = collapsed => {
+    explorerPanel?.classList.toggle('panel-collapsed', collapsed);
+    panelToggle?.setAttribute('aria-expanded', String(!collapsed));
+    if (panelToggle) panelToggle.textContent = collapsed ? 'Show controls' : 'Map view';
+  };
+
+  panelToggle?.addEventListener('click', () => {
+    setPanelCollapsed(!explorerPanel?.classList.contains('panel-collapsed'));
+  });
 
   const activate = (name, focus = false) => {
     tabs.forEach(tab => {
@@ -25,7 +37,10 @@ function setupMenuNavigation() {
   };
 
   tabs.forEach((tab, index) => {
-    tab.addEventListener('click', () => activate(tab.dataset.menuTarget));
+    tab.addEventListener('click', () => {
+      setPanelCollapsed(false);
+      activate(tab.dataset.menuTarget);
+    });
     tab.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
@@ -125,7 +140,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=88');
+    const module = await import('./webglRenderer.js?v=89');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -134,7 +149,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=78');
+      const module = await import('./sceneRenderer.js?v=79');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
