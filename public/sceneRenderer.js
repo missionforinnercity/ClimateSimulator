@@ -1,3 +1,7 @@
+import { scopedFetch as fetch, assertManifest } from './requestClient.js';
+import { attachSceneExperience } from './sceneExperience.js';
+import { orbitFromDrag, panFromDrag } from './cameraControls.js';
+
 const COLORS = {
   background: '#1b2125',
   terrain: '#424a4d',
@@ -76,6 +80,23 @@ const simplifyShadowRing = (ring, tolerance = 1) => {
 export async function startScene(canvas, status) {
   const mainContext = canvas.getContext('2d', { alpha: false });
   if (!mainContext) throw new Error('Canvas 2D is unavailable.');
+  // Keep the compatibility renderer honest about capabilities that rely on
+  // the WebGL scene graph. Users can still inspect every panel and its
+  // evidence notes, but controls with no Canvas implementation are disabled.
+  for (const [panelId, statusId, message] of [
+    ['menu-traffic', 'traffic-status', 'Traffic simulation requires WebGL. Reload with hardware acceleration enabled to run it.'],
+    ['menu-transport', 'transport-status', 'Transport analysis requires WebGL. Reload with hardware acceleration enabled to run it.'],
+  ]) {
+    const panel = document.getElementById(panelId);
+    panel?.querySelectorAll('button, input, select').forEach(control => {
+      control.disabled = true;
+      control.title = 'Unavailable in Canvas compatibility mode';
+    });
+    const messageElement = document.getElementById(statusId);
+    if (messageElement) messageElement.textContent = message;
+  }
+  const transportSource = document.getElementById('transport-data-source');
+  if (transportSource) transportSource.textContent = 'Compatibility mode · WebGL required';
   // The city/roads/buildings/trees layer only changes with the camera or a
   // layer toggle, but wind particles animate every frame. Redrawing ~10k
   // static shapes 60 times a second just to move a few hundred particles is
@@ -105,7 +126,7 @@ export async function startScene(canvas, status) {
   asphaltContext.putImageData(asphaltPixels, 0, 0);
   const asphaltPattern = sceneContext.createPattern(asphaltTile, 'repeat');
 
-  const manifest = await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
+  const manifest = assertManifest(await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json()));
   const [scene, canopyAsset] = await Promise.all([
     fetch(`/assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`).then(response => response.json()),
     fetch(`/assets/${manifest.assets?.canopy || 'canopy.json'}?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
@@ -409,6 +430,7 @@ export async function startScene(canvas, status) {
   // static layer (terrain/roads/buildings/trees) dirty — only the wind
   // overlay needs to redraw every frame.
   function scheduleFrame() {
+    if (document.hidden || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     if (!frame) frame = requestAnimationFrame(render);
   }
 
@@ -524,32 +546,6 @@ export async function startScene(canvas, status) {
     requestRender();
   }
 
-  function fallbackWindField() {
-    const resolution = 5;
-    const width = Math.ceil(windState.size / resolution);
-    const height = width;
-    const angle = windState.direction * Math.PI / 180;
-    // windState.direction is the compass bearing wind blows FROM.
-    const flowX = -Math.sin(angle);
-    const flowZ = Math.cos(angle);
-    const u = [], v = [], speed = [];
-    for (let row = 0; row < height; row += 1) {
-      for (let column = 0; column < width; column += 1) {
-        const corridor = 0.62 + 0.32 * (0.5 + 0.5 * Math.sin(column * 0.32 + row * 0.17));
-        const localSpeed = windState.speed * corridor;
-        speed.push(localSpeed);
-        u.push(flowX * localSpeed);
-        v.push(flowZ * localSpeed);
-      }
-    }
-    return {
-      version: 'browser-fallback',
-      model_kind: 'directional_speed_proxy',
-      origin: [windState.center[0] - windState.size / 2, windState.center[1] - windState.size / 2],
-      width, height, dx: resolution, dz: resolution, u, v, speed,
-    };
-  }
-
   async function simulateWind() {
     windSimulate.disabled = true;
     windSimulate.textContent = 'Simulating…';
@@ -585,14 +581,14 @@ export async function startScene(canvas, status) {
         : 'manual forcing';
       windStatus.textContent = `${forcingNote} · ${windState.field.polygon_count || 0} zones${sourceNote} · preview`;
     } catch (error) {
-      console.warn('Wind API unavailable; using local preview:', error);
-      windState.field = fallbackWindField();
-      windStatus.textContent = `Local animated preview · API unavailable (${error.message})`;
+      windState.field = null;
+      windStatus.textContent = `Wind data unavailable (${error.message}). Retry when the service is available.`;
     } finally {
       windSimulate.disabled = false;
       windSimulate.textContent = 'Simulate wind';
     }
     windState.lastTime = performance.now();
+    if (!windState.field) { requestRender(); return; }
     dispatchEvent(new CustomEvent('climate-wind-result', { detail: windState.field }));
     if (windState.enabled) hideStreetLayersForWind();
     resetWindParticles();
@@ -1394,6 +1390,10 @@ export async function startScene(canvas, status) {
       if (rings[0]?.length >= 3) canopyPolygons.push({ rings, x: canopy.x, z: canopy.z });
     }
     shadowState.generated = { sun, buildingPolygons, canopyPolygons };
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'sun', metadata: {
+      description: `Canvas approximate shadows · ${shadowState.date} · ${shadowState.minutes} minutes after midnight. Simplified silhouettes, not WebGL shadow maps.`,
+      date: shadowState.date, minutes: shadowState.minutes, renderer: 'canvas', clientOnly: true,
+    } } }));
     sunGenerate.disabled = false;
     sunGenerate.textContent = 'Regenerate shadows';
     sunStatus.textContent = `${buildingPolygons.length} building + ${canopyPolygons.length} canopy shadows · ${Math.round(sun.altitude * 180 / Math.PI)}° sun altitude.`;
@@ -2025,6 +2025,7 @@ export async function startScene(canvas, status) {
 
   function render() {
     frame = 0;
+    if (document.hidden) return;
     if (resize()) dirty = true;
     const animating = windState.enabled && Boolean(windState.field);
     if (!dirty && !animating) return;
@@ -2159,13 +2160,13 @@ export async function startScene(canvas, status) {
         const centerY = (points[0].y + points[1].y) * 0.5;
         const spacing = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
         camera.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, 80, 7000);
-        const scale = cameraTouchGesture.distance / 850;
         const dx = centerX - cameraTouchGesture.centerX;
         const dy = centerY - cameraTouchGesture.centerY;
+        const pan = panFromDrag(cameraTouchGesture.distance, dx, dy);
         const right = [Math.sin(cameraTouchGesture.azimuth), 0, -Math.cos(cameraTouchGesture.azimuth)];
         const forward = [-Math.cos(cameraTouchGesture.azimuth), 0, -Math.sin(cameraTouchGesture.azimuth)];
-        camera.target[0] = cameraTouchGesture.target[0] - right[0] * dx * scale + forward[0] * dy * scale;
-        camera.target[2] = cameraTouchGesture.target[2] - right[2] * dx * scale + forward[2] * dy * scale;
+        camera.target[0] = cameraTouchGesture.target[0] + right[0] * pan.right + forward[0] * pan.forward;
+        camera.target[2] = cameraTouchGesture.target[2] + right[2] * pan.right + forward[2] * pan.forward;
         markInteraction();
         requestRender();
         return;
@@ -2211,14 +2212,15 @@ export async function startScene(canvas, status) {
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (drag.pan) {
-      const scale = camera.distance / 850;
+      const pan = panFromDrag(camera.distance, dx, dy);
       const right = [Math.sin(drag.azimuth), 0, -Math.cos(drag.azimuth)];
       const forward = [-Math.cos(drag.azimuth), 0, -Math.sin(drag.azimuth)];
-      camera.target[0] = drag.target[0] - right[0] * dx * scale + forward[0] * dy * scale;
-      camera.target[2] = drag.target[2] - right[2] * dx * scale + forward[2] * dy * scale;
+      camera.target[0] = drag.target[0] + right[0] * pan.right + forward[0] * pan.forward;
+      camera.target[2] = drag.target[2] + right[2] * pan.right + forward[2] * pan.forward;
     } else {
-      camera.azimuth = drag.azimuth - dx * 0.006;
-      camera.elevation = clamp(drag.elevation - dy * 0.006, 0.16, 1.35);
+      const orbit = orbitFromDrag(drag, dx, dy);
+      camera.azimuth = orbit.azimuth;
+      camera.elevation = orbit.elevation;
     }
     requestRender();
   });
@@ -2497,6 +2499,12 @@ export async function startScene(canvas, status) {
   });
 
   addEventListener('resize', requestRender);
+  addEventListener('climate-retry-analysis', event => {
+    const tool = event.detail?.tool;
+    if (tool === 'heat') void loadHeat();
+    if (tool === 'wind') void simulateWind();
+    if (tool === 'sun') { if (shadowState.mode === 'hours') void generateSunHours(); else void generateShadows(); }
+  });
 
   fitScene();
   applyViewFromUrl();
@@ -2508,4 +2516,18 @@ export async function startScene(canvas, status) {
   setHeatMode(heatState.enabled);
   updateSunStatus();
   loadHeat();
+  attachSceneExperience({
+    canvas, requestRender, fitScene,
+    readCamera: () => ({ azimuth: camera.azimuth, elevation: camera.elevation, distance: camera.distance,
+      x: camera.target[0], y: camera.target[1], z: camera.target[2] }),
+    writeCamera: c => { Object.assign(camera, { azimuth: c.azimuth, elevation: c.elevation, distance: c.distance, target: [c.x, c.y, c.z] }); },
+    useLocation: (tool, point) => {
+      const [left, bottom, right, top] = manifest.bounds;
+      if (point.x < left || point.x > right || point.z < -top || point.z > -bottom) return;
+      const state = tool === 'sun' ? shadowState : windState;
+      state.center = [point.x, point.z];
+      camera.target = [point.x, terrainHeightAt(point.x, point.z), point.z];
+      requestRender();
+    },
+  });
 }

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Climate Explorer</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=38">
+    <link rel="stylesheet" href="/style.css?v=39">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -30,7 +30,7 @@
     </div>
   </div>
   <main id="app">
-    <canvas id="scene" aria-label="Interactive Cape Town CBD 3D scene"></canvas>
+    <canvas id="scene" tabindex="0" aria-label="Interactive Cape Town CBD 3D scene. Mouse and one-finger drag orbit in the same direction. Two fingers or modified mouse drag pan. Arrow keys orbit, plus and minus zoom, and Home fits the city."></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
     <div id="transport-stop-card" class="transport-stop-card" role="dialog" aria-label="Stop details" hidden></div>
@@ -233,15 +233,15 @@
           <div class="heat-legend-labels"><span id="sun-hours-min">Least sun</span><span id="sun-hours-max">Most sun</span></div>
         </div>
         <details class="sun-advanced"><summary>Method &amp; limitations</summary><p>Binary clear-sky 3D rays are cast from ground zones and roof/façade cells inside the selected area toward each sampled sun position. All mapped buildings and canopies remain shadow blockers. Roof results use simplified planes and do not include diffuse or reflected light.</p></details>
-        <p class="sun-note">Planning-grade solar geometry · mapped buildings and canopies</p>
+        <p class="sun-note">Modelled solar geometry · mapped buildings and canopies</p>
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · FULL CBD</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
         <div class="wind-data-banner"><i></i><span><b id="wind-source-title">OpenFOAM urban airflow</b><small id="wind-source-detail">SE 135° · RANS k–ε · iteration 500</small></span></div>
 
-        <div class="wind-analysis-tabs" role="tablist" aria-label="Wind data source">
-          <button class="active" type="button" data-wind-lens="direction" role="tab" aria-selected="true">Direction</button>
-          <button type="button" data-wind-lens="comfort" role="tab" aria-selected="false">Comfort</button>
+        <div class="wind-analysis-tabs" role="group" aria-label="Wind analysis mode">
+          <button class="active" type="button" data-wind-lens="direction" aria-pressed="true">Direction</button>
+          <button type="button" data-wind-lens="comfort" aria-pressed="false">Comfort</button>
         </div>
 
         <div class="wind-control-section" data-wind-direction-controls hidden>
@@ -609,6 +609,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=webgl-87"></script>
+    <script type="module" src="/app.js?v=experience-2"></script>
 </body>
 </html>

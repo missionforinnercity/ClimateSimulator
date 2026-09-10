@@ -1,4 +1,7 @@
 import * as THREE from './vendor/three.module.min.js';
+import { scopedFetch as fetch, assertManifest, cancelRequests } from './requestClient.js';
+import { attachSceneExperience } from './sceneExperience.js';
+import { orbitFromDrag, panFromDrag } from './cameraControls.js';
 import { createTransportLayer } from './transportLayer.js?v=13';
 
 const COLORS = {
@@ -48,7 +51,7 @@ export async function startWebGLScene(canvas, status) {
   renderer.shadowMap.type = THREE.BasicShadowMap;
   renderer.shadowMap.autoUpdate = false;
 
-  const manifest = await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json());
+  const manifest = assertManifest(await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json()));
   const loadRendererScene = async () => {
     // The compact scene is intentionally the normal interactive asset. The
     // full semantic model and dense roof mesh remain available for analysis,
@@ -85,6 +88,7 @@ export async function startWebGLScene(canvas, status) {
   let animationFrame = 0;
   let renderRequested = true;
   let transportLayer = null;
+  let transportLoading = null;
   // Scene picking shared by overlay layers: a click that did not turn into a
   // camera drag is offered to each registered handler until one consumes it.
   let groundPickHandler = null;
@@ -2848,6 +2852,10 @@ export async function startWebGLScene(canvas, status) {
     sunLight.updateMatrixWorld();
     fitSunShadowCamera(target);
     shadowState.generated = true;
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'sun', metadata: {
+      description: `Direct shadows · ${shadowState.date} · ${shadowState.minutes} minutes after midnight · mapped geometry, no cloud correction.`,
+      date: shadowState.date, minutes: shadowState.minutes, clientOnly: true,
+    } } }));
     sunLight.visible = true;
     shadowCatcher.visible = true;
     setSunMaterials(true);
@@ -3128,6 +3136,10 @@ export async function startWebGLScene(canvas, status) {
       const payload = await response.json();
       if (loadToken !== heatLoadToken) return;
       heatPayload = payload;
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
+        description: `Source: ${payload.source || 'not supplied'} · window: ${payload.window?.label || 'not supplied'} · units: ${payload.metric_metadata?.unit || 'not supplied'}`,
+        source: payload.source, window: payload.window, scenario: payload.scenario, metric: payload.metric,
+      } } }));
       if (heatToggle?.checked && !shadowState.enabled) buildHeatMesh(payload);
       renderHeatSummary(payload.summary, payload.metric_metadata, payload.metric_label);
       const range = payload.color_range || payload.range;
@@ -3239,6 +3251,10 @@ export async function startWebGLScene(canvas, status) {
       const average = totalArea ? summaries.reduce((sum, summary) => sum + summary.area_weighted_mean * summary.total_area_m2, 0) / totalArea : 0;
       const cellCount = results.buildings?.count ? ` · ${results.buildings.count.toLocaleString()} building cells` : '';
       sunStatus.textContent = `${average.toFixed(1)} h average direct sun · ${clock(start)}–${clock(end)} · ${shadowState.size} m area${cellCount}.`;
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'sun', metadata: {
+        description: `${average.toFixed(1)} h average sampled direct sun; ${scenario.date}; ${clock(start)}–${clock(end)}; ${shadowState.size} m area. Clear-sky model.`,
+        scenario, meanSunHours: average,
+      } } }));
     } catch (error) {
       if (loadToken !== sunLoadToken) return;
       if (error.name === 'AbortError') return;
@@ -4098,6 +4114,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function resetTrafficResult() {
+    cancelRequests('traffic');
     trafficState.result = null;
     trafficState.tracks = [];
     clearStatusGroup(scenarioStatusGroup);
@@ -4112,6 +4129,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function invalidateTrafficResult(message) {
+    cancelRequests('traffic');
     if (!trafficState.result) return;
     resetTrafficResult();
     updateTrafficDrawing();
@@ -5143,6 +5161,10 @@ export async function startWebGLScene(canvas, status) {
 
   async function runTrafficClosurePreview() {
     if (!trafficState.selectedEdgeIds.length) return;
+    const selectionKey = () => JSON.stringify({ edges: trafficState.selectedEdgeIds, mode: trafficState.closureMode,
+      oneWay: trafficState.oneWay, duration: trafficDuration?.value, scenario: trafficScenario?.value,
+      control: trafficControlModel?.value, demand: trafficDemand?.value });
+    const submittedSelection = selectionKey();
     trafficRun.disabled = true;
     trafficRun.textContent = 'Simulating…';
     trafficStatus.textContent = 'Running paired SUMO simulations (road open vs closed)… this can take up to a minute.';
@@ -5163,7 +5185,12 @@ export async function startWebGLScene(canvas, status) {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      if (submittedSelection !== selectionKey()) return;
       buildTrafficResult(payload);
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'traffic', metadata: {
+        description: 'Paired synthetic SUMO runs. Reliability gates and scenario assumptions are retained in the traffic report.',
+        requestId: response.headers.get('X-Request-ID'),
+      } } }));
     } catch (error) {
       trafficStatus.textContent = `Closure preview unavailable (${error.message})`;
     } finally {
@@ -5321,7 +5348,21 @@ export async function startWebGLScene(canvas, status) {
   // view; Comfort calls this directly because it only needs to *sample* the
   // volume onto a 2D grid and must not disturb Direction's view state
   // (surfaceVisible, cfdView meshes, camera framing) when it runs.
-  async function ensureCfdCaseLoaded(directionDeg) {
+  let windStudyRevision = 0;
+  const invalidateWindStudy = () => { windStudyRevision++; cancelRequests('wind'); };
+  addEventListener('climate-cancel-analysis', event => {
+    if (event.detail?.tool === 'wind') invalidateWindStudy();
+    if (event.detail?.tool === 'sun') cancelSunHours('Sunlight analysis cancelled.');
+  });
+  document.querySelector('#menu-wind')?.addEventListener('input', invalidateWindStudy, true);
+  document.querySelector('#menu-wind')?.addEventListener('change', invalidateWindStudy, true);
+  document.querySelector('#menu-wind')?.addEventListener('click', event => {
+    if (event.target.closest('[data-wind-lens], [data-wind-direction]')) invalidateWindStudy();
+  }, true);
+  const checkWindRevision = revision => {
+    if (revision !== windStudyRevision) throw new DOMException('Wind settings changed; run again.', 'AbortError');
+  };
+  async function ensureCfdCaseLoaded(directionDeg, revision = windStudyRevision) {
     const cfdCase = findCfdCase(directionDeg);
     if (!cfdCase) throw new Error(`no solved OpenFOAM case for ${directionDeg}°`);
     const base = cfdCase.base;
@@ -5329,11 +5370,13 @@ export async function startWebGLScene(canvas, status) {
       if (!response.ok) throw new Error(`manifest HTTP ${response.status}`);
       return response.json();
     });
+    checkWindRevision(revision);
     const assetVersion = `${manifest.solver.case_id}-${manifest.result_time}-${manifest.dimensions.join('x')}`;
     const [fieldBuffer, maskBuffer] = await Promise.all([
       fetch(`${base}${manifest.fields}?v=${assetVersion}`).then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`fields HTTP ${response.status}`))),
       fetch(`${base}${manifest.valid_mask}?v=${assetVersion}`).then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`mask HTTP ${response.status}`))),
     ]);
+    checkWindRevision(revision);
     const channels = Object.fromEntries(manifest.channels.map((name, index) => [name, index]));
     const sampleCount = manifest.dimensions.reduce((total, value) => total * value, 1);
     const fields = new Float32Array(fieldBuffer);
@@ -5347,11 +5390,14 @@ export async function startWebGLScene(canvas, status) {
   }
 
   async function loadCfdWind(directionDeg = windState.direction) {
+    const revision = ++windStudyRevision;
+    cancelRequests('wind');
     windSimulate.disabled = true;
     windSimulate.textContent = 'Loading CFD volume…';
     windStatus.textContent = 'Loading compact OpenFOAM fields…';
     try {
-      const cfdCase = await ensureCfdCaseLoaded(directionDeg);
+      const cfdCase = await ensureCfdCaseLoaded(directionDeg, revision);
+      checkWindRevision(revision);
       const manifest = windState.cfd.manifest;
       windState.direction = manifest.direction_deg_from;
       windState.domainCenter = [...manifest.coordinates.viewer_center_xz];
@@ -5399,12 +5445,17 @@ export async function startWebGLScene(canvas, status) {
       if (windSourceDetail) windSourceDetail.textContent = `${cfdCase.label} · iteration ${manifest.result_time} · ${coverageLabel}`;
       windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
       windStatus.textContent = `OpenFOAM ${solver.version} · ${windState.cfdGroundHeight.toFixed(1)} m pedestrian field · ${coverageLabel}`;
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind', metadata: {
+        description: `${cfdCase.label} · ${coverageLabel} · ${manifest.validation_status || 'unvalidated'}. Native spacing ${manifest.spacing_foam_m.join(' × ')} m.`,
+        solver, direction: manifest.direction_deg_from, validation: manifest.validation_status, spacing: manifest.spacing_foam_m,
+      } } }));
       const half = windState.domainSize * 0.52;
       frameBounds([
         windState.domainCenter[0] - half, windState.domainCenter[1] - half,
         windState.domainCenter[0] + half, windState.domainCenter[1] + half,
       ], { elevation: 0.38 });
     } catch (error) {
+      if (revision !== windStudyRevision) return;
       windStatus.textContent = `CFD volume unavailable (${error.message})`;
     } finally {
       windSimulate.disabled = false;
@@ -6015,6 +6066,12 @@ export async function startWebGLScene(canvas, status) {
   // never interpolates or assumes calm for the missing sectors; it excludes
   // them, so the result is an honest lower bound, not a full annual study.
   async function runComfortStudy() {
+    const revision = ++windStudyRevision;
+    cancelRequests('wind');
+    const announceStudy = (state, message = '') => dispatchEvent(new CustomEvent('climate-request-status', {
+      detail: { tool: 'wind', key: 'comfort-compute', path: '/comfort-compute', state, message },
+    }));
+    announceStudy('loading');
     windSimulate.disabled = true;
     windSimulate.textContent = 'Weighting OpenFOAM sectors…';
     windStatus.textContent = 'Loading ERA5 sector frequencies…';
@@ -6023,6 +6080,7 @@ export async function startWebGLScene(canvas, status) {
       const response = await fetch(`${windApi}/wind/climatology/sectors?${params}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const climatology = await response.json();
+      checkWindRevision(revision);
       const resolved = CFD_CASES
         .map(cfdCase => ({ cfdCase, sector: climatology.sectors.find(item => item.sector === cfdCase.sector) }))
         .filter(entry => entry.sector);
@@ -6061,8 +6119,13 @@ export async function startWebGLScene(canvas, status) {
       // interpolated with the others, only summed.
       for (const { cfdCase, sector } of resolved) {
         windStatus.textContent = `Sampling ${cfdCase.label}…`;
-        await ensureCfdCaseLoaded(cfdCase.direction_deg);
+        await ensureCfdCaseLoaded(cfdCase.direction_deg, revision);
+        checkWindRevision(revision);
         for (let row = 0; row < height; row += 1) {
+          if (row % 8 === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            checkWindRevision(revision);
+          }
           for (let column = 0; column < width; column += 1) {
             const x = originX + (column + 0.5) * dx;
             const z = originZ + (row + 0.5) * dz;
@@ -6116,9 +6179,16 @@ export async function startWebGLScene(canvas, status) {
         + `${(coverage * 100).toFixed(1)}% of ${windState.season} wind hours covered · lower-bound estimate, `
         + `unsolved directions excluded.`;
     } catch (error) {
+      if (revision !== windStudyRevision) {
+        windSimulate.disabled = false;
+        windSimulate.textContent = 'Run OpenFOAM-weighted comfort study';
+        announceStudy('error', 'Wind settings changed or study cancelled. Run again for the current settings.');
+        return;
+      }
       windState.field = null;
       windStatus.textContent = `Comfort study unavailable (${error.message})`;
     }
+    announceStudy(windState.field ? 'ready' : 'error', windState.field ? '' : windStatus.textContent);
     windSimulate.disabled = false;
     windSimulate.textContent = 'Run OpenFOAM-weighted comfort study';
     windGradient?.classList.add('comfort');
@@ -6493,14 +6563,14 @@ export async function startWebGLScene(canvas, status) {
         const centerY = (points[0].y + points[1].y) * 0.5;
         const spacing = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
         cameraState.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, 80, 7000);
-        const scale = cameraTouchGesture.distance / 850;
         const dx = centerX - cameraTouchGesture.centerX;
         const dy = centerY - cameraTouchGesture.centerY;
+        const pan = panFromDrag(cameraTouchGesture.distance, dx, dy);
         const rightVector = new THREE.Vector3(Math.sin(cameraTouchGesture.azimuth), 0, -Math.cos(cameraTouchGesture.azimuth));
         const forwardVector = new THREE.Vector3(-Math.cos(cameraTouchGesture.azimuth), 0, -Math.sin(cameraTouchGesture.azimuth));
         cameraState.target.copy(cameraTouchGesture.target)
-          .addScaledVector(rightVector, -dx * scale)
-          .addScaledVector(forwardVector, dy * scale);
+          .addScaledVector(rightVector, pan.right)
+          .addScaledVector(forwardVector, pan.forward);
         updateCamera();
         return;
       }
@@ -6560,13 +6630,14 @@ export async function startWebGLScene(canvas, status) {
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (drag.pan) {
-      const scale = cameraState.distance / 850;
+      const pan = panFromDrag(cameraState.distance, dx, dy);
       const rightVector = new THREE.Vector3(Math.sin(drag.azimuth), 0, -Math.cos(drag.azimuth));
       const forwardVector = new THREE.Vector3(-Math.cos(drag.azimuth), 0, -Math.sin(drag.azimuth));
-      cameraState.target.copy(drag.target).addScaledVector(rightVector, -dx * scale).addScaledVector(forwardVector, dy * scale);
+      cameraState.target.copy(drag.target).addScaledVector(rightVector, pan.right).addScaledVector(forwardVector, pan.forward);
     } else {
-      cameraState.azimuth = drag.azimuth - dx * 0.006;
-      cameraState.elevation = clamp(drag.elevation - dy * 0.006, 0.16, 1.35);
+      const orbit = orbitFromDrag(drag, dx, dy);
+      cameraState.azimuth = orbit.azimuth;
+      cameraState.elevation = orbit.elevation;
     }
     updateCamera();
   });
@@ -6739,7 +6810,7 @@ export async function startWebGLScene(canvas, status) {
     windLensButtons.filter(button => ['direction', 'comfort'].includes(button.dataset.windLens)).forEach(button => {
       const active = button.dataset.windLens === mode;
       button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', String(active));
+      button.setAttribute('aria-pressed', String(active));
     });
     if (windDirectionControls) windDirectionControls.hidden = mode !== 'direction';
     if (windCfdControls) windCfdControls.hidden = mode !== 'direction';
@@ -7025,6 +7096,7 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
+    if (name === 'transport') void ensureTransportLayer();
     transportLayer?.setPanelActive(name === 'transport');
     // Tools is a utility panel, not its own exclusive visualization — switch
     // away from whatever layer (heat/sun/wind/traffic) is active only when
@@ -7118,6 +7190,8 @@ export async function startWebGLScene(canvas, status) {
 
   function render(now = performance.now()) {
     animationFrame = 0;
+    if (document.hidden) return;
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     resize();
     updateWindParticles(now);
     updateTrafficCars(now);
@@ -7141,15 +7215,23 @@ export async function startWebGLScene(canvas, status) {
     }
     renderer.render(scene, camera);
     renderRequested = false;
-    if ((windState.enabled && windState.field)
+    if (!reducedMotion && ((windState.enabled && windState.field)
       || (trafficGroup.visible && trafficState.tracks.length)
       || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)
-      || transportAnimating) {
+      || transportAnimating)) {
       animationFrame = requestAnimationFrame(render);
     }
   }
 
   addEventListener('resize', requestRender);
+  addEventListener('climate-retry-analysis', event => {
+    const tool = event.detail?.tool;
+    if (tool === 'heat') void loadHeat();
+    if (tool === 'sun') { if (shadowState.mode === 'hours') void generateSunHours(); else generateShadows(); }
+    if (tool === 'wind') void simulateWind();
+    if (tool === 'traffic') { void loadTrafficRoads(); void loadTrafficLive(false); }
+    if (tool === 'transport') void ensureTransportLayer();
+  });
   fitScene();
   setWindAnalysisMode(windState.analysisMode);
   updateWindBox();
@@ -7162,17 +7244,24 @@ export async function startWebGLScene(canvas, status) {
   setHeatMode(Boolean(heatToggle?.checked));
   loadTrafficRoads();
   loadTrafficLive(false);
-  try {
-    transportLayer = await createTransportLayer({
+  async function ensureTransportLayer() {
+    if (transportLayer) return transportLayer;
+    if (transportLoading) return transportLoading;
+    transportLoading = createTransportLayer({
       THREE, scene, terrainHeightAt, terrainValidAt, requestRender, frameBounds,
       requestGroundPick, addScenePickHandler,
-    });
-    transportLayer.setPanelActive(document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport');
-  } catch (error) {
-    console.warn('Public transport layer unavailable:', error);
-    const transportStatus = document.querySelector('#transport-status');
-    if (transportStatus) transportStatus.textContent = `Transport layer unavailable (${error.message})`;
+    }).then(layer => {
+      transportLayer = layer;
+      layer.setPanelActive(document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport');
+      requestRender();
+      return layer;
+    }).catch(error => {
+      const transportStatus = document.querySelector('#transport-status');
+      if (transportStatus) transportStatus.textContent = `Transport unavailable (${error.message}). Reopen this tab to retry.`;
+    }).finally(() => { transportLoading = null; });
+    return transportLoading;
   }
+  if (document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport') await ensureTransportLayer();
   requestRender();
 
   window.__trafficDebug = {
@@ -7188,5 +7277,25 @@ export async function startWebGLScene(canvas, status) {
       };
     },
   };
+  attachSceneExperience({
+    canvas, requestRender, fitScene,
+    readCamera: () => ({ azimuth: cameraState.azimuth, elevation: cameraState.elevation, distance: cameraState.distance,
+      x: cameraState.target.x, y: cameraState.target.y, z: cameraState.target.z }),
+    writeCamera: c => { Object.assign(cameraState, { azimuth: c.azimuth, elevation: c.elevation, distance: c.distance }); cameraState.target.set(c.x, c.y, c.z); updateCamera(); },
+    useLocation: (tool, point) => {
+      if (!terrainValidAt(point.x, point.z)) return;
+      const state = tool === 'sun' ? shadowState : windState;
+      const half = state.size / 2;
+      state.center = [clamp(point.x, left + half, right - half), clamp(point.z, minZ + half, maxZ - half)];
+      if (tool === 'sun') { cancelSunHours('Analysis centre changed · calculate sun hours again.'); updateSunBox(); }
+      else {
+        windState.flowBoxInitialized = true;
+        updateWindBox();
+        if (windState.analysisMode === 'direction' && windState.field) resetWindParticles();
+      }
+      cameraState.target.set(point.x, terrainHeightAt(point.x, point.z), point.z);
+      updateCamera();
+    },
+  });
   return { renderer, scene, camera };
 }

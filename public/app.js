@@ -1,3 +1,6 @@
+import { setupExplorerExperience } from './explorerExperience.js?v=2';
+import { scopedFetch as fetch } from './requestClient.js';
+
 let canvas = document.querySelector('#scene');
 const windCanvas = document.querySelector('#wind-overlay');
 const windContext = windCanvas.getContext('2d');
@@ -90,7 +93,7 @@ function startStartupProgress() {
     const next = Math.min(88, 12 + 76 * (1 - Math.exp(-elapsed / 2600)));
     const stage = elapsed < 900 ? 'Loading city geometry'
       : elapsed < 2400 ? 'Preparing simulation layers'
-        : 'Calibrating 3D environment';
+        : 'Preparing mapped geometry';
     setStartupProgress(next, stage);
   }, 180);
 }
@@ -110,13 +113,13 @@ function finishStartupProgress(failed = false) {
   }
 
   const initialValue = startupValue;
-  const duration = Math.max(900, (100 - initialValue) * 16);
+  const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180;
   const startedAt = performance.now();
   startupLoader?.classList.add('is-finishing');
   if (startupStage) startupStage.textContent = 'Finalising climate model';
 
   const completeFill = now => {
-    const elapsed = Math.min(1, (now - startedAt) / duration);
+    const elapsed = duration === 0 ? 1 : Math.min(1, (now - startedAt) / duration);
     const eased = 1 - Math.pow(1 - elapsed, 3);
     setStartupProgress(initialValue + (100 - initialValue) * eased);
     if (elapsed < 1) {
@@ -128,7 +131,7 @@ function finishStartupProgress(failed = false) {
     window.setTimeout(() => {
       startupLoader?.classList.add('is-complete');
       startupLoader?.setAttribute('aria-hidden', 'true');
-    }, 450);
+    }, 80);
   };
   requestAnimationFrame(completeFill);
 }
@@ -140,7 +143,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=89');
+    const module = await import('./webglRenderer.js?v=90');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -149,11 +152,15 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=79');
+      const module = await import('./sceneRenderer.js?v=80');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
       status.textContent = `Viewer failed: ${fallbackError.message}`;
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.textContent = 'Reload viewer';
+      retry.addEventListener('click', () => location.reload());
+      status.after(retry);
       finishStartupProgress(true);
       return;
     }
@@ -163,6 +170,8 @@ async function loadScene() {
   windContext.clearRect(0, 0, windCanvas.width, windCanvas.height);
   setupCurrentConditions();
   setupStreetView();
+  performance.mark('climate-viewer-ready');
+  dispatchEvent(new CustomEvent('climate-viewer-ready'));
   finishStartupProgress();
 }
 
@@ -552,6 +561,7 @@ function setupWindResults() {
   });
 }
 
+setupExplorerExperience();
 setupMenuNavigation();
 setupWindResults();
 freshCanvas();

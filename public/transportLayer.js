@@ -1,3 +1,5 @@
+import { scopedFetch as fetch } from './requestClient.js';
+
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
 // Planning constants. Every one of these is an assumption, not an observation,
@@ -946,6 +948,10 @@ export async function createTransportLayer({
       : actions.some(action => action.priority === 'medium') ? 'Review' : 'Covered';
 
     elements['transport-event-results'].hidden = false;
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'transport', metadata: {
+      description: `${arrivals} scheduled arrivals, ${returns} scheduled returns; ${Math.round(coverage * 100)}% nominal capacity coverage. Not measured occupancy.`,
+      arrivals, returns, coverage, date: elements['transport-event-date'].value, clientOnly: true,
+    } } }));
     elements['transport-event-areas'].textContent = String(connectedAreas.size);
     elements['transport-event-arrivals'].textContent = String(arrivals);
     elements['transport-event-returns'].textContent = String(returns);

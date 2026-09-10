@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict, deque
+from collections import OrderedDict, deque
 import json
 import logging
 import math
 import os
+import re
 from pathlib import Path
 import secrets
 import shutil
@@ -17,6 +18,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -83,6 +85,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "Retry-After"],
 )
 # The traffic preview returns long arrays of rounded numbers, which
 # compress by roughly 5x. Worth it even on localhost for the multi-megabyte
@@ -134,21 +137,23 @@ async def _stop_traffic_observation_loop() -> None:
     if _traffic_observation_task is not None:
         _traffic_observation_task.cancel()
 RATE_LIMIT_WINDOW_S = max(1, int(os.getenv("SIMULATION_RATE_WINDOW_S", "60")))
-RATE_HISTORY: dict[str, deque[float]] = defaultdict(deque)
+RATE_LIMIT_MAX_CLIENTS = max(1, int(os.getenv("SIMULATION_RATE_MAX_CLIENTS", "10000")))
+# Ordered by last admitted request, allowing expired clients to be removed
+# without scanning every active client. Never evict an active client's budget.
+RATE_HISTORY: OrderedDict[str, deque[float]] = OrderedDict()
 RATE_LOCK = asyncio.Lock()
 
 
-@app.middleware("http")
-async def protect_and_observe_requests(request: Request, call_next):
-    """Apply deployment-safe API controls without changing simulation code."""
-    started = time.monotonic()
-    request_id = request.headers.get("x-request-id") or secrets.token_hex(8)
+async def _dispatch_protected_request(request: Request, call_next):
     path = request.url.path
     api_key = os.getenv("CLIMATE_EXPLORER_API_KEY")
-    if api_key and path.startswith("/api/") and path != "/api/health":
+    preflight = (
+        request.method == "OPTIONS" and "origin" in request.headers
+        and "access-control-request-method" in request.headers
+    )
+    if api_key and path.startswith("/api/") and path != "/api/health" and not preflight:
         supplied = request.headers.get("x-api-key", "")
-        if not secrets.compare_digest(supplied, api_key):
-            from fastapi.responses import JSONResponse
+        if not secrets.compare_digest(supplied.encode("utf-8"), api_key.encode("utf-8")):
             return JSONResponse({"detail": "missing or invalid API key"}, status_code=401)
 
     semaphore = HEAVY_SEMAPHORES.get(path) if request.method in {"GET", "POST"} else None
@@ -156,30 +161,63 @@ async def protect_and_observe_requests(request: Request, call_next):
         client = request.client.host if request.client else "unknown"
         now = time.monotonic()
         async with RATE_LOCK:
+            while RATE_HISTORY:
+                oldest = next(iter(RATE_HISTORY.values()))
+                if oldest and oldest[-1] > now - RATE_LIMIT_WINDOW_S:
+                    break
+                RATE_HISTORY.popitem(last=False)
+            if client not in RATE_HISTORY:
+                if len(RATE_HISTORY) >= RATE_LIMIT_MAX_CLIENTS:
+                    return JSONResponse(
+                        {"detail": "simulation rate tracker is full; retry shortly"},
+                        status_code=503, headers={"Retry-After": str(RATE_LIMIT_WINDOW_S)},
+                    )
+                RATE_HISTORY[client] = deque()
             history = RATE_HISTORY[client]
             while history and history[0] <= now - RATE_LIMIT_WINDOW_S:
                 history.popleft()
             if len(history) >= RATE_LIMIT_REQUESTS:
-                from fastapi.responses import JSONResponse
                 return JSONResponse(
                     {"detail": "simulation rate limit exceeded"}, status_code=429,
-                    headers={"Retry-After": str(RATE_LIMIT_WINDOW_S)},
+                    headers={"Retry-After": str(max(1, math.ceil(history[0] + RATE_LIMIT_WINDOW_S - now)))},
                 )
             history.append(now)
+            RATE_HISTORY.move_to_end(client)
         try:
             await asyncio.wait_for(semaphore.acquire(), timeout=0.01)
         except TimeoutError:
-            from fastapi.responses import JSONResponse
             return JSONResponse(
                 {"detail": "simulation queue is full; retry shortly"}, status_code=503,
                 headers={"Retry-After": "2"},
             )
     try:
-        response = await call_next(request)
+        return await call_next(request)
     finally:
         if semaphore is not None:
             semaphore.release()
+
+
+@app.middleware("http")
+async def protect_and_observe_requests(request: Request, call_next):
+    """Finalize successful responses and early errors through the same path."""
+    started = time.monotonic()
+    supplied_id = request.headers.get("x-request-id", "")
+    request_id = supplied_id if re.fullmatch(r"[A-Za-z0-9._-]{1,100}", supplied_id) else secrets.token_hex(8)
+    request.state.request_id = request_id
+    path = request.url.path
+    try:
+        response = await _dispatch_protected_request(request, call_next)
+    except Exception:
+        LOGGER.exception("Unhandled request failure request_id=%s", request_id)
+        response = JSONResponse({"detail": "internal server error"}, status_code=500)
     response.headers["X-Request-ID"] = request_id
+    # Early auth/rate errors bypass the inner CORS middleware. Preserve the
+    # same explicit allow-list so approved clients can read those errors too.
+    origin = request.headers.get("origin")
+    if origin in ALLOWED_ORIGINS and "Access-Control-Allow-Origin" not in response.headers:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Expose-Headers"] = "X-Request-ID, Retry-After"
+        response.headers["Vary"] = ", ".join(filter(None, [response.headers.get("Vary"), "Origin"]))
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "same-origin"
@@ -189,7 +227,7 @@ async def protect_and_observe_requests(request: Request, call_next):
         "img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     )
-    if path.startswith("/assets/"):
+    if path.startswith("/assets/") and response.status_code < 400:
         response.headers["Cache-Control"] = (
             "public, max-age=31536000, immutable" if request.query_params.get("v")
             else "public, max-age=0, must-revalidate"
@@ -302,11 +340,17 @@ def health() -> dict[str, Any]:
     else:
         checks["database"] = {"status": "optional_not_configured"}
     required_ok = checks["assets"]["status"] == "ok"
+    checks["assets"]["required"] = True
+    checks["sumo"].update(required=False, affects=["traffic_closure_preview"])
+    checks["database"].update(required=False, affects=["database_backed_layers"])
     return {
         "status": "ok" if required_ok else "degraded",
+        "optional_degraded": [name for name, check in checks.items()
+                              if not check["required"] and check["status"] not in {"ok", "optional_not_configured"}],
         "field_version": FIELD_VERSION,
         "checks": checks,
-        "limits": {"heavy_concurrency": HEAVY_PATH_LIMITS, "rate_requests": RATE_LIMIT_REQUESTS, "rate_window_s": RATE_LIMIT_WINDOW_S},
+        "limits": {"heavy_concurrency": HEAVY_PATH_LIMITS, "rate_requests": RATE_LIMIT_REQUESTS, "rate_window_s": RATE_LIMIT_WINDOW_S,
+                   "rate_max_clients": RATE_LIMIT_MAX_CLIENTS},
     }
 
 

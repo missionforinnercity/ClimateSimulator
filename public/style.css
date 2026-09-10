@@ -15,6 +15,50 @@
   --accent-pale: #e0a4ca;
 }
 
+/* Shared scenario and evidence UI uses native controls and stays in the scrollable panel. */
+.scenario-workspace, .explorer-guide, .evidence-card {
+  border: 1px solid var(--line-light); border-radius: 7px; padding: 10px;
+  margin: 0 0 12px; font-size: 12px; line-height: 1.5; color: var(--muted);
+  background: var(--shell-deep); overflow-wrap: anywhere;
+}
+.scenario-workspace summary, .evidence-card summary, .experience-advanced summary {
+  cursor: pointer; color: var(--ink); padding: 5px 0; font-weight: 650;
+}
+.explorer-guide { border-color: #4c8e78; background: #203029; }
+.explorer-guide h2 { color: #d5f5e8; font-size: 14px; margin: 0; }
+.explorer-guide p, .scenario-workspace p, .evidence-card p { margin: 7px 0; }
+.experience-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.experience-actions button, .evidence-card button { width: auto; min-height: 36px; font-size: 11px; padding: 7px 9px; }
+.experience-feedback { color: #d5f5e8; }
+.experience-feedback:empty, .request-state:empty { display: none; }
+.evidence-badge { color: #e9c593; font-weight: 700; }
+.evidence-limit { border-left: 2px solid #b99361; padding-left: 8px; }
+.evidence-result { color: #b8d6f0; }
+.evidence-card a { color: #b8d6f0; text-underline-offset: 3px; }
+.control-hint { display: block; font-weight: 400; color: #c1c1bc; line-height: 1.45; }
+.experience-advanced { grid-column: 1 / -1; }
+.experience-advanced label { display: grid; gap: 6px; margin: 8px 0; }
+.scenario-comparison { overflow-x: auto; }
+.scenario-comparison table { border-collapse: collapse; width: 100%; table-layout: fixed; font-size: 11px; }
+.scenario-comparison th, .scenario-comparison td { text-align: left; vertical-align: top; padding: 6px 4px; border-bottom: 1px solid var(--line-light); overflow-wrap: anywhere; }
+.scenario-comparison caption { text-align: left; color: var(--ink); padding: 8px 0; }
+.experience-feedback textarea { width: 100%; height: 90px; }
+:focus-visible { outline: 3px solid #9bdded; outline-offset: 3px; }
+.panel .menu-tab { height: 52px; padding: 5px 2px; }
+.panel .menu-tab span { position: static; display: block; width: auto; height: auto; clip: auto; overflow: visible; margin-top: 3px; font-size: 9px; }
+.panel .wind-compass-presets button:not(:disabled):not(.active),
+.panel .wind-cfd-view-tabs button:not(.active) { color: #dededa; }
+.panel #transport-data-source, .panel #transport-service-day,
+.panel .transport-live-board small, .panel .transport-timeline b,
+.panel .transport-chip, .panel #transport-status, .panel .transport-event-planner summary em,
+.panel .transport-mini-heading > span { color: #d5d5ce; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}
+@media (pointer: coarse) {
+  .experience-actions button, .evidence-card button, .scenario-workspace summary, .evidence-card summary { min-height: 44px; }
+}
+
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #171717; }
 button, select, input { font: inherit; }

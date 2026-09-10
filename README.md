@@ -2,6 +2,16 @@
 
 Standalone lightweight Cape Town CBD 3D viewer.
 
+The explorer includes a getting-started guide, consistent evidence cards, keyboard
+map controls, and a **Scenario · save, compare & share** workspace. Save Before
+and After settings, compare changed assumptions, copy a settings link, or export
+JSON with source/manifest identifiers. Snapshots are local to the current tab;
+settings links do not carry completed simulation arrays or drawn traffic closures.
+
+Developer handoff: [architecture](docs/ARCHITECTURE.md),
+[QA checks](docs/QA_CHECKLIST.md), [implementation status](docs/IMPLEMENTATION_STATUS.md),
+and [proposed feature roadmap](docs/FEATURE_ROADMAP.md).
+
 ## Build the scene
 
 ```bash
