@@ -4983,7 +4983,7 @@ export async function startWebGLScene(canvas, status) {
             <tr><th>Scale</th><td>Schematic — not surveyed</td></tr>
             <tr><th>Scenario</th><td>${reportEscape(payload.scenario?.label || '—')}</td></tr>
             <tr><th>Date</th><td>${reportEscape(generated)}</td></tr>
-            <tr><th>Prepared by</th><td>climateExplorer traffic simulation</td></tr>
+            <tr><th>Prepared by</th><td>Conditions traffic simulation</td></tr>
             <tr><th>Reference</th><td>${reportEscape(reportReference)}</td></tr>
           </tbody>
         </table>
@@ -5030,7 +5030,7 @@ export async function startWebGLScene(canvas, status) {
         <div class="report-brand-title">
           <img class="report-brand" src="/branding/MissionWordmark.webp" alt="Mission for Inner City Cape Town">
           <div>
-          <p class="report-kicker">Cape Town CBD Climate Explorer</p>
+          <p class="report-kicker">Cape Town CBD Conditions</p>
           <h1 id="traffic-report-title">Road closure simulation report</h1>
           </div>
         </div>

@@ -50,7 +50,7 @@ def label_feature(name, coordinates, kind):
 def download_main_api(south, west, north, east):
     """Use the main OSM map API first; it is reliable for this small CBD extent."""
     url = f"https://api.openstreetmap.org/api/0.6/map?bbox={west},{south},{east},{north}"
-    response = requests.get(url, timeout=120, headers={"User-Agent": "CapeTownClimateExplorer/1.0"})
+    response = requests.get(url, timeout=120, headers={"User-Agent": "CapeTownConditions/1.0"})
     response.raise_for_status()
     root = ElementTree.fromstring(response.content)
     nodes = {node.attrib["id"]: [float(node.attrib["lon"]), float(node.attrib["lat"])] for node in root.findall("node")}

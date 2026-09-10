@@ -227,10 +227,10 @@ export function setupExplorerExperience() {
     }
   }));
   actions.append(button('Export scenario JSON', () => {
-    const data = { schema: 'climate-explorer-scenario/1', ...snapshot(), before, after,
+    const data = { schema: 'conditions-scenario/1', ...snapshot(), before, after,
       sources: EVIDENCE, limitations: 'Settings and evidence metadata only; no result arrays, traffic closure geometry, event names, credentials or personal data.' };
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const anchor = el('a'); anchor.href = url; anchor.download = 'climate-explorer-scenario.json'; anchor.click();
+    const anchor = el('a'); anchor.href = url; anchor.download = 'conditions-scenario.json'; anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000); notify('Scenario exported. Results must be recomputed against the recorded data release.');
   }));
   actions.append(button('Reset view & controls', () => {

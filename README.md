@@ -1,8 +1,8 @@
-# Climate Explorer
+# Conditions
 
 Standalone lightweight Cape Town CBD 3D viewer.
 
-The explorer includes a getting-started guide, consistent evidence cards, keyboard
+Conditions includes a getting-started guide, consistent evidence cards, keyboard
 map controls, and a **Scenario · save, compare & share** workspace. Save Before
 and After settings, compare changed assumptions, copy a settings link, or export
 JSON with source/manifest identifiers. Snapshots are local to the current tab;
@@ -182,7 +182,7 @@ Deployment controls are environment variables:
 
 - `ALLOWED_ORIGINS` is a comma-separated CORS allow-list (local port 8000 only
   by default).
-- `CLIMATE_EXPLORER_API_KEY`, when set, requires `X-API-Key` on API routes other
+- `CONDITIONS_API_KEY`, when set, requires `X-API-Key` on API routes other
   than the health check.
 - `SIMULATION_RATE_LIMIT` and `SIMULATION_RATE_WINDOW_S` control the per-client
   expensive-request budget (12 per minute by default).
@@ -196,7 +196,7 @@ binary/network, and the optional database connection. Request logs are
 structured JSON and include an `X-Request-ID`. `.env` is excluded from both Git
 and the Docker build context.
 
-## Public transport explorer
+## Public transport in Conditions
 
 The Transport tab adds timetable-derived 3D MyCiTi buses and Metrorail trains,
 bold network-map routes, a neutral rail track layer, clickable
@@ -223,7 +223,7 @@ compact transport asset with
 `python scripts/build_transport_asset.py`. Implementation notes, confidence
 rules, and the next development phase are in `docs/PUBLIC_TRANSPORT.md`.
 
-## Traffic and street-status explorer
+## Traffic and street status in Conditions
 
 Run the FastAPI application to enable paired SUMO closure previews. The
 traffic panel lets you draw a short or long closure directly on the 3D map. The
@@ -282,7 +282,7 @@ network after refreshing OSM data with:
 python scripts/build_sumo_network.py --reuse-osm
 ```
 
-## Wind explorer API
+## Conditions wind API
 
 The viewer can run as a single FastAPI application. It loads `DATABASE_URL`
 from `.env` on the server only; the database URL is never sent to the browser.
@@ -291,7 +291,7 @@ from `.env` on the server only; the database URL is never sent to the browser.
 uvicorn server.app:app --reload --port 8000
 ```
 
-Open http://localhost:8000. The Wind explorer's **Direction** lens loads a
+Open http://localhost:8000. The **Wind** tool's **Direction** lens loads a
 solved OpenFOAM volume for the picked compass direction (only directions with
 a converted case are selectable) and exposes four diagnostic views: a
 terrain-following pedestrian surface at 1.5/2/4 m, resolved 3D flowlines

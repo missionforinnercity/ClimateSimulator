@@ -12,7 +12,7 @@ api = importlib.import_module("server.app")
 
 @pytest.fixture(autouse=True)
 def isolated_limits(monkeypatch):
-    monkeypatch.delenv("CLIMATE_EXPLORER_API_KEY", raising=False)
+    monkeypatch.delenv("CONDITIONS_API_KEY", raising=False)
     monkeypatch.setattr(api, "RATE_HISTORY", OrderedDict())
     monkeypatch.setattr(api, "RATE_LOCK", asyncio.Lock())
     monkeypatch.setattr(api, "HEAVY_SEMAPHORES", {})
@@ -26,7 +26,7 @@ def request(path, method="GET", **kwargs):
 
 
 def test_auth_errors_have_request_id_and_security_headers(monkeypatch):
-    monkeypatch.setenv("CLIMATE_EXPLORER_API_KEY", "private-test-value")
+    monkeypatch.setenv("CONDITIONS_API_KEY", "private-test-value")
     result = request("/api/heat/metrics", headers={"X-Request-ID": "test-request-1", "Origin": api.ALLOWED_ORIGINS[0]})
     assert result.status_code == 401
     assert result.headers["x-request-id"] == "test-request-1"
@@ -42,7 +42,7 @@ def test_untrusted_request_id_is_replaced():
 
 
 def test_preflight_does_not_need_api_key(monkeypatch):
-    monkeypatch.setenv("CLIMATE_EXPLORER_API_KEY", "private-test-value")
+    monkeypatch.setenv("CONDITIONS_API_KEY", "private-test-value")
     result = request("/api/heat/metrics", "OPTIONS", headers={
         "Origin": api.ALLOWED_ORIGINS[0], "Access-Control-Request-Method": "GET",
         "Access-Control-Request-Headers": "X-API-Key",

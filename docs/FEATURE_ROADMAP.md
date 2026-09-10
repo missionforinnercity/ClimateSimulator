@@ -1,4 +1,4 @@
-# Features that could make Climate Explorer a leading urban evidence tool
+# Features that could make Conditions a leading urban evidence tool
 
 This is a proposed roadmap, not a claim that the current app is validated or state of the art. Prioritize decisions people need to make: where to add shade, how an event affects access, which scenarios deserve engineering study, and whether an apparent change is supported by evidence.
 

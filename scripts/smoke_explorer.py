@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://127.0.0.1:8011/app")
-    parser.add_argument("--output", default="/tmp/climate-explorer-smoke")
+    parser.add_argument("--output", default="/tmp/conditions-smoke")
     parser.add_argument("--axe", help="Optional local axe.min.js for automated accessibility checks")
     args = parser.parse_args()
     output = Path(args.output)
@@ -118,7 +118,7 @@ def main():
             with page.expect_download() as download:
                 page.get_by_role("button", name="Export scenario JSON").click()
             exported = json.loads(Path(download.value.path()).read_text())
-            assert exported["schema"] == "climate-explorer-scenario/1"
+            assert exported["schema"] == "conditions-scenario/1"
             assert exported["manifest"]["version"] == 3
             assert exported["before"] and exported["after"]
             assert "transport-event-name" not in exported["settings"]["controls"]

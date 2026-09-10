@@ -503,7 +503,7 @@ function setupWindResults() {
       : era5 ? `ERA5 ${windReportEscape(era5.sector.toUpperCase())} conditional profile` : 'Manual mean wind';
     reportDocument.innerHTML = `
       <header class="report-header">
-        <div><p class="report-kicker">Cape Town CBD Climate Explorer</p><h1 id="wind-report-title">Pedestrian wind analysis report</h1></div>
+        <div><p class="report-kicker">Cape Town CBD Conditions</p><h1 id="wind-report-title">Pedestrian wind analysis report</h1></div>
         <div class="report-header-meta"><b>${reference}</b>Generated ${windReportEscape(generated)}<br>${windReportEscape(String(field.analysis_mode || 'preview').toUpperCase())} · screening assessment</div>
       </header>
       <section class="report-verdict ${severity}"><div><h2>${windReportEscape(headline)}</h2><p>${windReportNumber(uncomfortable, 1, '%')} of the analysed grid is classified as uncomfortable and ${windReportNumber(restricted, 1, '%')} is limited to business walking or worse. The most common category is ${windReportEscape(dominant?.label || 'unknown')}.</p></div></section>
@@ -546,7 +546,7 @@ function setupWindResults() {
         <div class="report-note"><b>Method.</b> ERA5 or manual boundary forcing is adjusted to pedestrian height, then combined with the directional terrain field, building-resolved CBD field and available ventilation factors. ${isComfortStudy ? 'Sixteen directional exceedance fields are weighted by the selected period wind rose.' : 'The displayed exceedance is conditional on the selected direction.'} Comfort categories use five-percent-exceedance activity thresholds.</div>
         <div class="report-note"><b>Limitations.</b> This is a preview screening result, not certified CFD, wind-tunnel evidence or a local measurement. ERA5 is regional-scale; the current attached archive is temporally incomplete. Building wakes, turbulence and façade effects require independent OpenFOAM/WindNinja benchmarks and pedestrian anemometer validation.</div>
       </div></section>
-      <footer class="report-footer">Cape Town CBD Climate Explorer · ${reference} · ${windReportEscape(field.crs)} · Analysis mode: ${windReportEscape(field.analysis_mode)} · Source layer: ${windReportEscape(field.source_layer || 'generated field')}</footer>`;
+      <footer class="report-footer">Cape Town CBD Conditions · ${reference} · ${windReportEscape(field.crs)} · Analysis mode: ${windReportEscape(field.analysis_mode)} · Source layer: ${windReportEscape(field.source_layer || 'generated field')}</footer>`;
     reportDocument.scrollTop = 0;
     if (typeof reportDialog.showModal === 'function') reportDialog.showModal();
     else reportDialog.setAttribute('open', '');

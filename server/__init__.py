@@ -1,1 +1,1 @@
-"""Climate Explorer server package."""
+"""Conditions server package."""

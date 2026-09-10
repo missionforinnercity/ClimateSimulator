@@ -5,11 +5,11 @@
 
     <input>
         <type-files value="/home/anees/miniconda3/lib/python3.13/site-packages/sumo/data/typemap/osmNetconvert.typ.xml"/>
-        <osm-files value="/home/anees/mission_projects/climateExplorer/data/osm_cbd.osm.xml"/>
+        <osm-files value="../osm_cbd.osm.xml"/>
     </input>
 
     <output>
-        <output-file value="/home/anees/mission_projects/climateExplorer/data/sumo/cbd.net.xml"/>
+        <output-file value="cbd.net.xml"/>
         <output.street-names value="true"/>
     </output>
 

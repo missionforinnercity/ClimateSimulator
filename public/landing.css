@@ -139,6 +139,22 @@ img, video { display: block; }
   color: var(--white);
   font-style: normal;
 }
+.hero-title-line {
+  display: inline-flex;
+  gap: .19em;
+  overflow: hidden;
+  padding: .08em .08em .12em;
+  margin: -.08em -.08em -.12em;
+  vertical-align: bottom;
+}
+.hero-title-line em {
+  display: inline-flex;
+  gap: .19em;
+}
+.hero-title-word {
+  display: inline-block;
+  will-change: transform, opacity, filter;
+}
 .hero-copy {
   max-width: 570px;
   margin: 34px 0 32px;
@@ -347,6 +363,7 @@ img, video { display: block; }
   .header-action { gap: 8px; padding: 9px 12px; font-size: 10px; }
   .hero-content { padding-top: 72px; padding-bottom: 170px; }
   .hero h1 { font-size: clamp(3.35rem, 17vw, 5.5rem); }
+  .hero-title-line-accent { font-size: .65em; }
   .hero-foot { align-items: flex-start; flex-direction: column; justify-content: center; gap: 10px; min-height: 126px; }
   .mission-lockup img { width: 64px; height: 35px; }
   .hero-foot ul { display: grid; grid-template-columns: 1fr 1fr; width: 100%; gap: 4px 20px; }
@@ -382,4 +399,5 @@ img, video { display: block; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+  .hero-title-word { will-change: auto; }
 }

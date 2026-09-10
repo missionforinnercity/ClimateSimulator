@@ -48,7 +48,7 @@ def _cbd_bbox() -> tuple[float, float, float, float]:
 
 def _download_osm_xml(south: float, west: float, north: float, east: float) -> bytes:
     url = f"https://api.openstreetmap.org/api/0.6/map?bbox={west},{south},{east},{north}"
-    response = requests.get(url, timeout=120, headers={"User-Agent": "CapeTownClimateExplorer/1.0"})
+    response = requests.get(url, timeout=120, headers={"User-Agent": "CapeTownConditions/1.0"})
     response.raise_for_status()
     return response.content
 

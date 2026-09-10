@@ -1,4 +1,4 @@
-# Climate Explorer architecture
+# Conditions architecture
 
 ## Runtime boundaries
 

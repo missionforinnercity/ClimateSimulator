@@ -1,4 +1,4 @@
-"""FastAPI service for the Cape Town wind explorer."""
+"""FastAPI service for Conditions."""
 
 from __future__ import annotations
 
@@ -63,7 +63,7 @@ from .era5_wind import SECTORS, climatology_summary, forcing_profile
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(
-    title="Cape Town Wind Explorer API",
+    title="Conditions API",
     version="0.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -92,7 +92,7 @@ app.add_middleware(
 # vehicle-trajectory responses.
 app.add_middleware(GZipMiddleware, minimum_size=8192)
 
-LOGGER = logging.getLogger("climate_explorer.requests")
+LOGGER = logging.getLogger("conditions.requests")
 HEAVY_PATH_LIMITS = {
     "/api/heat/zones": int(os.getenv("HEAT_CONCURRENCY", "2")),
     "/api/sunlight/building-surfaces": int(os.getenv("SUNLIGHT_CONCURRENCY", "2")),
@@ -146,7 +146,7 @@ RATE_LOCK = asyncio.Lock()
 
 async def _dispatch_protected_request(request: Request, call_next):
     path = request.url.path
-    api_key = os.getenv("CLIMATE_EXPLORER_API_KEY")
+    api_key = os.getenv("CONDITIONS_API_KEY")
     preflight = (
         request.method == "OPTIONS" and "origin" in request.headers
         and "access-control-request-method" in request.headers
@@ -223,7 +223,7 @@ async def protect_and_observe_requests(request: Request, call_next):
     response.headers["Referrer-Policy"] = "same-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     )

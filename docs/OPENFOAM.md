@@ -6,7 +6,7 @@ any more — the older fast, mass-conserving horizontal screening model has
 been retired from it. It's still used elsewhere (the Canvas 2D compatibility
 fallback, and the standalone `/api/wind/preview`, `/api/wind/comfort`,
 `/api/wind/validate` API routes), just not to drive the WebGL wind UI. See
-`README.md`'s "Wind explorer API" section for that split.
+`README.md`'s "Conditions wind API" section for that split.
 
 Running CFD on every browser click is still not a useful target: mesh
 generation and convergence are offline jobs. The browser only samples compact
@@ -88,7 +88,7 @@ substitute for the native mesh in engineering analysis.
 
 ```json
 {
-  "schema": "climate-explorer-cfd-volume/1",
+  "schema": "conditions-cfd-volume/1",
   "solver": {"name": "OpenFOAM", "version": "14", "case_id": "cbd_nw_full"},
   "direction_deg_from": 315.0,
   "validation_status": "exploratory_unvalidated_pilot",

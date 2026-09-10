@@ -1,6 +1,6 @@
 {
   "type": "FeatureCollection",
-  "name": "climateExplorer_valid_lidar_footprint",
+  "name": "conditions_valid_lidar_footprint",
   "crs": {
     "type": "name",
     "properties": {

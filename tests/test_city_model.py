@@ -58,7 +58,7 @@ def test_municipal_street_data_is_clipped_and_semantically_typed():
     municipal_roads = [item for item in objects if "municipalRoads" in item["sources"]]
     assert municipal_roads
     assert sum(":RCL" in item["identifier"] for item in municipal_roads) > 700
-    assert all(item["identifier"].startswith("urn:za.capetown.climate-explorer:municipal-road:") for item in municipal_roads)
+    assert all(item["identifier"].startswith("urn:za.capetown.conditions:municipal-road:") for item in municipal_roads)
     assert all(item["attributes"].get("owner") or item["attributes"].get("maintainingAuthority") for item in municipal_roads)
 
 

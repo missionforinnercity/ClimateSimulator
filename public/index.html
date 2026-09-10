@@ -3,26 +3,27 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Climate Explorer — See Cape Town differently</title>
+  <title>Conditions — See Cape Town differently</title>
   <meta name="description" content="See how heat, sunlight, wind and movement shape Cape Town's Inner City—and turn shared evidence into better public space.">
   <meta name="theme-color" content="#11120f">
   <link rel="icon" type="image/webp" href="/branding/MisisonFavicon.webp">
   <link rel="preload" as="image" href="/assets/landing/heat.webp" fetchpriority="high">
   <link rel="stylesheet" href="/landing.css?v=3">
-  <script src="/landing.js?v=2" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js" defer></script>
+  <script src="/landing.js?v=3" defer></script>
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/" aria-label="Climate Explorer home">
+    <a class="brand" href="/" aria-label="Conditions home">
       <img class="brand-mark" src="/branding/MisisonFavicon.webp" alt="">
-      <span>Climate Explorer</span>
+      <span>Conditions</span>
     </a>
     <nav class="site-nav" aria-label="Primary navigation">
       <a href="#explore">Explore</a>
       <a href="#method">Method</a>
       <a href="/docs">Documentation</a>
     </nav>
-    <a class="header-action" href="/app">Open explorer <span aria-hidden="true">↗</span></a>
+    <a class="header-action" href="/app">Open Conditions <span aria-hidden="true">↗</span></a>
   </header>
 
   <main>
@@ -33,7 +34,20 @@
       <div class="hero-shade" aria-hidden="true"></div>
       <div class="hero-content page-shell">
         <p class="kicker"><span></span> Made for Cape Town's Inner City</p>
-        <h1 id="hero-title">See the city.<br><em>Shape it together.</em></h1>
+        <h1 id="hero-title">
+          <span class="hero-title-line">
+            <span class="hero-title-word">See</span>
+            <span class="hero-title-word">the</span>
+            <span class="hero-title-word">city.</span>
+          </span><br>
+          <span class="hero-title-line hero-title-line-accent">
+            <em>
+              <span class="hero-title-word">Shape</span>
+              <span class="hero-title-word">it</span>
+              <span class="hero-title-word">together.</span>
+            </em>
+          </span>
+        </h1>
         <p class="hero-copy">Explore how heat, sunlight, wind and movement shape the street-level experience and turn shared evidence into better public space for everyone.</p>
         <div class="actions">
           <a class="button button-solid" href="/app">Explore the city <span aria-hidden="true">↗</span></a>
@@ -57,7 +71,7 @@
     <section class="intro page-shell" id="explore">
       <div class="intro-label">
         <span>01</span>
-        <p>The explorer</p>
+        <p>Conditions</p>
       </div>
       <div class="intro-copy">
         <h2>One shared city.<br>Five ways to understand it.</h2>
@@ -65,7 +79,7 @@
       </div>
     </section>
 
-    <section class="portal-grid page-shell" aria-label="Explorer capabilities">
+    <section class="portal-grid page-shell" aria-label="Conditions capabilities">
       <a class="portal portal-wide" href="/docs#heat">
         <div class="portal-media">
           <img src="/assets/landing/heat.webp" alt="" loading="lazy">
@@ -166,17 +180,17 @@
       <div class="page-shell closing-inner">
         <p class="kicker"><span></span> Explore the possibilities</p>
         <h2>Better streets start<br>with seeing clearly.</h2>
-        <a class="button button-solid" href="/app">Open Climate Explorer <span aria-hidden="true">↗</span></a>
+        <a class="button button-solid" href="/app">Open Conditions <span aria-hidden="true">↗</span></a>
         <p class="closing-note">No account required · Runs directly in your browser</p>
       </div>
     </section>
   </main>
 
   <footer class="site-footer page-shell">
-    <a class="brand" href="/"><img class="brand-mark" src="/branding/MisisonFavicon.webp" alt=""><span>Climate Explorer</span></a>
+    <a class="brand" href="/"><img class="brand-mark" src="/branding/MisisonFavicon.webp" alt=""><span>Conditions</span></a>
     <p>A Mission for Inner City Cape Town project for better public space.</p>
     <nav aria-label="Footer navigation">
-      <a href="/app">Explorer</a>
+      <a href="/app">Conditions</a>
       <a href="/docs">Documentation</a>
       <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">Attribution</a>
     </nav>

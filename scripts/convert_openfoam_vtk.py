@@ -2,7 +2,7 @@
 """Sample an OpenFOAM legacy VTK result into a browser-friendly CFD volume.
 
 The output keeps the regular grid in OpenFOAM's wind-aligned coordinates.  The
-manifest carries the rotation back to Climate Explorer viewer coordinates, so
+manifest carries the rotation back to Conditions viewer coordinates, so
 the browser can trilinearly sample a small interleaved float32 asset instead of
 downloading the complete unstructured mesh.
 """
@@ -120,7 +120,7 @@ def convert(vtk_path: Path, case_path: Path, output_dir: Path, spacing: tuple[fl
             "fraction": float(covered / len(buildings)) if buildings else 0.0,
         }
     manifest = {
-        "schema": "climate-explorer-cfd-volume/1",
+        "schema": "conditions-cfd-volume/1",
         "solver": {
             "name": "OpenFOAM",
             "version": str(case["openfoam_version"]),

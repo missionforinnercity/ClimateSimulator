@@ -1,4 +1,4 @@
-# Climate Explorer QA
+# Conditions QA
 
 ## Automated commands
 
@@ -10,7 +10,7 @@ node --test tests/scenarioState.test.mjs tests/requestClient.test.mjs
 .venv/bin/python scripts/smoke_explorer.py --url http://127.0.0.1:8011/app
 ```
 
-The browser smoke harness intercepts API requests and CFD downloads. It exercises failure handling without depending on live services, a database, SUMO simulations or a new CFD solve. It loads the real scene/transport assets. Screenshots go to `/tmp/climate-explorer-smoke` by default. Its narrow viewport is an emulation, not a physical-phone performance measurement.
+The browser smoke harness intercepts API requests and CFD downloads. It exercises failure handling without depending on live services, a database, SUMO simulations or a new CFD solve. It loads the real scene/transport assets. Screenshots go to `/tmp/conditions-smoke` by default. Its narrow viewport is an emulation, not a physical-phone performance measurement.
 
 New Python HTTP tests use an in-process ASGI client without application lifespan startup, so provider polling is not started. Existing domain tests remain authoritative for numerical behaviour. Do not weaken numerical tests to make UI changes pass.
 

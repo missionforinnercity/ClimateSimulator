@@ -75,7 +75,7 @@ def write_lidar_footprint(dtm_path, output):
     geographic = transform_geometry(to_wgs84.transform, footprint)
     collection = {
         "type": "FeatureCollection",
-        "name": "climateExplorer_valid_lidar_footprint",
+        "name": "conditions_valid_lidar_footprint",
         "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:OGC:1.3:CRS84"}},
         "features": [{
             "type": "Feature",

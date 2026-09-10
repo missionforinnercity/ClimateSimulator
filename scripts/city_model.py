@@ -28,7 +28,7 @@ except ImportError:
 
 
 MODEL_VERSION = "1.0"
-ID_NAMESPACE = "za.capetown.climate-explorer"
+ID_NAMESPACE = "za.capetown.conditions"
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 
 
@@ -830,9 +830,9 @@ def build_city_model(
         "type": "CityModel",
         "schemaVersion": MODEL_VERSION,
         "conceptualModel": "OGC CityGML 3.0",
-        "encodingProfile": "Climate Explorer application JSON (non-conformant exchange encoding)",
+        "encodingProfile": "Conditions application JSON (non-conformant exchange encoding)",
         "metadata": {
-            "title": "Cape Town CBD Climate Explorer semantic city model",
+            "title": "Cape Town CBD Conditions semantic city model",
             "referenceSystem": manifest["crs"],
             "origin": manifest["origin"],
             "bounds": manifest["bounds"],

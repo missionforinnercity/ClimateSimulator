@@ -1,5 +1,5 @@
 {
-  "schema": "climate-explorer-cfd-volume/1",
+  "schema": "conditions-cfd-volume/1",
   "solver": {
     "name": "OpenFOAM",
     "version": "14",
