@@ -987,7 +987,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .streetview-link:hover { border-color: var(--accent); background: #513247; color: #fff; }
 
 .panel-footer { flex: 0 0 auto; padding: 9px 11px 10px; border-top: 1px solid var(--line); background: var(--shell-deep); }
-#fit { min-height: 27px; padding: 5px 9px; }
+.panel-footer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.panel-footer-actions button { min-height: 27px; padding: 5px 9px; }
+.panel-footer-actions button[hidden] { display: none; }
 .status { min-height: 14px; margin: 7px 1px 0; color: #d0d0cd; font-size: 10px; line-height: 1.35; }
 .help { margin-top: 6px; color: var(--quiet); font-size: 9px; }
 .help summary { cursor: pointer; list-style-position: inside; }

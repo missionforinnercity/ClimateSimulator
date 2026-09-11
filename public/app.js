@@ -62,6 +62,46 @@ function setupMenuNavigation() {
   activate(initial);
 }
 
+function setupFullscreenControls() {
+  const enterButton = document.querySelector('#fullscreen-enter');
+  const exitButton = document.querySelector('#fullscreen-exit');
+  if (!enterButton || !exitButton) return;
+
+  const supported = Boolean(document.fullscreenEnabled && document.documentElement.requestFullscreen);
+  const syncControls = () => {
+    const active = Boolean(document.fullscreenElement);
+    enterButton.hidden = active;
+    enterButton.setAttribute('aria-pressed', String(active));
+    exitButton.hidden = !active;
+  };
+
+  if (!supported) {
+    enterButton.disabled = true;
+    enterButton.title = 'Full screen is not supported by this browser';
+  }
+
+  enterButton.addEventListener('click', async () => {
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch (error) {
+      console.warn('Could not enter full screen:', error);
+      enterButton.title = 'The browser did not allow full screen';
+    }
+  });
+
+  exitButton.addEventListener('click', async () => {
+    if (!document.fullscreenElement) return;
+    try {
+      await document.exitFullscreen();
+    } catch (error) {
+      console.warn('Could not exit full screen:', error);
+    }
+  });
+
+  document.addEventListener('fullscreenchange', syncControls);
+  syncControls();
+}
+
 function freshCanvas() {
   const replacement = canvas.cloneNode(false);
   canvas.replaceWith(replacement);
@@ -563,6 +603,7 @@ function setupWindResults() {
 
 setupExplorerExperience();
 setupMenuNavigation();
+setupFullscreenControls();
 setupWindResults();
 freshCanvas();
 loadScene();

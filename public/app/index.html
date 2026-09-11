@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=39">
+    <link rel="stylesheet" href="/style.css?v=40">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -544,7 +544,11 @@
       </section>
       </div>
       <footer class="panel-footer">
-        <button id="fit" class="secondary">Fit to CBD</button>
+        <div class="panel-footer-actions">
+          <button id="fit" class="secondary" type="button">Fit to CBD</button>
+          <button id="fullscreen-enter" class="secondary" type="button" aria-pressed="false">Full screen</button>
+          <button id="fullscreen-exit" class="secondary" type="button" hidden>Exit full screen</button>
+        </div>
         <p id="status" class="status">Loading scene…</p>
         <details class="help">
           <summary>Controls &amp; sources</summary>
@@ -609,6 +613,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-2"></script>
+    <script type="module" src="/app.js?v=experience-3"></script>
 </body>
 </html>
