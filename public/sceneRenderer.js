@@ -981,7 +981,7 @@ export async function startScene(canvas, status) {
       const durationHours = (Number(scenario.end_minutes) - Number(scenario.start_minutes)) / 60;
       const requests = [];
       if (surfaces !== 'buildings') {
-        requests.push(fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`)
+        requests.push(fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`, { timeoutMs: 300000 })
           .then(async response => {
             const body = await response.json();
             if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);
@@ -989,7 +989,7 @@ export async function startScene(canvas, status) {
           }));
       }
       if (surfaces !== 'ground') {
-        requests.push(fetch(`${windApi}/sunlight/building-surfaces?${new URLSearchParams({ ...scenario, ...domain, resolution_m: sunSurfaceResolution?.value || '5', surfaces: 'all' })}`)
+        requests.push(fetch(`${windApi}/sunlight/building-surfaces?${new URLSearchParams({ ...scenario, ...domain, resolution_m: sunSurfaceResolution?.value || '5', surfaces: 'all' })}`, { timeoutMs: 300000 })
           .then(async response => {
             const body = await response.json();
             if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);

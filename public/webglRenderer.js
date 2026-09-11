@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.min.js';
-import { scopedFetch as fetch, assertManifest, cancelRequests } from './requestClient.js';
+import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { orbitFromDrag, panFromDrag } from './cameraControls.js';
 import { createTransportLayer } from './transportLayer.js?v=13';
@@ -3172,7 +3172,6 @@ export async function startWebGLScene(canvas, status) {
     const loadToken = ++sunLoadToken;
     const controller = new AbortController();
     sunAbortController = controller;
-    sunAnalysisId = crypto.randomUUID();
     sunStatus.textContent = 'Accumulating direct sunlight…';
     sunGenerate.disabled = true;
     sunGenerate.textContent = 'Calculating…';
@@ -3181,6 +3180,7 @@ export async function startWebGLScene(canvas, status) {
       sunProgress.removeAttribute('value');
     }
     try {
+      sunAnalysisId = createAnalysisId();
       const scenario = {
         date: sunDate?.value || shadowState.date,
         start_minutes: sunStartTime?.value || '480', end_minutes: sunEndTime?.value || '1080',
@@ -3195,7 +3195,9 @@ export async function startWebGLScene(canvas, status) {
       const durationHours = (Number(scenario.end_minutes) - Number(scenario.start_minutes)) / 60;
       const requestFactories = [];
       if (surfaces !== 'buildings') {
-        requestFactories.push(() => fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`, { signal: controller.signal })
+        requestFactories.push(() => fetch(`${windApi}/heat/zones?${new URLSearchParams({ metric: 'cumulative_sun_hours', ...scenario, ...domain })}`, {
+          signal: controller.signal, timeoutMs: 300000,
+        })
           .then(async response => {
             if (!response.ok) throw new Error((await response.json()).detail || `HTTP ${response.status}`);
             return ['ground', await response.json()];
@@ -3206,7 +3208,9 @@ export async function startWebGLScene(canvas, status) {
           ...scenario, ...domain, resolution_m: sunSurfaceResolution?.value || '5',
           surfaces: 'all', analysis_id: sunAnalysisId,
         });
-        requestFactories.push(() => fetch(`${windApi}/sunlight/building-surfaces?${buildingParams}`, { signal: controller.signal })
+        requestFactories.push(() => fetch(`${windApi}/sunlight/building-surfaces?${buildingParams}`, {
+          signal: controller.signal, timeoutMs: 300000,
+        })
           .then(async response => {
             const body = await response.json();
             if (!response.ok) throw new Error(body.detail || `HTTP ${response.status}`);

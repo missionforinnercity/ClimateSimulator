@@ -9,6 +9,21 @@ function announce(detail) {
     globalThis.dispatchEvent(new CustomEvent('climate-request-status', { detail }));
   }
 }
+
+// randomUUID() is restricted to secure browser contexts. The application is
+// also commonly opened directly from a VM over plain HTTP, so sunlight jobs
+// need an identifier that does not depend on HTTPS being configured first.
+export function createAnalysisId(cryptoSource = globalThis.crypto) {
+  if (typeof cryptoSource?.randomUUID === 'function') return cryptoSource.randomUUID();
+  if (typeof cryptoSource?.getRandomValues === 'function') {
+    const bytes = cryptoSource.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map(value => value.toString(16).padStart(2, '0'));
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+  }
+  return `sun-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 export function cancelRequests(tool) {
   for (const entry of pending.values()) if (entry.tool === tool) entry.controller.abort();
 }

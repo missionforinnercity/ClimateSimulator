@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { scopedFetch, cancelRequests, assertManifest } from '../public/requestClient.js';
+import { scopedFetch, cancelRequests, assertManifest, createAnalysisId } from '../public/requestClient.js';
+
+test('analysis IDs work when randomUUID is unavailable on an HTTP deployment', () => {
+  const bytes = Uint8Array.from({ length: 16 }, (_, index) => index);
+  const id = createAnalysisId({ getRandomValues: target => { target.set(bytes); return target; } });
+  assert.equal(id, '00010203-0405-4607-8809-0a0b0c0d0e0f');
+});
 
 test('newer request prevents an old body from becoming a result', async t => {
   let release;
