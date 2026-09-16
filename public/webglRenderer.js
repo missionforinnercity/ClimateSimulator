@@ -2197,6 +2197,7 @@ export async function startWebGLScene(canvas, status) {
   const trafficDurationValue = document.querySelector('#traffic-duration-value');
   const trafficScenario = document.querySelector('#traffic-scenario');
   const trafficDemand = document.querySelector('#traffic-demand');
+  const trafficSeedCount = document.querySelector('#traffic-seed-count');
   const trafficDrawLane = document.querySelector('#traffic-draw-lane');
   const trafficDrawRoad = document.querySelector('#traffic-draw-road');
   const trafficDrawOneWay = document.querySelector('#traffic-draw-oneway');
@@ -2309,6 +2310,10 @@ export async function startWebGLScene(canvas, status) {
     liveRoads: [],
     networkEdges: [],
     edgesById: new Map(),
+    roadsLoading: false,
+    roadsLoadPromise: null,
+    roadsLoadAttempts: 0,
+    roadsRetryTimer: null,
     snapGrid: new Map(),
     snapCellSize: 45,
     snapRadius: 24,
@@ -4298,6 +4303,17 @@ export async function startWebGLScene(canvas, status) {
     updateTrafficDrawing();
   }
 
+  function cancelInterruptedTrafficStroke(message = 'Stroke interrupted. Draw again or confirm the existing selection.') {
+    if (!trafficState.stroking) return;
+    trafficState.stroking = false;
+    trafficState.pointerId = null;
+    trafficState.lastScreen = null;
+    trafficState.strokePoints = [];
+    trafficState.strokeStartScreen = null;
+    updateTrafficDrawPopup(message);
+    updateTrafficDrawing();
+  }
+
   function confirmTrafficDrawing() {
     if (trafficState.stroking || !trafficState.selectedEdgeIds.length) {
       updateTrafficDrawPopup('Add at least one road section before confirming.');
@@ -4338,35 +4354,79 @@ export async function startWebGLScene(canvas, status) {
     if (trafficStatus) trafficStatus.textContent = `${label} confirmed (direction flipped) · adjust the scenario or run the comparison.`;
   }
 
-  async function loadTrafficRoads() {
-    try {
-      const response = await fetch(`${windApi}/traffic/roads`);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json();
-      const roads = payload.roads || [];
-      trafficState.roadsByName = new Map(roads.map(road => [road.name, road]));
-      trafficState.networkEdges = payload.network_edges || [];
-      trafficState.edgesById = new Map(trafficState.networkEdges.map(edge => [edge.id, edge]));
-      buildTrafficSnapIndex(trafficState.networkEdges);
-      trafficState.roadStatuses = payload.road_statuses || [];
-      buildPermanentRoadStatuses(trafficState.roadStatuses);
-      buildLiveRoadClosures(trafficState.liveRoads);
-      requestRender();
-      if (trafficScenario && payload.scenarios?.length) {
-        trafficScenario.innerHTML = payload.scenarios
-          .map(scenario => `<option value="${scenario.key}"${scenario.key === 'am_peak' ? ' selected' : ''}>${scenario.label}</option>`)
-          .join('');
-      }
-      if (trafficDrawLane) trafficDrawLane.disabled = !trafficState.networkEdges.length;
-      if (trafficDrawRoad) trafficDrawRoad.disabled = !trafficState.networkEdges.length;
-      if (trafficDrawOneWay) trafficDrawOneWay.disabled = !trafficState.networkEdges.length;
-      if (trafficState.networkEdges.length && trafficStatus) {
-        const matched = payload.road_data?.municipal_matched_edges || 0;
-        trafficStatus.textContent = `${trafficState.networkEdges.length} road sections ready · ${matched} matched to City road-centre data.`;
-      }
-    } catch (error) {
-      if (trafficStatus) trafficStatus.textContent = `Road list unavailable (${error.message})`;
+  function syncTrafficDrawingToolAvailability() {
+    const available = trafficState.networkEdges.length > 0;
+    const title = available
+      ? ''
+      : trafficState.roadsLoading
+        ? 'Loading the road network…'
+        : 'Road network unavailable; retrying automatically';
+    for (const button of [trafficDrawLane, trafficDrawRoad, trafficDrawOneWay]) {
+      if (!button) continue;
+      button.disabled = !available;
+      if (title) button.title = title;
+      else button.removeAttribute('title');
     }
+  }
+
+  function scheduleTrafficRoadRetry() {
+    if (trafficState.networkEdges.length || trafficState.roadsRetryTimer) return;
+    const delay = Math.min(30000, 1500 * (2 ** Math.min(trafficState.roadsLoadAttempts, 4)));
+    trafficState.roadsRetryTimer = setTimeout(() => {
+      trafficState.roadsRetryTimer = null;
+      void loadTrafficRoads();
+    }, delay);
+  }
+
+  function loadTrafficRoads() {
+    if (trafficState.networkEdges.length) return Promise.resolve();
+    if (trafficState.roadsLoadPromise) return trafficState.roadsLoadPromise;
+    trafficState.roadsLoading = true;
+    syncTrafficDrawingToolAvailability();
+    const request = (async () => {
+      try {
+        const response = await fetch(`${windApi}/traffic/roads`, { timeoutMs: 15000 });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        const roads = payload.roads || [];
+        trafficState.roadsByName = new Map(roads.map(road => [road.name, road]));
+        trafficState.networkEdges = payload.network_edges || [];
+        if (!trafficState.networkEdges.length) throw new Error('the server returned no drawable road sections');
+        trafficState.edgesById = new Map(trafficState.networkEdges.map(edge => [edge.id, edge]));
+        buildTrafficSnapIndex(trafficState.networkEdges);
+        trafficState.roadStatuses = payload.road_statuses || [];
+        buildPermanentRoadStatuses(trafficState.roadStatuses);
+        buildLiveRoadClosures(trafficState.liveRoads);
+        requestRender();
+        if (trafficScenario && payload.scenarios?.length) {
+          trafficScenario.innerHTML = payload.scenarios
+            .map(scenario => `<option value="${scenario.key}"${scenario.key === 'am_peak' ? ' selected' : ''}>${scenario.label}</option>`)
+            .join('');
+        }
+        trafficState.roadsLoadAttempts = 0;
+        if (trafficState.roadsRetryTimer) {
+          clearTimeout(trafficState.roadsRetryTimer);
+          trafficState.roadsRetryTimer = null;
+        }
+        if (trafficState.networkEdges.length && trafficStatus) {
+          const matched = payload.road_data?.municipal_matched_edges || 0;
+          trafficStatus.textContent = `${trafficState.networkEdges.length} road sections ready · ${matched} matched to City road-centre data.`;
+        }
+      } catch (error) {
+        trafficState.roadsLoadAttempts += 1;
+        if (trafficStatus && !trafficState.networkEdges.length) {
+          trafficStatus.textContent = `Road list unavailable (${error.message}) · retrying automatically…`;
+        }
+        scheduleTrafficRoadRetry();
+      } finally {
+        trafficState.roadsLoading = false;
+        syncTrafficDrawingToolAvailability();
+      }
+    })();
+    trafficState.roadsLoadPromise = request.finally(() => {
+      trafficState.roadsLoadPromise = null;
+    });
+    return trafficState.roadsLoadPromise;
   }
 
   async function loadTrafficLive(force) {
@@ -4594,8 +4654,16 @@ export async function startWebGLScene(canvas, status) {
         queueIncrease: 0,
         severity: 'incomplete',
         headline: 'Comparison incomplete — do not use this result yet',
-        action: impact.simulation_complete === false
+        action: impact.ensemble?.applied && impact.ensemble?.assessment_ready === false
+          ? `Only ${reportNumber(impact.ensemble.assessment_ready_runs, 0)} of ${reportNumber(impact.ensemble.run_count, 0)} seed runs passed quality checks; ${reportNumber(impact.ensemble.required_assessment_ready_runs, 0)} are required. The failed-run diagnostics have been retained for review.`
+          : impact.simulation_complete === false
           ? 'One or both simulation runs reached the processing time limit. Reduce the selected area or demand and rerun the comparison.'
+          : impact.physically_solved === false
+            ? `${reportNumber((impact.teleport_count_baseline || 0) + (impact.teleport_count_closure || 0), 0)} vehicles were moved through gridlock by the simulator. Revise the closure or demand and rerun before using the result.`
+          : impact.baseline_gridlock_stable === false
+            ? `${reportNumber(impact.persistent_gridlock_count_baseline, 0)} vehicles (${reportNumber(Number(impact.baseline_gridlock_ratio || 0) * 100, 1, '%')}) remained stopped for at least five minutes with the road open. The maximum acceptable baseline share is ${reportNumber(Number(impact.maximum_baseline_gridlock_ratio || 0) * 100, 0, '%')}. Reduce demand or correct the baseline network before using the comparison.`
+          : impact.baseline_insertion_stable === false
+            ? `${reportNumber(impact.insertion_failure_count_baseline, 0)} generated vehicles could not enter the open-road network. Reduce demand or correct its entry lanes before using the comparison.`
           : impact.baseline_stable === false
             ? `The open-road baseline completed only ${reportNumber(Number(impact.completed_trip_ratio_baseline || 0) * 100, 0, '%')} of generated trips; at least ${reportNumber(Number(impact.minimum_baseline_completion_ratio || 0) * 100, 0, '%')} is required. Reduce synthetic demand or shorten the selected area and rerun it.`
           : impact.paired_sample_sufficient === false
@@ -4603,44 +4671,69 @@ export async function startWebGLScene(canvas, status) {
             : 'No trip completed in both runs, so a like-for-like travel-time comparison is not available. Revise the closure or demand and rerun it.',
       };
     }
-    const durationChange = Number(
-      impact.mean_journey_time_change_pct ?? impact.mean_duration_change_pct,
-    ) || 0;
-    const completionChange = (
-      (impact.completed_trip_ratio_closure ?? 0) - (impact.completed_trip_ratio_baseline ?? 0)) * 100;
+    const journeyTimeReady = impact.ensemble?.applied
+      ? Number(impact.ensemble.journey_time_ready_runs) > 0
+      : impact.journey_time_ready !== false;
+    const rawDurationChange = impact.ensemble?.journey_time_change_pct?.median
+      ?? impact.mean_journey_time_change_pct ?? impact.mean_duration_change_pct;
+    const rawDurationChangeS = impact.ensemble?.journey_time_change_s?.median
+      ?? impact.mean_journey_time_change_s ?? impact.mean_duration_change_s;
+    const durationChange = journeyTimeReady && rawDurationChange !== null
+      && rawDurationChange !== undefined ? Number(rawDurationChange) || 0 : null;
+    const durationChangeS = journeyTimeReady && rawDurationChangeS !== null
+      && rawDurationChangeS !== undefined ? Number(rawDurationChangeS) || 0 : null;
+    const completionChange = Number(
+      impact.ensemble?.completion_change_percentage_points?.median
+      ?? ((impact.completed_trip_ratio_closure ?? 0) - (impact.completed_trip_ratio_baseline ?? 0)) * 100,
+    );
     const completionDrop = Math.max(0, -completionChange);
     const queueIncrease = Math.max(0,
       (Number(impact.max_queue_closure) || 0) - (Number(impact.max_queue_baseline) || 0));
+    const majorDelay = durationChange >= 35 && durationChangeS >= 30;
+    const significantDelay = durationChange >= 18 && durationChangeS >= 15;
+    const noticeableDelay = durationChange >= 7 && durationChangeS >= 5;
     let severity = 'minor';
-    if (durationChange >= 35 || completionDrop >= 15) severity = 'major';
-    else if (durationChange >= 18 || completionDrop >= 8 || queueIncrease >= 15) severity = 'significant';
-    else if (durationChange >= 7 || completionDrop >= 3 || queueIncrease >= 5) severity = 'noticeable';
+    if (majorDelay || completionDrop >= 15) severity = 'major';
+    else if (significantDelay || completionDrop >= 8) severity = 'significant';
+    else if (noticeableDelay || completionDrop >= 3) severity = 'noticeable';
 
-    const headline = {
+    // Peak queue is retained as supporting evidence, but an absolute count is
+    // not comparable across differently sized demand samples and must not, by
+    // itself, determine the verdict.
+    const durationBand = majorDelay ? 3 : significantDelay ? 2 : noticeableDelay ? 1 : 0;
+    const completionBand = completionDrop >= 15 ? 3 : completionDrop >= 8 ? 2 : completionDrop >= 3 ? 1 : 0;
+    const primaryDriver = completionBand > durationBand ? 'completion' : durationBand > completionBand ? 'delay'
+      : completionBand > 0 ? 'both' : 'none';
+
+    const genericHeadline = {
       major: 'Major modelled disruption — revise the option',
       significant: 'Significant modelled disruption — test mitigation',
       noticeable: 'Noticeable modelled disruption — mitigation is advisable',
       minor: 'Limited modelled disruption in this scenario',
     }[severity];
+    const completionHeadline = {
+      major: 'Major modelled completion loss — revise the option',
+      significant: 'Significant modelled completion loss — test mitigation',
+      noticeable: 'Noticeable modelled completion loss — mitigation is advisable',
+      minor: genericHeadline,
+    }[severity];
+    const headline = primaryDriver === 'completion' ? completionHeadline : genericHeadline;
     const action = {
       major: 'Revise the option before progressing it. Shorten or phase the work zone, retain available capacity where possible, or move it outside the peak, then compare the revision.',
       significant: 'Test a shorter or off-peak work zone and explicit junction or diversion management before taking the option forward.',
       noticeable: 'Compare practical mitigation such as off-peak timing, a shorter work zone, and monitoring of the busiest diversion roads.',
       minor: 'Retain this option for further assessment, alongside diversion signing, monitoring, emergency access and an operational contingency.',
     }[severity];
-    return { durationChange, completionChange, completionDrop, queueIncrease, severity, headline, action };
-  }
-
-  function publicChange(value, noun = 'traffic') {
-    const numeric = Number(value) || 0;
-    if (Math.abs(numeric) < 0.05) return `about the same ${noun}`;
-    return `${reportNumber(Math.abs(numeric), 1)} ${numeric > 0 ? 'more' : 'fewer'} ${noun}`;
+    return {
+      durationChange, durationChangeS, completionChange, completionDrop, queueIncrease,
+      primaryDriver, severity, headline, action,
+    };
   }
 
   function publicOccupancyChange(value) {
     const numeric = Number(value) || 0;
-    if (Math.abs(numeric) < 0.05) return 'about the same mean vehicle occupancy';
-    return `${reportNumber(Math.abs(numeric), 1)} ${numeric > 0 ? 'higher' : 'lower'} mean vehicle occupancy`;
+    if (Math.abs(numeric) < 0.05) return 'about the same number of recorded edge exits';
+    return `${reportNumber(Math.abs(numeric), 0)} ${numeric > 0 ? 'more' : 'fewer'} recorded edge exits`;
   }
 
   const reportEscape = value => String(value ?? '—').replace(/[&<>"]/g, character => ({
@@ -4652,6 +4745,47 @@ export async function startWebGLScene(canvas, status) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return '—';
     return `${numeric.toLocaleString('en-ZA', { minimumFractionDigits: digits, maximumFractionDigits: digits })}${unit}`;
+  }
+
+  function travelTimeText(seconds) {
+    const value = Math.abs(Number(seconds) || 0);
+    if (value < 90) {
+      const digits = value > 0 && value < 10 && Math.abs(value - Math.round(value)) > 0.05 ? 1 : 0;
+      const rounded = Number(value.toFixed(digits));
+      return `${reportNumber(rounded, digits)} ${rounded === 1 ? 'second' : 'seconds'}`;
+    }
+    const minutes = value / 60;
+    const digits = minutes < 10 && Math.abs(minutes - Math.round(minutes)) > 0.05 ? 1 : 0;
+    const rounded = Number(minutes.toFixed(digits));
+    return `${reportNumber(rounded, digits)} ${rounded === 1 ? 'minute' : 'minutes'}`;
+  }
+
+  function impactEvidenceText(impact = {}, assessment = trafficImpactAssessment(impact)) {
+    const ensemble = impact.ensemble || {};
+    if (ensemble.applied) {
+      if (!ensemble.journey_time_change_s) {
+        return `Across ${reportNumber(ensemble.run_count, 0)} seed runs, the closure produced a capacity failure in ${reportNumber(ensemble.capacity_failure_runs, 0)}: too few trips finished for a defensible journey-time estimate. The median completion change was <b>${assessment.completionChange >= 0 ? '+' : ''}${assessment.completionChange.toFixed(1)} percentage points</b>.`;
+      }
+      const journey = ensemble.journey_time_change_s || {};
+      const median = Number(journey.median) || 0;
+      const direction = median >= 0 ? 'longer' : 'shorter';
+      return `Across ${reportNumber(ensemble.journey_time_ready_runs, 0)} seed runs with sufficient paired trips, the median journey change was <b>${travelTimeText(median)} ${direction}</b> `
+        + `(arithmetic mean ${reportChange(journey.mean, 1, ' seconds')}; range ${reportNumber(journey.minimum, 1)} to ${reportNumber(journey.maximum, 1)} seconds), and the median completion change was <b>${assessment.completionChange >= 0 ? '+' : ''}${assessment.completionChange.toFixed(1)} percentage points</b>.`;
+    }
+    if (impact.closure_capacity_failure) {
+      return `<b>${assessment.completionDrop.toFixed(1)} percentage points fewer trips finished by the scoring cutoff.</b> Too few trips survived the closure for a defensible journey-time estimate; this is reported as a capacity failure, not as an incomplete simulation.`;
+    }
+    const compared = Number(impact.compared_trip_count) || 0;
+    const average = Number(impact.mean_journey_time_change_s) || 0;
+    const averageDirection = average >= 0 ? 'longer' : 'shorter';
+    const pairedText = `Among the ${reportNumber(compared, 0)} trips that finished in both runs, the average journey was <b>${travelTimeText(average)} ${averageDirection}</b> (${assessment.durationChange === null ? '—' : `${assessment.durationChange >= 0 ? '+' : ''}${assessment.durationChange.toFixed(1)}%`}).`;
+    if (assessment.completionDrop >= 0.05) {
+      const unfinished = Number(impact.net_additional_unfinished_trip_count) || 0;
+      const driverText = `<b>${assessment.completionDrop.toFixed(1)} percentage points fewer trips finished by the scoring cutoff</b>${unfinished ? ` (${reportNumber(unfinished, 0)} additional unfinished trips)` : ''}.`;
+      const caution = 'Trips that did not finish are excluded from the journey-time average, so the completion and delay results must be read together.';
+      return `${assessment.primaryDriver === 'completion' ? driverText : pairedText} ${assessment.primaryDriver === 'completion' ? pairedText : driverText} ${caution}`;
+    }
+    return `${pairedText} About the same share of generated trips finished by the scoring cutoff.`;
   }
 
   function reportChange(value, digits = 1, unit = '', inverse = false) {
@@ -5010,6 +5144,35 @@ export async function startWebGLScene(canvas, status) {
     const activity = payload.street_activity || {};
     const demand = payload.demand_model || {};
     const historicalCalibration = demand.historical_speed_calibration || {};
+    const ensemble = impact.ensemble || demand.run_seeds || {};
+    const ensembleJourney = ensemble.journey_time_change_s || {};
+    const automaticStability = ensemble.automatic_stability || {};
+    const stabilityText = automaticStability.applied
+      ? `Automatic baseline stabilization applied ${reportNumber(Number(automaticStability.applied_scale) * 100, 0, '%')} of the requested synthetic load after ${reportNumber((automaticStability.attempts || []).length, 0)} attempts.`
+      : 'The requested synthetic load passed baseline stability without automatic adjustment.';
+    const ensembleText = ensemble.applied
+      ? `${reportNumber(ensemble.run_count, 0)} paired random seeds · ${reportNumber(ensemble.assessment_ready_runs, 0)}/${reportNumber(ensemble.run_count, 0)} assessment-ready · median journey change ${reportChange(ensembleJourney.median, 1, ' sec')} · mean ${reportChange(ensembleJourney.mean, 1, ' sec')} (range ${reportNumber(ensembleJourney.minimum, 1)} to ${reportNumber(ensembleJourney.maximum, 1)} sec)`
+      : 'single paired random seed';
+    const reportedJourneyChangeS = ensemble.applied
+      ? ensembleJourney.median : impact.mean_journey_time_change_s;
+    const reportedJourneyChangePct = ensemble.applied
+      ? ensemble.journey_time_change_pct?.median : impact.mean_journey_time_change_pct;
+    const reportedBaselineCompletion = ensemble.applied
+      ? ensemble.completed_trip_ratio_baseline?.median : impact.completed_trip_ratio_baseline;
+    const reportedClosureCompletion = ensemble.applied
+      ? ensemble.completed_trip_ratio_closure?.median : impact.completed_trip_ratio_closure;
+    const reportedQueueBaseline = ensemble.applied
+      ? ensemble.max_queue_baseline?.median : impact.max_queue_baseline;
+    const reportedQueueClosure = ensemble.applied
+      ? ensemble.max_queue_closure?.median : impact.max_queue_closure;
+    const reportedSpeedChangeMps = ensemble.applied
+      ? ensemble.speed_change_mps?.median : impact.mean_speed_change_mps;
+    const reportedSpeedChangePct = ensemble.applied
+      ? ensemble.speed_change_pct?.median : impact.mean_speed_change_pct;
+    const reportedCo2ChangeKg = ensemble.applied
+      ? ensemble.co2_change_kg?.median : reportedEnvironment.co2_kg?.change;
+    const reportedCo2ChangePct = ensemble.applied
+      ? ensemble.co2_change_pct?.median : reportedEnvironment.co2_kg?.change_pct;
     const decisionValue = value => assessmentReady ? value : null;
     const toKmh = value => value === null || value === undefined ? null : Number(value) * 3.6;
     const generated = new Intl.DateTimeFormat('en-ZA', {
@@ -5019,15 +5182,12 @@ export async function startWebGLScene(canvas, status) {
     const percent = value => value !== null && value !== undefined && Number.isFinite(Number(value))
       ? `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%`
       : '—';
-    const completionText = Math.abs(assessment.completionChange) < 0.05
-      ? 'about the same share of trips finish'
-      : `${Math.abs(assessment.completionChange).toFixed(1)} percentage points ${assessment.completionChange > 0 ? 'more' : 'fewer'} trips finish`;
     const flowItems = (payload.street_flow_summary || []).slice(0, 5).map(street => `
       <li><b>${reportEscape(street.name)}</b><span>${publicOccupancyChange(street.vehicle_delta)}</span></li>`).join('')
       || '<li><b>No nearby street noticeably affected</b><span>—</span></li>';
     const durationDetail = assessment.severity === 'incomplete'
       ? reportEscape(assessment.action)
-      : `On average, a trip through this area took <b>${reportNumber(Math.abs(impact.mean_journey_time_change_s), 0, ' seconds')} ${Number(impact.mean_journey_time_change_s) >= 0 ? 'longer' : 'shorter'}</b> (${percent(assessment.durationChange)}), and <b>${completionText}</b>.`;
+      : impactEvidenceText(impact, assessment);
 
     trafficReportDocument.innerHTML = `
       <header class="report-header">
@@ -5073,22 +5233,22 @@ export async function startWebGLScene(canvas, status) {
       <section class="report-section">
         <div class="report-section-heading"><h2>What changes for road users</h2><span>Road open compared with road closed</span></div>
         <div class="report-stat-grid">
-          <div class="report-stat"><span>Journey time</span><strong>${reportChange(decisionValue(impact.mean_journey_time_change_s), 0, ' sec')}</strong><small>${percent(decisionValue(impact.mean_journey_time_change_pct))} on average, per trip</small></div>
-          <div class="report-stat"><span>Queuing</span><strong>${reportNumber(impact.max_queue_closure, 0, ' vehicles')}</strong><small>Busiest moment · was ${reportNumber(impact.max_queue_baseline, 0)} before</small></div>
-          <div class="report-stat"><span>Trips completed</span><strong>${reportNumber(impact.completed_trip_ratio_closure === null ? null : impact.completed_trip_ratio_closure * 100, 0, '%')}</strong><small>Was ${reportNumber(impact.completed_trip_ratio_baseline === null ? null : impact.completed_trip_ratio_baseline * 100, 0, '%')} before</small></div>
-          <div class="report-stat"><span>Traffic speed</span><strong>${reportChange(toKmh(decisionValue(impact.mean_speed_change_mps)), 1, ' km/h', true)}</strong><small>${percent(decisionValue(impact.mean_speed_change_pct))} on average</small></div>
-          <div class="report-stat"><span>CO₂ emitted</span><strong>${percent(reportedEnvironment.co2_kg?.change_pct)}</strong><small>${reportChange(reportedEnvironment.co2_kg?.change, 2, ' kg')} over the sample window</small></div>
+          <div class="report-stat"><span>Journey time</span><strong>${reportChange(decisionValue(reportedJourneyChangeS), Math.abs(Number(reportedJourneyChangeS)) < 10 ? 1 : 0, ' sec')}</strong><small>${percent(decisionValue(reportedJourneyChangePct))} · ${ensemble.applied ? 'median across seeds' : 'trips completed in both runs only'}</small></div>
+          <div class="report-stat"><span>Queuing</span><strong>${reportNumber(reportedQueueClosure, 0, ' vehicles')}</strong><small>Busiest moment · was ${reportNumber(reportedQueueBaseline, 0)} before${ensemble.applied ? ' · medians' : ''}</small></div>
+          <div class="report-stat"><span>Trips finished</span><strong>${reportNumber(reportedClosureCompletion === null || reportedClosureCompletion === undefined ? null : reportedClosureCompletion * 100, 0, '%')}</strong><small>By scoring cutoff · was ${reportNumber(reportedBaselineCompletion === null || reportedBaselineCompletion === undefined ? null : reportedBaselineCompletion * 100, 0, '%')} before${ensemble.applied ? ' · medians' : ''}</small></div>
+          <div class="report-stat"><span>Traffic speed</span><strong>${reportChange(toKmh(decisionValue(reportedSpeedChangeMps)), 1, ' km/h', true)}</strong><small>${percent(decisionValue(reportedSpeedChangePct))} on average${ensemble.applied ? ' · median' : ''}</small></div>
+          <div class="report-stat"><span>Modelled tailpipe CO₂</span><strong>${percent(decisionValue(reportedCo2ChangePct))}</strong><small>${reportChange(decisionValue(reportedCo2ChangeKg), 2, ' kg')} · whole run, not paired trips${ensemble.applied ? ' · median' : ''}</small></div>
           <div class="report-stat"><span>Lanes closed</span><strong>${reportNumber(payload.closure?.lanes_closed, 0)}</strong><small>${reportEscape(payload.closure?.description || '—')}</small></div>
         </div>
       </section>
 
       <section class="report-section report-two-column">
         <div>
-          <div class="report-section-heading"><h2>Most affected nearby roads</h2><span>Where traffic shifts to</span></div>
+          <div class="report-section-heading"><h2>Most affected nearby roads</h2><span>Recorded edge exits, not unique vehicles</span></div>
           <ul class="report-list">${flowItems}</ul>
         </div>
         <div>
-          <div class="report-section-heading"><h2>Around this street</h2><span>What's already there</span></div>
+          <div class="report-section-heading"><h2>Within the simulated corridor</h2><span>Mapped street inventory</span></div>
           <ul class="report-list">
             <li><b>Parking spaces nearby</b><span>${reportNumber(activity.parking_spaces, 0)}</span></li>
             <li><b>Pedestrian crossings nearby</b><span>${reportNumber(activity.pedestrian_crossings, 0)}</span></li>
@@ -5099,12 +5259,12 @@ export async function startWebGLScene(canvas, status) {
 
       <section class="report-section">
         <div class="report-section-heading"><h2>Comparison provenance</h2><span>Reproduce and compare this run</span></div>
-        <div class="report-note">Demand seed <b>${reportNumber(demand.seed, 0)}</b> · ${reportNumber(demand.planned_vehicle_count, 0)} generated trips · ${reportNumber(impact.compared_trip_count, 0)} paired completions (${reportNumber(Number(impact.paired_trip_ratio || 0) * 100, 1, '%')}) · open-road completion ${reportNumber(Number(impact.completed_trip_ratio_baseline || 0) * 100, 1, '%')} · peak calibration ${historicalCalibration.applied ? `${reportEscape(historicalCalibration.observed_peak_window || 'fixed scenario window')} from ${reportNumber(historicalCalibration.distinct_days, 0)} weekdays` : 'not yet ready'} · ${reportEscape(payload.signal_data_source || 'signal source not recorded')}. Opposite one-way directions are comparable only when scenario, duration, demand multiplier, demand seed and generated-trip count match.</div>
+        <div class="report-note">Demand seed <b>${reportNumber(demand.seed, 0)}</b> · ${ensembleText} · ${reportNumber(demand.planned_vehicle_count, 0)} measured-window trips after a ${reportNumber(payload.playback?.warmup_s, 0, ' sec')} warm-up · ${reportNumber(impact.compared_trip_count, 0)} paired completions (${reportNumber(Number(impact.paired_trip_ratio || 0) * 100, 1, '%')}) · ${reportNumber(impact.rerouted_vehicle_count, 0)} routes changed · ${reportNumber(impact.persistent_gridlock_count_baseline, 0)} → ${reportNumber(impact.persistent_gridlock_count_closure, 0)} persistently blocked vehicles · open-road completion ${reportNumber(Number(impact.completed_trip_ratio_baseline || 0) * 100, 1, '%')} · ${reportEscape(payload.signal_data_source || 'signal source not recorded')}. ${stabilityText}</div>
       </section>
 
       <section class="report-section">
         <div class="report-section-heading"><h2>How to read this report</h2><span>In plain terms</span></div>
-        <div class="report-note">This is a "what-if" through-traffic simulation: the same synthetic traffic is sent through the network twice — once as normal, once with this closure — and the two runs are compared. It is not calibrated to observed counts on the selected street and does not model driveway, loading, pedestrian, public-transport or emergency-access operations. Treat it as option screening, not a certified traffic study.</div>
+        <div class="report-note">This is a ${ensemble.applied ? 'multi-seed' : 'single-seed'} "what-if" traffic simulation: the same boundary-weighted demand is sent through a warmed-up network twice — once as normal, once with this closure. Mapped pedestrian crossings and kerbside activity create repeatable yield and loading stops. ${demand.observed_count_calibration ? 'Observed traffic counts calibrate this scenario.' : 'Observed traffic counts have not yet been supplied, so demand volume remains an estimate; live speed data does not supply vehicle counts.'} Nearby-road changes are recorded edge exits summed across road segments, not unique vehicles. Emergency access and unmapped driveway activity remain outside the model. Treat it as option screening, not a certified traffic study.</div>
       </section>
 
       <footer class="report-footer">
@@ -5127,18 +5287,37 @@ export async function startWebGLScene(canvas, status) {
     buildScenarioRoadStatuses(payload);
     const impact = payload.impact || {};
     const environment = impact.environment || {};
+    const ensemble = impact.ensemble || {};
+    const displayedJourneyPct = ensemble.applied
+      ? ensemble.journey_time_change_pct?.median : impact.mean_journey_time_change_pct;
+    const displayedSpeedPct = ensemble.applied
+      ? ensemble.speed_change_pct?.median : impact.mean_speed_change_pct;
+    const displayedQueueBaseline = ensemble.applied
+      ? ensemble.max_queue_baseline?.median : impact.max_queue_baseline;
+    const displayedQueueClosure = ensemble.applied
+      ? ensemble.max_queue_closure?.median : impact.max_queue_closure;
+    const displayedBaselineCompletion = ensemble.applied
+      ? ensemble.completed_trip_ratio_baseline?.median : impact.completed_trip_ratio_baseline;
+    const displayedClosureCompletion = ensemble.applied
+      ? ensemble.completed_trip_ratio_closure?.median : impact.completed_trip_ratio_closure;
+    const displayedCo2Pct = ensemble.applied
+      ? ensemble.co2_change_pct?.median : environment.co2_kg?.change_pct;
+    const journeyExplanation = impact.assessment_ready === false
+      ? ''
+      : impactEvidenceText(impact);
     const formatPercent = value => (value === null || value === undefined)
       ? '—'
       : `${Number(value) >= 0 ? '+' : ''}${Number(value).toFixed(1)}%`;
     if (trafficResults) {
       trafficResults.hidden = false;
       trafficResults.innerHTML = `
-        <span><b>${formatPercent(impact.mean_journey_time_change_pct)}</b>Journey time</span>
-        <span><b>${formatPercent(impact.mean_speed_change_pct)}</b>Mean speed</span>
-        <span><b>${impact.max_queue_baseline ?? 0} → ${impact.max_queue_closure ?? 0}</b>Peak queue</span>
-        <span><b>${impact.completed_trip_ratio_baseline === null || impact.completed_trip_ratio_baseline === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_baseline * 100)}%`} → ${impact.completed_trip_ratio_closure === null || impact.completed_trip_ratio_closure === undefined ? '—' : `${Math.round(impact.completed_trip_ratio_closure * 100)}%`}</b>Trips completed</span>
-        <span><b>${formatPercent(environment.co2_kg?.change_pct)}</b>CO₂</span>
-        <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>`;
+        <span><b>${formatPercent(displayedJourneyPct)}</b>Journey time${ensemble.applied ? ' median' : ''}</span>
+        <span><b>${formatPercent(displayedSpeedPct)}</b>Mean speed${ensemble.applied ? ' median' : ''}</span>
+        <span><b>${reportNumber(displayedQueueBaseline, 0)} → ${reportNumber(displayedQueueClosure, 0)}</b>Peak queue${ensemble.applied ? ' median' : ''}</span>
+        <span><b>${displayedBaselineCompletion === null || displayedBaselineCompletion === undefined ? '—' : `${Math.round(displayedBaselineCompletion * 100)}%`} → ${displayedClosureCompletion === null || displayedClosureCompletion === undefined ? '—' : `${Math.round(displayedClosureCompletion * 100)}%`}</b>Trips completed${ensemble.applied ? ' median' : ''}</span>
+        <span><b>${formatPercent(displayedCo2Pct)}</b>CO₂${ensemble.applied ? ' median' : ''}</span>
+        <span><b>${payload.closure?.lanes_closed || 0}</b>Lanes closed</span>
+        ${journeyExplanation ? `<span class="traffic-result-explanation">${journeyExplanation}</span>` : ''}`;
     }
     if (trafficImpactSummary) {
       const assessment = trafficImpactAssessment(impact);
@@ -5151,8 +5330,12 @@ export async function startWebGLScene(canvas, status) {
       trafficImpactSummary.hidden = false;
     }
     if (trafficStatus) {
+      const automaticStability = impact.ensemble?.automatic_stability || {};
+      const stabilitySuffix = automaticStability.applied
+        ? ` · baseline auto-stabilized to ${Math.round(Number(automaticStability.applied_scale) * 100)}% load`
+        : '';
       trafficStatus.textContent = `${payload.road_name} · ${payload.baseline.trip_count} before · `
-        + `${payload.closure_metrics.trip_count} with closure`;
+        + `${payload.closure_metrics.trip_count} with closure${stabilitySuffix}`;
     }
     if (trafficToggle) trafficToggle.checked = true;
     if (trafficCompare) trafficCompare.disabled = false;
@@ -5167,33 +5350,56 @@ export async function startWebGLScene(canvas, status) {
     if (!trafficState.selectedEdgeIds.length) return;
     const selectionKey = () => JSON.stringify({ edges: trafficState.selectedEdgeIds, mode: trafficState.closureMode,
       oneWay: trafficState.oneWay, duration: trafficDuration?.value, scenario: trafficScenario?.value,
-      control: trafficControlModel?.value, demand: trafficDemand?.value });
+      control: trafficControlModel?.value, demand: trafficDemand?.value, seeds: trafficSeedCount?.value });
     const submittedSelection = selectionKey();
     trafficRun.disabled = true;
     trafficRun.textContent = 'Simulating…';
-    trafficStatus.textContent = 'Running paired SUMO simulations (road open vs closed)… this can take up to a minute.';
+    trafficStatus.textContent = 'Starting paired SUMO simulations (road open vs closed)…';
     try {
-      const response = await fetch(`${windApi}/traffic/closure-preview`, {
+      const requestBody = {
+        road_name: trafficSelectionLabel(),
+        edge_ids: trafficState.selectedEdgeIds,
+        duration_min: Number(trafficDuration?.value) || 10,
+        scenario: trafficScenario?.value || 'am_peak',
+        closure_mode: trafficState.closureMode,
+        traffic_control: trafficControlModel?.value || 'signalized',
+        demand_multiplier: Number(trafficDemand?.value) || 1,
+        seed_count: Number(trafficSeedCount?.value) || 3,
+        one_way: trafficState.oneWay,
+      };
+      const startResponse = await fetch(`${windApi}/traffic/closure-preview/jobs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          road_name: trafficSelectionLabel(),
-          edge_ids: trafficState.selectedEdgeIds,
-          duration_min: Number(trafficDuration?.value) || 10,
-          scenario: trafficScenario?.value || 'am_peak',
-          closure_mode: trafficState.closureMode,
-          traffic_control: trafficControlModel?.value || 'signalized',
-          demand_multiplier: Number(trafficDemand?.value) || 1,
-          one_way: trafficState.oneWay,
-        }),
+        body: JSON.stringify(requestBody),
+        timeoutMs: 30000,
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      const job = await startResponse.json();
+      if (!job.job_id) throw new Error('The traffic simulation did not return a job identifier.');
+      const pollingStarted = performance.now();
+      let completedResponse = null;
+      let payload = null;
+      while (performance.now() - pollingStarted < 15 * 60 * 1000) {
+        await new Promise(resolve => setTimeout(resolve, Math.max(500, Number(job.poll_after_ms) || 1000)));
+        const pollResponse = await fetch(
+          `${windApi}/traffic/closure-preview/jobs/${encodeURIComponent(job.job_id)}`,
+          { timeoutMs: 30000 },
+        );
+        const progress = await pollResponse.json();
+        if (progress.status === 'complete') {
+          completedResponse = pollResponse;
+          payload = progress.result;
+          break;
+        }
+        const elapsed = Math.max(0, Math.round(Number(progress.elapsed_s) || 0));
+        const phase = progress.status === 'queued' ? 'Queued' : 'Running paired simulations';
+        trafficStatus.textContent = `${phase}… ${elapsed}s elapsed. You can leave this panel open.`;
+      }
+      if (!payload) throw new Error('The traffic simulation exceeded the 15-minute job limit.');
       if (submittedSelection !== selectionKey()) return;
       buildTrafficResult(payload);
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'traffic', metadata: {
         description: 'Paired synthetic SUMO runs. Reliability gates and scenario assumptions are retained in the traffic report.',
-        requestId: response.headers.get('X-Request-ID'),
+        requestId: completedResponse?.headers.get('X-Request-ID'),
       } } }));
     } catch (error) {
       trafficStatus.textContent = `Closure preview unavailable (${error.message})`;
@@ -6725,17 +6931,19 @@ export async function startWebGLScene(canvas, status) {
     cameraTouchPointers.delete(event.pointerId);
     cameraTouchGesture = null;
     if (event.pointerId === trafficState.pointerId) {
-      trafficState.stroking = false;
-      trafficState.pointerId = null;
-      trafficState.strokePoints = [];
-      trafficState.strokeStartScreen = null;
-      updateTrafficDrawPopup('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');
-      updateTrafficDrawing();
+      cancelInterruptedTrafficStroke('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');
     }
     sunDrag = null;
     drag = null;
     windDrag = null;
     sliceDrag = null;
+  });
+  canvas.addEventListener('lostpointercapture', event => {
+    if (event.pointerId === trafficState.pointerId) cancelInterruptedTrafficStroke();
+  });
+  addEventListener('blur', () => cancelInterruptedTrafficStroke());
+  addEventListener('online', () => {
+    if (!trafficState.networkEdges.length) void loadTrafficRoads();
   });
   canvas.addEventListener('wheel', event => {
     event.preventDefault();
@@ -7051,13 +7259,17 @@ export async function startWebGLScene(canvas, status) {
   });
   trafficScenario?.addEventListener('change', () => invalidateTrafficResult('Time of day changed · run the comparison again.'));
   trafficDemand?.addEventListener('change', () => invalidateTrafficResult('Demand assumption changed · run the comparison again.'));
+  trafficSeedCount?.addEventListener('change', () => invalidateTrafficResult('Random-seed sample changed · run the comparison again.'));
   trafficControlModel?.addEventListener('change', () => invalidateTrafficResult('Junction behaviour changed · run the comparison again.'));
   trafficOneWayToggle?.addEventListener('change', () => {
     trafficState.oneWay = Boolean(trafficOneWayToggle.checked);
     invalidateTrafficResult('One-way conversion changed · run the comparison again.');
   });
   trafficFlipDirection?.addEventListener('click', flipTrafficDirection);
-  trafficRefresh?.addEventListener('click', () => loadTrafficLive(true));
+  trafficRefresh?.addEventListener('click', () => {
+    void loadTrafficRoads();
+    void loadTrafficLive(true);
+  });
   trafficDrawLane?.addEventListener('click', () => beginTrafficDrawing('lane'));
   trafficDrawRoad?.addEventListener('click', () => beginTrafficDrawing('full'));
   trafficDrawOneWay?.addEventListener('click', () => beginTrafficDrawing('oneway'));
@@ -7100,6 +7312,7 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
+    if (name === 'traffic' && !trafficState.networkEdges.length) void loadTrafficRoads();
     if (name === 'transport') void ensureTransportLayer();
     transportLayer?.setPanelActive(name === 'transport');
     // Tools is a utility panel, not its own exclusive visualization — switch

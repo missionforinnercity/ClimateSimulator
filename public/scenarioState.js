@@ -9,7 +9,7 @@ export const CONTROL_IDS = [
   'wind-cfd-ground-height', 'wind-slice-plane', 'wind-slice-position', 'wind-slice-width',
   'wind-slice-height', 'wind-slice-center-x', 'wind-slice-center-y', 'wind-size',
   'wind-flow-box-height', 'wind-season', 'wind-stability',
-  'traffic-scenario', 'traffic-demand', 'traffic-control-model', 'traffic-duration',
+  'traffic-scenario', 'traffic-demand', 'traffic-seed-count', 'traffic-control-model', 'traffic-duration',
   'transport-event-date', 'transport-event-start', 'transport-event-end',
   'transport-event-attendance', 'transport-event-walk', 'transport-event-buffer',
   'transport-event-dispersal', 'transport-event-share',

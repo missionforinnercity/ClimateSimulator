@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "scenarios": {
+    "am_peak": {
+      "departures_per_min": 42.0,
+      "through_trip_share": 0.9,
+      "route_sampler": {
+        "enabled": false,
+        "observation_period_min": 60,
+        "candidate_multiplier": 4,
+        "minimum_match_ratio": 0.85,
+        "geh_ok": 5,
+        "turn_max_gap": 0,
+        "edge_counts": [
+          {"edge_id": "REPLACE_WITH_SUMO_EDGE_ID", "count": 420}
+        ],
+        "turn_counts": [
+          {
+            "from_edge_id": "REPLACE_WITH_INCOMING_SUMO_EDGE_ID",
+            "to_edge_id": "REPLACE_WITH_OUTGOING_SUMO_EDGE_ID",
+            "count": 120
+          }
+        ]
+      },
+      "run_seeds": {
+        "enabled": false,
+        "seeds": [101, 211, 307]
+      },
+      "dynamic_assignment": {
+        "enabled": false,
+        "iterations": 3,
+        "aggregation_s": 60,
+        "method_of_successive_average": true,
+        "weight_memory": true
+      },
+      "edge_weights": {
+        "REPLACE_WITH_SUMO_EDGE_ID": {
+          "origin": 1.25,
+          "destination": 0.8
+        }
+      }
+    }
+  },
+  "street_activity": {
+    "crossing_vehicle_probability": 0.025,
+    "crossing_stop_duration_s": 6.0,
+    "kerbside_vehicle_probability": 0.06,
+    "kerbside_stop_duration_s": 18.0
+  },
+  "network_overrides": {
+    "disabled_lane_ids": ["REPLACE_WITH_SURVEYED_PHANTOM_LANE_ID"],
+    "disabled_edge_ids": [],
+    "edge_speed_limits_kph": {
+      "REPLACE_WITH_SUMO_EDGE_ID": 40
+    }
+  },
+  "routing": {
+    "probability": 0.7,
+    "period_s": 60,
+    "threshold_factor": 1.1
+  },
+  "signals": {
+    "REPLACE_WITH_SUMO_SIGNAL_ID": {
+      "program_id": "observed-am",
+      "offset_s": 12,
+      "phases": [
+        {"duration_s": 30, "state": "REPLACE_WITH_SUMO_RYG_STATE"},
+        {"duration_s": 4, "state": "REPLACE_WITH_SUMO_RYG_STATE"}
+      ]
+    }
+  }
+}

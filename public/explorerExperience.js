@@ -250,6 +250,7 @@ export function setupExplorerExperience() {
     'wind-cfd-ground-height': 'Sampling height above local terrain; this does not change the solved CFD mesh.',
     'wind-stability': 'Screening atmospheric profile. The existing CFD cases use neutral inlet assumptions.',
     'traffic-demand': 'Multiplier on synthetic demand, not an observed vehicle count.',
+    'traffic-seed-count': 'Repeats the paired open/closed simulation and reports the median plus its range.',
     'transport-event-share': 'Assumed proportion of attendees using public transport; actual behaviour is unknown.',
     'sun-surface-resolution': 'Coarser grids run faster and cannot resolve fine details.',
   };

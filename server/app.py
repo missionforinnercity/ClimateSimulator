@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import math
@@ -12,6 +13,7 @@ import re
 from pathlib import Path
 import secrets
 import shutil
+import threading
 import time
 from typing import Any, Literal
 
@@ -100,6 +102,7 @@ HEAVY_PATH_LIMITS = {
     "/api/wind/comfort": int(os.getenv("WIND_COMFORT_CONCURRENCY", "1")),
     "/api/wind/validate": int(os.getenv("WIND_CONCURRENCY", "2")),
     "/api/traffic/closure-preview": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
+    "/api/traffic/closure-preview/jobs": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
 }
 HEAVY_SEMAPHORES = {path: asyncio.Semaphore(max(1, limit)) for path, limit in HEAVY_PATH_LIMITS.items()}
 RATE_LIMIT_REQUESTS = max(1, int(os.getenv("SIMULATION_RATE_LIMIT", "12")))
@@ -108,6 +111,16 @@ TRAFFIC_OBSERVATION_INTERVAL_S = max(
     300, int(os.getenv("TRAFFIC_OBSERVATION_INTERVAL_S", str(DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S)))
 )
 _traffic_observation_task: asyncio.Task | None = None
+
+# A paired 20-minute SUMO comparison can legitimately run for several minutes.
+# Keep it outside the HTTP request lifetime so browser and reverse-proxy timeouts
+# cannot discard a healthy simulation. A single worker also protects TraCI,
+# whose global connection registry is unsafe for overlapping runs.
+TRAFFIC_JOB_MAX_PENDING = max(1, int(os.getenv("TRAFFIC_JOB_MAX_PENDING", "2")))
+TRAFFIC_JOB_TTL_S = max(60, int(os.getenv("TRAFFIC_JOB_TTL_S", "900")))
+TRAFFIC_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="traffic-preview")
+TRAFFIC_JOBS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+TRAFFIC_JOBS_LOCK = threading.Lock()
 
 
 async def _traffic_observation_loop() -> None:
@@ -136,6 +149,7 @@ async def _start_traffic_observation_loop() -> None:
 async def _stop_traffic_observation_loop() -> None:
     if _traffic_observation_task is not None:
         _traffic_observation_task.cancel()
+    TRAFFIC_JOB_EXECUTOR.shutdown(wait=False, cancel_futures=True)
 RATE_LIMIT_WINDOW_S = max(1, int(os.getenv("SIMULATION_RATE_WINDOW_S", "60")))
 RATE_LIMIT_MAX_CLIENTS = max(1, int(os.getenv("SIMULATION_RATE_MAX_CLIENTS", "10000")))
 # Ordered by last admitted request, allowing expired clients to be removed
@@ -295,6 +309,7 @@ class TrafficClosurePayload(BaseModel):
     closure_scope: Literal["block", "road"] = "block"
     traffic_control: Literal["signalized", "priority"] = "signalized"
     demand_multiplier: float = Field(default=1.0, ge=0.5, le=1.5)
+    seed_count: Literal[1, 3, 5] = 1
     one_way: bool = False
 
 
@@ -620,6 +635,78 @@ def traffic_closure_preview(payload: TrafficClosurePayload) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"traffic closure preview unavailable: {error}") from error
+
+
+def _expire_traffic_jobs_locked(now: float) -> None:
+    expired = [
+        job_id for job_id, job in TRAFFIC_JOBS.items()
+        if job["status"] in {"complete", "error"}
+        and now - float(job.get("finished_at", now)) > TRAFFIC_JOB_TTL_S
+    ]
+    for job_id in expired:
+        TRAFFIC_JOBS.pop(job_id, None)
+
+
+def _run_traffic_preview_job(job_id: str, payload: dict[str, Any]) -> None:
+    with TRAFFIC_JOBS_LOCK:
+        job = TRAFFIC_JOBS.get(job_id)
+        if job is None:
+            return
+        job.update(status="running", started_at=time.monotonic())
+    try:
+        result = closure_preview(payload)
+    except ValueError as error:
+        outcome = {"status": "error", "detail": str(error), "error_status": 422}
+    except Exception as error:
+        LOGGER.exception("Traffic preview job failed job_id=%s", job_id)
+        outcome = {
+            "status": "error",
+            "detail": f"traffic closure preview unavailable: {error}",
+            "error_status": 503,
+        }
+    else:
+        outcome = {"status": "complete", "result": result}
+    with TRAFFIC_JOBS_LOCK:
+        job = TRAFFIC_JOBS.get(job_id)
+        if job is not None:
+            job.update(outcome, finished_at=time.monotonic())
+
+
+@app.post("/api/traffic/closure-preview/jobs", status_code=202)
+def start_traffic_closure_preview(payload: TrafficClosurePayload) -> dict[str, Any]:
+    now = time.monotonic()
+    with TRAFFIC_JOBS_LOCK:
+        _expire_traffic_jobs_locked(now)
+        pending = sum(job["status"] in {"queued", "running"} for job in TRAFFIC_JOBS.values())
+        if pending >= TRAFFIC_JOB_MAX_PENDING:
+            raise HTTPException(
+                status_code=503,
+                detail="traffic simulation queue is full; retry shortly",
+                headers={"Retry-After": "5"},
+            )
+        job_id = secrets.token_urlsafe(18)
+        TRAFFIC_JOBS[job_id] = {"status": "queued", "created_at": now}
+        TRAFFIC_JOB_EXECUTOR.submit(_run_traffic_preview_job, job_id, payload.model_dump())
+    return {"job_id": job_id, "status": "queued", "poll_after_ms": 1000}
+
+
+@app.get("/api/traffic/closure-preview/jobs/{job_id}")
+def traffic_closure_preview_job(job_id: str) -> dict[str, Any]:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,40}", job_id):
+        raise HTTPException(status_code=404, detail="traffic simulation job not found")
+    now = time.monotonic()
+    with TRAFFIC_JOBS_LOCK:
+        _expire_traffic_jobs_locked(now)
+        job = TRAFFIC_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="traffic simulation job not found")
+        status = job["status"]
+        elapsed_s = round(now - float(job.get("started_at", job["created_at"])), 1)
+        if status == "complete":
+            return {"status": status, "elapsed_s": elapsed_s, "result": job["result"]}
+        if status == "error":
+            raise HTTPException(status_code=int(job["error_status"]), detail=str(job["detail"]))
+        return {"status": status, "elapsed_s": elapsed_s, "poll_after_ms": 1000}
 
 
 # Brand assets live with the source data rather than the generated viewer

@@ -971,6 +971,14 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .traffic-results span:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .traffic-results span { padding: 7px; border: 1px solid #6b5a20; border-radius: 3px; background: #423a1c; color: #f0e0b0; font-size: 9px; }
 .traffic-results b { display: block; margin-bottom: 2px; color: #f4c451; font-size: 13px; }
+.traffic-results .traffic-result-explanation {
+  grid-column: 1 / -1;
+  line-height: 1.45;
+}
+.traffic-results .traffic-result-explanation b {
+  display: inline;
+  font-size: inherit;
+}
 
 .streetview-link {
   display: block;

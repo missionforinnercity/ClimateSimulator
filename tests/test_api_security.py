@@ -16,6 +16,11 @@ def isolated_limits(monkeypatch):
     monkeypatch.setattr(api, "RATE_HISTORY", OrderedDict())
     monkeypatch.setattr(api, "RATE_LOCK", asyncio.Lock())
     monkeypatch.setattr(api, "HEAVY_SEMAPHORES", {})
+    with api.TRAFFIC_JOBS_LOCK:
+        api.TRAFFIC_JOBS.clear()
+    yield
+    with api.TRAFFIC_JOBS_LOCK:
+        api.TRAFFIC_JOBS.clear()
 
 
 def request(path, method="GET", **kwargs):
@@ -84,6 +89,38 @@ def test_invalid_simulation_parameters_do_not_reach_solver():
     result = request("/api/traffic/closure-preview", "POST", json={"duration_min": -1})
     assert result.status_code == 422
     assert result.headers["x-request-id"]
+
+
+def test_traffic_job_returns_quickly_then_exposes_completed_result(monkeypatch):
+    class DeferredExecutor:
+        submitted = None
+
+        def submit(self, function, *args):
+            self.submitted = (function, args)
+
+    executor = DeferredExecutor()
+    monkeypatch.setattr(api, "TRAFFIC_JOB_EXECUTOR", executor)
+    monkeypatch.setattr(api, "closure_preview", lambda payload: {"road_name": payload["road_name"], "ready": True})
+
+    started = request(
+        "/api/traffic/closure-preview/jobs",
+        "POST",
+        json={"road_name": "Bree Street", "edge_ids": ["edge-1"], "duration_min": 20},
+    )
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    assert request(f"/api/traffic/closure-preview/jobs/{job_id}").json()["status"] == "queued"
+
+    function, args = executor.submitted
+    function(*args)
+    completed = request(f"/api/traffic/closure-preview/jobs/{job_id}")
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "complete"
+    assert completed.json()["result"] == {"road_name": "Bree Street", "ready": True}
+
+
+def test_traffic_job_rejects_invalid_or_missing_identifier():
+    assert request("/api/traffic/closure-preview/jobs/not-valid").status_code == 404
 
 
 def test_missing_asset_not_cached_immutably():

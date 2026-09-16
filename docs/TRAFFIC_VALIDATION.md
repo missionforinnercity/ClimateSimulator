@@ -1,5 +1,49 @@
 # Cape Town CBD traffic model review
 
+## Report-set audit (15 September 2026)
+
+Nine reports generated on 14-15 September were reviewed together. Four were
+not usable as closure comparisons because the unmodified network already
+failed the model's baseline checks:
+
+| Reference | Selection and scenario | Baseline problem |
+| --- | --- | --- |
+| TRF-24C6CE41 | Darling Street, live | 24.2% completion; 27.1% persistently blocked |
+| TRF-A2A262DA | Bree Street, live | 72.3% completion; 13.2% persistently blocked |
+| TRF-E04F2E85 | Lower Loop Street, live | 29.2% completion; 29.6% persistently blocked |
+| TRF-DE351DB4 | Church Street, PM peak | 72.0% completion; 13.0% persistently blocked |
+
+The reports correctly withheld journey-time and emissions claims in those
+cases. The cause of the three live failures was aggravated by treating a low
+TomTom speed ratio as permission to increase unobserved traffic demand above
+the stability-tested rate. A speed ratio is not a count. Uncalibrated live
+demand is now capped at the tested ceiling; a higher rate must come from an
+explicit observed `departures_per_min` calibration.
+
+Two valid reports exposed a presentation problem rather than a contradictory
+simulation result. TRF-B14D06BF reported a one-second illustrative completed
+trip but a 13.3 percentage-point completion loss, while TRF-C58546C0 combined
+a seven-second illustrative trip with a 28-second paired mean and 12.7-point
+completion loss. The example was selected only from vehicles that completed
+both runs and therefore omitted the vehicles most affected by the closure.
+Reports no longer lead with that survivor-only anecdote. They state the paired
+mean, the additional unfinished-trip count and the scoring cutoff together,
+and explicitly identify completion loss when it drives the severity label.
+
+The nearby-road ranking also summed edge exits across all segments of a named
+street. Those totals are useful for showing where simulated movement shifts,
+but they are not counts of unique vehicles. The report now labels them as
+recorded edge exits. Absolute peak-queue changes remain visible as supporting
+evidence but no longer determine severity across differently sized samples.
+The emissions tile is now labelled as modelled tailpipe CO2 over the whole run,
+not a paired-trip statistic; this explains why it may move much more than the
+survivor-only mean speed or journey-time values.
+
+The remaining valid low-impact reports (TRF-CC0537A7, TRF-19E37045 and
+TRF-FE51710F) are internally coherent, but their small changes are still
+single-seed synthetic results rather than evidence of no real-world effect.
+All reports now say this explicitly.
+
 Reviewed 7 August 2026 against reports `TRF-1B09B04C` and `TRF-308C2696`.
 
 ## Finding
