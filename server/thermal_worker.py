@@ -446,6 +446,14 @@ def publish_once() -> dict[str, Any]:
             "worker": {"duration_seconds": round(time.monotonic() - started, 1), "status": "complete"},
         }
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        # TemporaryDirectory creates its root with mode 0700. The API container
+        # runs as a different unprivileged user and must be able to traverse
+        # the published run directory and read its manifest and frame files.
+        for artifact in staging.rglob("*"):
+            if artifact.is_symlink():
+                continue
+            artifact.chmod(0o755 if artifact.is_dir() else 0o644)
+        staging.chmod(0o755)
         final = PRODUCT_ROOT / run_id
         os.replace(staging, final)
         current_tmp = PRODUCT_ROOT / ".CURRENT.tmp"
