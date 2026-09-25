@@ -87,8 +87,16 @@ After startup, verify the deployment:
 ```bash
 docker compose ps
 docker compose logs --tail=200 thermal-worker
-curl -fsS http://127.0.0.1:8000/api/thermal/forecast
+curl -fsS http://127.0.0.1:${WEB_HOST_PORT:-18080}/api/thermal/forecast
 ```
+
+If the VM already runs host-level Nginx on public port 8000, keep that listener
+and its authentication. Compose exposes its web container on loopback port
+18080 by default (`WEB_HOST_PORT` can override this). Configure the existing
+host Nginx server for port 8000 to proxy to `http://127.0.0.1:18080`, preserving
+any current authentication directives. Confirm the chosen port is free before
+starting the Compose `web` service. Do not publish the Compose web service on
+port 8000 when host Nginx already owns it.
 
 The API should report a new `generated_at`, `stale: false`, and all 25 frames.
 The worker's volume contains `STATUS.json`; on a failure it now records the
