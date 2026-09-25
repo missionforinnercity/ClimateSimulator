@@ -10,20 +10,25 @@ fallback, and the standalone `/api/wind/preview`, `/api/wind/comfort`,
 
 Running CFD on every browser click is still not a useful target: mesh
 generation and convergence are offline jobs. The browser only samples compact
-converted volumes checked into `public/assets/cfd/<case>/`.
+converted browser volumes delivered as a versioned deployment artifact under
+`public/assets/cfd/<case>/`. The large converted fields are excluded from Git
+and Docker build contexts; see [thermal deployment](THERMAL_DEPLOYMENT.md) for
+the VM transfer procedure.
 
 ## Solved cases today
 
 | Direction | Sector | Case directory | Browser asset |
 | --- | --- | --- | --- |
-| 135° | SE | `data/openfoam/cases/cbd_se_full` | `public/assets/cfd/cbd_se_pilot/` |
+| 0° | N | `data/openfoam/cases/cbd_n_full` | `public/assets/cfd/cbd_n_full/` |
+| 45° | NE | `data/openfoam/cases/cbd_ne_full` | `public/assets/cfd/cbd_ne_full/` |
+| 90° | E | `data/openfoam/cases/cbd_e_full` | `public/assets/cfd/cbd_e_full/` |
+| 135° | SE | `data/openfoam/cases/cbd_se_full` | `public/assets/cfd/cbd_se_full/` |
+| 180° | S | `data/openfoam/cases/cbd_s_full` | `public/assets/cfd/cbd_s_full/` |
+| 225° | SW | `data/openfoam/cases/cbd_sw_full` | `public/assets/cfd/cbd_sw_full/` |
+| 270° | W | `data/openfoam/cases/cbd_w_full` | `public/assets/cfd/cbd_w_full/` |
 | 315° | NW | `data/openfoam/cases/cbd_nw_full` | `public/assets/cfd/cbd_nw_full/` |
 
-(The SE case's browser asset directory is still named `cbd_se_pilot` for
-historical reasons — it holds the full-CBD result, not the original small
-pilot domain. Name new case asset directories after their actual case.)
-
-Both are full-CBD domains enclosing all 1,891 source building centroids: 2600
+These are full-CBD domains enclosing all 1,891 source building centroids: 2600
 m analysis size, 24 m base grid refined locally, 220 m top, 300 m
 lateral/upstream clearance and a 600 m downstream wake. Each is an
 unvalidated steady k-epsilon RANS solve with a uniform 10 m/s neutral inlet —

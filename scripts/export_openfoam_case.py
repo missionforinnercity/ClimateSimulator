@@ -635,6 +635,12 @@ set -e
 cd \"$(dirname \"$0\")\"
 . "$WM_PROJECT_DIR/bin/tools/RunFunctions"
 if [ ! -d constant/polyMesh ]; then ./Allmesh; fi
+if [ ! -f log.checkMesh.standard ] || ! grep -q "Mesh OK" log.checkMesh.standard; then
+    echo "Refusing to solve: standard checkMesh did not pass. Run ./Allmesh and fix the mesh first." >&2
+    exit 2
+fi
+# Phi is mesh-sized generated state; discard it after a mesh rebuild.
+rm -f 0/Phi
 latest_time="$(foamListTimes -latestTime 2>/dev/null || true)"
 if [ -z "$latest_time" ] || [ "$latest_time" = "0" ]; then
     runApplication -o potentialFoam -writePhi

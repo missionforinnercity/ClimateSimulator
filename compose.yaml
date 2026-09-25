@@ -1,5 +1,6 @@
 services:
   app:
+    image: ${CONDITIONS_APP_IMAGE:-conditions-app:local}
     build: .
     environment:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8000}
@@ -7,6 +8,30 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       TOMTOM_API: ${TOMTOM_API:-}
       ERA5API: ${ERA5API:-}
+      METEOSTAT_RAPIDAPI_KEY: ${METEOSTAT_RAPIDAPI_KEY:-}
+      METEOBLUEAPI: ${METEOBLUEAPI:-}
+      THERMAL_PRODUCT_ROOT: /var/lib/conditions-thermal
+    volumes:
+      - thermal-products:/var/lib/conditions-thermal:ro
+      - ./data/thermal/climatology:/app/data/thermal/climatology:ro
+    restart: unless-stopped
+
+  thermal-worker:
+    image: ${THERMAL_WORKER_IMAGE:-conditions-thermal-worker:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.thermal
+    environment:
+      METEOSTAT_RAPIDAPI_KEY: ${METEOSTAT_RAPIDAPI_KEY:-}
+      METEOBLUEAPI: ${METEOBLUEAPI:-}
+      THERMAL_PRODUCT_ROOT: /var/lib/conditions-thermal
+      THERMAL_SURFACE_ROOT: /app/data/thermal/surfaces
+      THERMAL_WIND_ATLAS_ROOT: /app/data/openfoam/atlas
+      SUEWS_CONFIG: /app/data/thermal/suews/config.yml
+    volumes:
+      - thermal-products:/var/lib/conditions-thermal
+      # This atlas is prepared offline; all worker writes go to the product volume.
+      - ./data/openfoam/atlas:/app/data/openfoam/atlas:ro
     restart: unless-stopped
 
   web:
@@ -21,3 +46,6 @@ services:
       - ./public:/srv/public:ro
       - ./data/branding:/srv/branding:ro
     restart: unless-stopped
+
+volumes:
+  thermal-products:

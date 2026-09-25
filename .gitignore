@@ -11,3 +11,16 @@ data/observations/
 # Generated OpenFOAM meshes, solver time directories and VTK exports are
 # reproducible but large (the first pilot is ~200 MB with VTK output).
 data/openfoam/cases/
+data/openfoam/atlas/
+data/thermal/products/
+data/thermal/climatology/
+data/thermal/surfaces/
+data/thermal/suews/checkpoints/
+data/thermal/suews/config.yml
+/public/assets/cfd/
+
+# Local CFD batch-run notes and solver output.
+/SuPy.log
+/winds.log
+/cells_used.txt
+/failed.txt

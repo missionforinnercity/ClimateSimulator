@@ -167,16 +167,57 @@ the complete runtime and test environments for reproducible installs.
 ```bash
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python -m http.server 8000 -d public
+./scripts/run_local.sh
 ```
 
-Open http://localhost:8000 in any modern browser.
+Open http://localhost:8000 in any modern browser. The launcher starts the API
+and serves the app from the same terminal; press Ctrl+C to stop it. To use a
+different port, run `PORT=8001 ./scripts/run_local.sh`.
 
-For the API-backed application, use `.venv/bin/uvicorn server.app:app --port
-8000`. Production deployments can run `docker compose up --build`: Nginx serves
+The static-only viewer can still be served with
+`.venv/bin/python -m http.server 8000 -d public`. Production deployments can run `docker compose up --build`: Nginx serves
 and compresses the static assets while proxying `/api` to one bounded API
 worker. Versioned scene assets receive immutable cache headers; the manifest
 and viewer shell revalidate so incompatible code and assets are not mixed.
+
+The near-live UTCI and Tmrt layers also need the separate thermal model worker.
+In another terminal, install its dependencies and run it alongside Uvicorn:
+
+```bash
+.venv/bin/python -m pip install -r requirements-models.txt
+.venv/bin/python -m server.thermal_worker
+```
+
+Rebuild the SOLWEIG surface rasters with
+`.venv/bin/python scripts/build_thermal_surfaces.py` after pulling this
+radiation audit; the worker checks their material-code version before
+publishing. The worker publishes its first forecast before those layers can display data.
+For a containerized run, `docker compose up --build` starts the API and thermal
+worker together.
+
+The UTCI/Tmrt forecast remains experimental until compared with co-located CBD
+measurements. A field-observation CSV template, three-site collection protocol,
+and script for paired input/result residuals are in
+[docs/THERMAL_VALIDATION.md](docs/THERMAL_VALIDATION.md). The thermal worker
+publishes local 10 m wind alongside pedestrian-height wind for that comparison.
+For a no-fieldwork check of weather inputs against FACT METAR, satellite
+radiation and ERA5, run
+`.venv/bin/python scripts/backtest_thermal_forcing.py --days 30`; interpret
+station and reanalysis comparisons as context, not CBD street-level validation.
+The worker refreshes at least every ten minutes to pick up the satellite API's native
+10-minute radiation estimates; each map frame shows the radiation interval and
+the separate air/wind forecast time. See
+[docs/THERMAL_RADIATION_AUDIT_2026-09-23.md](docs/THERMAL_RADIATION_AUDIT_2026-09-23.md)
+for the matched before/after results and model limits.
+
+For a longer-term view, the Heat tool also supports a historical UTCI/Tmrt
+profile across seasons, months and local hours. Its 2016–2025 ERA5 composite is
+a separate offline product; build and provision it as described in
+[docs/THERMAL_CLIMATOLOGY.md](docs/THERMAL_CLIMATOLOGY.md). The application host
+serves the prepared maps and does not run the historical simulations.
+UTCI results remain experimental model estimates until co-located CBD field
+observations support validation. Deployment artifact preparation and VM
+transfer steps are in [docs/THERMAL_DEPLOYMENT.md](docs/THERMAL_DEPLOYMENT.md).
 
 Deployment controls are environment variables:
 
@@ -307,27 +348,28 @@ that hasn't been solved. Clicking the city normally orbits the camera;
 dragging the flow box or a slice plane takes over only when the click lands
 on that object.
 
-The **Urban heat** layer reads the generated local product in
+The **Urban heat** layer opens on experimental UTCI thermal comfort, with a
+near-live forecast and a separate historical climate profile. Mean radiant
+temperature is available as an explanatory companion layer. Satellite-based
+heat-screening layers remain available in a separate group; they are not UTCI.
+The main screening view combines a fixed summer surface-temperature baseline
+with a shade deficit computed for the user-selected date and time. Because the
+temperature term does not vary with the selected date, only the shade term
+does, this is labelled a summer baseline plus selected-date shade scenario.
+The layer also reads the generated local product in
 `data/raw/scene_footprint_heat_2026_academic_v3_zones.geojson` and renders a
-set of simplified vector zones on the scene ground. It defaults to an
-intervention-priority view combining the fixed Summer 2025-26 surface-temperature
-baseline (70% weight) with a shade deficit computed for the user-selected date
-and time (30% weight). Because the temperature term does not vary with the
-selected date, only the shade term does, this is labelled a "summer thermal
-baseline + selected-date shade scenario" rather than a fully date-specific
-result — a winter date pairs winter shade geometry with the summer-baseline
-temperature. Priority and shade retain
-every surface-temperature zone rather than dropping building-heavy cells, so
-the screening surface remains continuous.
-Users can switch to pedestrian thermal exposure (a proxy thermal-exposure
-delta, not UTCI/PET or a measured pedestrian temperature), shade deficit, the
-original `heat_model_lst_c` surface temperature, or a rooftop-temperature view clipped
-to mapped building footprints and conformed to the detailed rendered roof
-surface rather than the LiDAR terrain. Ground-level heat views hide roads and
-paths so those layers do not cover the thermal surface; rooftop mode retains
-them for orientation alongside white buildings, green trees, and the heat surface. The
-database `climate.heat_zones` table remains a fallback when the local product
-is absent.
+set of simplified vector zones on the scene ground. The intervention-priority
+view combines the fixed Summer 2025–26 surface-temperature baseline (70% weight)
+with a shade deficit computed for the selected date and time (30% weight). A
+winter date therefore pairs winter shade geometry with the summer baseline.
+Priority and shade retain every surface-temperature zone to keep the screening
+surface continuous. Other screening views include pedestrian thermal exposure
+(a proxy, not UTCI/PET or a measured pedestrian temperature), shade deficit,
+the original `heat_model_lst_c` surface temperature, and rooftop temperature
+clipped to mapped building footprints and conformed to the detailed rendered
+roof surface. Ground-level heat views hide roads and paths so they do not cover
+the thermal surface; rooftop mode retains them for orientation. The database
+`climate.heat_zones` table remains a fallback when the local product is absent.
 
 The **Sunlight** panel provides both instantaneous GPU shadows and cumulative
 direct-sun hours. Ground sun is accumulated from mapped shadow overlap. The 3D

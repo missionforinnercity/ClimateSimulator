@@ -910,7 +910,11 @@ def test_peak_scenarios_carry_more_demand_than_off_peak():
     assert am_peak["demand_scale"] > midday["demand_scale"] > evening["demand_scale"]
 
 
-def test_morning_and_afternoon_peaks_bias_trips_in_opposite_directions():
+def test_morning_and_afternoon_peaks_bias_trips_in_opposite_directions(monkeypatch):
+    # This assertion checks the fixed representative profiles. Keep the local
+    # ignored TomTom history log from changing the inputs under test.
+    monkeypatch.setattr(traffic, "_historical_peak_profile", lambda scenario: None)
+    monkeypatch.setattr(traffic, "_historical_scenario_ratio", lambda scenario: None)
     morning = traffic.resolve_scenario("am_peak")
     afternoon = traffic.resolve_scenario("pm_peak")
     assert morning["inbound_bias"] > 0  # toward the CBD core

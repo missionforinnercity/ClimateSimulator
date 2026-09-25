@@ -1,7 +1,11 @@
 // Request lifetimes include body decoding. Never automatically replay simulations.
 const pending = new Map();
-const cheapReads = new Set(['/api/health', '/api/heat/metrics', '/api/traffic/roads', '/api/wind/scenarios']);
-const toolFor = path => path.includes('/sunlight/') ? 'sun' : path.includes('/heat/') ? 'heat'
+const cheapReads = new Set([
+  '/api/health', '/api/heat/metrics', '/api/traffic/roads', '/api/wind/scenarios',
+  '/api/weather/current', '/api/thermal/forecast', '/api/thermal/climatology',
+]);
+const retryableRead = path => cheapReads.has(path) || path.startsWith('/api/thermal/frames/') || path.startsWith('/api/thermal/climatology/frames/');
+const toolFor = path => path.includes('/sunlight/') ? 'sun' : path.includes('/heat/') || path.includes('/thermal/') ? 'heat'
   : path.includes('/wind/') || path.includes('/cfd/') ? 'wind' : path.includes('/traffic/') ? 'traffic'
     : path.includes('transport.json') ? 'transport' : 'tools';
 function announce(detail) {
@@ -27,12 +31,14 @@ export function createAnalysisId(cryptoSource = globalThis.crypto) {
 export function cancelRequests(tool) {
   for (const entry of pending.values()) if (entry.tool === tool) entry.controller.abort();
 }
-export function requestError(status) {
-  if (status === 429 || status === 503) return 'The service is busy. Wait briefly, then try again.';
+export function requestError(status, requestId = '') {
+  const trace = requestId ? ` Request ID: ${requestId}.` : '';
+  if (status === 429 || status === 503) return `The service is busy. Wait briefly, then try again.${trace}`;
   if (status === 401) return 'This deployment requires API access. Contact its operator.';
   if (status === 404) return 'This data or service is unavailable in this deployment.';
+  if (status === 405) return `This API version does not support the intervention endpoint yet. Deploy an app/API image with the current route, then retry.${trace}`;
   if (status === 422) return 'These analysis settings are invalid. Check the date, time window and supported ranges.';
-  return `Request failed (HTTP ${status}). Try again or check service availability.`;
+  return `Request failed (HTTP ${status}). Try again or check service availability.${trace}`;
 }
 
 export async function scopedFetch(input, options = {}) {
@@ -80,7 +86,7 @@ export async function scopedFetch(input, options = {}) {
     for (let attempt = 0; attempt < 2; attempt++) {
       response = await globalThis.fetch(input, { ...nativeOptions, signal: controller.signal });
       check();
-      if (!(attempt === 0 && method === 'GET' && cheapReads.has(url.pathname) && [502, 504].includes(response.status))) break;
+      if (!(attempt === 0 && method === 'GET' && retryableRead(url.pathname) && [502, 503, 504].includes(response.status))) break;
       await response.body?.cancel();
       await new Promise(resolve => setTimeout(resolve, 400));
       check();
@@ -88,7 +94,10 @@ export async function scopedFetch(input, options = {}) {
     detail.requestId = response.headers.get('X-Request-ID');
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(requestError(response.status));
+      const error = new Error(requestError(response.status, detail.requestId));
+      error.status = response.status;
+      error.requestId = detail.requestId;
+      throw error;
     }
     if (isCancel) { finish(); return response; }
     // Returning a Response proxy preserves existing response.ok and headers callers.

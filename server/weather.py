@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -16,9 +18,11 @@ from .field import load_viewer_config, local_to_web
 PROVIDER = "Open-Meteo"
 DEFAULT_BASE_URL = "https://api.open-meteo.com/v1/forecast"
 CACHE_SECONDS = 600
+CACHE_FILE = Path(os.getenv("WEATHER_CACHE_PATH", "/tmp/conditions-weather-current.json"))
 CURRENT_VARIABLES = (
     "temperature_2m",
     "apparent_temperature",
+    "dew_point_2m",
     "relative_humidity_2m",
     "precipitation",
     "weather_code",
@@ -76,6 +80,7 @@ def _normalize(payload: dict[str, Any], fetched_at: str) -> dict[str, Any]:
         "fetched_at": fetched_at,
         "stale": False,
         "temperature_2m_c": _number(current, "temperature_2m"),
+        "dewpoint_2m_c": _number(current, "dew_point_2m"),
         "apparent_temperature_c": _number(current, "apparent_temperature"),
         "relative_humidity_2m_pct": _number(current, "relative_humidity_2m"),
         "precipitation_mm": _number(current, "precipitation"),
@@ -103,6 +108,34 @@ def clear_weather_cache() -> None:
     with _lock:
         _cache = None
         _cache_monotonic = 0.0
+        try:
+            CACHE_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _read_persistent_cache() -> dict[str, Any] | None:
+    try:
+        payload = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) and payload.get("provider") == PROVIDER else None
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_persistent_cache(payload: dict[str, Any]) -> None:
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=CACHE_FILE.parent, delete=False) as stream:
+            json.dump(payload, stream, separators=(",", ":"))
+            temporary = Path(stream.name)
+        os.replace(temporary, CACHE_FILE)
+    except OSError:
+        # The in-process cache still protects the running service if the
+        # optional restart-survival cache cannot be written.
+        try:
+            temporary.unlink(missing_ok=True)
+        except (OSError, UnboundLocalError):
+            pass
 
 
 def current_weather(force: bool = False) -> dict[str, Any]:
@@ -110,6 +143,13 @@ def current_weather(force: bool = False) -> dict[str, Any]:
     global _cache, _cache_monotonic
     now = time.monotonic()
     with _lock:
+        if _cache is None:
+            _cache = _read_persistent_cache()
+            if _cache is not None:
+                # A disk cache survives process restarts but its monotonic
+                # timestamp does not. Refresh before treating it as fresh,
+                # while retaining it as an offline fallback.
+                _cache_monotonic = now - CACHE_SECONDS
         if _cache is not None and not force and now - _cache_monotonic < CACHE_SECONDS:
             return {**_cache, "stale": False}
 
@@ -131,12 +171,19 @@ def current_weather(force: bool = False) -> dict[str, Any]:
         except Exception as error:
             if _cache is None:
                 raise RuntimeError(f"current weather unavailable: {error}") from error
+            try:
+                fetched = datetime.fromisoformat(str(_cache.get("fetched_at", "")).replace("Z", "+00:00"))
+                age_seconds = max(0, int((datetime.now(timezone.utc) - fetched).total_seconds()))
+            except (TypeError, ValueError):
+                age_seconds = None
             return {
                 **_cache,
                 "stale": True,
+                "stale_age_seconds": age_seconds,
                 "warning": f"Live refresh failed; showing the last successful response ({error}).",
             }
 
         _cache = normalized
         _cache_monotonic = now
+        _write_persistent_cache(normalized)
         return dict(normalized)

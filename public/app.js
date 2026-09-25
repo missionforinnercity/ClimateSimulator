@@ -1,4 +1,4 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=2';
+import { setupExplorerExperience } from './explorerExperience.js?v=3';
 import { scopedFetch as fetch } from './requestClient.js';
 
 let canvas = document.querySelector('#scene');
@@ -183,7 +183,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=91');
+    const module = await import('./webglRenderer.js?v=98');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -192,7 +192,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=81');
+      const module = await import('./sceneRenderer.js?v=82');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
@@ -231,6 +231,7 @@ function setupCurrentConditions() {
   const statusElement = document.querySelector('#current-status');
   const freshness = document.querySelector('#current-freshness');
   const metrics = document.querySelector('#current-metrics');
+  const provenance = document.querySelector('#current-provenance');
   if (!apply || apply.dataset.ready) return;
   apply.dataset.ready = 'true';
   let latest = null;
@@ -240,13 +241,25 @@ function setupCurrentConditions() {
     freshness.textContent = payload.stale ? 'Stale' : 'Fresh';
     freshness.classList.toggle('stale', Boolean(payload.stale));
     const valid = new Date(payload.valid_at);
-    statusElement.textContent = `${weatherDescription(payload.weather_code)} · valid ${Number.isNaN(valid.getTime()) ? payload.valid_at : valid.toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' })}`;
+    const stationObserved = Boolean(payload.station_observation);
+    statusElement.textContent = `${stationObserved ? `Observed at ${payload.station_observation.id} · ${payload.observation_age_minutes} min old` : weatherDescription(payload.weather_code)} · valid ${Number.isNaN(valid.getTime()) ? payload.valid_at : valid.toLocaleString('en-ZA', { dateStyle: 'medium', timeStyle: 'short' })}`;
+    if (provenance) {
+      const age = Number(payload.stale_age_seconds);
+      const staleNote = payload.stale
+        ? `Cached response${Number.isFinite(age) ? ` · ${Math.floor(age / 60)} min old` : ''}; live refresh failed.`
+        : stationObserved
+          ? `${payload.provider} · airport observation; feels-like and solar radiation remain modelled.`
+          : `Open-Meteo modelled current conditions · fetched ${new Date(payload.fetched_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })} SAST`;
+      provenance.textContent = `${staleNote} · ${payload.attribution || 'Weather data by Open-Meteo'}`;
+      provenance.hidden = false;
+    }
     metrics.hidden = false;
     metrics.innerHTML = `
       <span><b>${payload.temperature_2m_c.toFixed(1)}°C</b>Air</span>
-      <span><b>${payload.apparent_temperature_c.toFixed(1)}°C</b>Feels like</span>
+      <span><b>${payload.apparent_temperature_c.toFixed(1)}°C</b>${stationObserved ? 'Feels like · model' : 'Feels like'}</span>
       <span><b>${payload.wind_speed_10m_mps.toFixed(1)} m/s</b>Wind · ${Math.round(payload.wind_direction_10m_deg)}°</span>
-      <span><b>${Math.round(payload.relative_humidity_2m_pct)}%</b>Humidity</span>`;
+      <span><b>${Math.round(payload.relative_humidity_2m_pct)}%</b>Humidity</span>
+      ${payload.cloud_cover_pct == null ? '' : `<span><b>${Math.round(payload.cloud_cover_pct)}%</b>Cloud cover</span>`}`;
   };
   const load = async force => {
     apply.disabled = true;

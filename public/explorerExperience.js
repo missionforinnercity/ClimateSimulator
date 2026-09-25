@@ -3,11 +3,11 @@ import { cancelRequests } from './requestClient.js';
 
 const EVIDENCE = {
   heat: {
-    status: 'Screening · Modelled', method: 'Summer thermal baseline with mapped building and canopy shade.',
-    sources: 'Heat-zone source window is reported with each response. Terrain uses 2025 LiDAR with a lower-resolution SRTM supplement.',
-    supports: 'Identify streets and public spaces to investigate for cooling and shade.',
-    limits: 'Not measured pedestrian temperature, UTCI/PET, a heat-health forecast, or a verified intervention benefit.',
-    legend: 'Higher scores (0–100) mean more intervention priority or shade deficit. °C surface estimates and °C exposure deltas are different quantities.',
+    status: 'Experimental · Modelled', method: 'Near-live and historical UTCI combine weather, wind and radiant heat; separate screening layers use satellite-derived surface heat and mapped shade.',
+    sources: 'Each result reports its source window and model inputs. Terrain uses 2025 LiDAR with a lower-resolution SRTM supplement.',
+    supports: 'Explore modelled outdoor comfort, compare planning periods, and identify areas for field investigation.',
+    limits: 'No co-located CBD observations yet. Results are not measured pedestrian conditions, a heat-health forecast, or a verified intervention benefit.',
+    legend: 'UTCI is an outdoor comfort index. Satellite surface temperature and shade-priority scores are separate screening measures, not UTCI.',
   },
   sun: {
     status: 'Modelled · Exploratory', method: 'Solar geometry, mapped building/canopy shadows, and clear-sky direct-sun sampling.',

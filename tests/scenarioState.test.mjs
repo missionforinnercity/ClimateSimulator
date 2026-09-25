@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateScenario, validControlValue, scenarioURL, readScenarioURL, compareScenarios } from '../public/scenarioState.js';
 
-const rules = { 'heat-date': { type: 'date' }, 'heat-time': { options: ['540', '720'] }, 'sun-time': { min: 0, max: 1430, step: 10 } };
+const rules = { 'heat-date': { type: 'date' }, 'heat-time': { options: ['540', '720'] }, 'heat-forecast-time': { min: 0, max: 24, step: 1 }, 'sun-time': { min: 0, max: 1430, step: 10 } };
 test('scenario allow-list drops credentials, event names, unknown controls and invalid values', () => {
   const result = validateScenario({ version: 1, tool: 'heat', secret: 'secret', controls: {
     'heat-date': '2026-02-30', 'sun-time': 'NaN', 'heat-time': '720',

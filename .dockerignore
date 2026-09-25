@@ -7,3 +7,14 @@ __pycache__
 data/Era5data.grib
 data/transport/*.pdf
 data/transport/*.jpg
+data/openfoam/cases/
+data/openfoam/atlas/
+data/thermal/products/
+data/thermal/climatology/
+data/thermal/surfaces/
+data/thermal/suews/
+public/assets/cfd/
+SuPy.log
+winds.log
+cells_used.txt
+failed.txt

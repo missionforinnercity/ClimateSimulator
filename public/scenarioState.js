@@ -2,7 +2,8 @@
 export const SCENARIO_VERSION = 1;
 export const TOOLS = ['tools', 'heat', 'sun', 'wind', 'traffic', 'transport'];
 export const CONTROL_IDS = [
-  'building-appearance', 'heat-metric', 'heat-date', 'heat-time',
+  'building-appearance', 'heat-metric', 'heat-period', 'heat-climate-month', 'heat-climate-hour',
+  'heat-date', 'heat-time', 'heat-forecast-time',
   'sun-date', 'sun-time', 'sun-analysis-surfaces', 'sun-start-time', 'sun-end-time',
   'sun-step-time', 'sun-surface-resolution', 'sun-domain-size',
   'wind-direction', 'wind-forcing-mode', 'wind-speed', 'wind-cfd-field',

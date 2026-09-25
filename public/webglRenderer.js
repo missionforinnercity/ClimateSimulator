@@ -1,3 +1,4 @@
+import { percentileColorPosition, utciAbsolutePalette, utciPalette, temperatureColor, UTCI_COLOR_MIN, UTCI_COLOR_MAX } from './thermalColors.js';
 import * as THREE from './vendor/three.module.min.js';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
@@ -2103,7 +2104,46 @@ export async function startWebGLScene(canvas, status) {
   const heatTime = document.querySelector('#heat-time');
   const heatDateControl = document.querySelector('#heat-date-control');
   const heatTimeControl = document.querySelector('#heat-time-control');
+  const heatThermalControls = document.querySelector('#heat-thermal-controls');
+  const heatScreeningControls = document.querySelector('#heat-screening-controls');
+  const heatForecastHint = document.querySelector('#heat-forecast-hint');
+  const heatLayerHelp = document.querySelector('#heat-layer-help');
+  const heatForecastControl = document.querySelector('#heat-forecast-control');
+  const heatForecastTime = document.querySelector('#heat-forecast-time');
+  const heatForecastLabel = document.querySelector('#heat-forecast-label');
+  const heatPeriod = document.querySelector('#heat-period');
+  const heatPeriodControl = document.querySelector('#heat-period-control');
+  const heatClimateControls = document.querySelector('#heat-climate-controls');
+  const heatClimateAggregate = document.querySelector('#heat-climate-aggregate');
+  const heatClimateSeasonControl = document.querySelector('#heat-climate-season-control');
+  const heatClimateSeason = document.querySelector('#heat-climate-season');
+  const heatClimateMonth = document.querySelector('#heat-climate-month');
+  const heatClimateHour = document.querySelector('#heat-climate-hour');
+  const heatClimateMonthLabel = document.querySelector('#heat-climate-month-label');
+  const heatClimateHourLabel = document.querySelector('#heat-climate-hour-label');
+  const heatScenarioControls = document.querySelector('#heat-scenario-controls');
+  const heatScenarioType = document.querySelector('#heat-scenario-type');
+  const heatScenarioRadius = document.querySelector('#heat-scenario-radius');
+  const heatScenarioRadiusLabel = document.querySelector('#heat-scenario-radius-label');
+  const heatScenarioShade = document.querySelector('#heat-scenario-shade');
+  const heatScenarioShadeLabel = document.querySelector('#heat-scenario-shade-label');
+  const heatScenarioPick = document.querySelector('#heat-scenario-pick');
+  const heatPointPick = document.querySelector('#heat-point-pick');
+  const heatScenarioRun = document.querySelector('#heat-scenario-run');
+  const heatScenarioDelta = document.querySelector('#heat-scenario-delta');
+  const heatScenarioBaseline = document.querySelector('#heat-scenario-baseline');
+  const heatScenarioStatus = document.querySelector('#heat-scenario-status');
+  const heatScenarioSummary = document.querySelector('#heat-scenario-summary');
+  const heatClimateMethod = document.querySelector('#heat-climate-method');
+  const heatWeatherInputs = document.querySelector('#heat-weather-inputs');
+  const heatLoadingState = document.querySelector('#heat-loading-state');
+  const heatSeasonProfile = document.querySelector('#heat-season-profile');
+  const heatMonthProfile = document.querySelector('#heat-month-profile');
+  const heatDayProfile = document.querySelector('#heat-day-profile');
   const heatStatus = document.querySelector('#heat-status');
+  const heatProvenance = document.querySelector('#heat-provenance');
+  const heatEnergy = document.querySelector('#heat-energy');
+  const heatEnergySummary = document.querySelector('#heat-energy-summary');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
   const heatSummary = document.querySelector('#heat-summary');
@@ -2339,6 +2379,16 @@ export async function startWebGLScene(canvas, status) {
   let heatPayload = null;
   let analysisGroupMode = null;
   let heatLoadToken = 0;
+  let thermalManifest = null;
+  let thermalClimatology = null;
+  const thermalClimateFrameCache = new Map();
+  const thermalClipIndexCache = new Map();
+  let thermalEnergy = null;
+  let thermalBaselinePayload = null;
+  let thermalScenarioPayload = null;
+  let thermalScenarioSummary = null;
+  let thermalScenarioCenter = null;
+  let thermalComparisonPoint = null;
   let sunLoadToken = 0;
   let sunAbortController = null;
   let sunAnalysisId = null;
@@ -2878,10 +2928,33 @@ export async function startWebGLScene(canvas, status) {
     });
   }
 
-  function heatColor(value, minimum, maximum, metric = '') {
+  function heatColor(value, minimum, maximum, metric = '', percentileValues = null) {
     const color = new THREE.Color();
-    const t = clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
-    const stops = metric === 'cumulative_sun_hours' ? [
+    if (metric === 'utci_c') {
+      const t = percentileValues ? percentileColorPosition(value, percentileValues)
+        : clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
+      const stops = utciPalette(minimum, maximum).stops;
+      let upper = 1;
+      while (upper < stops.length - 1 && t > stops[upper][0]) upper += 1;
+      const lower = upper - 1;
+      const amount = (t - stops[lower][0]) / (stops[upper][0] - stops[lower][0]);
+      return color.setHex(stops[lower][1]).lerp(new THREE.Color(stops[upper][1]), amount);
+    }
+    if (metric === 'utci_delta_c') {
+      const limit = Math.max(Math.abs(minimum), Math.abs(maximum), 0.5);
+      const amount = clamp((value + limit) / (2 * limit), 0, 1);
+      const stops = [[0, 0x1769aa], [0.5, 0xf3f0df], [1, 0xc73532]];
+      const upper = amount <= 0.5 ? 1 : 2;
+      const lower = upper - 1;
+      return color.setHex(stops[lower][1]).lerp(
+        new THREE.Color(stops[upper][1]),
+        (amount - stops[lower][0]) / (stops[upper][0] - stops[lower][0]),
+      );
+    }
+    const t = metric === 'utci_absolute_c'
+      ? clamp((value - UTCI_COLOR_MIN) / (UTCI_COLOR_MAX - UTCI_COLOR_MIN), 0, 1)
+      : clamp((value - minimum) / Math.max(maximum - minimum, 0.001), 0, 1);
+    const stops = metric === 'utci_absolute_c' ? utciAbsolutePalette().stops : metric === 'cumulative_sun_hours' ? [
       [0, 0x5e2e18], [0.25, 0x9a4b25], [0.5, 0xd47a32], [0.75, 0xf2b44e], [1, 0xffe8a6],
     ] : [
       [0, 0x2b50be], [0.2, 0x2daede], [0.42, 0x74cf48],
@@ -3105,10 +3178,693 @@ export async function startWebGLScene(canvas, status) {
     return `${Number(value).toFixed(decimals)}${metadata.unit || ''}`;
   }
 
+  function utciCategory(value) {
+    const thresholds = [
+      [-40, 'extreme cold stress'], [-27, 'very strong cold stress'],
+      [-13, 'strong cold stress'], [0, 'moderate cold stress'],
+      [9, 'slight cold stress'], [26, 'no thermal stress'],
+      [32, 'moderate heat stress'], [38, 'strong heat stress'],
+      [46, 'very strong heat stress'], [Infinity, 'extreme heat stress'],
+    ];
+    return thresholds.find(([ceiling]) => value < ceiling)?.[1] || 'no thermal stress';
+  }
+
   function syncHeatTemporalControls(metric = heatMetric?.value) {
+    const forecast = ['utci_c', 'tmrt_c'].includes(metric);
+    const climate = forecast && heatPeriod?.value === 'climatology';
     const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
+    if (heatLayerHelp) heatLayerHelp.textContent = forecast
+      ? 'Outdoor comfort from air, humidity, wind and radiant heat.'
+      : 'Satellite heat and mapped shade · separate from UTCI.';
+    if (heatThermalControls) heatThermalControls.hidden = !forecast;
+    if (heatScreeningControls) heatScreeningControls.hidden = !temporal;
     if (heatDateControl) heatDateControl.hidden = !temporal;
     if (heatTimeControl) heatTimeControl.hidden = !temporal;
+    if (heatPeriodControl) heatPeriodControl.hidden = !forecast;
+    if (heatForecastHint) heatForecastHint.hidden = !forecast || climate;
+    if (heatClimateControls) heatClimateControls.hidden = !climate;
+    if (heatClimateSeasonControl) heatClimateSeasonControl.hidden = !climate || heatClimateAggregate?.value !== 'season';
+    if (heatClimateMonth?.parentElement) heatClimateMonth.parentElement.hidden = !climate || heatClimateAggregate?.value !== 'month';
+    if (heatForecastControl) heatForecastControl.hidden = !forecast || climate;
+    if (heatScenarioControls) heatScenarioControls.hidden = !forecast || climate || metric !== 'utci_c';
+  }
+
+  function thermalChannel(manifest, name) {
+    const index = manifest.channels?.findIndex(channel => channel.name === name) ?? -1;
+    if (index < 0) throw new Error(`Thermal channel ${name} is unavailable`);
+    return { ...manifest.channels[index], index };
+  }
+
+  function selectedThermalFrame() {
+    const frames = thermalManifest?.frames || [];
+    if (!frames.length) return null;
+    const index = clamp(Math.trunc(Number(heatForecastTime?.value || 0)), 0, frames.length - 1);
+    return frames[index];
+  }
+
+  function thermalGridIndices(grid, stride, rows, columns) {
+    const bounds = grid.bounds.map(Number);
+    const cacheKey = `${grid.width}:${grid.height}:${grid.resolution_m}:${stride}:${bounds.join(',')}`;
+    if (thermalClipIndexCache.has(cacheKey)) return thermalClipIndexCache.get(cacheKey);
+    const indices = new Uint32Array(rows * columns * 6);
+    let indexOffset = 0;
+    const [minX, minZ, maxX, maxZ] = bounds;
+    const resolution = Number(grid.resolution_m);
+    const intersectionsAt = z => {
+      const crossings = [];
+      for (const polygon of terrain.footprint || []) for (const ring of polygon || []) {
+        for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+          const [x1, z1] = ring[index], [x2, z2] = ring[previous];
+          if ((z1 > z) !== (z2 > z)) crossings.push((x2 - x1) * (z - z1) / ((z2 - z1) || Number.EPSILON) + x1);
+        }
+      }
+      crossings.sort((a, b) => a - b);
+      return crossings;
+    };
+    const insideAt = (x, crossings) => {
+      if (!terrain.footprint?.length) return true;
+      let count = 0;
+      while (count < crossings.length && crossings[count] < x) count += 1;
+      return count % 2 === 1;
+    };
+    const vertexColumns = columns + 1;
+    for (let row = 0; row < rows; row += 1) {
+      const z0 = Math.min(maxZ, minZ + Math.min(grid.height, row * stride) * resolution);
+      const z1 = Math.min(maxZ, minZ + Math.min(grid.height, (row + 1) * stride) * resolution);
+      const firstCrossings = intersectionsAt(z0 + (z1 - z0) / 3);
+      const secondCrossings = intersectionsAt(z0 + 2 * (z1 - z0) / 3);
+      for (let column = 0; column < columns; column += 1) {
+        const x0 = Math.min(maxX, minX + Math.min(grid.width, column * stride) * resolution);
+        const x1 = Math.min(maxX, minX + Math.min(grid.width, (column + 1) * stride) * resolution);
+        const topLeft = row * vertexColumns + column;
+        const topRight = topLeft + 1;
+        const bottomLeft = topLeft + vertexColumns;
+        const bottomRight = bottomLeft + 1;
+        if (insideAt(x0 + (x1 - x0) / 3, firstCrossings)) {
+          indices.set([topLeft, bottomLeft, topRight], indexOffset);
+          indexOffset += 3;
+        }
+        if (insideAt(x0 + 2 * (x1 - x0) / 3, secondCrossings)) {
+          indices.set([topRight, bottomLeft, bottomRight], indexOffset);
+          indexOffset += 3;
+        }
+      }
+    }
+    const clippedIndices = indices.slice(0, indexOffset);
+    thermalClipIndexCache.set(cacheKey, clippedIndices);
+    return clippedIndices;
+  }
+
+  function buildThermalMesh(payload) {
+    for (const object of heatGroup.children) disposeObject(object);
+    heatGroup.clear();
+    heatMesh = null;
+    analysisGroupMode = 'heat';
+    const { manifest, values, metric, range } = payload;
+    const grid = manifest.grid;
+    const channel = thermalChannel(manifest, metric);
+    const channelCount = manifest.channels.length;
+    // Render at about 4 m and smoothly extend neighboring model values across
+    // masked cells for a continuous visual surface. Point samples and summaries
+    // continue to use only cells the model actually calculated.
+    const stride = Math.max(1, Math.round(4 / Number(grid.resolution_m)));
+    const [minX, minZ, maxX, maxZ] = grid.bounds.map(Number);
+    const resolution = Number(grid.resolution_m);
+    const sample = (row, column) => {
+      const raw = values[(row * grid.width + column) * channelCount + channel.index];
+      return raw === manifest.nodata ? null : raw * Number(channel.scale) + Number(channel.offset || 0);
+    };
+    const rows = Math.ceil(grid.height / stride), columns = Math.ceil(grid.width / stride);
+    const displayValues = new Float32Array(rows * columns);
+    displayValues.fill(Number.NaN);
+    for (let displayRow = 0; displayRow < rows; displayRow += 1) {
+      for (let displayColumn = 0; displayColumn < columns; displayColumn += 1) {
+        let sum = 0, count = 0;
+        for (let dy = 0; dy < stride; dy += 1) for (let dx = 0; dx < stride; dx += 1) {
+          const row = displayRow * stride + dy, column = displayColumn * stride + dx;
+          if (row >= grid.height || column >= grid.width) continue;
+          const value = sample(row, column);
+          if (value != null && Number.isFinite(value)) { sum += value; count += 1; }
+        }
+        if (count >= Math.max(1, Math.ceil(stride * stride * 0.5))) {
+          displayValues[displayRow * columns + displayColumn] = sum / count;
+        }
+      }
+    }
+    const displayCellCount = rows * columns;
+    const imputed = new Uint8Array(displayCellCount);
+    const queue = new Int32Array(displayCellCount);
+    let queueStart = 0, queueEnd = 0;
+    for (let index = 0; index < displayCellCount; index += 1) {
+      if (Number.isFinite(displayValues[index])) queue[queueEnd++] = index;
+      else imputed[index] = 1;
+    }
+    if (!queueEnd) throw new Error('selected thermal frame has no valid cells');
+    while (queueStart < queueEnd) {
+      const index = queue[queueStart++];
+      const row = Math.floor(index / columns), column = index - row * columns;
+      for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+        if (!dx && !dy) continue;
+        const nextRow = row + dy, nextColumn = column + dx;
+        if (nextRow < 0 || nextColumn < 0 || nextRow >= rows || nextColumn >= columns) continue;
+        const next = nextRow * columns + nextColumn;
+        if (Number.isFinite(displayValues[next])) continue;
+        displayValues[next] = displayValues[index];
+        queue[queueEnd++] = next;
+      }
+    }
+    // Two light smoothing passes soften the nearest-cell fill under buildings
+    // and at the extent edges without changing any directly modelled cells.
+    const smoothed = new Float32Array(displayCellCount);
+    for (let pass = 0; pass < 2; pass += 1) {
+      smoothed.set(displayValues);
+      for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+        const index = row * columns + column;
+        if (!imputed[index]) continue;
+        let sum = 0, count = 0;
+        for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+          const r = row + dy, c = column + dx;
+          if (r < 0 || c < 0 || r >= rows || c >= columns) continue;
+          sum += displayValues[r * columns + c];
+          count += 1;
+        }
+        if (count) smoothed[index] = displayValues[index] * 0.5 + (sum / count) * 0.5;
+      }
+      displayValues.set(smoothed);
+    }
+    const cornerValue = (row, column, fallback) => {
+      let sum = 0, count = 0;
+      for (const [r, c] of [[row - 1, column - 1], [row - 1, column], [row, column - 1], [row, column]]) {
+        if (r < 0 || c < 0 || r >= rows || c >= columns) continue;
+        const candidate = displayValues[r * columns + c];
+        if (Number.isFinite(candidate)) { sum += candidate; count += 1; }
+      }
+      return count ? sum / count : fallback;
+    };
+    const vertexColumns = columns + 1, vertexRows = rows + 1;
+    const vertexCount = vertexColumns * vertexRows;
+    const positions = new Float32Array(vertexCount * 3);
+    const colors = new Float32Array(vertexCount * 3);
+    for (let row = 0; row < vertexRows; row += 1) for (let column = 0; column < vertexColumns; column += 1) {
+      const index = row * vertexColumns + column, offset = index * 3;
+      const x = Math.min(maxX, minX + Math.min(grid.width, column * stride) * resolution);
+      const z = Math.min(maxZ, minZ + Math.min(grid.height, row * stride) * resolution);
+      positions[offset] = x;
+      positions[offset + 1] = terrainHeightAt(x, z) + 0.5;
+      positions[offset + 2] = z;
+      const fallback = displayValues[Math.min(row, rows - 1) * columns + Math.min(column, columns - 1)];
+      const value = cornerValue(row, column, fallback);
+      const color = payload.climatology && metric === 'utci_c'
+        ? heatColor(value, UTCI_COLOR_MIN, UTCI_COLOR_MAX, 'utci_absolute_c')
+        : heatColor(value, range.min, range.max, metric, range.percentiles);
+      colors[offset] = color.r;
+      colors[offset + 1] = color.g;
+      colors[offset + 2] = color.b;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setIndex(new THREE.BufferAttribute(thermalGridIndices(grid, stride, rows, columns), 1));
+    heatMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.88, side: THREE.DoubleSide,
+      depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
+    }));
+    heatGroup.add(heatMesh);
+  }
+
+  function climateFrame(month, hour) {
+    return thermalClimatology?.frames?.find(item => item.month === month && item.hour_local === hour) || null;
+  }
+
+  function climateBar(label, value, minimum, maximum, selection, title) {
+    const amount = maximum > minimum ? clamp((value - minimum) / (maximum - minimum), 0.025, 1) : 0.5;
+    const isUtci = heatMetric?.value === 'utci_c';
+    const t = clamp((value - 10) / 40, 0, 1);
+    const colorValue = isUtci ? temperatureColor(value) : [16, 8, 0].reduce((hex, shift) => hex
+      | Math.round(((0x2b50be >> shift) & 255) * (1 - t) + ((0xed4825 >> shift) & 255) * t) << shift, 0);
+    const color = colorValue.toString(16).padStart(6, '0');
+    const selected = (selection.month != null && selection.month === Number(heatClimateMonth?.value))
+      || (selection.season != null && selection.season === selection.selectedSeason)
+      || (selection.hour != null && selection.hour === Number(heatClimateHour?.value));
+    const data = Object.entries(selection).filter(([key]) => key !== 'selectedSeason')
+      .map(([key, item]) => `data-${key}="${item}"`).join(' ');
+    return `<button type="button" class="heat-climate-bar${selected ? ' selected' : ''}" ${data} title="${title}">
+      <span class="heat-climate-bar-label">${label}</span><span class="heat-climate-bar-track"><i style="width:${(amount * 100).toFixed(1)}%;background:#${color}"></i></span><b>${value.toFixed(1)}°</b></button>`;
+  }
+
+  function renderClimateProfiles() {
+    if (!thermalClimatology) return;
+    const month = Number(heatClimateMonth?.value || 1);
+    const hour = Number(heatClimateHour?.value || 12);
+    const metric = heatMetric?.value || 'utci_c';
+    const field = metric === 'tmrt_c' ? 'mean_tmrt_c' : 'mean_utci_c';
+    const metricLabel = metric === 'tmrt_c' ? 'Tmrt' : 'UTCI';
+    document.querySelectorAll('.heat-climate-profile-section > b').forEach((heading, index) => {
+      heading.textContent = index === 0 ? `Compare seasons · mean ${metricLabel} at selected hour`
+        : index === 1 ? `Compare months · mean ${metricLabel} at selected hour`
+          : `Compare times · mean ${metricLabel} in selected month`;
+    });
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const seasons = [
+      { key: 'summer', label: 'Summer', months: [12, 1, 2] },
+      { key: 'autumn', label: 'Autumn', months: [3, 4, 5] },
+      { key: 'winter', label: 'Winter', months: [6, 7, 8] },
+      { key: 'spring', label: 'Spring', months: [9, 10, 11] },
+    ];
+    const monthRows = months.map((label, index) => ({ month: index + 1, summary: climateFrame(index + 1, hour)?.summary }));
+    const monthValues = monthRows.map(item => item.summary?.[field]).filter(Number.isFinite);
+    const monthMin = Math.min(...monthValues), monthMax = Math.max(...monthValues);
+    if (heatMonthProfile) heatMonthProfile.innerHTML = monthRows.map((item, index) => item.summary
+      ? climateBar(months[index], item.summary[field], monthMin, monthMax, { month: item.month }, `${months[index]} · ${hour.toString().padStart(2, '0')}:00 · mean ${metricLabel} ${item.summary[field].toFixed(1)}°C`)
+      : '').join('');
+
+    const seasonRows = seasons.map(item => {
+      const weighted = item.months.map(monthId => ({
+        value: climateFrame(monthId, hour)?.summary?.[field],
+        days: new Date(Date.UTC(2020, monthId, 0)).getUTCDate(),
+      })).filter(row => Number.isFinite(row.value));
+      const days = weighted.reduce((sum, row) => sum + row.days, 0);
+      return { ...item, value: weighted.reduce((sum, row) => sum + row.value * row.days, 0) / Math.max(1, days) };
+    });
+    const seasonMin = Math.min(...seasonRows.map(item => item.value)), seasonMax = Math.max(...seasonRows.map(item => item.value));
+    const activeSeason = heatClimateAggregate?.value === 'season'
+      ? heatClimateSeason?.value : seasons.find(item => item.months.includes(month))?.key;
+    if (heatSeasonProfile) heatSeasonProfile.innerHTML = seasonRows.map(item => climateBar(
+      item.label, item.value, seasonMin, seasonMax,
+      { season: item.key, selectedSeason: activeSeason },
+      `${item.label} · average of its three monthly composite ${metricLabel} values at ${hour.toString().padStart(2, '0')}:00 · ${item.value.toFixed(1)}°C`,
+    )).join('');
+
+    const parts = [
+      { label: '00–02', hours: [0, 1, 2], select: 1 }, { label: '03–05', hours: [3, 4, 5], select: 4 },
+      { label: '06–08', hours: [6, 7, 8], select: 7 }, { label: '09–11', hours: [9, 10, 11], select: 10 },
+      { label: '12–14', hours: [12, 13, 14], select: 13 }, { label: '15–17', hours: [15, 16, 17], select: 16 },
+      { label: '18–20', hours: [18, 19, 20], select: 19 }, { label: '21–23', hours: [21, 22, 23], select: 22 },
+    ].map(part => ({ ...part, value: part.hours.reduce((sum, item) => sum + (climateFrame(month, item)?.summary?.[field] || 0), 0) / part.hours.length }));
+    const partMin = Math.min(...parts.map(item => item.value)), partMax = Math.max(...parts.map(item => item.value));
+    if (heatDayProfile) heatDayProfile.innerHTML = parts.map(item => climateBar(
+      item.label, item.value, partMin, partMax, { hour: item.select },
+      `${item.label} local time · average monthly-composite ${metricLabel} ${item.value.toFixed(1)}°C`,
+    )).join('');
+  }
+
+  async function getClimateFrameValues(frame) {
+    if (!thermalClimateFrameCache.has(frame.id)) {
+      const response = await fetch(`${windApi}/thermal/climatology/frames/${encodeURIComponent(frame.id)}`);
+      if (!response.ok) throw new Error(`historical climate map HTTP ${response.status}`);
+      thermalClimateFrameCache.set(frame.id, new Int16Array(await response.arrayBuffer()));
+    }
+    return thermalClimateFrameCache.get(frame.id);
+  }
+
+  async function loadClimatology(metric, loadToken) {
+    if (!thermalClimatology) {
+      const response = await fetch(`${windApi}/thermal/climatology`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `historical climate product HTTP ${response.status}`);
+      thermalClimatology = payload;
+      if (heatClimateMethod) {
+        const baseline = payload.baseline || {};
+        heatClimateMethod.textContent = `${payload.source?.dataset || 'ERA5'} · ${baseline.start_year}–${baseline.end_year} · ${payload.grid?.resolution_m} m overview grid. ${payload.method}`;
+      }
+    }
+    if (loadToken !== heatLoadToken) return;
+    const month = Number(heatClimateMonth?.value || 1);
+    const hour = Number(heatClimateHour?.value || 12);
+    if (heatClimateMonthLabel) heatClimateMonthLabel.textContent = new Date(Date.UTC(2020, month - 1, 1)).toLocaleString('en', { month: 'long', timeZone: 'UTC' });
+    if (heatClimateHourLabel) heatClimateHourLabel.textContent = `${hour.toString().padStart(2, '0')}:00 SAST`;
+    renderClimateProfiles();
+    const aggregate = heatClimateAggregate?.value || 'month';
+    const selectedSeason = heatClimateSeason?.value || 'summer';
+    const seasonMonths = {
+      summer: [12, 1, 2], autumn: [3, 4, 5], winter: [6, 7, 8], spring: [9, 10, 11],
+    };
+    const monthList = aggregate === 'annual' ? Array.from({ length: 12 }, (_, index) => index + 1)
+      : aggregate === 'season' ? seasonMonths[selectedSeason] : [month];
+    const sourceFrames = monthList.map(monthId => climateFrame(monthId, hour)).filter(Boolean);
+    if (!sourceFrames.length) throw new Error(`no climate maps for ${aggregate} at ${hour}:00`);
+    const sourceValues = await Promise.all(sourceFrames.map(getClimateFrameValues));
+    if (loadToken !== heatLoadToken) return;
+    const channel = thermalChannel(thermalClimatology, metric);
+    let values;
+    if (sourceValues.length === 1) values = sourceValues[0];
+    else {
+      const pixels = thermalClimatology.grid.width * thermalClimatology.grid.height;
+      const sums = new Float64Array(pixels), weights = new Float32Array(pixels);
+      sourceValues.forEach((source, index) => {
+        const days = new Date(Date.UTC(2020, sourceFrames[index].month, 0)).getUTCDate();
+        for (let pixel = 0; pixel < pixels; pixel++) {
+          const raw = source[pixel * thermalClimatology.channels.length + channel.index];
+          if (raw === thermalClimatology.nodata) continue;
+          sums[pixel] += raw * days;
+          weights[pixel] += days;
+        }
+      });
+      values = new Int16Array(pixels);
+      for (let pixel = 0; pixel < pixels; pixel++) {
+        values[pixel] = weights[pixel]
+          ? Math.round(sums[pixel] / weights[pixel])
+          : thermalClimatology.nodata;
+      }
+    }
+    const range = thermalClimatology.color_ranges?.[metric] || thermalClimatology.color_range || { min: -10, max: 50 };
+    const legendGradient = document.querySelector('.heat-gradient');
+    if (legendGradient) legendGradient.style.background = metric === 'utci_c' ? utciAbsolutePalette().gradient : '';
+    const displayManifest = sourceValues.length === 1 ? thermalClimatology : {
+      ...thermalClimatology, channels: [channel],
+    };
+    heatPayload = { thermal: true, climatology: true, manifest: displayManifest, values, metric, range };
+    heatRange = range;
+    if (heatToggle?.checked && !shadowState.enabled) buildThermalMesh(heatPayload);
+    const stats = [];
+    for (let pixel = 0; pixel < values.length / displayManifest.channels.length; pixel++) {
+      const raw = values[pixel * displayManifest.channels.length + (sourceValues.length === 1 ? channel.index : 0)];
+      if (raw !== thermalClimatology.nodata) stats.push(raw * channel.scale + Number(channel.offset || 0));
+    }
+    stats.sort((a, b) => a - b);
+    const mean = stats.length ? stats.reduce((sum, value) => sum + value, 0) / stats.length : NaN;
+    const percentile90 = stats.length ? stats[Math.floor((stats.length - 1) * 0.9)] : NaN;
+    const hotThreshold = metric === 'utci_c' ? 26 : Infinity;
+    heatPriorityArea.textContent = metric === 'utci_c'
+      ? `${(stats.filter(value => value >= hotThreshold).length / Math.max(1, stats.length) * 100).toFixed(1)}%` : '—';
+    if (heatAverageLabel) heatAverageLabel.textContent = metric === 'utci_c' ? 'Mean UTCI' : 'Mean Tmrt';
+    if (heatMaximumLabel) heatMaximumLabel.textContent = metric === 'utci_c' ? 'P90 UTCI' : 'P90 Tmrt';
+    if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'Area UTCI ≥ 26°C';
+    heatSummary.hidden = false;
+    heatLegendMin.textContent = metric === 'utci_c' ? `≤ ${UTCI_COLOR_MIN}°C` : `${Number(range.min).toFixed(0)}°C`;
+    heatLegendMax.textContent = metric === 'utci_c' ? `≥ ${UTCI_COLOR_MAX}°C` : `${Number(range.max).toFixed(0)}°C`;
+    const localHour = `${hour.toString().padStart(2, '0')}:00`;
+    const periodLabel = aggregate === 'annual' ? 'Annual composite' : aggregate === 'season'
+      ? `${selectedSeason[0].toUpperCase()}${selectedSeason.slice(1)} mean` : sourceFrames[0].month_name;
+    heatStatus.textContent = `${metric === 'utci_c' ? 'UTCI' : 'Tmrt'} · ${periodLabel} · ${localHour} SAST · 2016–2025 climate composite`;
+    if (heatWeatherInputs) heatWeatherInputs.hidden = true;
+    if (heatEnergy) heatEnergy.hidden = true;
+    const legendHelp = document.querySelector('#heat-legend-help');
+    if (legendHelp) legendHelp.textContent = 'The same temperature scale is used for every month and hour. Masked cells are blended for map continuity; point values and summaries use calculated cells only.';
+    if (heatProvenance) heatProvenance.textContent = `Historical reanalysis composite · not a live forecast or observed street-level UTCI · ${thermalClimatology.validation_status.replaceAll('_', ' ')}.`;
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
+      description: `${periodLabel}, ${localHour} SAST · ERA5 ${thermalClimatology.baseline.start_year}–${thermalClimatology.baseline.end_year} climate composite`,
+      metric, valid_at: sourceFrames[0].valid_at, validation_status: thermalClimatology.validation_status,
+    } } }));
+  }
+
+  async function loadThermal(metric, loadToken) {
+    if (loadToken !== heatLoadToken) return;
+    if (!thermalManifest) {
+      let payload;
+      while (loadToken === heatLoadToken) {
+        const response = await fetch(`${windApi}/thermal/forecast`);
+        payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || `forecast HTTP ${response.status}`);
+        if (payload.available === false) {
+          if (payload.status === 'not_started') {
+            throw new Error('Thermal worker is not running. Install its dependencies with `.venv/bin/python -m pip install -r requirements-models.txt`, then start it with `.venv/bin/python -m server.thermal_worker`.');
+          }
+          if (payload.status === 'failed') {
+            throw new Error(`Thermal worker failed during ${payload.worker?.phase || 'model execution'}. Check its terminal output, then restart it.`);
+          }
+          const phase = String(payload.worker?.phase || 'starting').replaceAll('_', ' ');
+          heatStatus.textContent = `Preparing UTCI forecast · ${phase}…`;
+          await new Promise(resolve => setTimeout(resolve, 15000));
+          continue;
+        }
+        break;
+      }
+      if (loadToken !== heatLoadToken) return;
+      const publishedFrames = (payload.frames || []).filter(frame => frame
+        && typeof frame.id === 'string' && typeof frame.file === 'string'
+        && Number.isFinite(Date.parse(frame.valid_at)))
+        .sort((a, b) => Date.parse(a.valid_at) - Date.parse(b.valid_at));
+      if (!publishedFrames.length) throw new Error('The forecast has no available time frames yet. Wait for the thermal worker to publish data.');
+      thermalManifest = { ...payload, frames: publishedFrames };
+      if (heatForecastTime) {
+        heatForecastTime.max = String(thermalManifest.frames.length - 1);
+        heatForecastTime.value = String(clamp(Number(heatForecastTime.value || 0), 0, thermalManifest.frames.length - 1));
+        heatForecastTime.disabled = thermalManifest.frames.length < 2;
+      }
+      fetch(`${windApi}/thermal/energy?run_id=${encodeURIComponent(thermalManifest.run_id)}`)
+        .then(response => response.ok ? response.json() : null).then(payload => { thermalEnergy = payload; }).catch(() => {});
+    }
+    const frame = selectedThermalFrame();
+    if (!frame) throw new Error('forecast contains no frames');
+    let response;
+    try {
+      response = await fetch(`${windApi}/thermal/frames/${encodeURIComponent(thermalManifest.run_id)}/${encodeURIComponent(frame.id)}`);
+    } catch (error) {
+      if (![404, 422].includes(error.status)) throw error;
+      const failedIndex = thermalManifest.frames.findIndex(item => item.id === frame.id);
+      const frames = thermalManifest.frames.filter(item => item.id !== frame.id);
+      if (!frames.length) throw new Error('The API has no readable forecast frames. Wait for the thermal worker to publish a complete forecast.');
+      thermalManifest = { ...thermalManifest, frames };
+      if (heatForecastTime) {
+        heatForecastTime.max = String(frames.length - 1);
+        heatForecastTime.value = String(clamp(failedIndex, 0, frames.length - 1));
+        heatForecastTime.disabled = frames.length < 2;
+      }
+      heatStatus.textContent = `Skipping unavailable ${new Date(frame.valid_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' })} frame; loading the nearest available time.`;
+      return loadThermal(metric, loadToken);
+    }
+    if (!response.ok) throw new Error(`frame HTTP ${response.status}`);
+    const frameBuffer = await response.arrayBuffer();
+    const expectedBytes = thermalManifest.grid.width * thermalManifest.grid.height
+      * thermalManifest.channels.length * Int16Array.BYTES_PER_ELEMENT;
+    if (frameBuffer.byteLength !== expectedBytes) {
+      throw new Error(`forecast frame is incomplete (${frameBuffer.byteLength} of ${expectedBytes} bytes)`);
+    }
+    const values = new Int16Array(frameBuffer);
+    if (loadToken !== heatLoadToken) return;
+    const channel = thermalChannel(thermalManifest, metric);
+    const sampleValues = [];
+    let total = 0, validCells = 0, maximum = -Infinity, hotspotCells = 0;
+    const sampleStride = Math.max(1, Math.floor(thermalManifest.grid.width * thermalManifest.grid.height / 100000));
+    for (let pixel = 0; pixel < thermalManifest.grid.width * thermalManifest.grid.height; pixel++) {
+      const raw = values[pixel * thermalManifest.channels.length + channel.index];
+      if (raw === thermalManifest.nodata) continue;
+      const value = raw * channel.scale + Number(channel.offset || 0);
+      total += value;
+      validCells++;
+      maximum = Math.max(maximum, value);
+      if (metric === 'utci_c' && value >= 32) hotspotCells++;
+      // Sample by valid-cell count, rather than fixed pixel positions. The
+      // latter can miss every valid cell in sparse frames and falsely report
+      // that an otherwise usable forecast frame is empty.
+      if ((validCells - 1) % sampleStride === 0) {
+        sampleValues.push(value);
+      }
+    }
+    sampleValues.sort((a, b) => a - b);
+    if (!validCells || !sampleValues.length) throw new Error('selected thermal frame has no valid cells');
+    const percentile = fraction => sampleValues[Math.round((sampleValues.length - 1) * fraction)];
+    const percentiles = Array.from({ length: 81 }, (_, index) => percentile(0.1 + index / 100));
+    const range = { min: percentiles[0], max: percentiles.at(-1), percentiles };
+    const legendGradient = document.querySelector('.heat-gradient');
+    if (legendGradient) legendGradient.style.background = metric === 'utci_c' ? utciPalette(range.min, range.max).gradient : '';
+    heatPayload = { thermal: true, manifest: thermalManifest, values, metric, range };
+    thermalBaselinePayload = heatPayload;
+    thermalScenarioPayload = null;
+    thermalScenarioSummary = null;
+    if (heatScenarioDelta) heatScenarioDelta.disabled = true;
+    if (heatScenarioBaseline) heatScenarioBaseline.disabled = true;
+    if (heatScenarioSummary) heatScenarioSummary.hidden = true;
+    heatRange = range;
+    if (heatToggle?.checked && !shadowState.enabled) buildThermalMesh(heatPayload);
+    const mean = total / validCells;
+    renderHeatSummary({
+      area_weighted_mean: mean, maximum,
+      hotspot_area_m2: metric === 'utci_c' ? hotspotCells * Number(thermalManifest.grid.resolution_m) ** 2 : 0,
+      hotspot_area_pct: metric === 'utci_c' ? hotspotCells / Math.max(1, validCells) * 100 : 0,
+    }, channel);
+    if (metric === 'utci_c') {
+      heatLegendMin.textContent = `P10 ${formatHeatValue(range.min, channel)}`;
+      heatLegendMax.textContent = `P90 ${formatHeatValue(range.max, channel)}`;
+    } else {
+      heatLegendMin.textContent = `P10 ${formatHeatValue(range.min, channel)}`;
+      heatLegendMax.textContent = `P90 ${formatHeatValue(range.max, channel)}`;
+    }
+    const validDate = new Date(frame.valid_at);
+    heatForecastLabel.textContent = `${validDate.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} SAST`;
+    const forcing = frame.forcing || {};
+    const hasWeatherWarnings = Array.isArray(forcing.weather_warnings) && forcing.weather_warnings.length > 0;
+    const refreshFailure = thermalManifest.refresh?.state === 'failed'
+      ? ` · latest refresh failed during ${String(thermalManifest.refresh.phase || 'model execution').replaceAll('_', ' ')}`
+      : '';
+    heatStatus.textContent = `${metric === 'utci_c' ? 'UTCI' : 'Tmrt'} · ${thermalManifest.stale ? 'stale forecast' : hasWeatherWarnings ? 'forecast inputs need checking' : 'model forecast · not observed'}${refreshFailure}`;
+    const inputs = forcing.inputs || {};
+    const weatherInputs = document.querySelector('#heat-weather-inputs');
+    if (weatherInputs) {
+      weatherInputs.hidden = false;
+      weatherInputs.textContent = `Forecast air ${inputs.temperature_2m_c == null ? 'unavailable' : Number(inputs.temperature_2m_c).toFixed(1) + '°C'} · no CBD observation.`;
+    }
+    const inputSummary = inputs.temperature_2m_c == null ? '' : ` · Air input ${Number(inputs.temperature_2m_c).toFixed(1)}°C, ${Math.round(inputs.relative_humidity_2m_pct)}% RH${inputs.cloud_cover_pct == null ? '' : `, ${Math.round(inputs.cloud_cover_pct)}% cloud`}${inputs.global_radiation_wm2 == null ? '' : `, ${Math.round(inputs.global_radiation_wm2)} W/m² shortwave`}`;
+    const generated = new Date(thermalManifest.generated_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    const sources = forcing.sources?.join(' + ') || 'Open-Meteo model forecast';
+    const station = forcing.station?.id ? ` · ${forcing.station.id} station report ${forcing.observed_at ? new Date(forcing.observed_at).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' }) + ' SAST' : ''}` : '';
+    const modelSpread = forcing.model_spread || {};
+    const temperatureSpread = modelSpread.temperature_2m;
+    const windSpread = modelSpread.wind_speed_10m;
+    const spreadSummary = [];
+    if (temperatureSpread?.low != null && temperatureSpread?.high != null) {
+      spreadSummary.push(`model air range ${Number(temperatureSpread.low).toFixed(1)}–${Number(temperatureSpread.high).toFixed(1)}°C`);
+    }
+    if (windSpread?.low != null && windSpread?.high != null) {
+      spreadSummary.push(`model wind range ${Number(windSpread.low).toFixed(1)}–${Number(windSpread.high).toFixed(1)} m/s`);
+    }
+    const weatherWarnings = Array.isArray(forcing.weather_warnings) ? forcing.weather_warnings : [];
+    const qualitySummary = weatherWarnings.length
+      ? ` · Weather check: ${weatherWarnings.join('; ')}`
+      : spreadSummary.length ? ` · ${spreadSummary.join('; ')}` : '';
+    const radiationTiming = document.querySelector('#heat-radiation-timing');
+    const radiationInfo = forcing.radiation;
+    if (radiationTiming) {
+      radiationTiming.hidden = !radiationInfo;
+      if (radiationInfo) {
+        const end = new Date(radiationInfo.interval_end);
+        const endLabel = end.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const elapsed = Math.round((Date.now() - end.getTime()) / 60000);
+        const age = elapsed >= 0 ? ` · ${elapsed} min old` : ' · forecast';
+        const weatherTime = new Date(forcing.weather_valid_at || frame.valid_at).toLocaleTimeString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit' });
+        radiationTiming.textContent = `${radiationInfo.source}: ${radiationInfo.averaging_minutes}-min mean ending ${endLabel} SAST${age}. Direct ${Math.round(inputs.direct_radiation_wm2)} + diffuse ${Math.round(inputs.diffuse_radiation_wm2)} W/m². Air/wind forecast: ${weatherTime} SAST.`;
+      }
+    }
+    const auditPanel = document.querySelector('#heat-radiation-audit');
+    const auditSummary = document.querySelector('#heat-radiation-audit-summary');
+    const diagnostics = frame.radiation_diagnostics;
+    if (auditPanel) auditPanel.hidden = !diagnostics;
+    if (diagnostics && auditSummary) {
+      const flux = key => diagnostics[key]?.mean?.toFixed(0) ?? '—';
+      auditSummary.textContent = `Ground-area model means: incoming sunlight ${flux('kdown_wm2')}, reflected sunlight ${flux('kup_wm2')}, downward thermal radiation ${flux('ldown_wm2')}, upward thermal radiation ${flux('lup_wm2')} W/m². Mean radiant temperature ${diagnostics.tmrt_c?.mean?.toFixed(1)}°C. UTCI with radiant temperature set to air temperature: ${diagnostics.utci_without_radiant_excess_c?.mean?.toFixed(1)}°C (diagnostic comparison). These horizontal fluxes exclude lateral radiation and cannot be summed into a full human radiation budget. Roofs are excluded from ground-area results.`;
+    }
+    const radiationProvenance = forcing.provenance?.global_radiation_wm2 || forcing.provenance?.shortwave_radiation || '';
+    const radiationSource = radiationProvenance.includes('satellite')
+      ? 'EUMETSAT satellite observation'
+      : 'Open-Meteo model forecast (no satellite measurement for this hour)';
+    const resultContext = metric === 'utci_c'
+      ? hasWeatherWarnings
+        ? ' · Low-confidence model estimate: forecast inputs have quality warnings, and no CBD street observation is available. Do not treat its heat-stress category as observed local conditions. UTCI includes modeled sun and wind; it is not air temperature.'
+      : ` · mean ${utciCategory(mean)}, peak ${utciCategory(maximum)}. UTCI is a sun-and-wind comfort index, not air temperature. The colour range adapts to this hour; compare numeric values across hours.`
+      : '';
+    heatProvenance.textContent = `${thermalManifest.validation_status.replaceAll('_', ' ')} · Weather ${sources}${station}${qualitySummary} · Radiation ${radiationSource}${thermalManifest.latest_observation_at && !forcing.station?.id ? ' · remote proxy checks through ' + new Date(thermalManifest.latest_observation_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : ''} · run ${generated} SAST${inputSummary}${resultContext}`;
+    if (metric === 'utci_c') {
+      if (heatAverageLabel) heatAverageLabel.textContent = hasWeatherWarnings ? 'Mean UTCI · low confidence' : `Mean UTCI · ${utciCategory(mean)}`;
+      if (heatMaximumLabel) heatMaximumLabel.textContent = hasWeatherWarnings ? 'Peak UTCI · low confidence' : `Peak UTCI · ${utciCategory(maximum)}`;
+      if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'UTCI ≥ 32°C';
+    } else {
+      if (heatAverageLabel) heatAverageLabel.textContent = 'Mean Tmrt';
+      if (heatMaximumLabel) heatMaximumLabel.textContent = 'Peak Tmrt';
+      if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'Wind sector';
+    }
+    if (heatEnergy && heatEnergySummary) {
+      const energyRow = thermalEnergy?.hours?.find(item => item.valid_at === frame.valid_at);
+      heatEnergy.hidden = !energyRow;
+      if (energyRow) heatEnergySummary.textContent = `QN ${energyRow.QN.toFixed(0)}, QH ${energyRow.QH.toFixed(0)}, QE ${energyRow.QE.toFixed(0)}, QS ${energyRow.QS.toFixed(0)} W/m² · runoff ${energyRow.RO.toFixed(2)} mm`;
+    }
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
+      description: `Experimental ${metric} forecast valid ${frame.valid_at}`, run_id: thermalManifest.run_id,
+      valid_at: frame.valid_at, validation_status: thermalManifest.validation_status, wind_sector: frame.wind_sector,
+      weather_warnings: forcing.weather_warnings || [], weather_inputs: inputs,
+    } } }));
+  }
+
+  async function calculateThermalScenario() {
+    if (!thermalManifest || !thermalBaselinePayload || !thermalScenarioCenter) return;
+    heatScenarioRun.disabled = true;
+    heatScenarioStatus.textContent = 'Calculating the shade intervention estimate…';
+    try {
+      const frame = selectedThermalFrame();
+      if (!frame) throw new Error('No forecast frame is available for this time.');
+      const response = await fetch(`${windApi}/thermal/scenario`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          run_id: thermalManifest.run_id, frame_id: frame.id,
+          x: thermalScenarioCenter.x, z: thermalScenarioCenter.z,
+          radius_m: Number(heatScenarioRadius.value),
+          shade_percent: Number(heatScenarioShade.value), intervention: heatScenarioType.value,
+        }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || `scenario request failed (${response.status})`);
+      }
+      const raw = new Int16Array(await response.arrayBuffer());
+      thermalScenarioSummary = JSON.parse(response.headers.get('X-Thermal-Scenario') || '{}');
+      let limit = 0.5;
+      for (const value of raw) if (value !== thermalManifest.nodata) limit = Math.max(limit, Math.abs(value * 0.1));
+      const range = { min: -limit, max: limit, percentiles: null };
+      const scenarioManifest = {
+        ...thermalManifest, nodata: thermalManifest.nodata,
+        channels: [{ name: 'utci_delta_c', scale: 0.1, offset: 0, unit: '°C' }],
+      };
+      thermalScenarioPayload = { thermal: true, manifest: scenarioManifest, values: raw, metric: 'utci_delta_c', range };
+      heatScenarioSummary.hidden = false;
+      heatScenarioSummary.textContent = `${thermalScenarioSummary.area_m2.toLocaleString()} m² assessed · mean UTCI ${thermalScenarioSummary.mean_utci_before_c}°C → ${thermalScenarioSummary.mean_utci_after_c}°C (${thermalScenarioSummary.mean_utci_delta_c > 0 ? '+' : ''}${thermalScenarioSummary.mean_utci_delta_c}°C) · area above 32°C ${thermalScenarioSummary.hot_area_before_m2.toLocaleString()} → ${thermalScenarioSummary.hot_area_after_m2.toLocaleString()} m². ${thermalScenarioSummary.note}`;
+      heatScenarioDelta.disabled = false;
+      heatScenarioBaseline.disabled = false;
+      heatScenarioStatus.textContent = `Estimate ready for ${frame.valid_at}. Values describe the selected forecast hour.`;
+      if (thermalComparisonPoint) await inspectThermalComparisonPoint(thermalComparisonPoint.x, thermalComparisonPoint.z);
+    } catch (error) {
+      heatScenarioStatus.textContent = error.message || 'Could not calculate this intervention estimate.';
+    } finally {
+      heatScenarioRun.disabled = false;
+    }
+  }
+
+  async function inspectThermalComparisonPoint(x, z) {
+    thermalComparisonPoint = { x, z };
+    if (!thermalManifest) return;
+    const frame = selectedThermalFrame();
+    if (!frame) throw new Error('No forecast frame is available for this time.');
+    const query = new URLSearchParams({ x: String(x), z: String(z), run_id: thermalManifest.run_id, frame_id: frame.id });
+    const response = await fetch(`${windApi}/thermal/point?${query}`);
+    if (!response.ok) throw new Error('The selected point has no forecast value.');
+    const point = await response.json();
+    const base = point.values.utci_c;
+    let delta = null;
+    if (thermalScenarioPayload) {
+      const { width } = thermalScenarioPayload.manifest.grid;
+      const index = point.grid_cell.row * width + point.grid_cell.column;
+      const raw = thermalScenarioPayload.values[index];
+      if (raw !== thermalManifest.nodata) delta = raw * 0.1;
+    }
+    const result = delta == null ? `Selected point UTCI ${base?.toFixed(1) ?? 'no data'}°C (${point.utci_category || 'masked cell'}).`
+      : `Selected point UTCI ${base.toFixed(1)}°C → ${(base + delta).toFixed(1)}°C (${delta > 0 ? '+' : ''}${delta.toFixed(1)}°C).`;
+    heatScenarioStatus.textContent = result;
+  }
+
+  function showThermalScenarioDifference() {
+    if (!thermalScenarioPayload) return;
+    heatPayload = thermalScenarioPayload;
+    heatRange = thermalScenarioPayload.range;
+    buildThermalMesh(thermalScenarioPayload);
+    const gradient = document.querySelector('.heat-gradient');
+    if (gradient) gradient.style.background = 'linear-gradient(90deg,#1769aa,#f3f0df,#c73532)';
+    heatLegendMin.textContent = `−${Math.abs(thermalScenarioPayload.range.min).toFixed(1)}°C`;
+    heatLegendMax.textContent = `+${Math.abs(thermalScenarioPayload.range.max).toFixed(1)}°C`;
+    if (heatAverageLabel) heatAverageLabel.textContent = 'Mean UTCI change';
+    if (heatMaximumLabel) heatMaximumLabel.textContent = 'Largest change';
+    const s = thermalScenarioSummary;
+    renderHeatSummary({ area_weighted_mean: s.mean_utci_delta_c, maximum: s.max_utci_reduction_c,
+      hotspot_area_m2: Math.max(0, s.hot_area_before_m2 - s.hot_area_after_m2),
+      hotspot_area_pct: s.area_m2 ? Math.max(0, s.hot_area_before_m2 - s.hot_area_after_m2) / s.area_m2 * 100 : 0 },
+    { unit: '°C', decimals: 1 });
+    if (heatAverageLabel) heatAverageLabel.textContent = 'Mean UTCI change';
+    if (heatMaximumLabel) heatMaximumLabel.textContent = 'Max reduction';
+    if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'Hot area reduced';
+    heatStatus.textContent = 'Intervention UTCI difference · experimental shade screening estimate';
+  }
+
+  function showThermalBaseline() {
+    if (!thermalBaselinePayload) return;
+    heatPayload = thermalBaselinePayload;
+    heatRange = thermalBaselinePayload.range;
+    buildThermalMesh(thermalBaselinePayload);
+    const gradient = document.querySelector('.heat-gradient');
+    if (gradient) gradient.style.background = utciPalette(heatRange.min, heatRange.max).gradient;
+    heatLegendMin.textContent = `P10 ${heatRange.min.toFixed(1)}°C`;
+    heatLegendMax.textContent = `P90 ${heatRange.max.toFixed(1)}°C`;
+    if (heatAverageLabel) heatAverageLabel.textContent = 'Mean UTCI';
+    if (heatMaximumLabel) heatMaximumLabel.textContent = 'Peak UTCI';
+    if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'UTCI ≥ 32°C';
+    heatStatus.textContent = 'Experimental modelled UTCI forecast · not observed';
   }
 
   function renderHeatSummary(summary, metadata = {}) {
@@ -3120,6 +3876,9 @@ export async function startWebGLScene(canvas, status) {
     heatMaximum.textContent = formatHeatValue(summary.maximum, metadata);
     if (heatAverageLabel) heatAverageLabel.textContent = 'Average';
     if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum';
+    if (heatPriorityArea?.nextElementSibling) {
+      heatPriorityArea.nextElementSibling.textContent = metadata?.name === 'utci_c' ? 'UTCI ≥ 32°C area' : 'Priority area';
+    }
     const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
     const hotspotPercent = Number(summary.hotspot_area_pct || 0);
     heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${hotspotPercent.toFixed(0)}%`;
@@ -3129,8 +3888,35 @@ export async function startWebGLScene(canvas, status) {
     if (!heatStatus) return;
     const loadToken = ++heatLoadToken;
     syncHeatTemporalControls(metric);
-    heatStatus.textContent = 'Loading heat zones…';
+    const legendGradient = document.querySelector('.heat-gradient');
+    if (legendGradient) legendGradient.style.background = '';
+    const legendHelp = document.querySelector('#heat-legend-help');
+    if (legendHelp) {
+      legendHelp.hidden = metric !== 'utci_c';
+      legendHelp.textContent = heatPeriod?.value === 'climatology'
+        ? 'One colour scale across all periods.'
+        : 'Colours show differences within this hour; compare values across hours.';
+    }
+    const weatherInputs = document.querySelector('#heat-weather-inputs');
+    if (weatherInputs) weatherInputs.hidden = true;
+    for (const id of ['heat-radiation-timing', 'heat-radiation-audit']) {
+      const element = document.getElementById(id);
+      if (element) element.hidden = true;
+    }
+    heatStatus.textContent = metric === 'utci_c' ? 'Loading UTCI…' : metric === 'tmrt_c' ? 'Loading Tmrt…' : 'Loading heat…';
+    heatStatus.setAttribute('aria-busy', 'true');
+    if (heatLoadingState) heatLoadingState.hidden = metric !== 'utci_c';
     try {
+      if (['utci_c', 'tmrt_c'].includes(metric)) {
+        if (heatPeriod?.value === 'climatology') await loadClimatology(metric, loadToken);
+        else await loadThermal(metric, loadToken);
+        setHeatMode(Boolean(heatToggle?.checked));
+        return;
+      }
+      if (heatAverageLabel) heatAverageLabel.textContent = 'Average';
+      if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum';
+      if (heatProvenance) heatProvenance.textContent = 'Satellite-based heat screening · summer baseline with mapped shade indicators';
+      if (heatEnergy) heatEnergy.hidden = true;
       const params = new URLSearchParams({
         metric,
         date: heatDate?.value || '2026-01-15',
@@ -3164,8 +3950,22 @@ export async function startWebGLScene(canvas, status) {
       heatStatus.textContent = `${timeContext}${payload.count || payload.features?.length || 0} zones · ${window}`;
     } catch (error) {
       if (loadToken !== heatLoadToken) return;
+      if (['utci_c', 'tmrt_c'].includes(metric)) {
+        heatPayload = null;
+        if (heatPeriod?.value === 'climatology') thermalClimatology = null;
+        else thermalManifest = null;
+        if (heatProvenance) heatProvenance.textContent = 'No model output has been published for this layer.';
+        for (const object of heatGroup.children) disposeObject(object);
+        heatGroup.clear();
+        analysisGroupMode = null;
+      }
       renderHeatSummary(null);
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
+    } finally {
+      if (loadToken === heatLoadToken) {
+        heatStatus.setAttribute('aria-busy', 'false');
+        if (heatLoadingState) heatLoadingState.hidden = true;
+      }
     }
     setHeatMode(Boolean(heatToggle?.checked));
   }
@@ -3355,7 +4155,8 @@ export async function startWebGLScene(canvas, status) {
       cancelSunHours('', false);
     }
     if (enabled && analysisGroupMode !== 'heat') {
-      if (heatPayload) buildHeatMesh(heatPayload);
+      if (heatPayload?.thermal) buildThermalMesh(heatPayload);
+      else if (heatPayload) buildHeatMesh(heatPayload);
       else {
         for (const object of heatGroup.children) disposeObject(object);
         heatGroup.clear();
@@ -5538,13 +6339,18 @@ export async function startWebGLScene(canvas, status) {
         category.max_speed_mps ? ` ≤${category.max_speed_mps} m/s` : ''}</span>`).join('');
   }
 
-  // Registry of solved OpenFOAM cases available to the browser. Only SE is
-  // meshed and solved today; append entries here (and enable the matching
-  // compass button in index.html) as more directions are converted with
-  // scripts/convert_openfoam_vtk.py. Direction and Comfort both read this —
-  // neither ever synthesizes a direction that isn't listed here.
+  // Registry of converted OpenFOAM cases available to the browser. A solved
+  // case is not browser-ready until convert_openfoam_vtk.py has emitted its
+  // volume.json, fields.f32 and valid.u8 files. Direction and Comfort both
+  // read this registry and never synthesize an unlisted direction.
   const CFD_CASES = [
-    { direction_deg: 135, sector: 'se', label: 'SE 135°', base: '/assets/cfd/cbd_se_pilot/' },
+    { direction_deg: 0, sector: 'n', label: 'N 0°', base: '/assets/cfd/cbd_n_full/' },
+    { direction_deg: 45, sector: 'ne', label: 'NE 45°', base: '/assets/cfd/cbd_ne_full/' },
+    { direction_deg: 90, sector: 'e', label: 'E 90°', base: '/assets/cfd/cbd_e_full/' },
+    { direction_deg: 135, sector: 'se', label: 'SE 135°', base: '/assets/cfd/cbd_se_full/' },
+    { direction_deg: 180, sector: 's', label: 'S 180°', base: '/assets/cfd/cbd_s_full/' },
+    { direction_deg: 225, sector: 'sw', label: 'SW 225°', base: '/assets/cfd/cbd_sw_full/' },
+    { direction_deg: 270, sector: 'w', label: 'W 270°', base: '/assets/cfd/cbd_w_full/' },
     { direction_deg: 315, sector: 'nw', label: 'NW 315°', base: '/assets/cfd/cbd_nw_full/' },
   ];
 
@@ -6979,6 +7785,100 @@ export async function startWebGLScene(canvas, status) {
     shadowState.minutes = Number(event.target.value);
     loadHeat(heatMetric?.value);
   });
+  heatForecastTime?.addEventListener('input', () => {
+    if (['utci_c', 'tmrt_c'].includes(heatMetric?.value)) loadHeat(heatMetric.value);
+  });
+  // The experience layer cancels in-flight heat reads during the bubbling
+  // change event. Reload after that cancellation so the final slider value
+  // still gets a request once the user releases the forecast slider.
+  heatForecastTime?.addEventListener('change', () => {
+    if (['utci_c', 'tmrt_c'].includes(heatMetric?.value)) loadHeat(heatMetric.value);
+  });
+  heatScenarioPick?.addEventListener('click', () => {
+    if (heatScenarioStatus) heatScenarioStatus.textContent = 'Click the map where the tree or shade structure should be centred.';
+    requestGroundPick((x, z) => {
+      thermalScenarioCenter = { x, z };
+      thermalScenarioPayload = null;
+      if (heatScenarioRun) heatScenarioRun.disabled = false;
+      if (heatScenarioDelta) heatScenarioDelta.disabled = true;
+      if (heatScenarioBaseline) heatScenarioBaseline.disabled = true;
+      if (heatScenarioStatus) heatScenarioStatus.textContent = `Intervention centre selected (${x.toFixed(1)}, ${z.toFixed(1)} m).`;
+    });
+  });
+  heatPointPick?.addEventListener('click', () => {
+    if (heatScenarioStatus) heatScenarioStatus.textContent = 'Click a valid ground cell to compare its UTCI.';
+    requestGroundPick((x, z) => {
+      void inspectThermalComparisonPoint(x, z).catch(error => {
+        if (heatScenarioStatus) heatScenarioStatus.textContent = error.message || 'No UTCI value at that point.';
+      });
+    });
+  });
+  heatScenarioRun?.addEventListener('click', () => void calculateThermalScenario());
+  heatScenarioDelta?.addEventListener('click', showThermalScenarioDifference);
+  heatScenarioBaseline?.addEventListener('click', showThermalBaseline);
+  heatScenarioRadius?.addEventListener('input', () => {
+    if (heatScenarioRadiusLabel) heatScenarioRadiusLabel.textContent = `${heatScenarioRadius.value} m`;
+    thermalScenarioPayload = null;
+    if (heatScenarioDelta) heatScenarioDelta.disabled = true;
+    if (heatScenarioBaseline) heatScenarioBaseline.disabled = true;
+    if (heatScenarioSummary) heatScenarioSummary.hidden = true;
+  });
+  heatScenarioShade?.addEventListener('input', () => {
+    if (heatScenarioShadeLabel) heatScenarioShadeLabel.textContent = `${heatScenarioShade.value}%`;
+    thermalScenarioPayload = null;
+    if (heatScenarioDelta) heatScenarioDelta.disabled = true;
+    if (heatScenarioBaseline) heatScenarioBaseline.disabled = true;
+    if (heatScenarioSummary) heatScenarioSummary.hidden = true;
+  });
+  heatScenarioType?.addEventListener('change', () => {
+    if (heatScenarioRadius) {
+      heatScenarioRadius.max = heatScenarioType.value === 'tree' ? '20' : '40';
+      if (Number(heatScenarioRadius.value) > Number(heatScenarioRadius.max)) heatScenarioRadius.value = heatScenarioRadius.max;
+      if (heatScenarioRadiusLabel) heatScenarioRadiusLabel.textContent = `${heatScenarioRadius.value} m`;
+    }
+    thermalScenarioPayload = null;
+    if (heatScenarioDelta) heatScenarioDelta.disabled = true;
+    if (heatScenarioBaseline) heatScenarioBaseline.disabled = true;
+    if (heatScenarioSummary) heatScenarioSummary.hidden = true;
+  });
+  heatPeriod?.addEventListener('change', () => {
+    syncHeatTemporalControls();
+    loadHeat(heatMetric?.value);
+  });
+  heatClimateMonth?.addEventListener('input', () => {
+    const month = Number(heatClimateMonth.value);
+    if (heatClimateMonthLabel) heatClimateMonthLabel.textContent = new Date(Date.UTC(2020, month - 1, 1)).toLocaleString('en', { month: 'long', timeZone: 'UTC' });
+    renderClimateProfiles();
+  });
+  heatClimateMonth?.addEventListener('change', () => loadHeat(heatMetric?.value));
+  heatClimateHour?.addEventListener('input', () => {
+    const hour = Number(heatClimateHour.value);
+    if (heatClimateHourLabel) heatClimateHourLabel.textContent = `${hour.toString().padStart(2, '0')}:00 SAST`;
+    renderClimateProfiles();
+  });
+  heatClimateHour?.addEventListener('change', () => loadHeat(heatMetric?.value));
+  heatClimateAggregate?.addEventListener('change', () => {
+    syncHeatTemporalControls();
+    loadHeat(heatMetric?.value);
+  });
+  heatClimateSeason?.addEventListener('change', () => loadHeat(heatMetric?.value));
+  [heatSeasonProfile, heatMonthProfile, heatDayProfile].forEach(profile => profile?.addEventListener('click', event => {
+    const button = event.target.closest('.heat-climate-bar');
+    if (!button) return;
+    if (button.dataset.month) heatClimateMonth.value = button.dataset.month;
+    if (button.dataset.hour) heatClimateHour.value = button.dataset.hour;
+    if (button.dataset.season) {
+      heatClimateAggregate.value = 'season';
+      heatClimateSeason.value = button.dataset.season;
+      syncHeatTemporalControls();
+    }
+    if (button.dataset.month) {
+      heatClimateAggregate.value = 'month';
+      syncHeatTemporalControls();
+    }
+    renderClimateProfiles();
+    loadHeat(heatMetric?.value);
+  }));
   sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
   sunDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
@@ -7459,6 +8359,29 @@ export async function startWebGLScene(canvas, status) {
   updateSunStatus();
   loadHeat();
   setHeatMode(Boolean(heatToggle?.checked));
+  let thermalManifestPollInFlight = false;
+  setInterval(async () => {
+    const panel = document.querySelector('#menu-heat');
+    if (document.hidden || panel?.hidden || !thermalManifest || heatPeriod?.value === 'climatology'
+      || !['utci_c', 'tmrt_c'].includes(heatMetric?.value) || thermalManifestPollInFlight) return;
+    thermalManifestPollInFlight = true;
+    try {
+      const response = await fetch(`${windApi}/thermal/forecast`, { cache: 'no-store' });
+      if (!response.ok) return;
+      const latest = await response.json();
+      if (latest.available && latest.run_id !== thermalManifest.run_id) {
+        // A follow-up worker run can replace a forecast-only current hour
+        // with the delayed satellite-radiation estimate for that same hour.
+        thermalManifest = null;
+        thermalEnergy = null;
+        void loadHeat(heatMetric.value);
+      }
+    } catch {
+      // Keep the currently displayed forecast if metadata polling is offline.
+    } finally {
+      thermalManifestPollInFlight = false;
+    }
+  }, 120000);
   loadTrafficRoads();
   loadTrafficLive(false);
   async function ensureTransportLayer() {

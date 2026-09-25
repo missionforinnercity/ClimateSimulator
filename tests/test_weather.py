@@ -11,6 +11,7 @@ def sample_payload():
         "current": {
             "time": "2026-07-28T14:15",
             "temperature_2m": 17.2,
+            "dew_point_2m": 11.2,
             "apparent_temperature": 16.1,
             "relative_humidity_2m": 68,
             "precipitation": 0,

@@ -1,0 +1,31 @@
+FROM python:3.12.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    THERMAL_PRODUCT_ROOT=/var/lib/conditions-thermal
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libgl1 libglx0 libx11-6 libxext6 libxrender1 libatomic1 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-models.txt ./
+RUN python -m pip install --upgrade pip==25.2 \
+    && python -m pip install -r requirements-models.txt
+
+COPY scripts/build_thermal_surfaces.py scripts/build_suews_config.py /app/scripts/
+COPY public/assets/fallback.json public/assets/canopy.json public/assets/manifest.json /app/public/assets/
+COPY data/derived/company_gardens_hybrid_dem_2m.tif /app/data/derived/
+RUN python scripts/build_thermal_surfaces.py \
+    && python scripts/build_suews_config.py \
+    && useradd --create-home --uid 10002 thermal \
+    && mkdir -p /var/lib/conditions-thermal \
+    && chown -R thermal:thermal /app /var/lib/conditions-thermal
+COPY . .
+RUN chown -R thermal:thermal /app
+USER thermal
+
+CMD ["python", "-m", "server.thermal_worker"]

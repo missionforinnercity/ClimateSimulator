@@ -7,5 +7,5 @@ def test_health_reports_dependency_checks_and_limits():
     result = health()
     assert result["status"] in {"ok", "degraded"}
     assert result["checks"]["assets"]["manifest_version"] == 3
-    assert {"assets", "sumo", "database"} <= result["checks"].keys()
+    assert {"assets", "sumo", "database", "thermal"} <= result["checks"].keys()
     assert result["limits"]["heavy_concurrency"]

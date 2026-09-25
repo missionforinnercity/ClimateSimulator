@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=40">
+    <link rel="stylesheet" href="/style.css?v=43">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -117,6 +117,7 @@
           <div class="current-heading"><span>Current conditions</span><span id="current-freshness" class="freshness">Not loaded</span></div>
           <p id="current-status" class="current-status">Available on demand.</p>
           <div id="current-metrics" class="current-metrics" hidden></div>
+          <p id="current-provenance" class="method-note" hidden></p>
           <div class="current-actions">
             <button id="current-apply" type="button">Use current</button>
             <button id="current-refresh" class="secondary" type="button">Refresh</button>
@@ -124,21 +125,71 @@
         </section>
       </section>
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
-        <div class="heat-heading"><span>Heat</span><label class="heat-switch compact-switch"><input id="heat-toggle" type="checkbox"> Show</label></div>
-        <div class="compact-section">
-          <b>View</b>
+        <div class="heat-heading"><div><strong>Urban heat</strong><small>UTCI &amp; satellite heat</small></div><label class="heat-switch compact-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
+        <div class="compact-section heat-layer-section">
+          <b>Heat view</b>
           <label>Layer
             <select id="heat-metric">
-              <option value="pedestrian_priority_score" selected title="Summer thermal baseline + selected-date shade scenario">Intervention priority (summer baseline + selected-date shade)</option>
-              <option value="pedestrian_heat_exposure_c" title="Proxy thermal-exposure delta, not UTCI/PET or measured pedestrian temperature">Pedestrian thermal exposure (proxy)</option>
-              <option value="shade_deficit_score">Shade deficit</option>
-              <option value="heat_model_lst_c">Surface temperature</option>
-              <option value="rooftop_temperature_c">Rooftop temperature</option>
+              <optgroup label="Thermal comfort">
+                <option value="utci_c" selected>UTCI</option>
+                <option value="tmrt_c">Radiant temperature (Tmrt)</option>
+              </optgroup>
+              <optgroup label="Satellite heat screening">
+                <option value="pedestrian_priority_score" title="Satellite-derived summer heat baseline plus selected-date shade">Priority · heat + shade</option>
+                <option value="pedestrian_heat_exposure_c" title="Proxy exposure delta; not UTCI or measured temperature">Exposure proxy</option>
+                <option value="shade_deficit_score">Shade deficit</option>
+                <option value="heat_model_lst_c">Surface temperature</option>
+                <option value="rooftop_temperature_c">Rooftop temperature</option>
+              </optgroup>
             </select>
           </label>
+          <p id="heat-layer-help" class="heat-legend-help">Outdoor comfort from air, humidity, wind and radiant heat.</p>
         </div>
-        <div class="compact-section">
-          <b>Date &amp; time</b>
+        <section id="heat-thermal-controls" class="compact-section heat-control-card">
+          <b>Time period</b>
+          <label id="heat-period-control">Period
+            <select id="heat-period">
+              <option value="forecast" selected>Near-live</option>
+              <option value="climatology">Historical</option>
+            </select>
+          </label>
+          <label id="heat-forecast-control">Model time <span id="heat-forecast-label">—</span>
+            <input id="heat-forecast-time" type="range" min="0" max="24" step="1" value="0" disabled>
+          </label>
+          <p id="heat-forecast-hint" class="method-note">Model estimate · not a street observation.</p>
+          <div id="heat-climate-controls" class="heat-climate-controls" hidden>
+            <b>Climate profile</b>
+            <p class="heat-legend-help">ERA5 climate composite · 2016–2025.</p>
+            <label>Planning period
+              <select id="heat-climate-aggregate"><option value="month">Month</option><option value="season">Season</option><option value="annual">Annual composite</option></select>
+            </label>
+            <label id="heat-climate-season-control" hidden>Season
+              <select id="heat-climate-season"><option value="summer">Summer · Dec–Feb</option><option value="autumn">Autumn · Mar–May</option><option value="winter">Winter · Jun–Aug</option><option value="spring">Spring · Sep–Nov</option></select>
+            </label>
+            <label>Month <span id="heat-climate-month-label">January</span>
+              <input id="heat-climate-month" type="range" min="1" max="12" step="1" value="1">
+            </label>
+            <label>Local time <span id="heat-climate-hour-label">12:00</span>
+              <input id="heat-climate-hour" type="range" min="0" max="23" step="1" value="12">
+            </label>
+            <div class="heat-climate-profile-section">
+              <b>Compare seasons · selected hour</b>
+              <div id="heat-season-profile" class="heat-climate-bars" aria-label="Mean UTCI by season"></div>
+            </div>
+            <div class="heat-climate-profile-section">
+              <b>Compare months · selected hour</b>
+              <div id="heat-month-profile" class="heat-climate-bars" aria-label="Mean UTCI by month"></div>
+            </div>
+            <div class="heat-climate-profile-section">
+              <b>Compare times · selected month</b>
+              <div id="heat-day-profile" class="heat-climate-bars" aria-label="Mean UTCI by time of day"></div>
+            </div>
+            <p id="heat-climate-method" class="method-note"></p>
+          </div>
+        </section>
+        <div id="heat-screening-controls" class="compact-section heat-screening-controls" hidden>
+          <b>Screening date and time</b>
+          <p class="heat-legend-help">Sets the shade calculation time.</p>
           <div class="heat-control-grid">
             <label id="heat-date-control">Date
               <input id="heat-date" type="date" value="2026-01-15">
@@ -155,16 +206,25 @@
         </div>
         <div class="compact-section heat-results-section">
           <b>Results</b>
-          <p id="heat-status" class="heat-status">Loading heat zones…</p>
-          <div id="heat-summary" class="heat-summary" aria-label="Heat screening summary" hidden>
+          <p id="heat-status" class="heat-status" aria-live="polite" aria-busy="false">Loading UTCI…</p>
+          <div id="heat-loading-state" class="heat-loading-state" role="progressbar" aria-label="Loading UTCI" aria-valuemin="0" aria-valuemax="100" hidden><span></span></div>
+          <div id="heat-summary" class="heat-summary" aria-label="Heat map summary" hidden>
             <span><b id="heat-average">—</b><i id="heat-average-label">Average</i></span>
             <span><b id="heat-priority-area">—</b><i>Priority area</i></span>
             <span><b id="heat-maximum">—</b><i id="heat-maximum-label">Maximum</i></span>
           </div>
           <div class="heat-gradient"></div>
           <div class="heat-legend-labels"><span id="heat-legend-min">Lower</span><span id="heat-legend-max">Higher</span></div>
+          <p id="heat-legend-help" class="heat-legend-help" hidden>Colours show relative differences within this hour.</p>
+          <details class="compact-about heat-evidence"><summary>Model details</summary>
+            <p id="heat-weather-inputs" class="heat-weather-inputs" hidden></p>
+            <p id="heat-provenance" class="method-note"></p>
+            <p id="heat-radiation-timing" class="heat-legend-help" hidden></p>
+            <details id="heat-radiation-audit" class="compact-about" hidden><summary>Radiation diagnostics</summary><p id="heat-radiation-audit-summary"></p></details>
+            <details id="heat-energy" class="compact-about" hidden><summary>Energy &amp; water balance</summary><p id="heat-energy-summary">—</p></details>
+          </details>
         </div>
-        <details class="compact-about"><summary>About this layer</summary><p>Modelled summer screening layer. Red marks higher priority; verify conditions on site.</p></details>
+        <details class="compact-about"><summary>About</summary><p>UTCI and Tmrt are experimental model estimates, not observations. Satellite screening layers are separate from UTCI.</p></details>
       </section>
       <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
         <div class="sun-heading"><span>Sunlight</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
@@ -247,12 +307,12 @@
         <div class="wind-control-section" data-wind-direction-controls hidden>
           <b>Wind direction</b>
           <div class="wind-compass-presets" aria-label="Solved OpenFOAM directions">
-            <button type="button" data-wind-direction="0" disabled title="No solved OpenFOAM case yet">N</button><button type="button" data-wind-direction="45" disabled title="No solved OpenFOAM case yet">NE</button>
-            <button type="button" data-wind-direction="90" disabled title="No solved OpenFOAM case yet">E</button><button class="active" type="button" data-wind-direction="135">SE</button>
-            <button type="button" data-wind-direction="180" disabled title="No solved OpenFOAM case yet">S</button><button type="button" data-wind-direction="225" disabled title="No solved OpenFOAM case yet">SW</button>
-            <button type="button" data-wind-direction="270" disabled title="No solved OpenFOAM case yet">W</button><button type="button" data-wind-direction="315">NW</button>
+            <button type="button" data-wind-direction="0">N</button><button type="button" data-wind-direction="45">NE</button>
+            <button type="button" data-wind-direction="90">E</button><button class="active" type="button" data-wind-direction="135">SE</button>
+            <button type="button" data-wind-direction="180">S</button><button type="button" data-wind-direction="225">SW</button>
+            <button type="button" data-wind-direction="270">W</button><button type="button" data-wind-direction="315">NW</button>
           </div>
-          <p class="wind-cfd-hint">SE 135° and NW 315° have solved OpenFOAM cases today. Other directions light up here as more cases are meshed, solved and converted.</p>
+          <p class="wind-cfd-hint">Eight converted OpenFOAM directions are available. Additional 22.5° sectors appear after their volumes are converted.</p>
           <!-- Hidden in the normal WebGL/OpenFOAM path — the compass presets
                above replace this as the direction picker there. The Canvas
                fallback renderer (sceneRenderer.js, used only when WebGL2 is
@@ -620,6 +680,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-3"></script>
+    <script type="module" src="/app.js?v=experience-5"></script>
 </body>
 </html>

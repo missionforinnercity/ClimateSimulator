@@ -277,6 +277,7 @@ export async function startScene(canvas, status) {
   const heatTime = document.querySelector('#heat-time');
   const heatDateControl = document.querySelector('#heat-date-control');
   const heatTimeControl = document.querySelector('#heat-time-control');
+  const heatForecastControl = document.querySelector('#heat-forecast-control');
   const heatStatus = document.querySelector('#heat-status');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
@@ -903,11 +904,22 @@ export async function startScene(canvas, status) {
 
   async function loadHeat(metric = heatState.metric) {
     const loadToken = ++heatLoadToken;
+    let thermalFallback = false;
+    if (['utci_c', 'tmrt_c'].includes(metric)) {
+      thermalFallback = true;
+      heatState.metric = 'pedestrian_priority_score';
+      if (heatMetric) heatMetric.value = heatState.metric;
+      metric = heatState.metric;
+      const status = document.querySelector('#heat-status');
+      if (status) status.textContent = 'Near-live thermal rasters require WebGL 2; showing the legacy screening layer.';
+    }
     const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
     if (heatDateControl) heatDateControl.hidden = !temporal;
     if (heatTimeControl) heatTimeControl.hidden = !temporal;
+    if (heatForecastControl) heatForecastControl.hidden = true;
     heatState.metric = metric;
     heatStatus.textContent = 'Loading heat zones…';
+    heatStatus.setAttribute('aria-busy', 'true');
     try {
       const params = new URLSearchParams({
         metric,
@@ -947,9 +959,9 @@ export async function startScene(canvas, status) {
       const scenarioMinutes = Number(heatState.data.scenario?.minutes ?? 720);
       const scenarioTime = `${String(Math.floor(scenarioMinutes / 60)).padStart(2, '0')}:${String(scenarioMinutes % 60).padStart(2, '0')}`;
       const timeContext = ['shade_deficit_score', 'pedestrian_priority_score'].includes(heatState.data.metric) ? `${scenarioTime} · ` : '';
-      heatStatus.textContent = heatState.data.count
+      heatStatus.textContent = `${thermalFallback ? 'WebGL 2 unavailable · legacy screening · ' : ''}${heatState.data.count
         ? `${timeContext}${heatState.data.count} zones · ${window}`
-        : 'No values in this product.';
+        : 'No values in this product.'}`;
     } catch (error) {
       if (loadToken !== heatLoadToken) return;
       heatState.data = null;
@@ -957,6 +969,8 @@ export async function startScene(canvas, status) {
       heatLegendMin.textContent = '—';
       heatLegendMax.textContent = '—';
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
+    } finally {
+      if (loadToken === heatLoadToken) heatStatus.setAttribute('aria-busy', 'false');
     }
     requestRender();
   }

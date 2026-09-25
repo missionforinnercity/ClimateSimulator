@@ -20,7 +20,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -49,6 +49,20 @@ from .sunlight import (
 )
 from .location import streetview_location
 from .weather import current_weather
+from .thermal_products import (
+    ThermalProductUnavailable,
+    energy_payload,
+    frame_path,
+    product_health,
+    forecast_status as thermal_forecast_status,
+    sample_point as sample_thermal_point,
+)
+from .thermal_climatology import (
+    ThermalClimatologyUnavailable,
+    frame_path as thermal_climatology_frame_path,
+    manifest as thermal_climatology_manifest,
+)
+from .thermal_scenario import shade_scenario
 from .traffic import SCENARIOS as TRAFFIC_SCENARIOS
 from .traffic import (
     DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S,
@@ -87,7 +101,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID", "Retry-After"],
+    expose_headers=["X-Request-ID", "Retry-After", "X-Thermal-Scenario"],
 )
 # The traffic preview returns long arrays of rounded numbers, which
 # compress by roughly 5x. Worth it even on localhost for the multi-megabyte
@@ -230,7 +244,7 @@ async def protect_and_observe_requests(request: Request, call_next):
     origin = request.headers.get("origin")
     if origin in ALLOWED_ORIGINS and "Access-Control-Allow-Origin" not in response.headers:
         response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Expose-Headers"] = "X-Request-ID, Retry-After"
+        response.headers["Access-Control-Expose-Headers"] = "X-Request-ID, Retry-After, X-Thermal-Scenario"
         response.headers["Vary"] = ", ".join(filter(None, [response.headers.get("Vary"), "Origin"]))
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -313,6 +327,16 @@ class TrafficClosurePayload(BaseModel):
     one_way: bool = False
 
 
+class ThermalScenarioPayload(BaseModel):
+    run_id: str
+    frame_id: str
+    x: float = Field(ge=-5000, le=5000)
+    z: float = Field(ge=-5000, le=5000)
+    radius_m: float = Field(default=12.0, ge=2.0, le=80.0)
+    shade_percent: float = Field(default=75.0, ge=1.0, le=100.0)
+    intervention: Literal["tree", "shade"] = "tree"
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     checks: dict[str, Any] = {}
@@ -358,6 +382,7 @@ def health() -> dict[str, Any]:
     checks["assets"]["required"] = True
     checks["sumo"].update(required=False, affects=["traffic_closure_preview"])
     checks["database"].update(required=False, affects=["database_backed_layers"])
+    checks["thermal"] = product_health()
     return {
         "status": "ok" if required_ok else "degraded",
         "optional_degraded": [name for name, check in checks.items()
@@ -384,6 +409,78 @@ def weather_current(refresh: bool = False) -> dict[str, Any]:
     try:
         return current_weather(force=refresh)
     except Exception as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/thermal/forecast")
+def thermal_forecast() -> dict[str, Any]:
+    # An empty product volume is an expected cold-start state, not an HTTP
+    # service failure.  Clients can render a useful readiness message without
+    # generating a noisy failed-resource entry in the browser console.
+    return thermal_forecast_status()
+
+
+@app.get("/api/thermal/climatology")
+def thermal_climatology() -> dict[str, Any]:
+    try:
+        return thermal_climatology_manifest()
+    except ThermalClimatologyUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/thermal/climatology/frames/{frame_id}")
+def thermal_climatology_frame(frame_id: str):
+    try:
+        path = thermal_climatology_frame_path(frame_id)
+        return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ThermalClimatologyUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/thermal/frames/{run_id}/{frame_id}")
+def thermal_frame(run_id: str, frame_id: str):
+    try:
+        path = frame_path(run_id, frame_id)
+        return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ThermalProductUnavailable as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/thermal/point")
+def thermal_point(x: float, z: float, frame_id: str, run_id: str | None = None) -> dict[str, Any]:
+    try:
+        return sample_thermal_point(x, z, frame_id, run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ThermalProductUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/thermal/scenario")
+def thermal_scenario(payload: ThermalScenarioPayload):
+    try:
+        raster, summary = shade_scenario(**payload.model_dump())
+        return Response(
+            content=raster, media_type="application/octet-stream",
+            headers={"X-Thermal-Scenario": json.dumps(summary, separators=(",", ":"))},
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ThermalProductUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/thermal/energy")
+def thermal_energy(run_id: str | None = None) -> dict[str, Any]:
+    try:
+        return energy_payload(run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ThermalProductUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
