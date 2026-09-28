@@ -6,11 +6,11 @@ import { orbitFromDrag, panFromDrag } from './cameraControls.js';
 import { createTransportLayer } from './transportLayer.js?v=13';
 
 const COLORS = {
-  background: 0x1b2125,
-  terrain: 0x424a4d,
+  background: 0x101719,
+  terrain: 0x3a4447,
   terrainSun: 0xf4f3ee,
-  terrainEdge: 0x363d40,
-  terrainEdgeDeep: 0x1c2124,
+  terrainEdge: 0x30393c,
+  terrainEdgeDeep: 0x171e20,
   grass: 0x50745a,
   water: 0x2f86a6,
   wall: 0x657076,
@@ -49,7 +49,7 @@ export async function startWebGLScene(canvas, status) {
   renderer.setClearColor(COLORS.background, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.BasicShadowMap;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
 
   const manifest = assertManifest(await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json()));
@@ -119,14 +119,19 @@ export async function startWebGLScene(canvas, status) {
     festoonPointLights: [],
   };
 
-  const ambient = new THREE.HemisphereLight(0xeaf5ff, 0x364147, 1.65);
+  const ambient = new THREE.HemisphereLight(0xeaf5ff, 0x273237, 1.25);
   scene.add(ambient);
+  // A broad, shadowless fill gives the default city view readable wall planes
+  // while keeping the dedicated sun study responsible for hard shadow evidence.
+  const cityFill = new THREE.DirectionalLight(0xc5e7ee, 0.72);
+  cityFill.position.set(-900, 1250, 700);
+  scene.add(cityFill);
   const sunLight = new THREE.DirectionalLight(0xfff3d6, 3.25);
   sunLight.castShadow = true;
   sunLight.visible = false;
   sunLight.shadow.bias = 0.00015;
   sunLight.shadow.normalBias = 0.18;
-  sunLight.shadow.radius = 0;
+  sunLight.shadow.radius = 2;
   const maxShadowMap = renderer.capabilities.maxTextureSize;
   const shadowMapSize = Math.min(4096, maxShadowMap);
   sunLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
@@ -421,6 +426,11 @@ export async function startWebGLScene(canvas, status) {
     return new THREE.Color(`rgb(${red},${green},${blue})`);
   }
 
+  function subtleHeightColour(baseHex, height, strength) {
+    const heightCue = clamp((Number(height) - 5) / 120, 0, 1);
+    return new THREE.Color(baseHex).lerp(new THREE.Color(0x9acbd1), heightCue * strength);
+  }
+
   function makeBuildings() {
     const wallPositions = [];
     const wallTriangles = [];
@@ -434,8 +444,8 @@ export async function startWebGLScene(canvas, status) {
       const simpleWallHeight = roofSurfaceBuffer ? wallHeight : height;
       const roofY = ground + simpleWallHeight;
       const colour = elevationColour(height);
-      const facadeColour = new THREE.Color(COLORS.wall);
-      const roofColour = new THREE.Color(COLORS.roof);
+      const facadeColour = subtleHeightColour(COLORS.wall, height, 0.22);
+      const roofColour = subtleHeightColour(COLORS.roof, height, 0.16);
       for (const [ringIndex, wallRing] of [ring, ...holes].entries()) {
         for (let index = 0; index < wallRing.length; index += 1) {
           const next = (index + 1) % wallRing.length;
@@ -2630,6 +2640,24 @@ export async function startWebGLScene(canvas, status) {
     if (!animationFrame) animationFrame = requestAnimationFrame(render);
   }
 
+  function updateMapHud() {
+    const northArrow = document.querySelector('#north-arrow');
+    const scaleBar = document.querySelector('#map-scale-bar');
+    const scaleLabel = document.querySelector('#map-scale-label');
+    if (northArrow) {
+      const angle = Math.atan2(-Math.cos(cameraState.azimuth), Math.sin(cameraState.azimuth) * Math.sin(cameraState.elevation));
+      northArrow.style.setProperty('--north-angle', `${angle * 180 / Math.PI}deg`);
+    }
+    if (!scaleBar || !scaleLabel) return;
+    const metresPerPixel = cameraState.distance * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(canvas.clientHeight, 1);
+    const rawMetres = metresPerPixel * 84;
+    const magnitude = 10 ** Math.floor(Math.log10(Math.max(rawMetres, 0.001)));
+    const fraction = rawMetres / magnitude;
+    const niceDistance = (fraction >= 5 ? 5 : fraction >= 2 ? 2 : 1) * magnitude;
+    scaleBar.style.width = `${clamp(niceDistance / metresPerPixel, 36, 112)}px`;
+    scaleLabel.textContent = `≈ ${niceDistance >= 1000 ? `${Number((niceDistance / 1000).toFixed(1))} km` : `${Math.round(niceDistance)} m}`}`;
+  }
+
   function updateCamera() {
     const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
     camera.position.set(
@@ -2638,6 +2666,7 @@ export async function startWebGLScene(canvas, status) {
       cameraState.target.z + Math.sin(cameraState.azimuth) * horizontal,
     );
     camera.lookAt(cameraState.target);
+    updateMapHud();
     // Fine street markings and furniture disappear at district scale. Apart
     // from reducing clutter this avoids spending GPU time on details smaller
     // than a pixel; they return automatically as the camera approaches.
@@ -2657,14 +2686,28 @@ export async function startWebGLScene(canvas, status) {
     renderer.setSize(width, height, false);
     camera.aspect = width / Math.max(height, 1);
     camera.updateProjectionMatrix();
+    updateMapHud();
   }
 
   function fitScene() {
-    cameraState.target.set(0, 20, 0);
-    cameraState.distance = Math.max(500, Math.min(2800, Math.hypot(terrainWidth, terrainDepth) * 0.82));
+    const mapOffset = terrainWidth * 0.15;
+    // Shift the world opposite the panel, so the complete city remains in the
+    // unobscured canvas area when the controls occupy the right edge.
+    cameraState.target.set(Math.sin(cameraState.azimuth) * mapOffset, 20, -Math.cos(cameraState.azimuth) * mapOffset);
+    cameraState.distance = Math.max(500, Math.min(2800, Math.hypot(terrainWidth, terrainDepth) * 0.76));
     cameraState.elevation = 0.68;
     updateCamera();
   }
+
+  document.querySelector('#map-zoom-in')?.addEventListener('click', () => {
+    cameraState.distance = clamp(cameraState.distance * 0.82, 80, 7000);
+    updateCamera();
+  });
+  document.querySelector('#map-zoom-out')?.addEventListener('click', () => {
+    cameraState.distance = clamp(cameraState.distance / 0.82, 80, 7000);
+    updateCamera();
+  });
+  document.querySelector('#map-fit')?.addEventListener('click', fitScene);
 
   // Frame a local-space [minX, minZ, maxX, maxZ] box. Used after a traffic
   // run so the corridor the user just closed fills the view: at full-CBD

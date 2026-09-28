@@ -11,7 +11,28 @@ function setupMenuNavigation() {
   const panels = [...document.querySelectorAll('[data-menu-panel]')];
   const explorerPanel = document.querySelector('.panel');
   const panelToggle = document.querySelector('#panel-toggle');
+  const sceneModeTitle = document.querySelector('#scene-mode-title');
+  const sceneModeDetail = document.querySelector('#scene-mode-detail');
   if (!tabs.length || !panels.length) return;
+
+  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', sun: 'SUNLIGHT', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
+  const updateSceneMode = name => {
+    if (!sceneModeTitle || !sceneModeDetail) return;
+    sceneModeTitle.textContent = toolLabels[name] || name.toUpperCase();
+    if (name === 'tools') {
+      sceneModeDetail.textContent = 'City layers · drag to orbit';
+      return;
+    }
+    const toggle = document.querySelector(`#${name}-toggle`);
+    const active = Boolean(toggle?.checked);
+    let modeDetail = active ? 'Map layer active' : 'Map layer hidden';
+    if (name === 'heat') modeDetail = `${document.querySelector('#heat-metric option:checked')?.textContent || 'Heat'} · ${active ? 'visible' : 'hidden'}`;
+    if (name === 'wind') modeDetail = `${document.querySelector('[data-wind-lens].active')?.textContent.trim() || 'Direction'} · ${active ? 'visible' : 'hidden'}`;
+    if (name === 'traffic') modeDetail = `Street simulation · ${active ? 'visible' : 'hidden'}`;
+    if (name === 'transport') modeDetail = `Bus + rail network · ${active ? 'visible' : 'hidden'}`;
+    sceneModeDetail.textContent = modeDetail;
+    document.querySelector('.scene-mode')?.classList.toggle('is-active', active);
+  };
 
   const setPanelCollapsed = collapsed => {
     explorerPanel?.classList.toggle('panel-collapsed', collapsed);
@@ -36,6 +57,8 @@ function setupMenuNavigation() {
       panel.classList.toggle('menu-active', selected);
       panel.hidden = !selected;
     });
+    document.querySelector('.scene-mode')?.classList.toggle('is-active', name === 'tools' || Boolean(document.querySelector(`#${name}-toggle`)?.checked));
+    updateSceneMode(name);
     dispatchEvent(new CustomEvent('climate-menu-change', { detail: { name } }));
   };
 
@@ -55,6 +78,20 @@ function setupMenuNavigation() {
       activate(tabs[next].dataset.menuTarget, true);
     });
   });
+
+  ['heat-toggle', 'sun-toggle', 'wind-toggle', 'traffic-toggle', 'transport-toggle', 'heat-metric'].forEach(id => {
+    document.querySelector(`#${id}`)?.addEventListener('change', () => {
+      const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
+      updateSceneMode(current);
+      document.querySelector('.scene-mode')?.classList.toggle('is-active', current === 'tools' || Boolean(document.querySelector(`#${current}-toggle`)?.checked));
+    });
+  });
+  document.querySelectorAll('[data-layer]').forEach(input => input.addEventListener('change', () => {
+    document.querySelector(`[data-legend-layer="${input.dataset.layer}"]`)?.classList.toggle('is-hidden', !input.checked);
+  }));
+  document.querySelectorAll('[data-wind-lens]').forEach(button => button.addEventListener('click', () => {
+    if (tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget === 'wind') updateSceneMode('wind');
+  }));
   const requested = new URLSearchParams(location.search).get('tool');
   const initial = tabs.some(tab => tab.dataset.menuTarget === requested)
     ? requested
@@ -183,7 +220,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=98');
+    const module = await import('./webglRenderer.js?v=102');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=43">
+    <link rel="stylesheet" href="/style.css?v=49">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -32,6 +32,33 @@
   <main id="app">
     <canvas id="scene" tabindex="0" aria-label="Interactive Cape Town CBD 3D scene. Mouse and one-finger drag orbit in the same direction. Two fingers or modified mouse drag pan. Arrow keys orbit, plus and minus zoom, and Home fits the city."></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
+    <div class="scene-hud" aria-label="Map orientation and legend">
+      <div class="scene-hud-top">
+        <div class="north-widget" aria-label="North direction">
+          <span id="north-arrow" class="north-arrow" aria-hidden="true">N</span>
+          <span>North</span>
+        </div>
+        <div class="scene-mode" role="status" aria-live="polite">
+          <span class="scene-mode-dot" aria-hidden="true"></span>
+          <span><b id="scene-mode-title">CITY MODEL</b><small id="scene-mode-detail">Base map · ready to explore</small></span>
+        </div>
+      </div>
+      <div class="map-scale" aria-label="Approximate map scale">
+        <span id="map-scale-label">—</span>
+        <i id="map-scale-bar" aria-hidden="true"></i>
+      </div>
+      <div class="scene-legend" aria-label="Map legend">
+        <span data-legend-layer="buildings"><i class="legend-building"></i>Buildings</span>
+        <span data-legend-layer="roads"><i class="legend-road"></i>Roads</span>
+        <span data-legend-layer="grass"><i class="legend-green"></i>Green space</span>
+        <span data-legend-layer="water"><i class="legend-water"></i>Water</span>
+      </div>
+    </div>
+    <div class="map-controls" role="group" aria-label="Map camera controls">
+      <button id="map-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
+      <button id="map-zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
+      <button id="map-fit" type="button" aria-label="Fit city to map" title="Fit city to map">⌂</button>
+    </div>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
     <div id="transport-stop-card" class="transport-stop-card" role="dialog" aria-label="Stop details" hidden></div>
     <div id="traffic-draw-popup" class="traffic-draw-popup" role="dialog" aria-labelledby="traffic-draw-popup-title" hidden>
@@ -84,35 +111,6 @@
       </header>
       <div id="explorer-panel-body" class="panel-body">
       <section id="menu-tools" class="tools-panel menu-section menu-active" data-menu-panel="tools" role="tabpanel" aria-label="Map tools">
-        <div class="tools-heading"><span>Tools</span></div>
-        <section class="tool-section">
-          <h2>Layers</h2>
-          <div class="controls tool-layer-grid">
-            <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
-            <label><input type="checkbox" data-layer="water" checked> Water</label>
-            <label><input type="checkbox" data-layer="grass" checked> Grass</label>
-            <label><input type="checkbox" data-layer="railways" checked> Railways</label>
-            <label><input type="checkbox" data-layer="paths" checked> Paths</label>
-            <label><input type="checkbox" data-layer="roads" checked> Roads</label>
-            <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
-            <label><input type="checkbox" data-layer="trees" checked> Trees</label>
-            <label>Buildings
-              <select id="building-appearance">
-                <option value="neutral" selected>Neutral</option>
-                <option value="elevation">Elevation</option>
-              </select>
-            </label>
-          </div>
-        </section>
-        <section class="tool-section streetview-panel">
-          <div class="streetview-heading"><span>Street View</span><span class="pin-badge">Google Maps</span></div>
-          <p id="streetview-status" class="streetview-status">Drop a pin to open Street View.</p>
-          <div class="streetview-actions">
-            <button id="streetview-drop" class="secondary" type="button" aria-pressed="false">Drop pin</button>
-            <button id="streetview-clear" class="secondary" type="button" disabled>Clear</button>
-          </div>
-          <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open Street View ↗</a>
-        </section>
         <section class="tool-section current-panel">
           <div class="current-heading"><span>Current conditions</span><span id="current-freshness" class="freshness">Not loaded</span></div>
           <p id="current-status" class="current-status">Available on demand.</p>
@@ -123,6 +121,39 @@
             <button id="current-refresh" class="secondary" type="button">Refresh</button>
           </div>
         </section>
+        <details class="tool-disclosure">
+          <summary>Map layers <span>8 layers · display options</span></summary>
+          <section class="tool-section">
+            <div class="controls tool-layer-grid">
+              <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
+              <label><input type="checkbox" data-layer="water" checked> Water</label>
+              <label><input type="checkbox" data-layer="grass" checked> Grass</label>
+              <label><input type="checkbox" data-layer="railways" checked> Railways</label>
+              <label><input type="checkbox" data-layer="paths" checked> Paths</label>
+              <label><input type="checkbox" data-layer="roads" checked> Roads</label>
+              <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
+              <label><input type="checkbox" data-layer="trees" checked> Trees</label>
+              <label class="building-appearance-control">Building colors
+                <select id="building-appearance">
+                  <option value="neutral" selected>Subtle height</option>
+                  <option value="elevation">Elevation bands</option>
+                </select>
+              </label>
+            </div>
+          </section>
+        </details>
+        <details class="tool-disclosure streetview-disclosure">
+          <summary>Street View <span>Drop a map pin</span></summary>
+          <section class="tool-section streetview-panel">
+            <div class="streetview-heading"><span>Google Maps</span><span class="pin-badge">Location preview</span></div>
+            <p id="streetview-status" class="streetview-status">Drop a pin to open Street View.</p>
+            <div class="streetview-actions">
+              <button id="streetview-drop" class="secondary" type="button" aria-pressed="false">Drop pin</button>
+              <button id="streetview-clear" class="secondary" type="button" disabled>Clear</button>
+            </div>
+            <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open Street View ↗</a>
+          </section>
+        </details>
       </section>
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
         <div class="heat-heading"><div><strong>Urban heat</strong><small>UTCI &amp; satellite heat</small></div><label class="heat-switch compact-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
@@ -680,6 +711,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-5"></script>
+    <script type="module" src="/app.js?v=experience-6"></script>
 </body>
 </html>
