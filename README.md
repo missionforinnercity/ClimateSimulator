@@ -195,6 +195,11 @@ publishing. The worker publishes its first forecast before those layers can disp
 For a containerized run, `docker compose up --build` starts the API and thermal
 worker together.
 
+The Compose web container binds to `127.0.0.1:18081` on the VM by default.
+If a host reverse proxy routes to this app, point its upstream at port `18081`.
+Set `WEB_HOST_PORT` in the deployment environment to choose another unused
+loopback port; the proxy upstream must use the same port.
+
 The UTCI/Tmrt forecast remains experimental until compared with co-located CBD
 measurements. A field-observation CSV template, three-site collection protocol,
 and script for paired input/result residuals are in

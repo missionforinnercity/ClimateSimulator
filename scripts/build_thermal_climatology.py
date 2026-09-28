@@ -270,6 +270,14 @@ def build(start_year: int, end_year: int, output: Path, resolution_m: float = 8.
             "frames": metadata,
         }
         (staging / "manifest.json").write_text(json.dumps(manifest, separators=(",", ":")) + "\n", encoding="utf-8")
+        # TemporaryDirectory creates the dataset root as 0700. The application
+        # container runs as a different unprivileged UID, so publish readable
+        # files and traversable directories before the atomic rename.
+        for artifact in staging.rglob("*"):
+            if artifact.is_symlink():
+                continue
+            artifact.chmod(0o755 if artifact.is_dir() else 0o644)
+        staging.chmod(0o755)
         if output.exists():
             shutil.rmtree(output)
         os.replace(staging, output)
