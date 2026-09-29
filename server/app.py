@@ -624,7 +624,12 @@ def wind_climatology_sectors(season: str = "annual", stability: str = "neutral")
         })
     if not sectors:
         raise HTTPException(status_code=503, detail="ERA5 climatology unavailable")
-    return {"season": season, "stability": stability, "sectors": sectors}
+    summary = climatology_summary() or {}
+    return {
+        "season": season, "stability": stability, "sectors": sectors,
+        "dataset_version": summary.get("version"),
+        "coverage": summary.get("coverage"),
+    }
 
 
 @app.post("/api/wind/preview")

@@ -179,6 +179,7 @@ export async function createTransportLayer({
     'transport-event-attendance', 'transport-event-attendance-value', 'transport-event-analyse',
     'transport-event-results', 'transport-event-grade', 'transport-event-areas',
     'transport-event-arrivals', 'transport-event-returns', 'transport-event-cover',
+    'transport-demand-value', 'transport-capacity-value', 'transport-gap-value',
     'transport-coverage-chart', 'transport-arrival-bar', 'transport-return-bar',
     'transport-results-close', 'transport-results-title',
     'transport-event-recommendation', 'transport-event-actions',
@@ -900,7 +901,7 @@ export async function createTransportLayer({
     }
     if (capacityGap > 0) actions.push({
       priority: capacityGap > publicTransportTrips * 0.4 ? 'high' : 'medium',
-      title: `Nominal scheduled capacity is short by about ${capacityGap.toLocaleString('en-ZA')} outbound trips`,
+      title: `Nominal scheduled capacity is short by about ${capacityGap.toLocaleString('en-ZA')} places`,
       body: `Return services in the ${dispersal}-minute dispersal window supply roughly `
         + `${returnPlaces.toLocaleString('en-ZA')} nominal scheduled places against an event-demand proxy of `
         + `${publicTransportTrips.toLocaleString('en-ZA')} public-transport trips (${Math.round(modeShare * 100)}% of `
@@ -956,6 +957,10 @@ export async function createTransportLayer({
     elements['transport-event-arrivals'].textContent = String(arrivals);
     elements['transport-event-returns'].textContent = String(returns);
     elements['transport-event-cover'].textContent = `${Math.round(coverage * 100)}%`;
+    elements['transport-demand-value'].textContent = publicTransportTrips.toLocaleString('en-ZA');
+    elements['transport-capacity-value'].textContent = returnPlaces.toLocaleString('en-ZA');
+    elements['transport-gap-value'].textContent = capacityGap
+      ? `${capacityGap.toLocaleString('en-ZA')} short` : 'No gap in proxy';
     elements['transport-coverage-chart'].style.setProperty('--coverage', `${Math.round(coverage * 360)}deg`);
     const largestServiceCount = Math.max(arrivals, returns, 1);
     elements['transport-arrival-bar'].style.width = `${Math.round(arrivals / largestServiceCount * 100)}%`;
@@ -1046,7 +1051,8 @@ export async function createTransportLayer({
       const serving = [...new Set((routesByStop.get(record.id) || []).map(entry => entry.route.number))];
       body = `
         <p class="transport-card-meta">${escapeHtml(record.kind === 'station' ? 'Bus station' : 'Bus stop')} · ${escapeHtml(record.shelter)}</p>
-        <p class="transport-card-meta">${serving.length ? `Routes ${serving.map(escapeHtml).join(', ')}` : 'No modelled route matched to this stop'}</p>
+        <p class="transport-card-meta">${serving.length ? 'Select a route to focus it on the map:' : 'No modelled route matched to this stop'}</p>
+        ${serving.length ? `<div class="transport-card-routes">${serving.map(number => `<button type="button" class="transport-card-route" data-route="${escapeHtml(number)}">${escapeHtml(number)}</button>`).join('')}</div>` : ''}
         ${upcoming.length ? `<ul class="transport-card-list">${upcoming.map(entry => `
           <li><i style="background:${colorHex(entry.route._color)}"></i>${escapeHtml(entry.route.number)}
           <em>${minuteLabel(entry.time)} · ${Math.round(entry.wait)} min</em></li>`).join('')}</ul>`
@@ -1063,6 +1069,17 @@ export async function createTransportLayer({
     card.style.left = `${clamp(event.clientX + 14, 8, innerWidth - width - 8)}px`;
     card.style.top = `${clamp(event.clientY - 20, 8, innerHeight - 240)}px`;
     card.querySelector('.transport-card-close').addEventListener('click', hideStopCard);
+    card.querySelectorAll('.transport-card-route').forEach(button => button.addEventListener('click', () => {
+      state.mode = 'bus';
+      elements['transport-route'].value = button.dataset.route;
+      document.querySelectorAll('[data-transport-mode]').forEach(tab => {
+        const active = tab.dataset.transportMode === 'bus';
+        tab.classList.toggle('active', active);
+        tab.setAttribute('aria-pressed', String(active));
+      });
+      rebuildMap();
+      requestRender();
+    }));
     card.querySelector('.transport-card-venue').addEventListener('click', () => {
       elements['transport-event-venue'].value = record.id;
       setVenue({ id: record.id, name: record.name, point: record.point, source: pick.kind });

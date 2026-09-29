@@ -1,5 +1,24 @@
 # Wind validation and comfort workflow
 
+## Wind panel workflow
+
+The wind panel opens on the comfort screen. Results show sitting/standing
+share first; resolved model-cell coverage, solved wind-hour coverage, ERA5
+hourly archive coverage and model status sit under **Evidence, coverage &
+assumptions**. Direction mode reports the solved pedestrian-height CFD speed
+field and can be compared with another direction. Comfort results can be
+compared across periods. Comparisons use the same analysis type and show a
+cell difference map only when both grids have matching geometry and valid
+cells.
+
+**Compare scenarios** keeps a baseline in the current browser session. It is
+not a saved study package. **Check against measurements** accepts pasted JSON
+or CSV with `x,z,speed_mps` columns (optional `id`, `height_m`,
+`observed_at`). Coordinates are viewer-local metres. That workbench calls
+`/api/wind/validate`, which currently evaluates the screening model; its
+metrics do not validate the OpenFOAM field. The result remains explicitly
+benchmark-only.
+
 ## What the application reports now
 
 Every `/api/wind/preview` response reports a field at the requested height
@@ -43,18 +62,42 @@ and two gust products. The application uses it to select a conditional mean
 speed, fitted Weibull shape, gust factor, sector occurrence, and observed
 10–100 m shear exponent for each season, direction and stability group.
 
-The archive contains only 11 UTC hours and 35.4% of the possible hourly
-records. Frequencies therefore remain provisional. The `ERA5API` value in
-`.env` is consumed without being logged by the monthly downloader:
+The attached archive contains only 11 UTC hours and 35.4% of the possible
+hourly records. Frequencies therefore remain provisional until rebuilt from
+the complete multi-year archive. The `ERA5API` value in `.env` is consumed
+without being logged by the downloader:
 
 ```bash
 python scripts/download_era5_wind.py --year 2025 --month 1
-python scripts/build_era5_wind_climatology.py --input data/era5_monthly
+python scripts/download_era5_wind_archive.py --start-year 2021 --end-year 2025
+python scripts/build_era5_wind_climatology.py --input data/era5_monthly_2021_2025
 ```
 
-Use all 24 hours and all calendar days for a final wind rose. For a defensible
-climatology, extend the archive to at least ten years rather than tuning only
-to 2025–26.
+The archive downloader resumes by skipping complete monthly files. It requests
+all 24 hours and calendar days for five complete years, storing them in
+`data/era5_monthly_2021_2025`. Rebuild the JSON only
+after the monthly requests finish; the builder reports calendar-year coverage
+and identifies a fully hourly timeline. Until the new JSON is installed, the
+browser continues to label the attached profile as temporally incomplete.
+
+## Proposed geometry comparison
+
+Create a proposal JSON with a name, forcing direction, removed building record
+indexes, and added building records. Each added record is
+`[ground_m, height_m, [[x,z], ...]]` in the viewer's local metre coordinates.
+Indexes refer to `public/assets/fallback.json`'s original building order.
+
+```bash
+python scripts/build_wind_design_case.py proposal.json
+python scripts/build_wind_design_case.py proposal.json --solve --workers 4
+```
+
+The first command writes a candidate scene for review. `--solve` exports a new
+OpenFOAM case, meshes and solves it, converts the result to browser assets, and
+registers the solved proposal in `public/assets/cfd/design-cases.json`. In the
+Wind panel, save the baseline, load the proposed design, and compare pedestrian
+speed for the same direction. The candidate and baseline use the same solver
+and forcing settings; different geometry requires a new mesh and solve.
 
 ## WindNinja reference cases
 

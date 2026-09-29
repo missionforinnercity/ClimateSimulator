@@ -125,7 +125,9 @@ grid points so narrow streets between them aren't left as holes.
   between directions that lack a solved case.
 
 Not yet built: wake/recirculation inspection via vorticity or Q-criterion
-exports, and before/after design comparisons (towers, podiums, screens).
+exports. Proposed geometry comparisons are available through the reviewed JSON
+geometry workflow in `scripts/build_wind_design_case.py`; a graphical geometry
+editor remains future work.
 
 ## Guardrails
 

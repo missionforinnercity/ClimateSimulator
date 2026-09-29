@@ -13,12 +13,64 @@ function setupMenuNavigation() {
   const panelToggle = document.querySelector('#panel-toggle');
   const sceneModeTitle = document.querySelector('#scene-mode-title');
   const sceneModeDetail = document.querySelector('#scene-mode-detail');
+  const panelContextValue = document.querySelector('#panel-context-value');
+  const panelBody = document.querySelector('#explorer-panel-body');
   if (!tabs.length || !panels.length) return;
 
   const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', sun: 'SUNLIGHT', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
+  const selectedLabel = selector => document.querySelector(`${selector} option:checked`)?.textContent.trim() || '';
+  const inputValue = selector => document.querySelector(selector)?.value?.trim() || '';
+  const textValue = selector => document.querySelector(selector)?.textContent.trim() || '';
+  const updatePanelContext = name => {
+    if (!panelContextValue) return;
+    let context = 'City model · base layers';
+    if (name === 'tools') {
+      const visible = [...document.querySelectorAll('[data-layer]')].filter(input => input.checked).length;
+      context = `City model · ${visible} map layers visible`;
+    } else if (name === 'heat') {
+      const metric = document.querySelector('#heat-metric');
+      const metricLabel = metric?.selectedOptions[0]?.textContent.trim() || 'Heat view';
+      let time = 'Source period';
+      if (['utci_c', 'tmrt_c'].includes(metric?.value)) {
+        const aggregate = inputValue('#heat-climate-aggregate');
+        const climateScope = aggregate === 'month' ? textValue('#heat-climate-month-label')
+          : aggregate === 'season' ? selectedLabel('#heat-climate-season') : 'All months';
+        time = document.querySelector('#heat-period')?.value === 'climatology'
+          ? `${selectedLabel('#heat-climate-aggregate')} · ${climateScope} · ${textValue('#heat-climate-hour-label') || '12:00'}`
+          : textValue('#heat-forecast-label') || 'Near-live forecast';
+      } else if (['pedestrian_priority_score', 'shade_deficit_score'].includes(metric?.value)) {
+        time = `${inputValue('#heat-date')} · ${selectedLabel('#heat-time')}`;
+      }
+      context = `${metricLabel} · ${time}`;
+    } else if (name === 'sun') {
+      const mode = document.querySelector('[data-sun-mode].active')?.textContent.trim() || 'Shadows';
+      const date = mode.toLowerCase().includes('hours') ? inputValue('#sun-analysis-date') : inputValue('#sun-date');
+      const time = mode.toLowerCase().includes('hours')
+        ? `${selectedLabel('#sun-start-time')}–${selectedLabel('#sun-end-time')}`
+        : textValue('#sun-time-value') || '12:00';
+      context = `${mode} · ${date} · ${time}`;
+    } else if (name === 'wind') {
+      const lens = document.querySelector('[data-wind-lens].active')?.textContent.trim() || 'Direction';
+      const direction = selectedLabel('#wind-direction');
+      const season = selectedLabel('#wind-season');
+      context = [lens, direction, season].filter(Boolean).join(' · ');
+    } else if (name === 'traffic') {
+      context = `${selectedLabel('#traffic-scenario') || 'Street simulation'} · ${selectedLabel('#traffic-demand') || 'Current demand'}`;
+    } else if (name === 'transport') {
+      context = `${selectedLabel('#transport-service-day') || 'Weekday'} · ${textValue('#transport-time-value') || 'Service timetable'}`;
+    }
+    panelContextValue.textContent = context;
+  };
+
+  let contextTimer = null;
+  const schedulePanelContext = name => {
+    window.clearTimeout(contextTimer);
+    contextTimer = window.setTimeout(() => updatePanelContext(name), 120);
+  };
   const updateSceneMode = name => {
     if (!sceneModeTitle || !sceneModeDetail) return;
     sceneModeTitle.textContent = toolLabels[name] || name.toUpperCase();
+    updatePanelContext(name);
     if (name === 'tools') {
       sceneModeDetail.textContent = 'City layers · drag to orbit';
       return;
@@ -89,6 +141,23 @@ function setupMenuNavigation() {
   document.querySelectorAll('[data-layer]').forEach(input => input.addEventListener('change', () => {
     document.querySelector(`[data-legend-layer="${input.dataset.layer}"]`)?.classList.toggle('is-hidden', !input.checked);
   }));
+  panelBody?.addEventListener('input', () => {
+    const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
+    schedulePanelContext(current);
+  });
+  panelBody?.addEventListener('change', () => {
+    const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
+    schedulePanelContext(current);
+  });
+  const contextTextObserver = new MutationObserver(changes => {
+    if (!changes.length) return;
+    const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
+    updatePanelContext(current);
+  });
+  ['#heat-forecast-label', '#heat-climate-month-label', '#heat-climate-hour-label', '#sun-time-value', '#transport-time-value'].forEach(selector => {
+    const node = document.querySelector(selector);
+    if (node) contextTextObserver.observe(node, { childList: true, characterData: true, subtree: true });
+  });
   document.querySelectorAll('[data-wind-lens]').forEach(button => button.addEventListener('click', () => {
     if (tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget === 'wind') updateSceneMode('wind');
   }));
@@ -97,6 +166,86 @@ function setupMenuNavigation() {
     ? requested
     : tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || tabs[0].dataset.menuTarget;
   activate(initial);
+}
+
+function setupHeatViewSelector() {
+  const metric = document.querySelector('#heat-metric');
+  const period = document.querySelector('#heat-period');
+  const wheel = document.querySelector('#heat-spin');
+  const output = document.querySelector('#heat-spin-value');
+  const groups = [...document.querySelectorAll('[data-heat-view-group]')];
+  if (!metric || !wheel || !output) return;
+  const options = {
+    current: ['utci_c', 'tmrt_c'],
+    history: ['utci_c', 'tmrt_c'],
+    screening: ['pedestrian_priority_score', 'pedestrian_heat_exposure_c', 'shade_deficit_score', 'heat_model_lst_c', 'rooftop_temperature_c'],
+  };
+  const labels = Object.fromEntries([...metric.options].map(option => [option.value, option.textContent.trim()]));
+  let activeGroup = metric.value.startsWith('utci') || metric.value === 'tmrt_c' ? 'current' : 'screening';
+  let selectionTimer = null;
+  const groupForMetric = value => options.screening.includes(value) ? 'screening'
+    : period?.value === 'climatology' ? 'history' : 'current';
+  const refresh = () => {
+    output.textContent = labels[metric.value] || 'Heat view';
+    groups.forEach(button => {
+      const selected = button.dataset.heatViewGroup === activeGroup;
+      button.setAttribute('aria-pressed', String(selected));
+      button.classList.toggle('active', selected);
+    });
+  };
+  const selectMetric = value => {
+    if (value === metric.value) return;
+    metric.value = value;
+    window.clearTimeout(selectionTimer);
+    selectionTimer = window.setTimeout(() => metric.dispatchEvent(new Event('change', { bubbles: true })), 140);
+  };
+  groups.forEach(button => button.addEventListener('click', () => {
+    activeGroup = button.dataset.heatViewGroup;
+    let periodChanged = false;
+    if (period && activeGroup !== 'screening') {
+      const nextPeriod = activeGroup === 'history' ? 'climatology' : 'forecast';
+      if (period.value !== nextPeriod) {
+        period.value = nextPeriod;
+        periodChanged = true;
+      }
+    }
+    const allowed = options[activeGroup];
+    if (!allowed.includes(metric.value)) selectMetric(allowed[0]);
+    else if (periodChanged) period.dispatchEvent(new Event('change', { bubbles: true }));
+    refresh();
+  }));
+  const spin = direction => {
+    const allowed = options[activeGroup];
+    const current = allowed.indexOf(metric.value);
+    const next = current < 0 ? 0 : (current + direction + allowed.length) % allowed.length;
+    wheel.classList.remove('is-spinning');
+    requestAnimationFrame(() => wheel.classList.add('is-spinning'));
+    selectMetric(allowed[next]);
+    refresh();
+  };
+  wheel.addEventListener('click', () => {
+    const allowed = options[activeGroup];
+    if (allowed.length < 2) return;
+    const current = allowed.indexOf(metric.value);
+    let next = Math.floor(Math.random() * allowed.length);
+    if (next === current) next = (next + 1) % allowed.length;
+    wheel.classList.remove('is-spinning');
+    requestAnimationFrame(() => wheel.classList.add('is-spinning'));
+    selectMetric(allowed[next]);
+    refresh();
+  });
+  document.querySelector('#heat-spin-previous')?.addEventListener('click', () => spin(-1));
+  document.querySelector('#heat-spin-next')?.addEventListener('click', () => spin(1));
+  metric.addEventListener('change', () => {
+    window.clearTimeout(selectionTimer);
+    activeGroup = groupForMetric(metric.value);
+    refresh();
+  });
+  period?.addEventListener('change', () => {
+    if (activeGroup !== 'screening') activeGroup = period.value === 'climatology' ? 'history' : 'current';
+    refresh();
+  });
+  refresh();
 }
 
 function setupFullscreenControls() {
@@ -220,7 +369,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=102');
+    const module = await import('./webglRenderer.js?v=121');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -229,7 +378,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=82');
+      const module = await import('./sceneRenderer.js?v=86');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
@@ -397,6 +546,7 @@ function windReportQuantile(values, probability) {
   if (!sorted.length) return NaN;
   const position = (sorted.length - 1) * probability;
   const lower = Math.floor(position), upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
   return sorted[lower] * (upper - position) + sorted[upper] * (position - lower);
 }
 
@@ -482,22 +632,210 @@ function setupWindResults() {
   if (!results || results.dataset.ready) return;
   results.dataset.ready = 'true';
   let latestField = null;
+  let baseline = null;
+  const saveBaseline = document.querySelector('#wind-save-baseline');
+  const clearBaseline = document.querySelector('#wind-clear-baseline');
+  const compareStatus = document.querySelector('#wind-compare-status');
+  const compareResult = document.querySelector('#wind-comparison-result');
+  const categoryColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
+  const describeField = field => field.analysis_mode === 'comfort'
+    ? `Comfort · ${field.season || 'annual'} · ${field.stability || 'neutral'} · ${field.height_m ?? '?'} m`
+    : `Direction · ${Math.round(field.direction_deg ?? 0)}° · ${field.season || 'annual'} · ${field.height_m ?? '?'} m`;
+  const distribution = field => {
+    const categories = field.comfort_categories || [];
+    const valid = index => !field.valid || Boolean(field.valid[index]);
+    const total = field.comfort_category.reduce((sum, _, index) => sum + Number(valid(index)), 0);
+    return categories.map(category => {
+      const count = field.comfort_category.reduce((sum, code, index) => sum + Number(valid(index) && code === category.code), 0);
+      return { ...category, share: total ? count * 100 / total : 0 };
+    });
+  };
+  const renderComparison = () => {
+    if (!baseline || !latestField) {
+      compareResult.hidden = true;
+      compareStatus.textContent = baseline ? 'Baseline saved. Run another study to compare.' : 'Run a wind study to start a comparison.';
+      return;
+    }
+    if (baseline.field.analysis_mode !== latestField.analysis_mode) {
+      compareResult.innerHTML = '<p>Choose results from the same analysis mode to compare them. Comfort and single-direction results use different interpretations.</p>';
+      compareResult.hidden = false;
+      compareStatus.textContent = 'Analysis modes differ; run a matching type of study.';
+      return;
+    }
+    if (latestField.analysis_mode === 'direction') {
+      const first = baseline.field, second = latestField;
+      const firstSpeeds = first.speed.filter((_, index) => !first.valid || first.valid[index]);
+      const secondSpeeds = second.speed.filter((_, index) => !second.valid || second.valid[index]);
+      const firstMean = firstSpeeds.reduce((sum, value) => sum + value, 0) / Math.max(firstSpeeds.length, 1);
+      const secondMean = secondSpeeds.reduce((sum, value) => sum + value, 0) / Math.max(secondSpeeds.length, 1);
+      const sameGrid = first.width === second.width && first.height === second.height && first.dx === second.dx && first.dz === second.dz
+        && JSON.stringify(first.origin) === JSON.stringify(second.origin)
+        && JSON.stringify(first.basis_xz) === JSON.stringify(second.basis_xz)
+        && JSON.stringify(first.basis_z) === JSON.stringify(second.basis_z);
+      let pairedCount = 0, increased = 0, decreased = 0, deltaSum = 0, cells = '';
+      if (sameGrid) {
+        const columns = Math.min(44, first.width), rows = Math.min(32, first.height);
+        const deltas = [];
+        for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+          const x = Math.min(first.width - 1, Math.floor((column + .5) * first.width / columns));
+          const y = Math.min(first.height - 1, Math.floor((row + .5) * first.height / rows));
+          const index = y * first.width + x;
+          if ((first.valid && !first.valid[index]) || (second.valid && !second.valid[index])) continue;
+          const delta = second.speed[index] - first.speed[index];
+          pairedCount += 1; deltaSum += delta; deltas.push({ column, row, delta });
+          if (delta > .25) increased += 1;
+          if (delta < -.25) decreased += 1;
+        }
+        const scale = Math.max(.5, ...deltas.map(item => Math.abs(item.delta)));
+        const rects = deltas.map(item => `<rect x="${item.column}" y="${item.row}" width="1.05" height="1.05" fill="${item.delta < 0 ? '#4eb58b' : item.delta > 0 ? '#dc795e' : '#777b7a'}" fill-opacity="${Math.max(.25, Math.abs(item.delta) / scale).toFixed(2)}"/>`).join('');
+        cells = `<div class="wind-difference-map"><b>Pedestrian speed change</b><svg viewBox="0 0 ${columns} ${rows}" role="img" aria-label="Green areas became slower; red areas became faster">${rects}</svg><small><i class="better"></i>Slower <i class="same"></i>Little change <i class="worse"></i>Faster</small></div>`;
+      }
+      const meanDelta = pairedCount ? deltaSum / pairedCount : secondMean - firstMean;
+      const diffPp = pairedCount ? `${(increased * 100 / pairedCount).toFixed(1)}% faster · ${(decreased * 100 / pairedCount).toFixed(1)}% slower` : 'No shared grid';
+      compareResult.innerHTML = `${cells}<div class="wind-direction-compare-stats"><span>Baseline mean<strong>${firstMean.toFixed(2)} m/s</strong></span><span>Current mean<strong>${secondMean.toFixed(2)} m/s</strong></span><span>Mean change<strong>${meanDelta > 0 ? '+' : ''}${meanDelta.toFixed(2)} m/s</strong></span></div><p>${diffPp} across paired pedestrian cells. Directional steady-state comparison; this is not a comfort classification.</p>`;
+      compareResult.hidden = false;
+      compareStatus.textContent = `${baseline.label} compared with ${describeField(latestField)}.`;
+      return;
+    }
+    const first = distribution(baseline.field), second = distribution(latestField);
+    const canPair = baseline.field.width === latestField.width && baseline.field.height === latestField.height
+      && baseline.field.dx === latestField.dx && baseline.field.dz === latestField.dz
+      && JSON.stringify(baseline.field.origin) === JSON.stringify(latestField.origin);
+    const valid = field => field.comfort_category.reduce((sum, _, index) => sum + Number(!field.valid || Boolean(field.valid[index])), 0);
+    const paired = canPair ? baseline.field.comfort_category.reduce((sum, _, index) => sum + Number((!baseline.field.valid || baseline.field.valid[index]) && (!latestField.valid || latestField.valid[index])), 0) : 0;
+    const rows = first.map((category, index) => {
+      const next = second[index];
+      const delta = next.share - category.share;
+      return `<div class="wind-compare-row"><i style="background:${categoryColors[index]}"></i><span>${windReportEscape(category.label)}</span><b>${category.share.toFixed(1)}%</b><span class="wind-compare-delta ${delta > .05 ? 'up' : delta < -.05 ? 'down' : ''}">${delta > 0 ? '+' : ''}${delta.toFixed(1)} pp</span><b>${next.share.toFixed(1)}%</b></div>`;
+    }).join('');
+    let differenceMap = '';
+    if (canPair) {
+      const columns = Math.min(44, baseline.field.width), rowsCount = Math.min(32, baseline.field.height);
+      const rects = [];
+      for (let y = 0; y < rowsCount; y += 1) for (let x = 0; x < columns; x += 1) {
+        const sourceX = Math.min(baseline.field.width - 1, Math.floor((x + .5) * baseline.field.width / columns));
+        const sourceY = Math.min(baseline.field.height - 1, Math.floor((y + .5) * baseline.field.height / rowsCount));
+        const index = sourceY * baseline.field.width + sourceX;
+        if ((baseline.field.valid && !baseline.field.valid[index]) || (latestField.valid && !latestField.valid[index])) continue;
+        const delta = latestField.comfort_category[index] - baseline.field.comfort_category[index];
+        const fill = delta < 0 ? '#4eb58b' : delta > 0 ? '#dc795e' : '#777b7a';
+        rects.push(`<rect x="${x}" y="${y}" width="1.05" height="1.05" fill="${fill}"/>`);
+      }
+      differenceMap = `<div class="wind-difference-map"><b>Comfort class change</b><svg viewBox="0 0 ${columns} ${rowsCount}" role="img" aria-label="Green areas move toward more comfortable categories; red areas move toward less comfortable categories">${rects.join('')}</svg><small><i class="better"></i>More comfortable <i class="same"></i>No change <i class="worse"></i>Less comfortable</small></div>`;
+    }
+    compareResult.innerHTML = `${differenceMap}<div class="wind-compare-head"><span>Comfort class</span><b>Baseline</b><span>Change</span><b>Current</b></div>${rows}<p>${canPair ? `${paired.toLocaleString()} cells are valid in both results (${valid(latestField).toLocaleString()} current cells). The map shows category changes on shared valid cells.` : 'Grid extents differ, so category shares are compared without a cell-by-cell map difference.'}</p>`;
+    compareResult.hidden = false;
+    compareStatus.textContent = `${baseline.label} compared with ${describeField(latestField)}.`;
+  };
+  saveBaseline?.addEventListener('click', () => {
+    if (!latestField) return;
+    baseline = { field: structuredClone(latestField), label: describeField(latestField) };
+    clearBaseline.hidden = false;
+    renderComparison();
+  });
+  clearBaseline?.addEventListener('click', () => {
+    baseline = null;
+    clearBaseline.hidden = true;
+    renderComparison();
+  });
+
+  const validationStatus = document.querySelector('#wind-validation-status');
+  const validationResult = document.querySelector('#wind-validation-result');
+  const validationButton = document.querySelector('#wind-validate-button');
+  const fileInput = document.querySelector('#wind-observation-file');
+  const observationsInput = document.querySelector('#wind-observation-json');
+  // Convert CSV values explicitly so numeric validation errors are readable.
+  const csvObservations = source => {
+    const lines = source.trim().split(/\r?\n/).filter(Boolean);
+    const split = line => { const values = []; let cell = '', quote = false; for (let i = 0; i < line.length; i += 1) { if (line[i] === '"' && line[i + 1] === '"' && quote) { cell += '"'; i++; } else if (line[i] === '"') quote = !quote; else if (line[i] === ',' && !quote) { values.push(cell.trim()); cell = ''; } else cell += line[i]; } values.push(cell.trim()); return values; };
+    const headers = split(lines.shift() || '').map(item => item.toLowerCase());
+    if (!['x', 'z', 'speed_mps'].every(header => headers.includes(header))) throw new Error('CSV needs x, z and speed_mps columns.');
+    return lines.map((line, rowIndex) => {
+      const cells = split(line);
+      const row = Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? '']));
+      const observation = { id: row.id || undefined, x: Number(row.x), z: Number(row.z), speed_mps: Number(row.speed_mps), height_m: Number(row.height_m || 2), observed_at: row.observed_at || undefined };
+      if (![observation.x, observation.z, observation.speed_mps, observation.height_m].every(Number.isFinite)) throw new Error(`CSV row ${rowIndex + 2} has a missing or invalid number.`);
+      return observation;
+    });
+  };
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files?.[0]; if (!file) return;
+    try { const observations = csvObservations(await file.text()); observationsInput.value = JSON.stringify(observations, null, 2); validationStatus.textContent = `${observations.length} observations loaded from ${file.name}.`; }
+    catch (error) { validationStatus.textContent = error.message; }
+  });
+  validationButton?.addEventListener('click', async () => {
+    validationButton.disabled = true;
+    validationStatus.textContent = 'Comparing observations with the screening model…';
+    validationResult.hidden = true;
+    try {
+      const observations = observationsInput.value.trim().startsWith('[')
+        ? JSON.parse(observationsInput.value)
+        : csvObservations(observationsInput.value);
+      if (!Array.isArray(observations) || observations.length < 3) throw new Error('Add at least three observations.');
+      const payload = {
+        scenario: {
+          center_local: [Number(document.querySelector('#wind-validation-center-x').value), Number(document.querySelector('#wind-validation-center-z').value)],
+          size_m: Number(document.querySelector('#wind-validation-size').value),
+          direction_deg: Number(document.querySelector('#wind-validation-direction').value),
+          season: document.querySelector('#wind-season')?.value || 'annual',
+          stability: document.querySelector('#wind-stability')?.value || 'neutral',
+          reference_speed_mps: Number(document.querySelector('#wind-validation-speed').value),
+          reference_height_m: 10, height_m: 2, resolution_m: 5,
+          exceedance_threshold_mps: 6, forcing_mode: 'manual',
+        }, observations,
+      };
+      const response = await fetch('/api/wind/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const body = await response.json();
+      if (!response.ok) {
+        const detail = Array.isArray(body.detail)
+          ? body.detail.map(item => `${(item.loc || []).slice(-1)[0] || 'Input'}: ${item.msg}`).join(' ')
+          : body.detail;
+        throw new Error(detail || `Request failed (${response.status}).`);
+      }
+      const validation = body.validation;
+      const distances = validation.distance_to_observation_m || [];
+      const within = distances.filter(distance => distance <= 25).length / Math.max(1, distances.length) * 100;
+      const samples = validation.samples.map(sample => `<tr><td>${windReportEscape(sample.id || '—')}</td><td>${Number(sample.predicted_speed_mps).toFixed(2)}</td><td>${Number(sample.height_adjusted_observed_speed_mps).toFixed(2)}</td><td>${Number(sample.error_mps) > 0 ? '+' : ''}${Number(sample.error_mps).toFixed(2)}</td></tr>`).join('');
+      validationResult.innerHTML = `<b>Benchmark only · screening model</b><div class="wind-validation-metrics"><span>Bias <strong>${validation.metrics.bias_mps.toFixed(2)} m/s</strong></span><span>MAE <strong>${validation.metrics.mae_mps.toFixed(2)} m/s</strong></span><span>RMSE <strong>${validation.metrics.rmse_mps.toFixed(2)} m/s</strong></span><span>Grid within 25 m of a sensor <strong>${within.toFixed(1)}%</strong></span></div><div class="wind-validation-table-wrap"><table><thead><tr><th>Sensor</th><th>Model</th><th>Observed*</th><th>Error</th></tr></thead><tbody>${samples}</tbody></table></div><small>*Observed speed adjusted to 2 m using the selected stability profile. Sparse coverage limits interpretation.</small>`;
+      validationResult.hidden = false;
+      validationStatus.textContent = `${validation.observation_count} observations · ${validation.status.replaceAll('_', ' ')}.`;
+    } catch (error) { validationStatus.textContent = error.message || 'Could not compare observations.'; }
+    finally { validationButton.disabled = false; }
+  });
 
   const invalidate = () => {
     results.hidden = true;
     latestField = null;
     if (reportButton) reportButton.disabled = true;
+    if (saveBaseline) saveBaseline.disabled = true;
+    renderComparison();
   };
-  ['wind-direction', 'wind-season', 'wind-stability', 'wind-size']
-    .forEach(id => document.querySelector(`#${id}`)?.addEventListener('input', invalidate));
+  ['wind-direction', 'wind-season', 'wind-stability', 'wind-size', 'wind-cfd-ground-height', 'wind-cfd-field']
+    .forEach(id => {
+      document.querySelector(`#${id}`)?.addEventListener('input', invalidate);
+      document.querySelector(`#${id}`)?.addEventListener('change', invalidate);
+    });
+  document.querySelectorAll('[data-wind-direction]').forEach(button => button.addEventListener('click', invalidate));
   document.querySelectorAll('[data-wind-lens="direction"], [data-wind-lens="comfort"]').forEach(button => button.addEventListener('click', invalidate));
   addEventListener('climate-wind-result', event => {
     const field = event.detail;
-    if (!field?.comfort_category || !field?.exceedance?.probability) {
+    const directionResult = field?.analysis_mode === 'direction' && Array.isArray(field.speed);
+    if (!directionResult && (!field?.comfort_category || !field?.exceedance?.probability)) {
       invalidate();
       return;
     }
     latestField = field;
+    if (reportButton) reportButton.disabled = directionResult;
+    if (saveBaseline) saveBaseline.disabled = false;
+    if (directionResult) {
+      const speeds = field.speed.filter((_, index) => !field.valid || field.valid[index]);
+      const mean = speeds.length ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length : NaN;
+      const coverage = field.speed.length ? speeds.length / field.speed.length * 100 : 0;
+      results.innerHTML = `<div class="wind-result-highlights"><span><b>${windReportNumber(mean, 2, ' m/s')}</b>mean pedestrian speed · ${field.height_m.toFixed(1)} m</span><span><b>${windReportNumber(windReportQuantile(speeds, .95), 2, ' m/s')}</b>95th spatial percentile</span></div><details class="wind-result-evidence"><summary>Evidence &amp; coverage</summary><div class="wind-result-facts"><span><b>${coverage.toFixed(1)}%</b>${speeds.length.toLocaleString()} of ${field.speed.length.toLocaleString()} sampled cells resolved</span><span><b>${Math.round(field.direction_deg)}° · ${field.season}</b>Steady OpenFOAM direction</span><span><b>${windReportEscape(String(field.validation_status || 'not reported').replaceAll('_', ' '))}</b>Validation status</span><span><b>${field.dx.toFixed(1)} × ${field.dz.toFixed(1)} m</b>Sample spacing</span></div></details>`;
+      results.hidden = false;
+      renderComparison();
+      return;
+    }
     if (reportButton) reportButton.disabled = false;
     // Cells the source field never actually sampled (field.valid[i] === 0)
     // must not silently count as "comfortable" in these stats — they're
@@ -523,6 +861,13 @@ function setupWindResults() {
     const sittingStanding = categoryShares.filter(item => item.code <= 2).reduce((sum, item) => sum + item.share, 0);
     const walkingOnly = categoryShares.filter(item => item.code >= 4).reduce((sum, item) => sum + item.share, 0);
     const worstExceedance = Math.max(...probabilities, 0) * 100;
+    const cellCount = (field.speed || []).length;
+    const validCellCount = speeds.length;
+    const validCoverage = cellCount ? validCellCount / cellCount * 100 : 0;
+    const sectorCoverage = Number.isFinite(field.coverage_fraction) ? `${(field.coverage_fraction * 100).toFixed(1)}% of wind hours in resolved sectors` : 'Not applicable';
+    const archiveCoverage = field.forcing_coverage
+      ? `${(field.forcing_coverage.hourly_coverage_fraction * 100).toFixed(1)}% hourly coverage · ${Number(field.forcing_coverage.records).toLocaleString()} records`
+      : 'Not reported';
     const comfortColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
     const breakdown = categoryShares.filter(item => item.share >= 0.05).map(item =>
       `<i style="flex:${item.share};background:${comfortColors[item.code]}" title="${windReportEscape(item.label)} · ${item.share.toFixed(1)}%"></i>`
@@ -533,18 +878,21 @@ function setupWindResults() {
       ? `ERA5 ${field.era5_profile.sector.toUpperCase()} · ${(field.era5_profile.frequency_fraction * 100).toFixed(1)}% sampled group hours`
       : 'Manual mean forcing';
     results.innerHTML = `
-      <span><b>${field.height_m.toFixed(1)} m</b>Result height</span>
-      <span><b>${meanSpeed.toFixed(1)} m/s</b>Mean spatial speed</span>
-      <span><b>${category?.label || '—'}</b>Most common comfort class</span>
-      <span><b>${(meanExceedance * 100).toFixed(1)}%</b>Mean area exceedance · ${field.exceedance.threshold_mps} m/s</span>
-      <span><b>${sittingStanding.toFixed(1)}%</b>Suitable for sitting or standing</span>
-      <span><b>${walkingOnly.toFixed(1)}%</b>Walking-only or uncomfortable</span>
-      <span><b>${worstExceedance.toFixed(1)}%</b>Worst-cell threshold exceedance</span>
-      <span><b>±${relative.toFixed(0)}%</b>Screening uncertainty</span>
-      <span><b>${forcingLabel}</b>Forcing source</span>
-      <span><b>${field.analysis_mode.toUpperCase()}</b>${field.validation_status.replaceAll('_', ' ')}</span>
-      <div class="wind-comfort-mini" aria-label="Comfort category distribution">${breakdown}</div>`;
+      <div class="wind-result-highlights"><span><b>${sittingStanding.toFixed(1)}%</b>sit or stand</span><span><b>${category?.label || '—'}</b>most common class</span></div>
+      <div class="wind-comfort-mini" aria-label="Comfort category distribution">${breakdown}</div>
+      <details class="wind-result-evidence"><summary>Evidence, coverage &amp; assumptions</summary><div class="wind-result-facts">
+        <span><b>${meanSpeed.toFixed(1)} m/s</b>Mean speed at ${field.height_m.toFixed(1)} m</span>
+        <span><b>${(meanExceedance * 100).toFixed(1)}%</b>Mean exceedance above ${field.exceedance.threshold_mps} m/s</span>
+        <span><b>${walkingOnly.toFixed(1)}%</b>Walking-only or uncomfortable</span>
+        <span><b>${worstExceedance.toFixed(1)}%</b>Worst-cell exceedance</span>
+        <span><b>±${relative.toFixed(0)}%</b>Screening uncertainty</span>
+        <span><b>${validCoverage.toFixed(1)}%</b>${validCellCount.toLocaleString()} of ${cellCount.toLocaleString()} model cells resolved</span>
+        <span><b>${windReportEscape(forcingLabel)}</b>Forcing source · ${windReportEscape(sectorCoverage)}</span>
+        <span><b>${windReportEscape(archiveCoverage)}</b>ERA5 archive time coverage · ${windReportEscape(field.forcing_dataset_version || '')}</span>
+        <span><b>${windReportEscape(String(field.validation_status || 'not reported').replaceAll('_', ' '))}</b>Validation status</span>
+      </div></details>`;
     results.hidden = false;
+    renderComparison();
   });
 
   reportButton?.addEventListener('click', () => {
@@ -653,6 +1001,7 @@ function setupWindResults() {
 
 setupExplorerExperience();
 setupMenuNavigation();
+setupHeatViewSelector();
 setupFullscreenControls();
 setupWindResults();
 freshCanvas();

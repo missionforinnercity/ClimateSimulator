@@ -2118,6 +2118,10 @@ export async function startWebGLScene(canvas, status) {
   const heatScreeningControls = document.querySelector('#heat-screening-controls');
   const heatForecastHint = document.querySelector('#heat-forecast-hint');
   const heatLayerHelp = document.querySelector('#heat-layer-help');
+  const heatInspectButton = document.querySelector('#heat-inspect-place');
+  const heatInspectResult = document.querySelector('#heat-inspect-result');
+  const heatSaveComparison = document.querySelector('#heat-save-comparison');
+  const heatComparison = document.querySelector('#heat-comparison');
   const heatForecastControl = document.querySelector('#heat-forecast-control');
   const heatForecastTime = document.querySelector('#heat-forecast-time');
   const heatForecastLabel = document.querySelector('#heat-forecast-label');
@@ -2164,21 +2168,38 @@ export async function startWebGLScene(canvas, status) {
   const heatMaximumLabel = document.querySelector('#heat-maximum-label');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
+  const sunAnalysisDate = document.querySelector('#sun-analysis-date');
   const sunTime = document.querySelector('#sun-time');
   const sunTimeValue = document.querySelector('#sun-time-value');
+  const sunTimeTools = document.querySelector('#sun-time-tools');
+  const sunPlay = document.querySelector('#sun-play');
+  const sunPositionMarker = document.querySelector('#sun-position-marker');
+  const sunPositionGlow = document.querySelector('#sun-position-glow');
+  const sunPositionAltitude = document.querySelector('#sun-position-altitude');
+  const sunPositionCaption = document.querySelector('#sun-position-caption');
   const sunGenerate = document.querySelector('#sun-generate');
   const sunProgress = document.querySelector('#sun-progress');
   const sunStatus = document.querySelector('#sun-status');
   const sunModeButtons = [...document.querySelectorAll('[data-sun-mode]')];
+  const sunShadowControls = document.querySelector('#sun-shadow-controls');
   const sunInstantControl = document.querySelector('#sun-instant-control');
   const sunWindowControls = document.querySelector('#sun-window-controls');
   const sunDateTimeHeading = document.querySelector('#sun-date-time-heading');
+  const sunHoursMethod = document.querySelector('#sun-hours-method');
   const sunStartTime = document.querySelector('#sun-start-time');
   const sunEndTime = document.querySelector('#sun-end-time');
   const sunStepTime = document.querySelector('#sun-step-time');
   const sunAnalysisSurfaces = document.querySelector('#sun-analysis-surfaces');
   const sunSurfaceResolution = document.querySelector('#sun-surface-resolution');
   const sunDomainSize = document.querySelector('#sun-domain-size');
+  const sunCompareDate = document.querySelector('#sun-compare-date');
+  const sunCompare = document.querySelector('#sun-compare');
+  const sunCompareSwitch = document.querySelector('#sun-compare-switch');
+  const sunCompareSummary = document.querySelector('#sun-compare-summary');
+  const sunInspect = document.querySelector('#sun-inspect');
+  const sunInspectResult = document.querySelector('#sun-inspect-result');
+  const sunResultButtons = [...document.querySelectorAll('[data-sun-result]')];
+  const sunDetailButtons = [...document.querySelectorAll('[data-sun-detail]')];
   const sunMoveDomain = document.querySelector('#sun-move-domain');
   const sunHoursLegend = document.querySelector('#sun-hours-legend');
   const sunHoursMin = document.querySelector('#sun-hours-min');
@@ -2213,8 +2234,6 @@ export async function startWebGLScene(canvas, status) {
   const windLensButtons = [...document.querySelectorAll('[data-wind-lens]')];
   const windPanel = document.querySelector('.wind-panel');
   const windModeBadge = document.querySelector('.wind-mode-badge');
-  const windSourceTitle = document.querySelector('#wind-source-title');
-  const windSourceDetail = document.querySelector('#wind-source-detail');
   const windCfdControls = document.querySelector('#wind-cfd-controls');
   const windFlowBoxControls = document.querySelector('#wind-flow-box-controls');
   const windClimateControls = document.querySelector('#wind-climate-controls');
@@ -2222,6 +2241,10 @@ export async function startWebGLScene(canvas, status) {
   const windCfdViewButtons = [...document.querySelectorAll('[data-cfd-view]')];
   const windGroundControls = document.querySelector('#wind-ground-controls');
   const windCfdGroundHeight = document.querySelector('#wind-cfd-ground-height');
+  const windInspectToggle = document.querySelector('#wind-inspect-toggle');
+  const windInspectResult = document.querySelector('#wind-inspect-result');
+  const windDesignSelect = document.querySelector('#wind-design-select');
+  const windDesignLoad = document.querySelector('#wind-design-load');
   const windSliceControls = document.querySelector('#wind-slice-controls');
   const windSlicePlane = document.querySelector('#wind-slice-plane');
   const windSlicePosition = document.querySelector('#wind-slice-position');
@@ -2258,6 +2281,7 @@ export async function startWebGLScene(canvas, status) {
   const trafficDrawConfirm = document.querySelector('#traffic-draw-confirm');
   const trafficDrawCancel = document.querySelector('#traffic-draw-cancel');
   const trafficSelectionStatus = document.querySelector('#traffic-selection-status');
+  const trafficSelectionList = document.querySelector('#traffic-selection-list');
   const trafficControlModel = document.querySelector('#traffic-control-model');
   const trafficOneWayRow = document.querySelector('#traffic-oneway-row');
   const trafficOneWayToggle = document.querySelector('#traffic-oneway');
@@ -2268,6 +2292,9 @@ export async function startWebGLScene(canvas, status) {
   const trafficCompare = document.querySelector('#traffic-compare');
   const trafficResults = document.querySelector('#traffic-results');
   const trafficImpactSummary = document.querySelector('#traffic-impact-summary');
+  const trafficUncertainty = document.querySelector('#traffic-uncertainty');
+  const trafficCalibrationBadge = document.querySelector('#traffic-calibration-badge');
+  const trafficCalibrationStatus = document.querySelector('#traffic-calibration-status');
   const trafficReport = document.querySelector('#traffic-report');
   const trafficReportDialog = document.querySelector('#traffic-report-dialog');
   const trafficReportDocument = document.querySelector('#traffic-report-document');
@@ -2289,6 +2316,7 @@ export async function startWebGLScene(canvas, status) {
     moveMode: false,
   };
   let liveShadowTimer = 0;
+  let sunPlaybackTimer = 0;
   const windState = {
     enabled: Boolean(windToggle?.checked),
     // center/size is the interactive, user-drawn flow-seed box (the old
@@ -2304,7 +2332,7 @@ export async function startWebGLScene(canvas, status) {
     stability: windStability?.value || 'neutral',
     height: 2,
     forcingMode: windForcingMode?.value || 'era5_climatology',
-    analysisMode: 'direction',
+    analysisMode: 'comfort',
     dataMode: 'cfd',
     cfd: null,
     cfdView: 'ground',
@@ -2387,6 +2415,8 @@ export async function startWebGLScene(canvas, status) {
   let heatMesh = null;
   let heatRange = null;
   let heatPayload = null;
+  let heatCurrentSummary = null;
+  let heatSavedComparison = null;
   let analysisGroupMode = null;
   let heatLoadToken = 0;
   let thermalManifest = null;
@@ -2402,6 +2432,8 @@ export async function startWebGLScene(canvas, status) {
   let sunLoadToken = 0;
   let sunAbortController = null;
   let sunAnalysisId = null;
+  let sunSeasonalResults = null;
+  let activeSunResult = null;
   let windHeatMesh = null;
   let windPoints = null;
   let windCfdSlice = null;
@@ -2419,6 +2451,11 @@ export async function startWebGLScene(canvas, status) {
   let windDrag = null;
   let sunDrag = null;
   let sliceDrag = null;
+
+  function makeWindLayerMaterial(parameters) {
+    return new THREE.MeshBasicMaterial(parameters);
+  }
+
   const cameraTouchPointers = new Map();
   let cameraTouchGesture = null;
   let lastCameraTouchTap = 0;
@@ -2434,12 +2471,34 @@ export async function startWebGLScene(canvas, status) {
     trafficDrawingGroup.visible = trafficState.sceneActive && Boolean(trafficState.selectedEdgeIds.length);
   }
 
-  function rememberNormalVisibility() {
-    for (const [name, group] of Object.entries(layerGroups)) savedVisibility[name] = group.visible;
-  }
-
   function restoreNormalVisibility() {
     for (const [name, group] of Object.entries(layerGroups)) group.visible = savedVisibility[name];
+  }
+
+  const sectionLayerProfiles = {
+    analysis: {
+      terrain: true, water: true, grass: false, railways: false,
+      paths: false, roads: false, cityFurniture: false, buildings: true, trees: true,
+    },
+    traffic: {
+      terrain: true, water: true, grass: false, railways: false,
+      paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
+    },
+    transport: {
+      terrain: true, water: true, grass: false, railways: true,
+      paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
+    },
+  };
+
+  function applySectionLayerProfile(name) {
+    if (name === 'tools') return;
+    const profile = ['heat', 'sun', 'wind'].includes(name)
+      ? sectionLayerProfiles.analysis : sectionLayerProfiles[name];
+    if (!profile) return;
+    for (const [layerName, visible] of Object.entries(profile)) {
+      layerGroups[layerName].visible = visible;
+    }
+    syncLayerControls();
   }
 
   // Road and footpath meshes are drawn above the terrain and otherwise cover
@@ -2724,17 +2783,17 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   }
 
-  function sunPosition() {
-    const [year, month, day] = shadowState.date.split('-').map(Number);
+  function sunPosition(dateText = shadowState.date, minutes = shadowState.minutes) {
+    const [year, month, day] = dateText.split('-').map(Number);
     const date = new Date(Date.UTC(year || 2026, (month || 7) - 1, day || 27));
     const start = Date.UTC(date.getUTCFullYear(), 0, 0);
     const dayOfYear = Math.floor((date.getTime() - start) / 86400000);
-    const hour = shadowState.minutes / 60;
+    const hour = minutes / 60;
     const gamma = 2 * Math.PI / 365 * (dayOfYear - 1 + (hour - 12) / 24);
     const equation = 229.18 * (0.000075 + 0.001868 * Math.cos(gamma) - 0.032077 * Math.sin(gamma) - 0.014615 * Math.cos(2 * gamma) - 0.040849 * Math.sin(2 * gamma));
     const declination = 0.006918 - 0.399912 * Math.cos(gamma) + 0.070257 * Math.sin(gamma) - 0.006758 * Math.cos(2 * gamma) + 0.000907 * Math.sin(2 * gamma) - 0.002697 * Math.cos(3 * gamma) + 0.00148 * Math.sin(3 * gamma);
     const latitude = -33.9249 * Math.PI / 180;
-    const solarMinutes = shadowState.minutes + equation + 4 * 18.4241 - 120;
+    const solarMinutes = minutes + equation + 4 * 18.4241 - 120;
     const hourAngle = (solarMinutes / 4 - 180) * Math.PI / 180;
     const altitude = Math.asin(clamp(Math.sin(latitude) * Math.sin(declination) + Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle), -1, 1));
     const azimuth = (Math.atan2(Math.sin(hourAngle), Math.cos(hourAngle) * Math.sin(latitude) - Math.tan(declination) * Math.cos(latitude)) + Math.PI) % (2 * Math.PI);
@@ -2749,11 +2808,35 @@ export async function startWebGLScene(canvas, status) {
     const hours = String(Math.floor(shadowState.minutes / 60)).padStart(2, '0');
     const minutes = String(shadowState.minutes % 60).padStart(2, '0');
     if (sunTimeValue) sunTimeValue.textContent = `${hours}:${minutes}`;
+    updateSunPositionGraphic(sun);
     if (sunStatus) {
       sunStatus.textContent = message || (sun.altitude <= 0
         ? 'Sun is below the horizon at this time.'
-        : `Sun altitude ${Math.round(sun.altitude * 180 / Math.PI)}° · click Generate shadows when ready.`);
+        : `Cape Town · ${shadowState.date} · ${hours}:${minutes} · sun altitude ${Math.round(sun.altitude * 180 / Math.PI)}°${shadowState.generated ? '' : ' · preparing shadows…'}`);
     }
+  }
+
+  function updateSunPositionGraphic(sun = sunPosition()) {
+    const altitudeDegrees = sun.altitude * 180 / Math.PI;
+    if (sunPositionAltitude) sunPositionAltitude.textContent = altitudeDegrees > 0
+      ? `Altitude ${Math.round(altitudeDegrees)}°` : 'Sun below horizon';
+    if (sunPositionMarker && sunPositionGlow) {
+      const visible = altitudeDegrees > 0;
+      sunPositionMarker.style.display = visible ? '' : 'none';
+      sunPositionGlow.style.display = visible ? '' : 'none';
+      if (visible) {
+        const azimuth = (Math.atan2(sun.vector.x, -sun.vector.z) + Math.PI * 2) % (Math.PI * 2);
+        const x = clamp(120 - Math.sin(azimuth) * 100, 20, 220);
+        const y = clamp(92 - Math.sin(sun.altitude) * 76, 16, 90);
+        sunPositionMarker.setAttribute('cx', x.toFixed(1));
+        sunPositionMarker.setAttribute('cy', y.toFixed(1));
+        sunPositionGlow.setAttribute('cx', x.toFixed(1));
+        sunPositionGlow.setAttribute('cy', y.toFixed(1));
+      }
+    }
+    if (sunPositionCaption) sunPositionCaption.textContent = altitudeDegrees > 0
+      ? `${Math.round(altitudeDegrees)}° high · ${sun.vector.x < -0.15 ? 'east' : sun.vector.x > 0.15 ? 'west' : 'north'} sky`
+      : 'Below the horizon';
   }
 
   function fitSunShadowCamera(target) {
@@ -2818,6 +2901,11 @@ export async function startWebGLScene(canvas, status) {
     shadowCatcher.visible = enabled && shadowState.generated;
     ambient.intensity = enabled ? 0.5 : 1.65;
     terrainMesh.material.color.setHex(enabled ? terrainMesh.userData.sunColor : terrainMesh.userData.normalColor);
+    // The single, non-indexed façade mesh is a receiver and caster for the
+    // entire CBD. Receiving its own low-resolution city-wide shadow map creates
+    // repeated self-shadow acne across otherwise flat walls. Keep wall faces
+    // lit by the sun direction and keep casting shadows onto terrain/roofs.
+    if (buildingMeshes.walls) buildingMeshes.walls.receiveShadow = !enabled;
     for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
       mesh.material = enabled ? mesh.userData.sunMaterial : mesh.userData.normalMaterial;
     }
@@ -2891,8 +2979,6 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function setShadowMode(enabled) {
-    const wasInStudyMode = shadowState.enabled || heatGroup.visible;
-    if (enabled && !wasInStudyMode) rememberNormalVisibility();
     shadowState.enabled = enabled;
     if (!enabled) {
       // A cumulative calculation may still be running when the user leaves
@@ -2967,7 +3053,10 @@ export async function startWebGLScene(canvas, status) {
   function syncLayerControls() {
     document.querySelectorAll('[data-layer]').forEach(input => {
       const group = layerGroups[input.dataset.layer];
-      if (group) input.checked = group.visible;
+      if (!group) return;
+      input.checked = group.visible;
+      document.querySelector(`[data-legend-layer="${input.dataset.layer}"]`)
+        ?.classList.toggle('is-hidden', !group.visible);
     });
   }
 
@@ -3236,9 +3325,18 @@ export async function startWebGLScene(canvas, status) {
     const forecast = ['utci_c', 'tmrt_c'].includes(metric);
     const climate = forecast && heatPeriod?.value === 'climatology';
     const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
-    if (heatLayerHelp) heatLayerHelp.textContent = forecast
-      ? 'Outdoor comfort from air, humidity, wind and radiant heat.'
-      : 'Satellite heat and mapped shade · separate from UTCI.';
+    if (heatLayerHelp) {
+      const explanations = {
+        utci_c: 'Outdoor heat stress combines air, humidity, wind and radiant temperature. Experimental model estimate, not a street observation.',
+        tmrt_c: 'Mean radiant temperature estimates the combined radiant load from sun and surrounding surfaces; it is one UTCI input, not air temperature.',
+        pedestrian_priority_score: 'Screening rank: 70% fixed Summer 2025–26 surface-heat baseline + 30% shade deficit at the selected date and time. Not a health-risk score.',
+        pedestrian_heat_exposure_c: 'Satellite-derived exposure proxy in °C. It is not UTCI, PET, air temperature or a measured pedestrian exposure.',
+        shade_deficit_score: 'Relative lack of mapped shade at the selected date and time. It does not measure surface temperature or health risk.',
+        heat_model_lst_c: 'Modelled land-surface temperature from the Summer 2025–26 product; it is not air temperature.',
+        rooftop_temperature_c: 'Land-surface temperature screened onto mapped roofs. It is not a measured roof-membrane temperature.',
+      };
+      heatLayerHelp.textContent = explanations[metric] || (forecast ? 'Outdoor comfort from air, humidity, wind and radiant heat.' : 'Satellite heat and mapped shade · separate from UTCI.');
+    }
     if (heatThermalControls) heatThermalControls.hidden = !forecast;
     if (heatScreeningControls) heatScreeningControls.hidden = !temporal;
     if (heatDateControl) heatDateControl.hidden = !temporal;
@@ -3914,17 +4012,41 @@ export async function startWebGLScene(canvas, status) {
     if (!heatSummary) return;
     const ready = summary?.area_weighted_mean != null && summary?.maximum != null;
     heatSummary.hidden = !ready;
-    if (!ready) return;
+    heatCurrentSummary = ready ? {
+      metric: heatMetric?.value || '', label: heatMetric?.selectedOptions[0]?.textContent.trim() || 'Heat view',
+      mean: Number(summary.area_weighted_mean), maximum: Number(summary.maximum), unit: metadata.unit || '',
+      date: heatPeriod?.value === 'climatology'
+        ? `${heatClimateAggregate?.selectedOptions[0]?.textContent || 'Month'} · ${heatClimateAggregate?.value === 'season' ? heatClimateSeason?.selectedOptions[0]?.textContent || 'season' : heatClimateAggregate?.value === 'month' ? heatClimateMonthLabel?.textContent || 'month' : 'all months'} · ${heatClimateHourLabel?.textContent || 'local hour'}`
+        : ['utci_c', 'tmrt_c'].includes(heatMetric?.value) ? heatForecastLabel?.textContent || 'Near-live forecast'
+          : ['heat_model_lst_c', 'rooftop_temperature_c', 'pedestrian_heat_exposure_c'].includes(heatMetric?.value)
+            ? `${heatPayload?.window?.label || 'Fixed source baseline'}`
+            : `${heatDate?.value || ''} · ${heatTime?.selectedOptions[0]?.textContent || '12:00'}`,
+    } : null;
+    if (!ready) { updateHeatComparison(); return; }
     heatAverage.textContent = formatHeatValue(summary.area_weighted_mean, metadata);
     heatMaximum.textContent = formatHeatValue(summary.maximum, metadata);
     if (heatAverageLabel) heatAverageLabel.textContent = 'Average';
     if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum';
-    if (heatPriorityArea?.nextElementSibling) {
-      heatPriorityArea.nextElementSibling.textContent = metadata?.name === 'utci_c' ? 'UTCI ≥ 32°C area' : 'Priority area';
-    }
+    if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = heatMetric?.value === 'utci_c'
+      ? 'UTCI ≥ 32°C area' : 'Top 10% area';
     const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
     const hotspotPercent = Number(summary.hotspot_area_pct || 0);
     heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${hotspotPercent.toFixed(0)}%`;
+    updateHeatComparison();
+  }
+
+  function updateHeatComparison() {
+    if (!heatComparison) return;
+    if (!heatSavedComparison || !heatCurrentSummary) { heatComparison.hidden = true; return; }
+    heatComparison.hidden = false;
+    const before = heatSavedComparison, after = heatCurrentSummary;
+    if (before.metric === after.metric && before.unit === after.unit) {
+      const delta = after.mean - before.mean;
+      const sign = delta > 0 ? '+' : '';
+      heatComparison.textContent = `Map-wide area-weighted mean · saved: ${before.label}, ${before.date}, ${before.mean.toFixed(1)}${before.unit}; now: ${after.date}, ${after.mean.toFixed(1)}${after.unit}. Change: ${sign}${delta.toFixed(1)}${after.unit}.`;
+    } else {
+      heatComparison.textContent = `Map-wide area-weighted mean · saved: ${before.label}, ${before.date}, ${before.mean.toFixed(1)}${before.unit}; now: ${after.label}, ${after.date}, ${after.mean.toFixed(1)}${after.unit}. Different measures cannot be subtracted.`;
+    }
   }
 
   async function loadHeat(metric = heatMetric?.value || 'pedestrian_priority_score') {
@@ -4013,7 +4135,40 @@ export async function startWebGLScene(canvas, status) {
     setHeatMode(Boolean(heatToggle?.checked));
   }
 
-  async function generateSunHours() {
+  function displaySunHoursResult(result, difference = false) {
+    const { payload, buildings, scenario, area, average } = result;
+    activeSunResult = result;
+    if (sunInspect) sunInspect.hidden = false;
+    if (sunInspectResult) sunInspectResult.hidden = true;
+    buildHeatMesh(payload);
+    if (buildings) addBuildingSunMesh(buildings, payload.color_range, difference ? 'utci_delta_c' : 'cumulative_sun_hours');
+    setBuildingAnalysisSkin(Boolean(buildings));
+    heatGroup.visible = true;
+    sunLight.visible = false;
+    shadowCatcher.visible = false;
+    const range = payload.color_range || payload.range;
+    const sunGradient = document.querySelector('.sun-energy-gradient');
+    if (sunGradient) sunGradient.style.background = difference
+      ? 'linear-gradient(90deg,#2879bb,#f1eee4,#d34a39)' : '';
+    if (range) {
+      sunHoursMin.textContent = `${range.min.toFixed(1)} h`;
+      sunHoursMax.textContent = `${difference && range.max > 0 ? '+' : ''}${range.max.toFixed(1)} h`;
+    }
+    const clock = value => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+    const cellCount = buildings?.count ? ` · ${buildings.count.toLocaleString()} building cells` : '';
+    const dateLabel = new Date(`${scenario.date}T12:00:00`).toLocaleDateString('en-ZA', { timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric' });
+    sunStatus.textContent = difference
+      ? `Seasonal difference · ${average > 0 ? '+' : ''}${average.toFixed(1)} h average (${sunSeasonalResults.first.scenario.date} → ${sunSeasonalResults.second.scenario.date}) · same ${area} m area and time window.`
+      : `${dateLabel} · ${average.toFixed(1)} h average direct sun · ${clock(Number(scenario.start_minutes))}–${clock(Number(scenario.end_minutes))} · ${area} m area${cellCount}.`;
+    sunStatus.classList.remove('is-updated');
+    requestAnimationFrame(() => sunStatus.classList.add('is-updated'));
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'sun', metadata: {
+      description: `${average.toFixed(1)} h average sampled direct sun; ${scenario.date}; ${clock(Number(scenario.start_minutes))}–${clock(Number(scenario.end_minutes))}; ${area} m area. Clear-sky model.`,
+      scenario, meanSunHours: average,
+    } } }));
+  }
+
+  async function generateSunHours(dateOverride = null, displayResult = true) {
     if (!sunToggle?.checked) sunToggle.checked = true;
     setShadowMode(true);
     cancelSunHours('', false);
@@ -4030,7 +4185,7 @@ export async function startWebGLScene(canvas, status) {
     try {
       sunAnalysisId = createAnalysisId();
       const scenario = {
-        date: sunDate?.value || shadowState.date,
+        date: dateOverride || sunAnalysisDate?.value || sunDate?.value || shadowState.date,
         start_minutes: sunStartTime?.value || '480', end_minutes: sunEndTime?.value || '1080',
         step_minutes: sunStepTime?.value || '60',
       };
@@ -4084,29 +4239,12 @@ export async function startWebGLScene(canvas, status) {
         scenario: { ...scenario, sample_count: 0 },
       };
       payload.color_range = { min: 0, max: durationHours };
-      buildHeatMesh(payload);
-      if (results.buildings) addBuildingSunMesh(results.buildings, payload.color_range);
-      setBuildingAnalysisSkin(Boolean(results.buildings));
-      heatGroup.visible = true;
-      sunLight.visible = false;
-      shadowCatcher.visible = false;
-      const range = payload.color_range || payload.range;
-      if (range) {
-        sunHoursMin.textContent = `${range.min.toFixed(1)} h`;
-        sunHoursMax.textContent = `${range.max.toFixed(1)} h`;
-      }
-      const start = Number(scenario.start_minutes);
-      const end = Number(scenario.end_minutes);
-      const clock = value => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
       const summaries = [payload.summary, results.buildings?.summary].filter(summary => summary?.area_weighted_mean != null);
       const totalArea = summaries.reduce((sum, summary) => sum + Number(summary.total_area_m2 || 0), 0);
       const average = totalArea ? summaries.reduce((sum, summary) => sum + summary.area_weighted_mean * summary.total_area_m2, 0) / totalArea : 0;
-      const cellCount = results.buildings?.count ? ` · ${results.buildings.count.toLocaleString()} building cells` : '';
-      sunStatus.textContent = `${average.toFixed(1)} h average direct sun · ${clock(start)}–${clock(end)} · ${shadowState.size} m area${cellCount}.`;
-      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'sun', metadata: {
-        description: `${average.toFixed(1)} h average sampled direct sun; ${scenario.date}; ${clock(start)}–${clock(end)}; ${shadowState.size} m area. Clear-sky model.`,
-        scenario, meanSunHours: average,
-      } } }));
+      const result = { payload, buildings: results.buildings || null, scenario, area: shadowState.size, average };
+      if (displayResult) displaySunHoursResult(result);
+      return result;
     } catch (error) {
       if (loadToken !== sunLoadToken) return;
       if (error.name === 'AbortError') return;
@@ -4126,7 +4264,27 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
-  function addBuildingSunMesh(payload, range) {
+  function makeSunDifference(first, second) {
+    const deltaFeatures = (before = [], after = []) => after.map((feature, index) => ({
+      ...feature,
+      value: Number(feature.value || 0) - Number(before[index]?.value || 0),
+      display_value: Number(feature.display_value ?? feature.value ?? 0) - Number(before[index]?.display_value ?? before[index]?.value ?? 0),
+    }));
+    const ground = {
+      ...second.payload,
+      metric: 'utci_delta_c',
+      features: deltaFeatures(first.payload.features, second.payload.features),
+    };
+    const buildingFeatures = deltaFeatures(first.buildings?.features, second.buildings?.features);
+    const allDeltas = [...ground.features, ...buildingFeatures].map(feature => Number(feature.display_value ?? feature.value ?? 0));
+    const limit = Math.max(0.5, ...allDeltas.map(Math.abs));
+    ground.color_range = { min: -limit, max: limit };
+    ground.range = ground.color_range;
+    const buildings = second.buildings ? { ...second.buildings, features: buildingFeatures, color_range: ground.color_range } : null;
+    return { payload: ground, buildings, scenario: second.scenario, area: second.area, average: second.average - first.average };
+  }
+
+  function addBuildingSunMesh(payload, range, colorMetric = 'cumulative_sun_hours') {
     const positions = [];
     const colors = [];
     const pushTriangle = (a, b, c, color) => {
@@ -4136,7 +4294,7 @@ export async function startWebGLScene(canvas, status) {
     for (const feature of payload.features || []) {
       const value = feature.display_value ?? feature.value;
       if (value == null) continue;
-      const color = heatColor(value, range.min, range.max, 'cumulative_sun_hours');
+      const color = heatColor(value, range.min, range.max, colorMetric);
       if (feature.surface === 'roof') {
         const y = Number(feature.surface_y) + 0.08;
         for (const polygon of geometryPolygons(feature.geometry)) {
@@ -4166,7 +4324,10 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function setSunAnalysisMode(mode) {
+    stopSunPlayback();
     cancelSunHours('', true);
+    if (mode === 'hours' && sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
+    if (mode === 'shadows' && sunDate) sunDate.value = shadowState.date;
     shadowState.mode = mode;
     const cumulative = mode === 'hours';
     for (const button of sunModeButtons) {
@@ -4175,9 +4336,24 @@ export async function startWebGLScene(canvas, status) {
       button.setAttribute('aria-pressed', String(active));
     }
     if (sunInstantControl) sunInstantControl.hidden = cumulative;
+    if (sunShadowControls) sunShadowControls.hidden = cumulative;
+    if (sunTimeTools) sunTimeTools.hidden = cumulative;
     if (sunWindowControls) sunWindowControls.hidden = !cumulative;
     if (sunDateTimeHeading) sunDateTimeHeading.textContent = cumulative ? 'Date & analysis window' : 'Date & time';
     if (sunHoursLegend) sunHoursLegend.hidden = !cumulative;
+    if (sunHoursMethod) sunHoursMethod.hidden = !cumulative;
+    if (sunCompare) sunCompare.hidden = !cumulative;
+    if (!cumulative) {
+      sunCompareSwitch.hidden = true;
+      sunCompareSummary.hidden = true;
+      sunInspect.hidden = true;
+      sunInspectResult.hidden = true;
+    }
+    document.body.classList.remove('sun-result-switching');
+    requestAnimationFrame(() => {
+      document.body.classList.add('sun-result-switching');
+      setTimeout(() => document.body.classList.remove('sun-result-switching'), 460);
+    });
     sunGenerate.textContent = cumulative ? 'Calculate sun hours' : 'Generate shadows';
     heatGroup.visible = false;
     setBuildingAnalysisSkin(false);
@@ -4185,15 +4361,28 @@ export async function startWebGLScene(canvas, status) {
     setSunMaterials(false);
     sunStatus.textContent = cumulative
       ? 'Move the analysis area if needed, then calculate cumulative direct sunlight.'
-      : 'Choose a date and time, then generate terrain-aware shadows.';
+      : 'Showing direct shadows for the selected Cape Town date and time.';
     requestRender();
+    updateSunBox();
+    if (!cumulative && shadowState.enabled) generateShadows();
+  }
+
+  function setSunDetail(level) {
+    const detailed = level === 'detailed';
+    sunDetailButtons.forEach(button => {
+      const active = button.dataset.sunDetail === level;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    if (sunSurfaceResolution) sunSurfaceResolution.value = detailed ? '5' : '10';
+    if (sunDomainSize) sunDomainSize.value = detailed ? '300' : '500';
+    shadowState.size = detailed ? 300 : 500;
+    cancelSunHours(`${detailed ? 'Detailed' : 'Quick'} preset selected · ${shadowState.size} m area · calculate sun hours.`);
     updateSunBox();
   }
 
   function setHeatMode(enabled) {
     if (enabled) restoreStreetLayersAfterWind();
-    const wasInStudyMode = shadowState.enabled || heatGroup.visible;
-    if (enabled && !wasInStudyMode) rememberNormalVisibility();
     if (enabled && shadowState.enabled) {
       cancelSunHours('', false);
     }
@@ -4785,7 +4974,11 @@ export async function startWebGLScene(canvas, status) {
     if (!point) return false;
     const nearest = snapToSelectedTrafficRoad(point.x, point.z);
     if (!nearest) return false;
-    const removedId = nearest.edge.id;
+    return removeTrafficSelectionById(nearest.edge.id);
+  }
+
+  function removeTrafficSelectionById(removedId) {
+    if (!trafficState.selectedEdgeIds.includes(removedId)) return false;
     trafficState.selectedEdgeIds = trafficState.selectedEdgeIds.filter(edgeId => edgeId !== removedId);
     if (trafficState.result) invalidateTrafficResult('Selection changed · run the comparison again.');
     updateTrafficDrawing();
@@ -4807,6 +5000,29 @@ export async function startWebGLScene(canvas, status) {
     return true;
   }
 
+  function updateTrafficSelectionList() {
+    if (!trafficSelectionList) return;
+    trafficSelectionList.replaceChildren();
+    const selected = trafficState.selectedEdgeIds
+      .map(edgeId => trafficState.edgesById.get(edgeId))
+      .filter(Boolean);
+    trafficSelectionList.hidden = selected.length === 0;
+    for (const edge of selected) {
+      const row = document.createElement('li');
+      const name = document.createElement('span');
+      name.textContent = trafficEdgeName(edge);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'traffic-section-remove';
+      remove.dataset.trafficEdgeId = edge.id;
+      remove.setAttribute('aria-label', `Remove ${trafficEdgeName(edge)} section`);
+      remove.title = 'Remove this section';
+      remove.textContent = '×';
+      row.append(name, remove);
+      trafficSelectionList.append(row);
+    }
+  }
+
   function trafficEdgeName(edge) {
     return edge?.name && edge.name !== 'Unnamed road'
       ? edge.name
@@ -4815,8 +5031,8 @@ export async function startWebGLScene(canvas, status) {
 
   function trafficSelectionLabel() {
     const names = [...new Set(trafficState.selectedEdgeIds
-      .map(edgeId => trafficState.edgesById.get(edgeId)?.name)
-      .filter(name => name && name !== 'Unnamed road'))];
+      .map(edgeId => trafficEdgeName(trafficState.edgesById.get(edgeId)))
+      .filter(name => name && !name.startsWith('edge:')))];
     return names.slice(0, 3).join(', ') + (names.length > 3 ? '…' : '') || 'Selected road section';
   }
 
@@ -4922,6 +5138,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function updateTrafficDrawing() {
+    updateTrafficSelectionList();
     clearStatusGroup(trafficDrawingGroup);
     const fullClosure = trafficState.closureMode === 'full';
     for (const edgeId of trafficState.selectedEdgeIds) {
@@ -5021,6 +5238,7 @@ export async function startWebGLScene(canvas, status) {
     trafficState.strokeStartScreen = null;
     trafficState.strokePoints = [];
     trafficState.selectedEdgeIds = [];
+    updateTrafficSelectionList();
     if (trafficDrawPopup) trafficDrawPopup.hidden = true;
     resetTrafficResult();
     clearStatusGroup(trafficDrawingGroup);
@@ -5282,7 +5500,11 @@ export async function startWebGLScene(canvas, status) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
       if (trafficFreshness) {
-        trafficFreshness.textContent = payload.stale ? 'Stale' : 'Live';
+        const fetchedAt = payload.fetched_at ? new Date(payload.fetched_at) : null;
+        const timeLabel = fetchedAt && Number.isFinite(fetchedAt.getTime())
+          ? fetchedAt.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'short', timeStyle: 'short' })
+          : '';
+        trafficFreshness.textContent = `${payload.stale ? 'Cached' : 'Live'}${timeLabel ? ` · ${timeLabel}` : ''}`;
         trafficFreshness.classList.toggle('stale', Boolean(payload.stale));
       }
       const level = (payload.congestion_level || 'unknown').replace(/_/g, ' ');
@@ -5305,6 +5527,31 @@ export async function startWebGLScene(canvas, status) {
       trafficLiveStatus.textContent = `Live traffic unavailable (${error.message})`;
     } finally {
       if (trafficRefresh) trafficRefresh.disabled = false;
+    }
+  }
+
+  async function loadTrafficCalibrationStatus() {
+    if (!trafficCalibrationStatus) return;
+    try {
+      const response = await fetch(`${windApi}/traffic/calibration-status`);
+      const status = await response.json();
+      if (!response.ok) throw new Error(status.detail || `HTTP ${response.status}`);
+      const profiles = Object.values(status.profiles || {});
+      const readyProfiles = profiles.filter(profile => profile.ready);
+      const days = Number(status.distinct_days) || 0;
+      const requiredDays = Math.max(0, ...profiles.map(profile => Number(profile.minimum_distinct_weekdays) || 0));
+      const routeScenarios = Object.values(status.route_sampler?.scenarios || {});
+      const countCalibrated = routeScenarios.some(item => item.enabled);
+      trafficCalibrationBadge.textContent = countCalibrated ? 'Counts configured' : `${days}/${requiredDays || 5} weekdays`;
+      trafficCalibrationBadge.classList.toggle('is-ready', countCalibrated || readyProfiles.length > 0);
+      trafficCalibrationStatus.textContent = countCalibrated
+        ? 'Observed edge or turning counts are configured for at least one scenario. Check each comparison report for the calibration actually applied.'
+        : readyProfiles.length
+          ? `Peak timing profiles are ready for ${readyProfiles.length} period${readyProfiles.length === 1 ? '' : 's'} from ${days} observed weekdays. This is speed-pattern calibration; vehicle demand is still synthetic.`
+          : `${Number(status.observation_rows) || 0} TomTom speed snapshots across ${days} distinct weekdays. ${Math.max(0, requiredDays - days)} more weekday${requiredDays - days === 1 ? '' : 's'} needed for peak timing profiles; these observations do not provide vehicle counts.`;
+    } catch (error) {
+      trafficCalibrationBadge.textContent = 'Status unavailable';
+      trafficCalibrationStatus.textContent = `Could not load traffic calibration status (${error.message}).`;
     }
   }
 
@@ -6166,12 +6413,30 @@ export async function startWebGLScene(canvas, status) {
     if (trafficImpactSummary) {
       const assessment = trafficImpactAssessment(impact);
       trafficImpactSummary.className = `traffic-impact-summary ${assessment.severity}`;
-      trafficImpactSummary.innerHTML = `<strong>${assessment.headline}</strong>`
+      const qualityLabel = impact.assessment_ready === false
+        ? '<span class="traffic-quality-pill is-incomplete">Quality checks failed</span>'
+        : '<span class="traffic-quality-pill">Quality checks passed</span>';
+      trafficImpactSummary.innerHTML = `${qualityLabel}<strong>${assessment.headline}</strong>`
         + (assessment.severity === 'incomplete'
           ? assessment.action
           : `${assessment.action} ${formatPercent(assessment.durationChange)} paired journey time · `
             + `${assessment.completionChange >= 0 ? '+' : ''}${assessment.completionChange.toFixed(1)} percentage-point completion change.`);
       trafficImpactSummary.hidden = false;
+    }
+    if (trafficUncertainty) {
+      if (ensemble.applied) {
+        const range = ensemble.journey_time_change_pct || {};
+        const goodRuns = reportNumber(ensemble.assessment_ready_runs, 0);
+        const totalRuns = reportNumber(ensemble.run_count, 0);
+        const hasRange = Number.isFinite(Number(range.minimum)) && Number.isFinite(Number(range.maximum));
+        trafficUncertainty.textContent = hasRange
+          ? `${goodRuns} of ${totalRuns} seed runs passed · median journey-time change ${formatPercent(range.median)} (range ${formatPercent(range.minimum)} to ${formatPercent(range.maximum)}).`
+          : `${goodRuns} of ${totalRuns} seed runs passed. Journey-time range is unavailable for this comparison.`;
+        trafficUncertainty.hidden = false;
+      } else {
+        trafficUncertainty.textContent = 'Single random seed · variation between runs is not estimated. Select 3 or 5 seeds for a range.';
+        trafficUncertainty.hidden = false;
+      }
     }
     if (trafficStatus) {
       const automaticStability = impact.ensemble?.automatic_stability || {};
@@ -6396,6 +6661,24 @@ export async function startWebGLScene(canvas, status) {
     { direction_deg: 270, sector: 'w', label: 'W 270°', base: '/assets/cfd/cbd_w_full/' },
     { direction_deg: 315, sector: 'nw', label: 'NW 315°', base: '/assets/cfd/cbd_nw_full/' },
   ];
+  let CFD_DESIGN_CASES = [];
+  fetch('/assets/cfd/design-cases.json', { cache: 'no-store' })
+    .then(response => response.ok ? response.json() : [])
+    .then(items => {
+      CFD_DESIGN_CASES = Array.isArray(items) ? items.filter(item => item?.base && Number.isFinite(item.direction_deg)) : [];
+      if (windDesignSelect) {
+        windDesignSelect.replaceChildren();
+        const cases = CFD_DESIGN_CASES.length ? CFD_DESIGN_CASES : [{ label: 'No solved proposals yet' }];
+        cases.forEach((item, index) => {
+          const option = document.createElement('option');
+          option.value = String(index);
+          option.textContent = item.label || item.case_id;
+          windDesignSelect.append(option);
+        });
+        windDesignSelect.disabled = !CFD_DESIGN_CASES.length;
+        if (windDesignLoad) windDesignLoad.disabled = !CFD_DESIGN_CASES.length;
+      }
+    }).catch(() => {});
 
   function findCfdCase(directionDeg) {
     return CFD_CASES.find(item => item.direction_deg === directionDeg) || null;
@@ -6422,7 +6705,7 @@ export async function startWebGLScene(canvas, status) {
     if (revision !== windStudyRevision) throw new DOMException('Wind settings changed; run again.', 'AbortError');
   };
   async function ensureCfdCaseLoaded(directionDeg, revision = windStudyRevision) {
-    const cfdCase = findCfdCase(directionDeg);
+    const cfdCase = typeof directionDeg === 'object' ? directionDeg : findCfdCase(directionDeg);
     if (!cfdCase) throw new Error(`no solved OpenFOAM case for ${directionDeg}°`);
     const base = cfdCase.base;
     const manifest = await fetch(`${base}volume.json`, { cache: 'no-store' }).then(response => {
@@ -6501,7 +6784,6 @@ export async function startWebGLScene(canvas, status) {
         ? `${coverage.centroids_in_domain}/${coverage.scene_buildings} buildings in solved domain`
         : 'solved domain only';
       if (windModeBadge) windModeBadge.textContent = coverage?.fraction >= 0.99 ? 'CFD · FULL CBD' : 'CFD · PILOT';
-      if (windSourceDetail) windSourceDetail.textContent = `${cfdCase.label} · iteration ${manifest.result_time} · ${coverageLabel}`;
       windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
       windStatus.textContent = `OpenFOAM ${solver.version} · ${windState.cfdGroundHeight.toFixed(1)} m pedestrian field · ${coverageLabel}`;
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind', metadata: {
@@ -6634,65 +6916,121 @@ export async function startWebGLScene(canvas, status) {
     const domainSizeX = nativeSpacing[0] * (manifest.dimensions[0] - 1);
     const domainSizeY = nativeSpacing[1] * (manifest.dimensions[1] - 1);
     const origin = manifest.origin_foam_m;
-    // Sample finer than the native ~20 m OpenFOAM grid. That grid is coarser
-    // than most street canyons, so a narrow street often has zero native
-    // grid points landing inside it — every corner check then fails and the
-    // whole street draws as a hole, even though sampleCfd (trilinear) can
-    // interpolate a perfectly good value at any point in between. Only the
-    // wide main streets happened to catch enough native points to look
-    // continuous.
-    const groundResolution = 12;
+    // Sample on sub-native cells. Cell-centred validity avoids dropping a
+    // whole quad just because one of its shared corners falls inside a
+    // building or outside the CFD mask.
+    const groundResolution = 10;
     const columns = Math.max(2, Math.round(domainSizeX / groundResolution));
     const rows = Math.max(2, Math.round(domainSizeY / groundResolution));
     const spacing = [domainSizeX / columns, domainSizeY / rows];
     const points = [];
-    const samples = [];
     for (let row = 0; row <= rows; row += 1) {
       for (let column = 0; column <= columns; column += 1) {
         const foamX = origin[0] + column * spacing[0];
         const foamY = origin[1] + row * spacing[1];
         const [x, , z] = foamToViewerPoint(foamX, foamY, 0);
         const worldY = terrainHeightAt(x, z) + windState.cfdGroundHeight;
-        const sample = pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, worldY)
-          ? sampleCfd(x, worldY, z) : null;
         points.push([x, worldY, z]);
-        samples.push(sample);
+      }
+    }
+    // Keep solver samples for inspection/statistics, while tracking building
+    // masks separately so the display mesh can sit on the ground and let the
+    // actual building geometry define a clean edge.
+    const cellSamples = [];
+    const cellCenters = [];
+    const blockedByBuilding = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        const a = row * (columns + 1) + column;
+        const d = a + columns + 2;
+        const x = (points[a][0] + points[d][0]) * 0.5;
+        const z = (points[a][2] + points[d][2]) * 0.5;
+        const worldY = terrainHeightAt(x, z) + windState.cfdGroundHeight;
+        const inFootprint = pointInLidarFootprint(x, z);
+        const blocked = inFootprint && windPointInsideBuilding(x, z, worldY);
+        const sample = inFootprint && !blocked
+          ? sampleCfd(x, worldY, z) : null;
+        cellCenters.push([x, z]);
+        cellSamples.push(sample);
+        blockedByBuilding.push(blocked);
       }
     }
     windState.cfdLocalRange = {
       [windState.cfdField]: computeLocalRange(
         windState.cfdField,
-        samples.filter(Boolean).map(sample => sample[windState.cfdField]),
+        cellSamples.filter(Boolean).map(sample => sample[windState.cfdField]),
       ),
     };
     const positions = [];
     const colors = [];
     const valid = [];
-    for (let index = 0; index < points.length; index += 1) {
-      const [x, worldY, z] = points[index];
-      const sample = samples[index];
-      positions.push(x, worldY + 0.12, z);
-      const color = sample ? cfdColor(sample[windState.cfdField]) : new THREE.Color(0x202729);
-      colors.push(color.r, color.g, color.b);
-      valid.push(Boolean(sample));
-    }
     const indices = [];
-    const rowWidth = columns + 1;
+    const cornerCount = (columns + 1) * (rows + 1);
+    const cornerSums = new Float32Array(cornerCount);
+    const cornerSamples = new Uint8Array(cornerCount);
     for (let row = 0; row < rows; row += 1) {
       for (let column = 0; column < columns; column += 1) {
-        const a = row * rowWidth + column;
+        const sample = cellSamples[row * columns + column];
+        if (!sample) continue;
+        const value = sample[windState.cfdField];
+        for (const corner of [
+          row * (columns + 1) + column,
+          (row + 1) * (columns + 1) + column,
+          (row + 1) * (columns + 1) + column + 1,
+          row * (columns + 1) + column + 1,
+        ]) {
+          cornerSums[corner] += value;
+          cornerSamples[corner] += 1;
+        }
+      }
+    }
+    for (let row = 0; row < rows; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        const cell = row * columns + column;
+        const sample = cellSamples[cell];
+        valid.push(Boolean(sample));
+        let displaySample = sample;
+        let nearbyCount = 0;
+        if (!displaySample && !blockedByBuilding[cell]) {
+          for (let nearbyRow = Math.max(0, row - 1); nearbyRow <= Math.min(rows - 1, row + 1); nearbyRow += 1) {
+            for (let nearbyColumn = Math.max(0, column - 1); nearbyColumn <= Math.min(columns - 1, column + 1); nearbyColumn += 1) {
+              if (cellSamples[nearbyRow * columns + nearbyColumn]) nearbyCount += 1;
+            }
+          }
+        }
+        if (!displaySample && (blockedByBuilding[cell] || nearbyCount >= 6)) {
+          let total = 0, count = 0;
+          for (let nearbyRow = Math.max(0, row - 2); nearbyRow <= Math.min(rows - 1, row + 2); nearbyRow += 1) {
+            for (let nearbyColumn = Math.max(0, column - 2); nearbyColumn <= Math.min(columns - 1, column + 2); nearbyColumn += 1) {
+              const nearby = cellSamples[nearbyRow * columns + nearbyColumn];
+              if (!nearby) continue;
+              total += nearby[windState.cfdField];
+              count += 1;
+            }
+          }
+          if (count) displaySample = { [windState.cfdField]: total / count };
+        }
+        if (!displaySample) continue;
+        const a = row * (columns + 1) + column;
         const b = a + 1;
-        const c = a + rowWidth;
+        const c = a + columns + 1;
         const d = c + 1;
-        if (valid[a] && valid[b] && valid[c]) indices.push(a, c, b);
-        if (valid[b] && valid[c] && valid[d]) indices.push(b, c, d);
+        for (const corner of [a, c, d, b]) {
+          const [x, , z] = points[corner];
+          positions.push(x, terrainHeightAt(x, z) + 0.035, z);
+          const cornerValue = cornerSamples[corner] ? cornerSums[corner] / cornerSamples[corner] : displaySample[windState.cfdField];
+          const color = cfdColor(cornerValue);
+          colors.push(color.r, color.g, color.b);
+        }
+        const vertex = positions.length / 3 - 4;
+        indices.push(vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3);
       }
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geometry.setIndex(indices);
-    windHeatMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    windHeatMesh = new THREE.Mesh(geometry, makeWindLayerMaterial({
       vertexColors: true, transparent: true, opacity: 0.82, side: THREE.DoubleSide,
       depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
     }));
@@ -6700,6 +7038,21 @@ export async function startWebGLScene(canvas, status) {
     windHeatMesh.renderOrder = 3;
     windGroup.add(windHeatMesh);
     hideStreetLayersForWind();
+    if (windState.analysisMode === 'direction' && windState.cfdField === 'speed') {
+      dispatchEvent(new CustomEvent('climate-wind-result', { detail: {
+        analysis_mode: 'direction', cfd: true,
+        version: windState.cfd.manifest.solver?.case_id || 'openfoam-cfd',
+        validation_status: windState.cfd.manifest.validation_status || 'exploratory_unvalidated_pilot',
+        direction_deg: windState.direction, height_m: windState.cfdGroundHeight,
+        season: windState.season, stability: windState.stability,
+        model_kind: 'steady_openfoam_rans',
+        origin: [cellCenters[0][0], cellCenters[0][1]], width: columns, height: rows,
+        dx: spacing[0], dz: spacing[1],
+        basis_xz: windState.cfd.manifest.coordinates.x_downwind_in_viewer_xz,
+        basis_z: windState.cfd.manifest.coordinates.y_crosswind_in_viewer_xz,
+        speed: cellSamples.map(sample => sample?.speed || 0), valid: Uint8Array.from(valid, value => value ? 1 : 0),
+      } }));
+    }
   }
 
   function updateCfdSliceLabels(fixedAxis, axes, fixedIndex, centerA, centerB) {
@@ -6888,7 +7241,10 @@ export async function startWebGLScene(canvas, status) {
     buildCfdPedestrianSurface();
     buildCfdSlice();
     buildCfdFacadePressure();
-    if (windPoints) windPoints.visible = windState.cfdView === 'flow' && windState.flowlinesVisible;
+    if (windPoints) {
+      windPoints.visible = windState.cfdView === 'flow' && windState.flowlinesVisible
+        && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
     updateCfdLegend();
   }
 
@@ -6909,55 +7265,110 @@ export async function startWebGLScene(canvas, status) {
     const positions = [];
     const colors = [];
     const indices = [];
-    for (let row = 0; row <= field.height; row += 1) {
-      for (let column = 0; column <= field.width; column += 1) {
-        const x = field.origin[0] + column * field.dx;
-        const z = field.origin[1] + row * field.dz;
-        const sampled = sampleWind(x, z);
-        let color;
-        if (comfortMode) {
-          const sourceColumn = clamp(Math.floor((x - field.origin[0]) / field.dx), 0, field.width - 1);
-          const sourceRow = clamp(Math.floor((z - field.origin[1]) / field.dz), 0, field.height - 1);
-          const code = field.comfort_category[sourceRow * field.width + sourceColumn] ?? 5;
-          color = new THREE.Color(comfortColors[code]);
-        } else {
-          color = windColor(sampled.speed, minimum, maximum);
+    if (comfortMode) {
+      // Subdivide the display mesh and blend colours between nearby solved
+      // cells. A few masked building cells and isolated one-cell mesh gaps
+      // are filled for rendering only; the field and inspector stay masked.
+      const nearestComfortCategory = (column, row) => {
+        let nearest = null, nearestDistance = Infinity;
+        for (let radius = 0; radius <= 3 && nearest === null; radius += 1) {
+          for (let r = Math.max(0, row - radius); r <= Math.min(field.height - 1, row + radius); r += 1) {
+            for (let c = Math.max(0, column - radius); c <= Math.min(field.width - 1, column + radius); c += 1) {
+              const index = r * field.width + c;
+              if (!field.valid?.[index]) continue;
+              const distance = (c - column) ** 2 + (r - row) ** 2;
+              if (distance < nearestDistance) {
+                nearest = field.comfort_category[index];
+                nearestDistance = distance;
+              }
+            }
+          }
         }
-        positions.push(x, terrainHeightAt(x, z) + 1.05, z);
-        colors.push(color.r, color.g, color.b);
-      }
-    }
-    const rowWidth = field.width + 1;
-    for (let row = 0; row < field.height; row += 1) {
-      for (let column = 0; column < field.width; column += 1) {
-        if (comfortMode) {
-          // Require both: a real CFD sample (excludes the lidar-footprint
-          // holes for water bodies etc. wrongly leaving false-comfortable
-          // gaps) AND inside the mapped city footprint (excludes the wide
-          // upstream/downstream clearance buffer the solved wind-aligned
-          // domain carries beyond the actual mapped terrain — that buffer is
-          // real CFD data, but rendering it read as the study spilling out
-          // past its own bounds since it's ocean/unmapped land, not city).
+        return nearest;
+      };
+      const comfortColorAt = (x, z) => {
+        const gx = clamp((x - field.origin[0]) / field.dx - 0.5, 0, field.width - 1);
+        const gz = clamp((z - field.origin[1]) / field.dz - 0.5, 0, field.height - 1);
+        const c0 = Math.floor(gx), r0 = Math.floor(gz);
+        const c1 = Math.min(c0 + 1, field.width - 1), r1 = Math.min(r0 + 1, field.height - 1);
+        const tx = gx - c0, tz = gz - r0;
+        const centerColumn = clamp(Math.round((x - field.origin[0]) / field.dx - 0.5), 0, field.width - 1);
+        const centerRow = clamp(Math.round((z - field.origin[1]) / field.dz - 0.5), 0, field.height - 1);
+        const fallbackCategory = nearestComfortCategory(centerColumn, centerRow);
+        if (fallbackCategory === null) return null;
+        const category = (c, r) => field.valid?.[r * field.width + c]
+          ? field.comfort_category[r * field.width + c] : nearestComfortCategory(c, r) ?? fallbackCategory;
+        const top = category(c0, r0) * (1 - tx) + category(c1, r0) * tx;
+        const bottom = category(c0, r1) * (1 - tx) + category(c1, r1) * tx;
+        const value = top * (1 - tz) + bottom * tz;
+        const low = Math.floor(value), high = Math.min(5, low + 1), mix = value - low;
+        const color = new THREE.Color(comfortColors[low]).lerp(new THREE.Color(comfortColors[high]), mix);
+        return color;
+      };
+      const subdivisions = 4;
+      for (let row = 0; row < field.height; row += 1) {
+        for (let column = 0; column < field.width; column += 1) {
+          const cell = row * field.width + column;
           const centerX = field.origin[0] + (column + 0.5) * field.dx;
           const centerZ = field.origin[1] + (row + 0.5) * field.dz;
-          if (!field.valid?.[row * field.width + column] || !pointInLidarFootprint(centerX, centerZ)) continue;
-        } else {
+          const centerY = terrainHeightAt(centerX, centerZ) + field.height_m;
+          const blockedByBuilding = windPointInsideBuilding(centerX, centerZ, centerY);
+          let nearbySamples = 0;
+          for (let nearbyRow = Math.max(0, row - 1); nearbyRow <= Math.min(field.height - 1, row + 1); nearbyRow += 1) {
+            for (let nearbyColumn = Math.max(0, column - 1); nearbyColumn <= Math.min(field.width - 1, column + 1); nearbyColumn += 1) {
+              if (field.valid?.[nearbyRow * field.width + nearbyColumn]) nearbySamples += 1;
+            }
+          }
+          const isolatedDataGap = !field.valid?.[cell] && nearbySamples >= 6;
+          if ((!field.valid?.[cell] && !blockedByBuilding && !isolatedDataGap) || !pointInLidarFootprint(centerX, centerZ)) continue;
+          for (let sy = 0; sy < subdivisions; sy += 1) for (let sx = 0; sx < subdivisions; sx += 1) {
+            const x0 = field.origin[0] + (column + sx / subdivisions) * field.dx;
+            const x1 = field.origin[0] + (column + (sx + 1) / subdivisions) * field.dx;
+            const z0 = field.origin[1] + (row + sy / subdivisions) * field.dz;
+            const z1 = field.origin[1] + (row + (sy + 1) / subdivisions) * field.dz;
+            if (!pointInLidarFootprint((x0 + x1) * 0.5, (z0 + z1) * 0.5)) continue;
+            const corners = [[x0, z0], [x0, z1], [x1, z1], [x1, z0]];
+            const cornerColors = corners.map(([x, z]) => comfortColorAt(x, z));
+            if (cornerColors.some(color => !color)) continue;
+            const vertex = positions.length / 3;
+            corners.forEach(([x, z], index) => {
+              positions.push(x, terrainHeightAt(x, z) + 0.035, z);
+              const color = cornerColors[index];
+              colors.push(color.r, color.g, color.b);
+            });
+            indices.push(vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3);
+          }
+        }
+      }
+    } else {
+      const subdivisions = 4;
+      for (let row = 0; row < field.height; row += 1) {
+        for (let column = 0; column < field.width; column += 1) {
           const centerX = field.origin[0] + (column + 0.5) * field.dx;
           const centerZ = field.origin[1] + (row + 0.5) * field.dz;
           if (!pointInLidarFootprint(centerX, centerZ)) continue;
+          for (let sy = 0; sy < subdivisions; sy += 1) for (let sx = 0; sx < subdivisions; sx += 1) {
+            const x0 = field.origin[0] + (column + sx / subdivisions) * field.dx;
+            const x1 = field.origin[0] + (column + (sx + 1) / subdivisions) * field.dx;
+            const z0 = field.origin[1] + (row + sy / subdivisions) * field.dz;
+            const z1 = field.origin[1] + (row + (sy + 1) / subdivisions) * field.dz;
+            if (!pointInLidarFootprint((x0 + x1) * 0.5, (z0 + z1) * 0.5)) continue;
+            const vertex = positions.length / 3;
+            [[x0, z0], [x0, z1], [x1, z1], [x1, z0]].forEach(([x, z]) => {
+              const color = windColor(sampleWind(x, z).speed, minimum, maximum);
+              positions.push(x, terrainHeightAt(x, z) + 0.035, z);
+              colors.push(color.r, color.g, color.b);
+            });
+            indices.push(vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3);
+          }
         }
-        const a = row * rowWidth + column;
-        const b = a + 1;
-        const c = a + rowWidth;
-        const d = c + 1;
-        indices.push(a, c, b, b, c, d);
       }
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geometry.setIndex(indices);
-    windHeatMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    const layerMaterial = makeWindLayerMaterial({
       vertexColors: true,
       transparent: true,
       opacity: 0.76,
@@ -6965,7 +7376,8 @@ export async function startWebGLScene(canvas, status) {
       depthWrite: false,
       polygonOffset: true,
       polygonOffsetFactor: -1,
-    }));
+    });
+    windHeatMesh = new THREE.Mesh(geometry, layerMaterial);
     windHeatMesh.name = 'wind-speed-heatmap';
     windHeatMesh.renderOrder = 2;
     windHeatMesh.visible = windState.surfaceVisible;
@@ -6973,23 +7385,48 @@ export async function startWebGLScene(canvas, status) {
     if (windState.enabled && windState.surfaceVisible) hideStreetLayersForWind();
   }
 
+  function windFieldCellValid(field, x, z) {
+    const column = Math.floor((x - field.origin[0]) / field.dx);
+    const row = Math.floor((z - field.origin[1]) / field.dz);
+    if (column < 0 || column >= field.width || row < 0 || row >= field.height) return false;
+    return !field.valid || Boolean(field.valid[row * field.width + column]);
+  }
+
   function spawnWindParticle(field) {
     const makeParticle = (x, worldY, z, age, heightAboveGround) => ({
       x, worldY, z, spawnX: x, spawnY: worldY, spawnZ: z, age, heightAboveGround, u: 0, w: 0, v: 0,
       trail: Array.from({ length: windTrailPoints }, () => [x, worldY, z]),
     });
+    if (windState.analysisMode === 'comfort' && field.valid) {
+      const minX = field.origin[0], maxX = minX + field.width * field.dx;
+      const minZ = field.origin[1], maxZ = minZ + field.height * field.dz;
+      const heightAboveGround = Math.max(1.5, windState.cfdGroundHeight + 0.8);
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        const x = minX + Math.random() * (maxX - minX);
+        const z = minZ + Math.random() * (maxZ - minZ);
+        const worldY = terrainHeightAt(x, z) + heightAboveGround;
+        if (windFieldCellValid(field, x, z) && pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, worldY)) {
+          return makeParticle(x, worldY, z, Math.random() * 7, heightAboveGround);
+        }
+      }
+      const x = clamp(0, minX, maxX), z = clamp(0, minZ, maxZ);
+      return makeParticle(x, terrainHeightAt(x, z) + heightAboveGround, z, 0, heightAboveGround);
+    }
     if (windState.dataMode === 'cfd' && windState.cfd) {
       // Seed across the user's flow box (like the old "draw a box, then
       // simulate" domain), not a fixed curtain over the whole ~2600 m solved
       // domain — that mostly seeded particles far upstream of the streets
       // anyone actually wanted to look at, so they read as a small,
       // disconnected patch of dashes rather than flow through the city.
-      const half = windState.size / 2;
+      const groundFlowMode = windState.analysisMode === 'direction' && windState.cfdView === 'ground'
+        && windState.cfdField === 'speed';
+      const center = groundFlowMode ? windState.domainCenter : windState.center;
+      const half = (groundFlowMode ? windState.domainSize : windState.size) / 2;
       for (let attempt = 0; attempt < 80; attempt += 1) {
-        const x = windState.center[0] + (Math.random() * 2 - 1) * half;
-        const z = windState.center[1] + (Math.random() * 2 - 1) * half;
+        const x = center[0] + (Math.random() * 2 - 1) * half;
+        const z = center[1] + (Math.random() * 2 - 1) * half;
         const groundY = terrainHeightAt(x, z);
-        const heightAboveGround = windState.volumeVisible
+        const heightAboveGround = !groundFlowMode && windState.volumeVisible
           ? 2 + Math.random() ** 1.5 * Math.max(3, windState.flowBoxHeight - 2)
           : windState.cfdGroundHeight + Math.random() * 3;
         const worldY = groundY + heightAboveGround;
@@ -7022,7 +7459,9 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function resetWindParticles() {
-    const count = Math.round(clamp(windState.particleCount, 200, 1600));
+    const particleAnimationMode = windState.analysisMode !== 'comfort'
+      && windState.cfdView === 'flow' && windState.flowlinesVisible;
+    const count = particleAnimationMode ? Math.round(clamp(windState.particleCount, 200, 1600)) : 0;
     windState.particles = Array.from({ length: count }, () => spawnWindParticle(windState.field));
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(count * (windTrailPoints - 1) * 6), 3));
@@ -7041,7 +7480,8 @@ export async function startWebGLScene(canvas, status) {
     }));
     windPoints.name = 'wind-gusts';
     windPoints.renderOrder = 3;
-    windPoints.visible = windState.flowlinesVisible && windState.analysisMode !== 'comfort' && windState.cfdView === 'flow';
+    const motionAllowed = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    windPoints.visible = motionAllowed && particleAnimationMode;
     windGroup.add(windPoints);
   }
 
@@ -7152,7 +7592,7 @@ export async function startWebGLScene(canvas, status) {
       const domainCenter = [0, 0];
       const domainSize = 2600;
       const half = domainSize / 2;
-      const resolution = 20;
+      const resolution = 12;
       const width = Math.max(4, Math.round(domainSize / resolution));
       const height = width;
       const dx = domainSize / width;
@@ -7232,6 +7672,8 @@ export async function startWebGLScene(canvas, status) {
         uncertainty: { relative_fraction: 0.35 },
         direction_count: resolved.length,
         coverage_fraction: coverage,
+        forcing_coverage: climatology.coverage || null,
+        forcing_dataset_version: climatology.dataset_version || null,
       };
       const sectorList = resolved.map(entry => entry.sector.sector.toUpperCase()).join(', ');
       windStatus.textContent = `OpenFOAM comfort · ${resolved.length}/16 sectors resolved (${sectorList}) · `
@@ -7240,7 +7682,7 @@ export async function startWebGLScene(canvas, status) {
     } catch (error) {
       if (revision !== windStudyRevision) {
         windSimulate.disabled = false;
-        windSimulate.textContent = 'Run OpenFOAM-weighted comfort study';
+        windSimulate.textContent = 'Run comfort assessment';
         announceStudy('error', 'Wind settings changed or study cancelled. Run again for the current settings.');
         return;
       }
@@ -7249,7 +7691,7 @@ export async function startWebGLScene(canvas, status) {
     }
     announceStudy(windState.field ? 'ready' : 'error', windState.field ? '' : windStatus.textContent);
     windSimulate.disabled = false;
-    windSimulate.textContent = 'Run OpenFOAM-weighted comfort study';
+    windSimulate.textContent = 'Run comfort assessment';
     windGradient?.classList.add('comfort');
     windLegendLow.innerHTML = '<b>Long sitting</b> · suitable';
     windLegendHigh.innerHTML = '<b>Uncomfortable</b> · mitigate';
@@ -7264,27 +7706,31 @@ export async function startWebGLScene(canvas, status) {
     // must be visible regardless of what Direction last left surfaceVisible
     // at.
     windState.surfaceVisible = true;
+    resetWindParticles();
     dispatchEvent(new CustomEvent('climate-wind-result', { detail: windState.field }));
     buildWindHeatmap();
     requestRender();
   }
 
   function updateWindParticles(now) {
-    if (!windState.enabled || !windState.field || !windPoints) return;
+    if (!windState.enabled || !windState.field || !windPoints?.visible) return;
     const elapsed = Math.min(0.06, (now - windState.lastTime) / 1000) * windState.animationSpeed;
     windState.lastTime = now;
     const half = windState.size * 0.5;
     const positions = windPoints.geometry.attributes.position.array;
     const colors = windPoints.geometry.attributes.color.array;
     const fieldSpeeds = windState.field.speed || [];
+    const comfortMode = windState.analysisMode === 'comfort' && windState.field.analysis_mode === 'comfort';
+    const directionSurfaceMode = windState.analysisMode === 'direction' && windState.cfdView === 'ground'
+      && windState.cfdField === 'speed';
     const minimumSpeed = fieldSpeeds.length ? Math.min(...fieldSpeeds) : 0;
     const maximumSpeed = Math.max(...fieldSpeeds, windState.speed, 0.1) * (windState.volumeVisible ? 1.8 : 1);
     windState.particles.forEach((particle, index) => {
-      const cfdMode = windState.dataMode === 'cfd' && windState.cfd;
+      const cfdMode = !comfortMode && windState.dataMode === 'cfd' && windState.cfd;
       const worldY = cfdMode ? particle.worldY : terrainHeightAt(particle.x, particle.z) + particle.heightAboveGround;
       const target = redirectWindFlow(
         particle.x, particle.z,
-        sampleWindAtHeight(particle.x, particle.z, particle.heightAboveGround, worldY),
+        comfortMode ? sampleWind(particle.x, particle.z) : sampleWindAtHeight(particle.x, particle.z, particle.heightAboveGround, worldY),
         false, worldY,
       );
       // Relax toward the redirected vector over several frames. Instant
@@ -7303,10 +7749,15 @@ export async function startWebGLScene(canvas, status) {
       // wake can visibly clear the edge) rather than the whole ~2600 m
       // solved domain — otherwise a fast respawn near the box reads as
       // "dies after a small section" while the rest of the domain sits empty.
-      const outsideDomain = cfdMode
+      const outsideDomain = comfortMode
+        ? !windFieldCellValid(windState.field, nextX, nextZ)
+          || !pointInLidarFootprint(nextX, nextZ)
+          || Math.abs(nextX - windState.field.origin[0]) > windState.field.width * windState.field.dx
+          || Math.abs(nextZ - windState.field.origin[1]) > windState.field.height * windState.field.dz
+        : cfdMode
         ? !sampleCfd(nextX, nextY, nextZ)
-          || Math.abs(nextX - windState.center[0]) > half + 60
-          || Math.abs(nextZ - windState.center[1]) > half + 60
+          || (!directionSurfaceMode && (Math.abs(nextX - windState.center[0]) > half + 60
+            || Math.abs(nextZ - windState.center[1]) > half + 60))
         : Math.abs(nextX - windState.center[0]) > half || Math.abs(nextZ - windState.center[1]) > half;
       const nextWorldY = cfdMode ? nextY : terrainHeightAt(nextX, nextZ) + particle.heightAboveGround;
       const midpointX = (particle.x + nextX) * 0.5;
@@ -7322,7 +7773,7 @@ export async function startWebGLScene(canvas, status) {
         const respawnWorldY = cfdMode ? particle.worldY : terrainHeightAt(particle.x, particle.z) + particle.heightAboveGround;
         const respawnTarget = redirectWindFlow(
           particle.x, particle.z,
-          sampleWindAtHeight(particle.x, particle.z, particle.heightAboveGround, respawnWorldY),
+        comfortMode ? sampleWind(particle.x, particle.z) : sampleWindAtHeight(particle.x, particle.z, particle.heightAboveGround, respawnWorldY),
           false, respawnWorldY,
         );
         particle.u = respawnTarget.u;
@@ -7366,7 +7817,8 @@ export async function startWebGLScene(canvas, status) {
         positions[offset + 3] = headX;
         positions[offset + 4] = cfdMode ? headY : terrainHeightAt(headX, headZ) + particle.heightAboveGround;
         positions[offset + 5] = headZ;
-        const segmentSample = cfdMode ? sampleCfd(headX, headY, headZ) : sampleWindAtHeight(headX, headZ, particle.heightAboveGround);
+        const segmentSample = comfortMode ? sampleWind(headX, headZ)
+          : cfdMode ? sampleCfd(headX, headY, headZ) : sampleWindAtHeight(headX, headZ, particle.heightAboveGround);
         const color = windState.dataMode === 'cfd'
           ? cfdColor(segmentSample?.speed || 0, 'speed')
           : windColor(segmentSample.speed, minimumSpeed, maximumSpeed);
@@ -7415,7 +7867,7 @@ export async function startWebGLScene(canvas, status) {
 
   function requestGroundPick(handler) {
     groundPickHandler = handler;
-    canvas.style.cursor = handler ? 'crosshair' : '';
+    canvas.style.cursor = handler || windInspectToggle?.getAttribute('aria-pressed') === 'true' ? 'crosshair' : '';
   }
 
   function addScenePickHandler(handler) {
@@ -7749,7 +8201,38 @@ export async function startWebGLScene(canvas, status) {
     }
     if (cameraTouchTap) lastCameraTouchTap = performance.now();
     drag = null;
-    if (clickCandidate && scenePickHandlers.size
+    const isMapClick = clickCandidate
+      && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < (event.pointerType === 'touch' ? 12 : 5);
+    if (isMapClick && windInspectToggle?.getAttribute('aria-pressed') === 'true'
+      && windState.enabled && windHeatMesh?.visible) {
+      const point = pointerGround(event);
+      if (point) {
+        const x = point.x, z = point.z;
+        const ground = terrainHeightAt(x, z);
+        let speed = null, category = null;
+        if (windState.analysisMode === 'comfort' && windState.field?.comfort_category) {
+          const field = windState.field;
+          const column = Math.floor((x - field.origin[0]) / field.dx);
+          const row = Math.floor((z - field.origin[1]) / field.dz);
+          const index = row * field.width + column;
+          if (column >= 0 && row >= 0 && column < field.width && row < field.height && field.valid?.[index]
+            && pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, ground + field.height_m)) {
+            speed = field.speed[index];
+            category = ['Long sitting', 'Short sitting', 'Standing', 'Strolling', 'Business walking', 'Uncomfortable'][field.comfort_category[index]] || 'Unclassified';
+          }
+        } else if (windState.cfd) {
+          if (pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, ground + windState.cfdGroundHeight)) {
+            const sample = sampleCfd(x, ground + windState.cfdGroundHeight, z);
+            if (sample) speed = sample.speed;
+          }
+        }
+        windInspectResult.textContent = speed == null
+          ? 'No solved wind value at this point. Try a coloured part of the layer.'
+          : `${speed.toFixed(1)} m/s${category ? ` · ${category}` : ' · switch to Wind comfort for the comfort class'} · ${x.toFixed(0)} m east, ${z.toFixed(0)} m south`;
+        windInspectResult.hidden = false;
+      }
+    }
+    if (isMapClick && scenePickHandlers.size
       && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < (event.pointerType === 'touch' ? 12 : 5)) {
       const raycaster = pointerRaycaster(event);
       for (const handler of scenePickHandlers) {
@@ -7758,6 +8241,9 @@ export async function startWebGLScene(canvas, status) {
     }
     clickCandidate = null;
     if (sunDrag) {
+      sunSeasonalResults = null;
+      sunCompareSwitch.hidden = true;
+      sunCompareSummary.hidden = true;
       sunStatus.textContent = `Analysis area updated to ${shadowState.size} m · calculate sun hours again.`;
     }
     sunDrag = null;
@@ -7811,7 +8297,9 @@ export async function startWebGLScene(canvas, status) {
     const group = layerGroups[event.target.dataset.layer];
     if (group) {
       group.visible = event.target.checked;
-      if (!shadowState.enabled && !heatGroup.visible) savedVisibility[event.target.dataset.layer] = group.visible;
+      if (document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'tools') {
+        savedVisibility[event.target.dataset.layer] = group.visible;
+      }
     }
     requestRender();
   }));
@@ -7819,6 +8307,71 @@ export async function startWebGLScene(canvas, status) {
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
   heatMetric?.addEventListener('change', event => {
     loadHeat(event.target.value);
+  });
+  heatSaveComparison?.addEventListener('click', () => {
+    if (!heatCurrentSummary) {
+      if (heatComparison) { heatComparison.hidden = false; heatComparison.textContent = 'Wait for a heat result before saving a comparison.'; }
+      return;
+    }
+    heatSavedComparison = { ...heatCurrentSummary };
+    if (heatComparison) { heatComparison.hidden = false; heatComparison.textContent = `Saved ${heatSavedComparison.label} · ${heatSavedComparison.date} · mean ${heatSavedComparison.mean.toFixed(1)}${heatSavedComparison.unit}. Change the view or time to compare.`; }
+  });
+  heatInspectButton?.addEventListener('click', () => {
+    if (!heatInspectResult) return;
+    if (heatToggle && !heatToggle.checked) { heatToggle.checked = true; heatToggle.dispatchEvent(new Event('change', { bubbles: true })); }
+    heatInspectResult.hidden = false;
+    heatInspectResult.textContent = 'Click a mapped place on the heat surface to inspect it.';
+    requestGroundPick((x, z) => {
+      void (async () => {
+        try {
+          if (heatPayload?.thermal) {
+            if (heatPayload.climatology) {
+              const manifest = heatPayload.manifest;
+              const { width, height, resolution_m: resolution, bounds } = manifest.grid;
+              const [minX, minZ, maxX, maxZ] = bounds.map(Number);
+              if (x < minX || x >= maxX || z < minZ || z >= maxZ) throw new Error('That point is outside the historical climate grid.');
+              const column = Math.floor((x - minX) / resolution), row = Math.floor((z - minZ) / resolution);
+              if (column < 0 || row < 0 || column >= width || row >= height) throw new Error('That point is outside the historical climate grid.');
+              const channel = thermalChannel(manifest, heatMetric.value);
+              const channelSlot = manifest.channels.findIndex(item => item.name === heatMetric.value);
+              const raw = heatPayload.values[(row * width + column) * manifest.channels.length + channelSlot];
+              if (raw === manifest.nodata) throw new Error('That historical grid cell has no calculated value.');
+              const value = raw * channel.scale + Number(channel.offset || 0);
+              const period = heatClimateAggregate?.selectedOptions[0]?.textContent || 'Historical climate';
+              heatInspectResult.textContent = `${heatMetric.value === 'utci_c' ? 'UTCI' : 'Mean radiant temperature'}: ${Number(value).toFixed(1)}°C at ${x.toFixed(0)}, ${z.toFixed(0)} m · ${period}, ${heatClimateHourLabel?.textContent || ''} · 2016–2025 climate estimate.`;
+              return;
+            }
+            const frame = selectedThermalFrame();
+            if (!thermalManifest || !frame) throw new Error('No forecast frame is available for this time.');
+            const params = new URLSearchParams({ x: String(x), z: String(z), run_id: thermalManifest.run_id, frame_id: frame.id });
+            const response = await fetch(`${windApi}/thermal/point?${params}`);
+            if (!response.ok) throw new Error('That point is outside the current forecast grid or has no value.');
+            const point = await response.json();
+            const name = heatMetric.value === 'tmrt_c' ? 'tmrt_c' : 'utci_c';
+            const value = point.values?.[name];
+            heatInspectResult.textContent = value == null
+              ? `No ${name === 'utci_c' ? 'UTCI' : 'radiant-temperature'} value at ${x.toFixed(0)}, ${z.toFixed(0)} m.`
+              : `${name === 'utci_c' ? 'UTCI' : 'Mean radiant temperature'} at ${x.toFixed(0)}, ${z.toFixed(0)} m: ${Number(value).toFixed(1)}°C${name === 'utci_c' && point.utci_category ? ` · ${point.utci_category}` : ''}. Model estimate, not an observation.`;
+            return;
+          }
+          const contains = (ring, px, pz) => {
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+              const [xi, zi] = ring[i], [xj, zj] = ring[j];
+              if ((zi > pz) !== (zj > pz) && px < (xj - xi) * (pz - zi) / ((zj - zi) || 1e-12) + xi) inside = !inside;
+            }
+            return inside;
+          };
+          const feature = heatPayload?.features?.find(item => geometryPolygons(item.geometry).some(polygon =>
+            contains(polygon[0] || [], x, z) && !(polygon.slice(1).some(hole => contains(hole, x, z)))));
+          const value = feature?.value ?? feature?.properties?.[heatMetric.value];
+          if (value == null) throw new Error('No screening value covers that point. Try another place on the coloured surface.');
+          heatInspectResult.textContent = `${heatPayload.metric_label || heatMetric.selectedOptions[0]?.textContent}: ${formatHeatValue(value, heatPayload.metric_metadata)} at ${x.toFixed(0)}, ${z.toFixed(0)} m. ${heatPayload.source || 'Screening product'} · ${heatPayload.window?.label || 'source period'}.`;
+        } catch (error) {
+          heatInspectResult.textContent = error.message || 'Could not inspect this place.';
+        }
+      })();
+    });
   });
   heatDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
@@ -7923,25 +8476,98 @@ export async function startWebGLScene(canvas, status) {
     loadHeat(heatMetric?.value);
   }));
   sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
+  sunDetailButtons.forEach(button => button.addEventListener('click', () => setSunDetail(button.dataset.sunDetail)));
   sunDate?.addEventListener('change', event => {
+    sunSeasonalResults = null;
+    sunCompareSwitch.hidden = true;
+    sunCompareSummary.hidden = true;
     shadowState.date = event.target.value || shadowState.date;
+    if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
     if (shadowState.mode === 'shadows') queueLiveShadowUpdate();
     else {
       cancelSunHours('Date changed · calculate sun hours again.');
     }
   });
+  sunAnalysisDate?.addEventListener('change', event => {
+    sunSeasonalResults = null;
+    sunCompareSwitch.hidden = true;
+    sunCompareSummary.hidden = true;
+    shadowState.date = event.target.value || shadowState.date;
+    if (sunDate) sunDate.value = shadowState.date;
+    cancelSunHours('Study date changed · calculate sun hours again.');
+  });
   sunTime?.addEventListener('input', event => {
     shadowState.minutes = Number(event.target.value);
     if (shadowState.mode === 'shadows') queueLiveShadowUpdate();
   });
+  const stopSunPlayback = () => {
+    if (sunPlaybackTimer) clearInterval(sunPlaybackTimer);
+    sunPlaybackTimer = 0;
+    if (sunPlay) { sunPlay.textContent = '▶ Play day'; sunPlay.setAttribute('aria-pressed', 'false'); }
+  };
+  sunPlay?.addEventListener('click', () => {
+    if (sunPlaybackTimer) { stopSunPlayback(); return; }
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      sunStatus.textContent = 'Day playback is disabled by your reduced-motion preference. Use the time slider or solar shortcuts.';
+      return;
+    }
+    if (shadowState.mode !== 'shadows') setSunAnalysisMode('shadows');
+    if (shadowState.minutes >= 1430) {
+      shadowState.minutes = 360;
+      if (sunTime) sunTime.value = '360';
+    }
+    sunPlay.textContent = 'Ⅱ Pause';
+    sunPlay.setAttribute('aria-pressed', 'true');
+    sunPlaybackTimer = setInterval(() => {
+      const next = Math.min(1430, shadowState.minutes + 10);
+      shadowState.minutes = next;
+      if (sunTime) sunTime.value = String(next);
+      updateSunStatus();
+      queueLiveShadowUpdate();
+      if (next >= 1430) stopSunPlayback();
+    }, 500);
+  });
+  sunDate?.addEventListener('input', stopSunPlayback);
+  sunTime?.addEventListener('input', stopSunPlayback);
+  document.querySelectorAll('[data-sun-time]').forEach(button => button.addEventListener('click', () => {
+    const target = button.dataset.sunTime;
+    let sunrise = null, sunset = null, noon = 0, peak = -Infinity, wasAbove = false;
+    for (let minute = 0; minute <= 1430; minute += 10) {
+      const altitude = sunPosition(shadowState.date, minute).altitude;
+      if (altitude > peak) { peak = altitude; noon = minute; }
+      const above = altitude > 0.008;
+      if (above && !wasAbove && sunrise == null) sunrise = minute;
+      if (!above && wasAbove && sunset == null) sunset = minute - 10;
+      wasAbove = above;
+    }
+    const value = target === 'sunrise' ? sunrise : target === 'sunset' ? sunset : noon;
+    if (value == null) {
+      sunStatus.textContent = 'The sun does not rise on this date at this location.';
+      return;
+    }
+    stopSunPlayback();
+    shadowState.minutes = value;
+    if (sunTime) sunTime.value = String(value);
+    updateSunStatus();
+    if (shadowState.mode === 'shadows') queueLiveShadowUpdate();
+  }));
   sunModeButtons.forEach(button => button.addEventListener('click', () => setSunAnalysisMode(button.dataset.sunMode)));
   sunDomainSize?.addEventListener('change', event => {
     shadowState.size = Number(event.target.value) || 500;
+    sunSeasonalResults = null;
+    sunCompareSwitch.hidden = true;
+    sunCompareSummary.hidden = true;
     cancelSunHours(`Analysis area resized to ${shadowState.size} m · calculate sun hours.`);
     updateSunBox();
   });
   for (const control of [sunStartTime, sunEndTime, sunStepTime, sunAnalysisSurfaces, sunSurfaceResolution]) {
-    control?.addEventListener('change', () => cancelSunHours('Sun-hours settings changed · calculate again.'));
+    control?.addEventListener('change', () => {
+      sunSeasonalResults = null;
+      sunCompareSwitch.hidden = true;
+      sunCompareSummary.hidden = true;
+      sunInspect.hidden = true;
+      cancelSunHours('Sun-hours settings changed · calculate again.');
+    });
   }
   sunMoveDomain?.addEventListener('click', () => {
     shadowState.moveMode = !shadowState.moveMode;
@@ -7951,8 +8577,123 @@ export async function startWebGLScene(canvas, status) {
     updateSunBox();
   });
   sunGenerate?.addEventListener('click', () => {
-    if (shadowState.mode === 'hours') generateSunHours();
+    if (shadowState.mode === 'hours') {
+      sunSeasonalResults = null;
+      sunCompareSwitch.hidden = true;
+      sunCompareSummary.hidden = true;
+      generateSunHours();
+    }
     else generateShadows();
+  });
+  sunCompare?.addEventListener('click', async () => {
+    const firstDate = sunAnalysisDate?.value || sunDate?.value || shadowState.date;
+    const secondDate = sunCompareDate?.value;
+    if (!secondDate || firstDate === secondDate) {
+      sunStatus.textContent = 'Choose two different dates for a seasonal comparison.';
+      return;
+    }
+    sunCompare.disabled = true;
+    sunCompare.textContent = 'Comparing…';
+    sunCompareSummary.hidden = true;
+    sunCompareSwitch.hidden = true;
+    try {
+      const first = await generateSunHours(firstDate, false);
+      if (!first) throw new Error('The first date did not finish.');
+      const second = await generateSunHours(secondDate, false);
+      if (!second) throw new Error('The comparison date did not finish.');
+      sunSeasonalResults = { first, second, difference: makeSunDifference(first, second) };
+      const firstLabel = new Date(`${firstDate}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+      const secondLabel = new Date(`${secondDate}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+      sunResultButtons.find(button => button.dataset.sunResult === 'first').textContent = firstLabel;
+      sunResultButtons.find(button => button.dataset.sunResult === 'second').textContent = secondLabel;
+      sunCompareSwitch.hidden = false;
+      sunInspect.hidden = false;
+      sunCompareSummary.textContent = `${firstLabel}: ${first.average.toFixed(1)} h mean · ${secondLabel}: ${second.average.toFixed(1)} h mean · change ${second.average - first.average > 0 ? '+' : ''}${(second.average - first.average).toFixed(1)} h. Same area, surfaces and time window; clear-sky model comparison.`;
+      sunCompareSummary.hidden = false;
+      sunResultButtons.forEach(button => {
+        const selected = button.dataset.sunResult === 'first';
+        button.classList.toggle('active', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+      displaySunHoursResult(first);
+    } catch (error) {
+      sunStatus.textContent = `Seasonal comparison unavailable (${error.message})`;
+    } finally {
+      sunCompare.disabled = false;
+      sunCompare.textContent = 'Compare dates';
+    }
+  });
+  sunResultButtons.forEach(button => button.addEventListener('click', () => {
+    if (!sunSeasonalResults) return;
+    const view = button.dataset.sunResult;
+    sunResultButtons.forEach(item => {
+      const active = item === button;
+      item.classList.toggle('active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    if (view === 'difference') displaySunHoursResult(sunSeasonalResults.difference, true);
+    else displaySunHoursResult(sunSeasonalResults[view]);
+  }));
+  sunInspect?.addEventListener('click', () => {
+    if (!activeSunResult) return;
+    sunInspectResult.hidden = false;
+    sunInspectResult.textContent = 'Click a coloured ground, roof or façade cell in the scene.';
+    requestGroundPick((x, z) => {
+      requestGroundPick(null);
+      const inside = (ring, px, pz) => {
+        let result = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          if ((ring[i][1] > pz) !== (ring[j][1] > pz)
+            && px < (ring[j][0] - ring[i][0]) * (pz - ring[i][1]) / ((ring[j][1] - ring[i][1]) || 1e-12) + ring[i][0]) result = !result;
+        }
+        return result;
+      };
+      const groundCell = activeSunResult.payload.features?.find(feature => {
+        const polygon = feature.geometry?.type === 'Polygon' ? feature.geometry.coordinates
+          : feature.geometry?.type === 'MultiPolygon' ? feature.geometry.coordinates[0] : null;
+        return polygon && inside(polygon[0] || [], x, z) && !polygon.slice(1).some(hole => inside(hole, x, z));
+      });
+      const buildingCell = activeSunResult.buildings?.features?.find(feature => {
+        if (feature.surface === 'roof') {
+          const polygons = geometryPolygons(feature.geometry);
+          return polygons.some(polygon => inside(polygon[0] || [], x, z) && !polygon.slice(1).some(hole => inside(hole, x, z)));
+        }
+        return feature.vertices?.length >= 4 && inside(feature.vertices.map(vertex => [vertex[0], vertex[2]]), x, z);
+      });
+      const feature = buildingCell || groundCell;
+      if (!feature) { sunInspectResult.textContent = 'No analysed cell at this point. Try a coloured surface inside the study area.'; return; }
+      const surface = feature.surface || 'ground';
+      const rawValue = Number(feature.value || 0);
+      const value = rawValue.toFixed(1);
+      const label = activeSunResult.payload.metric === 'utci_delta_c'
+        ? `Δ ${rawValue > 0 ? '+' : ''}${value} h direct sun (${sunSeasonalResults.first.scenario.date} → ${sunSeasonalResults.second.scenario.date})`
+        : `${value} h direct sun · ${activeSunResult.scenario.date}`;
+      sunInspectResult.textContent = `${surface[0].toUpperCase()}${surface.slice(1)} · ${label} · clear-sky estimate.`;
+    });
+  });
+
+  let initializedSunOnOpen = false;
+  const showCurrentSun = () => {
+    if (!initializedSunOnOpen) {
+      initializedSunOnOpen = true;
+      const now = new Date();
+      shadowState.date = now.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(now);
+      const hour = Number(parts.find(part => part.type === 'hour')?.value || 12);
+      const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+      if (sunDate) sunDate.value = shadowState.date;
+      if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
+      if (sunTime) sunTime.value = String(clamp(Math.round((hour * 60 + minute) / 10) * 10, Number(sunTime.min), Number(sunTime.max)));
+      shadowState.minutes = Number(sunTime?.value) || 0;
+      const alternateSolstice = shadowState.date.slice(5, 7) === '06' ? '12-21' : '06-21';
+      if (sunCompareDate) sunCompareDate.value = `${shadowState.date.slice(0, 4)}-${alternateSolstice}`;
+    }
+    if (!sunToggle?.checked) setShadowMode(true);
+    if (shadowState.mode === 'shadows') generateShadows();
+  };
+  addEventListener('climate-menu-change', event => {
+    if (event.detail?.name !== 'sun') return;
+    showCurrentSun();
   });
 
   function setWindAnalysisMode(mode) {
@@ -7976,22 +8717,22 @@ export async function startWebGLScene(canvas, status) {
     updateWindBox();
     windPanel?.classList.add('cfd-active');
     if (windModeBadge) windModeBadge.textContent = mode === 'comfort' ? 'CFD · COMFORT (PARTIAL)' : 'CFD · FULL CBD';
-    if (windSourceTitle) windSourceTitle.textContent = mode === 'comfort' ? 'OpenFOAM-weighted comfort' : 'OpenFOAM urban airflow';
-    if (windSourceDetail) windSourceDetail.textContent = mode === 'comfort'
-      ? 'ERA5 wind rose · resolved OpenFOAM sectors only'
-      : 'Pick a solved direction, then load the result';
+    const windModeHelp = document.querySelector('#wind-mode-help');
+    if (windModeHelp) windModeHelp.textContent = mode === 'comfort'
+      ? 'Combines available solved directions with Cape Town’s wind rose. Unsolved directions are excluded, so coverage is partial.'
+      : 'Inspect one solved wind direction. Select a direction, then load its full-CBD OpenFOAM result.';
     if (windFlowlinesVisible) windFlowlinesVisible.disabled = mode === 'comfort';
     if (windVolumeVisible) windVolumeVisible.disabled = mode === 'comfort';
     if (mode === 'comfort' && windState.volumeVisible) {
       windState.volumeVisible = false;
       if (windVolumeVisible) windVolumeVisible.checked = false;
     }
-    windSimulate.textContent = mode === 'comfort' ? 'Run OpenFOAM-weighted comfort study' : 'Load OpenFOAM result';
+    windSimulate.textContent = mode === 'comfort' ? 'Run comfort assessment' : 'Load direction result';
     windState.field = null;
     clearWindSimulation();
     windStatus.textContent = mode === 'comfort'
-      ? 'Weights each solved OpenFOAM direction by its ERA5 wind-rose frequency. Unsolved directions are excluded, not assumed calm.'
-      : 'Pick a solved wind direction, then load the OpenFOAM result.';
+      ? 'Weights solved OpenFOAM directions by ERA5 wind-rose frequency. Unsolved directions are excluded, not assumed calm.'
+      : 'Pick a solved wind direction, then load its OpenFOAM result.';
     requestRender();
   }
 
@@ -8007,12 +8748,24 @@ export async function startWebGLScene(canvas, status) {
     windDirectionPresets.forEach(item => item.classList.toggle('active', Number(item.dataset.windDirection) === directionDeg));
     windState.field = null;
     clearWindSimulation();
-    windStatus.textContent = `${button.textContent} selected · click Load OpenFOAM result.`;
+    windStatus.textContent = `${button.textContent} selected · load the direction result when ready.`;
     requestRender();
   }));
   windFlowlinesVisible?.addEventListener('change', event => {
     windState.flowlinesVisible = event.target.checked;
-    if (windPoints) windPoints.visible = windState.flowlinesVisible && windState.analysisMode !== 'comfort' && windState.cfdView === 'flow';
+    if (windState.cfdView === 'flow' && windState.flowlinesVisible) resetWindParticles();
+    else if (windPoints) windPoints.visible = false;
+    requestRender();
+  });
+  windInspectToggle?.addEventListener('click', () => {
+    const active = windInspectToggle.getAttribute('aria-pressed') !== 'true';
+    windInspectToggle.setAttribute('aria-pressed', String(active));
+    windInspectToggle.textContent = active ? 'Click the map…' : 'Inspect a place';
+    canvas.style.cursor = active ? 'crosshair' : '';
+    if (windInspectResult) {
+      windInspectResult.textContent = active ? 'Click a point on the map to inspect it.' : 'Map inspection is off.';
+      windInspectResult.hidden = false;
+    }
     requestRender();
   });
   windVolumeVisible?.addEventListener('change', event => {
@@ -8055,7 +8808,8 @@ export async function startWebGLScene(canvas, status) {
     if (windSliceControls) windSliceControls.hidden = windState.cfdView !== 'slice';
     if (windGroundControls) windGroundControls.hidden = windState.cfdView !== 'ground';
     if (windFlowBoxControls) windFlowBoxControls.hidden = windState.cfdView !== 'flow';
-    if (windState.cfd && windState.cfdView === 'flow') resetWindParticles();
+    if (windState.cfd && (windState.cfdView === 'flow'
+      || (windState.cfdView === 'ground' && windState.cfdField === 'speed'))) resetWindParticles();
     updateWindBox();
     buildCfdView();
     if (windState.cfd) {
@@ -8081,6 +8835,7 @@ export async function startWebGLScene(canvas, status) {
       if (windSliceControls) windSliceControls.hidden = false;
     }
     buildCfdView();
+    if (windState.cfd && windState.cfdView === 'ground' && windState.cfdField === 'speed') resetWindParticles();
     requestRender();
   });
   windCfdGroundHeight?.addEventListener('change', event => {
@@ -8196,6 +8951,22 @@ export async function startWebGLScene(canvas, status) {
     updateWindBox();
   });
   windSimulate?.addEventListener('click', simulateWind);
+  windDesignLoad?.addEventListener('click', () => {
+    const candidate = CFD_DESIGN_CASES[Number(windDesignSelect?.value)];
+    if (!candidate) return;
+    if (windState.analysisMode !== 'direction') setWindAnalysisMode('direction');
+    windState.cfdView = 'ground';
+    windState.cfdField = 'speed';
+    windCfdViewButtons.forEach(button => {
+      const active = button.dataset.cfdView === 'ground';
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    if (windCfdField) windCfdField.value = 'speed';
+    if (windSliceControls) windSliceControls.hidden = true;
+    if (windGroundControls) windGroundControls.hidden = false;
+    void loadCfdWind(candidate);
+  });
   trafficDuration?.addEventListener('input', () => {
     if (trafficDurationValue) trafficDurationValue.textContent = `${trafficDuration.value} min`;
     invalidateTrafficResult('Duration changed · run the comparison again.');
@@ -8218,6 +8989,11 @@ export async function startWebGLScene(canvas, status) {
   trafficDrawOneWay?.addEventListener('click', () => beginTrafficDrawing('oneway'));
   trafficDrawConfirm?.addEventListener('click', confirmTrafficDrawing);
   trafficDrawCancel?.addEventListener('click', clearTrafficSelection);
+  trafficSelectionList?.addEventListener('click', event => {
+    const button = event.target.closest('[data-traffic-edge-id]');
+    if (!button) return;
+    removeTrafficSelectionById(button.dataset.trafficEdgeId);
+  });
   trafficRun?.addEventListener('click', runTrafficClosurePreview);
   trafficClear?.addEventListener('click', clearTrafficSelection);
   trafficReport?.addEventListener('click', buildTrafficReport);
@@ -8294,6 +9070,7 @@ export async function startWebGLScene(canvas, status) {
       clearTrafficSelection();
     }
     syncTrafficSceneVisibility();
+    applySectionLayerProfile(name);
     requestRender();
   });
   addEventListener('climate-streetview-mode', event => {
@@ -8319,6 +9096,7 @@ export async function startWebGLScene(canvas, status) {
       const minute = Number(timeParts.find(part => part.type === 'minute')?.value || 0);
       shadowState.minutes = hour * 60 + minute;
       if (sunDate) sunDate.value = shadowState.date;
+      if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
       if (sunTime) sunTime.value = String(clamp(Math.round(shadowState.minutes / 10) * 10, Number(sunTime.min), Number(sunTime.max)));
       shadowState.minutes = Number(sunTime?.value) || shadowState.minutes;
     }
@@ -8375,7 +9153,7 @@ export async function startWebGLScene(canvas, status) {
     }
     renderer.render(scene, camera);
     renderRequested = false;
-    if (!reducedMotion && ((windState.enabled && windState.field)
+    if (!reducedMotion && ((windState.enabled && windState.field && windPoints?.visible)
       || (trafficGroup.visible && trafficState.tracks.length)
       || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)
       || transportAnimating)) {
@@ -8400,8 +9178,10 @@ export async function startWebGLScene(canvas, status) {
   const roofTriangles = roofSurfaceBuffer ? manifest.layers?.roof_surface?.triangles : 0;
   status.textContent = `${data.buildings.length} buildings · ${(data.water || []).length} water bodies · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
   updateSunStatus();
+  if (document.querySelector('[data-menu-target="sun"]')?.classList.contains('active')) showCurrentSun();
   loadHeat();
   setHeatMode(Boolean(heatToggle?.checked));
+  applySectionLayerProfile(document.querySelector('[data-menu-target].active')?.dataset.menuTarget || 'tools');
   let thermalManifestPollInFlight = false;
   setInterval(async () => {
     const panel = document.querySelector('#menu-heat');
@@ -8427,6 +9207,7 @@ export async function startWebGLScene(canvas, status) {
   }, 120000);
   loadTrafficRoads();
   loadTrafficLive(false);
+  loadTrafficCalibrationStatus();
   async function ensureTransportLayer() {
     if (transportLayer) return transportLayer;
     if (transportLoading) return transportLoading;

@@ -131,9 +131,13 @@ def build(input_paths: list[Path], longitude: float, latitude: float) -> dict:
             result_profiles[season][stability_name] = {"sample_count": total, "sectors": sector_profiles}
 
     first, last = datetimes[0], datetimes[-1]
-    expected_hours = int((last - first).total_seconds() // 3600) + 1
+    coverage_start = datetime(first.year, 1, 1, tzinfo=timezone.utc)
+    coverage_end = datetime(last.year + 1, 1, 1, tzinfo=timezone.utc)
+    calendar_expected_hours = int((coverage_end - coverage_start).total_seconds() // 3600)
+    span_expected_hours = int((last - first).total_seconds() // 3600) + 1
+    complete_timeline = len(times) == calendar_expected_hours and int(times[0]) == int(coverage_start.timestamp()) and int(times[-1]) == int((coverage_end.timestamp() - 3600))
     return {
-        "version": "era5-cape-town-v1",
+        "version": "era5-cape-town-v2",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": {
             "kind": "ERA5_GRIB",
@@ -145,10 +149,12 @@ def build(input_paths: list[Path], longitude: float, latitude: float) -> dict:
         "grid": {"bounds": list(bounds), "shape": list(grid_shape), "resolution_deg": [abs(transform.a), abs(transform.e)]},
         "coverage": {
             "start_utc": first.isoformat(), "end_utc": last.isoformat(), "records": len(times),
-            "expected_hourly_records": expected_hours,
-            "hourly_coverage_fraction": round(len(times) / expected_hours, 6),
+            "calendar_years": [first.year, last.year],
+            "expected_hourly_records": span_expected_hours,
+            "hourly_coverage_fraction": round(len(times) / span_expected_hours, 6),
+            "calendar_year_hourly_coverage_fraction": round(len(times) / calendar_expected_hours, 6),
             "sampled_utc_hours": sorted({item.hour for item in datetimes}),
-            "complete_hourly_climatology": len(times) == expected_hours,
+            "complete_hourly_climatology": complete_timeline,
         },
         "stability_method": "ERA5 neutral/actual 10 m speed ratio with 3% dead-band",
         "profiles": result_profiles,

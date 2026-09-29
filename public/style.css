@@ -10,9 +10,9 @@
   --control-hover: #565656;
   --line: #3d3d3d;
   --line-light: #5c5c5c;
-  --accent: #b84e92;
-  --accent-dark: #74325f;
-  --accent-pale: #e0a4ca;
+  --accent: #087f8c;
+  --accent-dark: #164d57;
+  --accent-pale: #b5edf1;
 }
 
 /* Shared scenario and evidence UI uses native controls and stays in the scrollable panel. */
@@ -885,6 +885,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .wind-legend-labels b { color: var(--ink); }
 .wind-mode-badge { margin-left: 4px; padding: 2px 5px; border: 1px solid #a8688d; border-radius: 2px; color: #f0c9de; font-size: 7px; letter-spacing: .08em; }
 .wind-panel { --wind-accent: #dd8bb8; }
+.wind-intro, .wind-mode-help { margin: 0; color: #c5c2c1; font-size: 10px; line-height: 1.45; }
+.wind-mode-help { padding: 7px 8px; border-left: 2px solid #a8688d; background: #302a2e; }
 .wind-analysis-tabs, .wind-lenses { display: grid; overflow: hidden; border: 1px solid #555; border-radius: 16px; background: #3d3d3d; }
 .wind-analysis-tabs { grid-template-columns: repeat(2, 1fr); }
 .wind-lenses { grid-template-columns: repeat(3, 1fr); }
@@ -907,6 +909,109 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 #wind-slice-reset { min-height: 28px; color: #ddd; border-color: #555; background: #3a3737; }
 .wind-cfd-hint { margin: 0; color: #a8a19f; font-size: 8px; line-height: 1.4; }
 .wind-control-section { display: grid; gap: 7px; padding-top: 5px; border-top: 1px solid #434343; }
+.wind-control-section > summary, .wind-tool-card > summary { cursor: pointer; color: #e0dcdc; font-size: 10px; font-weight: 650; list-style-position: inside; }
+.wind-control-section[open] > summary, .wind-tool-card[open] > summary { margin-bottom: 4px; }
+.wind-tool-card { display: grid; gap: 7px; padding: 9px; border: 1px solid #4c4c4c; border-radius: 5px; background: #292728; }
+.wind-tool-card h3 { margin: 0; color: #eee; font-size: 11px; }
+.wind-tool-card > p { margin: 0; color: #b5b0b2; font-size: 9px; line-height: 1.45; }
+.wind-tool-actions { display: flex; gap: 6px; }
+.wind-tool-actions button, .wind-tool-card > button { min-height: 32px; padding: 5px 8px; font-size: 9px; }
+.wind-tool-status { color: #c2bdc0 !important; }
+.wind-comparison-result { display: grid; gap: 6px; }
+.wind-comparison-result[hidden], .wind-validation-result[hidden] { display: none; }
+.wind-compare-head, .wind-compare-row { display: grid; align-items: center; gap: 4px; font-size: 8px; }
+.wind-compare-head { grid-template-columns: minmax(66px, 1fr) 42px 44px 42px; }
+.wind-compare-row { grid-template-columns: 7px minmax(59px, 1fr) 42px 44px 42px; }
+.wind-compare-head { color: #b8b2b5; }
+.wind-compare-head > :first-child { grid-column: 1; }
+.wind-compare-row { min-height: 20px; color: #ddd; }
+.wind-compare-row i { width: 7px; height: 7px; border-radius: 50%; }
+.wind-compare-row .wind-compare-delta { color: #beb8ba; text-align: right; }
+.wind-compare-row .wind-compare-delta.up { color: #f0a18e; }
+.wind-compare-row .wind-compare-delta.down { color: #83d6b3; }
+.wind-comparison-result > p { margin: 2px 0 0; color: #a9a4a6; font-size: 8px; line-height: 1.4; }
+.wind-difference-map { display: grid; gap: 4px; }
+.wind-difference-map > b { color: #dedadc; font-size: 9px; }
+.wind-difference-map svg { width: 100%; max-height: 130px; border-radius: 3px; background: #252729; }
+.wind-difference-map small { display: flex; align-items: center; gap: 5px; color: #aaa5a7; font-size: 8px; }
+.wind-difference-map small i { width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; }
+.wind-difference-map small .better { background: #4eb58b; }
+.wind-difference-map small .same { background: #777b7a; }
+.wind-difference-map small .worse { background: #dc795e; }
+.wind-validation-card label { display: grid; gap: 4px; color: #d1ccce; font-size: 9px; }
+.wind-validation-card textarea { width: 100%; min-height: 70px; padding: 6px; resize: vertical; border: 1px solid #555; border-radius: 3px; background: #222; color: #eee; font: 9px/1.4 ui-monospace, monospace; }
+.wind-validation-scenario { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.wind-validation-scenario label span { display: flex; align-items: center; gap: 4px; }
+.wind-validation-scenario input, .wind-validation-scenario select { width: 100%; min-width: 0; padding: 5px; border: 1px solid #555; border-radius: 3px; background: #333; color: #eee; font-size: 9px; }
+.wind-validation-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.wind-validation-metrics span { display: grid; gap: 2px; padding: 6px; background: #343033; color: #c6c0c3; font-size: 8px; }
+.wind-validation-metrics strong { color: #f1dce7; font-size: 10px; }
+.wind-validation-result > b { color: #f0c9de; font-size: 9px; }
+.wind-validation-result > small { color: #aaa4a7; font-size: 8px; line-height: 1.4; }
+.wind-validation-table-wrap { overflow-x: auto; }
+.wind-validation-table-wrap table { width: 100%; border-collapse: collapse; font-size: 8px; }
+.wind-validation-table-wrap th, .wind-validation-table-wrap td { padding: 4px 3px; border-bottom: 1px solid #4b4649; text-align: right; white-space: nowrap; }
+.wind-validation-table-wrap th:first-child, .wind-validation-table-wrap td:first-child { text-align: left; }
+
+/* Wind panel shares the compact spacing and soft control surfaces used by Heat. */
+.wind-panel { gap: 0; --wind-accent: #7ad4b5; }
+.wind-panel > .wind-heading { min-height: 42px; align-items: center; padding: 0 0 9px; color: #e2ece7; letter-spacing: .035em; }
+.wind-heading > span { color: #edf5f0; font-size: 16px; letter-spacing: -.02em; }
+.wind-panel .wind-mode-badge { padding: 3px 6px; border-color: #3c594d; border-radius: 5px; background: #25342d; color: #bcebd3; font-size: 7px; vertical-align: middle; }
+.wind-intro { padding: 0 1px 10px; color: #aab9b1; font-size: 9px; }
+.wind-panel .wind-data-banner { margin: 0 0 10px; padding: 9px; border-color: #35443d; border-radius: 7px; background: #202824; }
+.wind-panel .wind-data-banner i { background: #79d5b4; box-shadow: 0 0 9px #79d5b455; }
+.wind-panel .wind-data-banner b { color: #e1ece6; font-size: 9px; }
+.wind-panel .wind-data-banner small { color: #9eaea5; font-size: 8px; }
+.wind-panel .wind-analysis-tabs { gap: 4px; padding: 3px; border-color: #35433c; border-radius: 8px; background: #1b221e; }
+.wind-panel .wind-analysis-tabs button { min-height: 34px; border-radius: 5px; color: #a1b0a8; font-size: 9px; font-weight: 650; }
+.wind-panel .wind-analysis-tabs button.active { border: 1px solid #496552; background: #2d4035; color: #d5f1df; box-shadow: none; }
+.wind-mode-help { margin: 8px 0; padding: 8px 9px; border: 1px solid #35443d; border-left: 2px solid #79d5b4; border-radius: 6px; background: #202824; color: #b7c6be; font-size: 9px; }
+.wind-panel .wind-control-section { gap: 9px; padding: 10px 0; border-top-color: #35413b; }
+.wind-panel .wind-cfd-controls,
+.wind-panel .wind-flow-box-controls { padding: 10px; border: 1px solid #37433d; border-radius: 7px; background: #202723; }
+.wind-panel .wind-control-section > summary { color: #d9e5de; font-size: 9px; font-weight: 700; list-style-position: outside; }
+.wind-panel .wind-control-section > b { color: #bac8c0; font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+.wind-panel label { color: #b7c3bc; font-size: 9px; }
+.wind-panel select,
+.wind-panel input[type="number"],
+.wind-panel input[type="file"] { min-height: 33px; padding: 6px 8px; border: 1px solid #3d4a43; border-radius: 6px; background: #252d29; color: #e0e9e4; font-size: 9px; }
+.wind-panel .wind-run-button { min-height: 40px; margin: 10px 0 4px; border: 1px solid #629e80; border-radius: 7px; background: #315844; color: #effaf3; font-size: 10px; font-weight: 700; }
+.wind-panel .wind-run-button:hover { background: #3a6a50; }
+.wind-panel .wind-status { margin: 4px 0 8px; padding: 7px 9px; border: 1px solid #35423b; border-radius: 6px; background: #1d2420; color: #b8c5bd; font-size: 9px; line-height: 1.45; }
+.wind-panel .wind-results { gap: 6px; margin: 1px 0 9px; }
+.wind-panel .wind-results span { padding: 8px; border-color: #35433c; border-radius: 7px; background: #222a25; color: #9fafa6; font-size: 8px; }
+.wind-panel .wind-results b { color: #e3eee7; font-size: 11px; }
+.wind-panel .wind-results .wind-result-facts span { min-width: 0; overflow-wrap: anywhere; }
+.wind-panel .wind-tool-card { margin-top: 8px; padding: 9px 10px; border-color: #35413b; border-radius: 7px; background: #202723; }
+.wind-panel .wind-tool-card > summary { color: #d7e3dc; font-size: 9px; font-weight: 700; }
+.wind-panel .wind-tool-card > p { color: #aab8b0; font-size: 8px; line-height: 1.5; }
+.wind-panel .wind-legend-scale { margin: 10px 0; gap: 6px; color: #a6b4ac; font-size: 9px; }
+.wind-panel .wind-legend-heading b { color: #d5e2da; font-size: 9px; }
+.wind-panel .wind-legend-labels { color: #abb8b1; font-size: 8px; }
+.wind-panel .wind-map-tools { display: grid; gap: 5px; margin: 2px 0 8px; }
+.wind-panel #wind-inspect-toggle { justify-self: start; padding: 7px 10px; }
+.wind-panel #wind-inspect-toggle[aria-pressed="true"] { border-color: #79d5b4; color: #c9ffea; }
+.wind-panel #wind-inspect-result { margin: 0; color: #b7c8bf; font-size: 9px; line-height: 1.45; }
+.wind-panel .wind-design-compare { display: grid; gap: 6px; margin: 3px 0 10px; padding: 9px; border: 1px solid #35433c; border-radius: 8px; background: #1c2420; }
+.wind-panel .wind-design-compare small { color: #9eada4; font-size: 8px; line-height: 1.45; }
+.wind-panel .wind-method { margin-top: 3px; padding-top: 8px; border-top: 1px solid #35413b; }
+.wind-panel .wind-method > summary { color: #aab9b1; font-size: 8px; }
+.wind-panel .wind-method > p { color: #9fada5; font-size: 8px; line-height: 1.5; }
+.wind-panel .wind-cfd-view-tabs button { min-height: 31px; border-radius: 5px; font-size: 8px; }
+.wind-panel .wind-compass-presets button { min-height: 30px; border-radius: 5px; font-size: 8px; }
+.wind-panel .wind-cfd-hint { color: #9eada4; font-size: 8px; line-height: 1.45; }
+.wind-panel .wind-comfort-chips { gap: 6px 8px; }
+.wind-panel .wind-comfort-chips span { color: #afbbb4; font-size: 8px; }
+.wind-panel .wind-comfort-chips i { width: 9px; height: 9px; border-radius: 3px; }
+.wind-panel .wind-validation-card textarea { border-color: #3d4a43; border-radius: 6px; background: #1b221e; color: #dfe9e3; }
+.wind-panel .wind-validation-result { display: grid; gap: 7px; }
+.wind-panel .wind-validation-metrics span { border-radius: 6px; background: #252e29; }
+.wind-panel [hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .wind-panel .wind-analysis-tabs button,
+  .wind-panel .wind-run-button { transition: none; }
+}
 .wind-control-section > b { color: #d2d2cf; font-size: 10px; font-weight: 600; letter-spacing: .02em; }
 .wind-control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .wind-domain-button { width: 100%; color: #c8c8c5; }
@@ -926,6 +1031,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .wind-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .wind-results span { padding: 6px; border: 1px solid #39413f; border-radius: 3px; background: #1b2221; color: var(--muted); font-size: 8px; }
 .wind-results b { display: block; margin-bottom: 2px; color: var(--ink); font-size: 11px; }
+.wind-results .wind-result-highlights { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.wind-results .wind-comfort-mini { display: flex; grid-column: 1 / -1; min-height: 10px; overflow: hidden; border-radius: 3px; }
+.wind-results .wind-result-evidence { grid-column: 1 / -1; padding: 7px; border: 1px solid #39413f; border-radius: 3px; background: #222; }
+.wind-results .wind-result-evidence summary { cursor: pointer; color: #d4d0d2; font-size: 9px; }
+.wind-results .wind-result-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; margin-top: 7px; }
+.wind-results .wind-result-facts span { overflow-wrap: anywhere; }
 .wind-comfort-mini { grid-column: 1 / -1; display: flex; height: 7px; overflow: hidden; border-radius: 5px; background: #242827; }
 .wind-comfort-mini i { display: block; min-width: 1px; }
 .wind-report-button { border-color: #376f92; color: #bcecff; background: #203b4b; }
@@ -955,15 +1066,40 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .sun-segmented button { min-height: 28px; border: 0; border-radius: 0; background: transparent; color: #bbb; box-shadow: none; }
 .sun-segmented button.active { background: #696969; color: #fff; }
 .sun-control-section { display: grid; gap: 7px; padding-top: 2px; }
+.sun-mode-controls { display: grid; gap: 7px; }
 .sun-control-section > b { color: #d0d0cd; font-size: 10px; font-weight: 600; }
 .sun-window-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-.sun-window-controls[hidden], #sun-instant-control[hidden], #heat-time-control[hidden], #heat-date-control[hidden], #heat-forecast-control[hidden] { display: none !important; }
+.sun-detail-preset { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.sun-detail-preset button { min-height: 30px; padding: 5px 7px; border: 1px solid #56534e; border-radius: 4px; background: #343330; color: #c8c5be; font: inherit; cursor: pointer; }
+.sun-detail-preset button.active { border-color: #d8a45c; background: #493b29; color: #ffe0b0; }
+.sun-help { margin: 0; color: #c7c3b9; font-size: 10px; line-height: 1.45; }
+.sun-time-tools { display: grid; gap: 5px; }
+.sun-time-tools button, .sun-compare-switch button { min-height: 28px; border: 1px solid #56534e; border-radius: 4px; background: #343330; color: #dedbd3; font: inherit; cursor: pointer; }
+.sun-time-tools > button { border-color: #a8793d; background: #453621; color: #ffe0aa; }
+.sun-time-shortcuts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.sun-position-card { padding: 5px 8px 3px; border: 1px solid #4c5557; border-radius: 5px; background: linear-gradient(145deg, #202c31, #32312c); }
+.sun-position-card svg { display: block; width: 100%; max-height: 112px; }
+#sun-position-marker { transition: cx .35s ease, cy .35s ease; filter: drop-shadow(0 0 3px #ffd578); }
+#sun-position-glow { transition: cx .35s ease, cy .35s ease; }
+.sun-position-card > span { display: block; padding: 1px 4px 3px; color: #d6c5a6; font-size: 9px; text-align: center; }
+.sun-compare-switch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.sun-compare-switch button.active { border-color: #d8a45c; background: #493b29; color: #ffe0b0; }
+.sun-status.is-updated { animation: sun-result-in .45s ease-out; }
+.sun-result-switching #sun-generate { animation: sun-control-pulse .42s ease-out; }
+@keyframes sun-result-in { from { opacity: .45; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes sun-control-pulse { 0% { box-shadow: 0 0 0 0 #f3bf6740; } 55% { box-shadow: 0 0 0 5px #f3bf671f; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) {
+  #sun-position-marker, #sun-position-glow { transition: none; }
+  .sun-status.is-updated, .sun-result-switching #sun-generate { animation: none; }
+}
+.sun-window-controls[hidden], #sun-shadow-controls[hidden], #sun-time-tools[hidden], #sun-hours-method[hidden], #sun-instant-control[hidden], #heat-time-control[hidden], #heat-date-control[hidden], #heat-forecast-control[hidden] { display: none !important; }
 .heat-panel input[type="range"] { width: 100%; margin: 5px 0 0; }
 #heat-forecast-label { margin-left: auto; color: #ddd; }
 #heat-provenance { min-height: 12px; }
 .sun-window-controls label:last-child { grid-column: 1 / -1; }
 .sun-window-controls .sun-wide-control { grid-column: 1 / -1; }
 .sun-hours-legend { display: grid; gap: 4px; }
+.sun-hours-legend[hidden] { display: none !important; }
 .sun-progress { width: 100%; height: 6px; margin-top: 8px; accent-color: #e5a84a; }
 .sun-progress[hidden] { display: none; }
 .sun-energy-gradient { height: 14px; border-radius: 3px; background: linear-gradient(90deg, #5e2e18, #9a4b25, #d47a32, #f2b44e, #ffe8a6); box-shadow: inset 0 0 0 1px #ffffff20; }
@@ -1058,19 +1194,116 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .heat-layer-section > label { gap: 5px; }
 .heat-layer-section select { min-height: 36px; text-align: left; }
+.heat-panel > .heat-heading { min-height: 42px; align-items: center; padding: 0 0 9px; }
+.heat-heading strong { font-size: 17px; line-height: 1.1; }
+.heat-heading small { font-size: 9px; letter-spacing: .025em; }
+.heat-layer-section { gap: 9px; padding: 12px 0 14px; border-top: 1px solid #39433f; }
+.heat-layer-section .heat-section-title,
+.heat-results-section > b { color: #dce7e2; font-size: 10px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.heat-view-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding: 3px; border: 1px solid #343d39; border-radius: 8px; background: #1b211e; }
+.heat-view-groups button { min-width: 0; min-height: 33px; padding: 5px 3px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: #9baaa3; font: inherit; font-size: 8px; font-weight: 650; white-space: nowrap; cursor: pointer; transition: color .18s ease, border-color .18s ease, background .18s ease; }
+.heat-view-groups button:hover { background: #29312d; color: #d7e2dc; }
+.heat-view-groups button.active { border-color: #4e6a5d; background: #304238; color: #d4f5e2; box-shadow: 0 1px 5px #0004; }
+.heat-spin-selector { display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; gap: 6px; align-items: center; min-height: 62px; padding: 5px 8px; border: 1px solid #333e38; border-radius: 9px; background: linear-gradient(105deg, #191e1c, #222a26 50%, #191e1c); }
+.heat-spin-wheel { position: relative; display: grid; grid-column: 2; grid-row: 1; justify-items: center; align-content: center; min-width: 0; min-height: 50px; overflow: hidden; border: 0; border-radius: 6px; background: linear-gradient(90deg, transparent, #38432f 50%, transparent); color: #f0f5ef; cursor: pointer; }
+.heat-spin-wheel span { max-width: 100%; font-size: 14px; letter-spacing: -.015em; }
+.heat-spin-wheel small { margin-top: 5px; color: #9eaa89; font-size: 7px; font-weight: 750; letter-spacing: .18em; }
+.heat-spin-wheel.is-spinning span { animation: heat-wheel-spin .48s cubic-bezier(.16,.8,.25,1); }
+.heat-spin-wheel:focus-visible { outline: 1px solid #8ba892; outline-offset: 1px; }
+.heat-spin-controls { display: contents; }
+.heat-spin-controls button { width: 28px; height: 32px; min-height: 32px; padding: 0; border: 1px solid #46534e; border-radius: 6px; background: #2a322e; color: #d3e0d8; font: inherit; font-size: 19px; font-weight: 450; line-height: 1; cursor: pointer; transition: background .18s ease, border-color .18s ease; }
+#heat-spin-previous { grid-column: 1; grid-row: 1; }
+#heat-spin-next { grid-column: 3; grid-row: 1; }
+.heat-spin-controls button:hover { border-color: #73bda3; background: #384b40; }
+@keyframes heat-wheel-spin { 0% { opacity: .15; transform: translateY(-14px) rotateX(70deg); filter: blur(3px); } 65% { opacity: 1; transform: translateY(3px) rotateX(-12deg); filter: blur(0); } 100% { transform: translateY(0) rotateX(0); } }
+.heat-layer-section > label { display: grid; gap: 4px; color: #98a79f; font-size: 8px; }
+.heat-layer-section select { min-height: 33px; margin: 0; border: 1px solid #3d4943; border-radius: 6px; background: #242b28; color: #d4ded8; font-size: 10px; }
+.heat-layer-help { margin: 0; padding: 0 2px; color: #a9b7b0; font-size: 9px; line-height: 1.5; }
 .heat-control-card {
-  padding: 12px;
-  border: 1px solid #414c49;
-  border-radius: 8px;
-  background: linear-gradient(145deg, #202927, #242626 70%);
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid #39443f;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #202724, #212724 70%);
 }
+
+/* Small control refinements for the compact analysis panels. */
+.traffic-oneway-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 5px;
+  padding: 9px 10px;
+  border-color: #3c526c;
+  border-radius: 5px;
+  background: linear-gradient(110deg, #202d3a, #252c32);
+  color: #e4edf7;
+  cursor: pointer;
+}
+.traffic-toggle-copy { display: grid; gap: 3px; }
+.traffic-toggle-copy b { font-size: 9px; font-weight: 650; }
+.traffic-toggle-copy small { max-width: 220px; color: #9eacb9; font-size: 8px; line-height: 1.35; }
+.traffic-oneway-toggle input[type="checkbox"] {
+  appearance: none;
+  flex: 0 0 31px;
+  width: 31px;
+  height: 18px;
+  margin: 0;
+  border: 1px solid #647382;
+  border-radius: 99px;
+  background: #414a53;
+  cursor: pointer;
+  transition: background .18s ease, border-color .18s ease;
+}
+.traffic-oneway-toggle input[type="checkbox"]::before {
+  display: block;
+  width: 12px;
+  height: 12px;
+  margin: 2px;
+  border-radius: 50%;
+  background: #d7e0e8;
+  content: "";
+  transition: transform .18s ease;
+}
+.traffic-oneway-toggle input[type="checkbox"]:checked { border-color: #4b9cf4; background: #2877c9; }
+.traffic-oneway-toggle input[type="checkbox"]:checked::before { transform: translateX(13px); background: white; }
+.traffic-oneway-toggle input[type="checkbox"]:focus-visible { outline: 2px solid #83bdff; outline-offset: 2px; }
+.traffic-flip-direction { width: auto; min-height: 28px; margin: 2px 0 7px; padding: 5px 9px; border-radius: 4px; color: #bdc9d5; }
+.wind-panel .wind-compass-presets button.active {
+  border-color: #55a9ff;
+  background: #174e82;
+  color: #e6f3ff;
+  box-shadow: inset 0 0 0 1px #86c5ff55, 0 0 8px #318be533;
+}
+.wind-panel .wind-cfd-controls {
+  gap: 11px;
+  padding: 12px;
+  border-radius: 7px;
+}
+.wind-panel .wind-cfd-controls > summary { padding: 2px 0 4px; }
+.wind-panel .wind-cfd-controls > label { display: grid; gap: 6px; }
+.wind-panel .wind-cfd-view-tabs { gap: 4px; }
+.wind-panel .wind-cfd-view-tabs button { min-height: 34px; padding: 5px 3px; }
+.wind-panel #wind-slice-controls, .wind-panel #wind-ground-controls { gap: 10px; padding: 10px; }
+.wind-panel #wind-slice-reset { min-height: 32px; margin-top: 2px; }
+.heat-spin-selector {
+  border-color: #3d5145;
+  background: linear-gradient(110deg, #242b32 0%, #253a35 48%, #32352b 100%);
+  box-shadow: inset 0 1px 0 #ffffff08;
+}
+.heat-spin-wheel { background: linear-gradient(90deg, transparent, #4a644d 50%, transparent); }
+.heat-spin-wheel span { color: #eef8e9; text-shadow: 0 1px 12px #a0d78755; }
+.heat-spin-wheel small { color: #b7d08c; }
+.heat-spin-controls button { border-color: #586b5b; background: #303e35; color: #e0ebd7; }
+.heat-spin-controls button:hover { border-color: #9caf69; background: #46533d; }
 .heat-control-card > b,
 .heat-screening-controls > b { color: #e0e8e4; font-size: 10px; letter-spacing: .035em; }
 .heat-control-card #heat-period-control { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 8px; }
 .heat-control-card #heat-period-control select { text-align: left; }
 .heat-control-card #heat-forecast-control { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; align-items: center; color: #cbd4d0; }
 .heat-control-card #heat-forecast-control input { grid-column: 1 / -1; accent-color: #71d8bc; }
-.heat-screening-controls { padding-top: 10px; }
+.heat-screening-controls { gap: 8px; padding: 10px 0; }
 .heat-screening-controls .heat-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .heat-screening-controls select,
 .heat-screening-controls input[type="date"] { text-align: left; }
@@ -1083,7 +1316,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 #heat-forecast-control[hidden],
 #heat-forecast-hint[hidden] { display: none !important; }
 .heat-panel [hidden] { display: none !important; }
-.heat-results-section { gap: 8px; }
+.heat-results-section { gap: 8px; padding: 12px 0 9px; border-top: 1px solid #39433f; }
 .heat-results-section > b { color: #e1e5e2; font-size: 10px; }
 #menu-heat:has(#heat-loading-state:not([hidden])) .heat-status[aria-busy="true"]::before { display: none; }
 .heat-loading-state {
@@ -1106,6 +1339,32 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   to { transform: translateX(300%); }
 }
 .heat-evidence > summary { color: #b8c8c1; }
+.heat-status { padding: 6px 8px; border: 1px solid #343f3a; border-radius: 6px; background: #1c2320; color: #b9c8c1; }
+.heat-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.heat-summary span,
+.heat-summary span:last-child { display: grid; grid-column: auto; min-width: 0; min-height: 54px; align-content: center; gap: 3px; padding: 7px 5px; border: 1px solid #343f3a; border-radius: 7px; background: #202724; text-align: center; }
+.heat-summary b { overflow-wrap: anywhere; color: #eef5f0; font-size: 12px; }
+.heat-summary i { color: #9aa9a1; font-size: 7px; line-height: 1.25; }
+.heat-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.heat-actions button { min-height: 34px; padding: 5px 7px; border: 1px solid #435149; border-radius: 6px; background: #252e29; color: #c5d3cb; font: inherit; font-size: 8px; font-weight: 650; cursor: pointer; transition: color .18s ease, border-color .18s ease, background .18s ease, transform .18s ease; }
+.heat-actions button:hover { transform: translateY(-1px); border-color: #73bda3; color: #dbfff0; }
+.heat-action-result, .heat-comparison { margin: 0; padding: 7px 8px; border-left: 2px solid #73bda3; border-radius: 3px; background: #202b27; color: #d1e2da; font-size: 9px; line-height: 1.45; }
+.heat-comparison { border-left-color: #d49b63; }
+.heat-spin-wheel::after { position: absolute; inset: 0; border: 1px solid transparent; border-radius: inherit; content: ''; pointer-events: none; }
+.heat-spin-wheel:hover::after { border-color: #9f7758; }
+.heat-view-groups button:focus-visible, .heat-spin-controls button:focus-visible, .heat-actions button:focus-visible { outline: 1px solid #8ba892; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .heat-spin-wheel.is-spinning span { animation: none; } .heat-view-groups button, .heat-spin-controls button, .heat-actions button { transition: none; } }
+@media (pointer: coarse) {
+  .heat-view-groups button { min-height: 44px; }
+  .heat-spin-controls button { height: 44px; min-height: 44px; }
+  .heat-spin-selector { min-height: 72px; }
+}
+.heat-gradient { height: 10px; margin-top: 2px; border-radius: 5px; box-shadow: inset 0 0 0 1px #ffffff28; }
+.heat-legend-labels { color: #9fada6; font-size: 8px; }
+.heat-evidence { margin-top: 2px; padding-top: 7px; border-top: 1px solid #353f3b; }
+.heat-evidence > summary { padding: 2px 0; font-size: 8px; }
+.heat-panel > .compact-about:last-child { margin-top: 2px; padding-top: 7px; border-top: 1px solid #353f3b; }
+.heat-panel .compact-about > summary { color: #a7b5ad; font-size: 8px; }
 
 .compact-section {
   display: grid;
@@ -1411,6 +1670,68 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 }
 .traffic-results b { font-size: 12px; }
 .traffic-map-key summary { font-weight: 600; }
+
+/* Traffic scenario workspace: clearer hierarchy, quieter cards, and visible evidence. */
+.traffic-panel { gap: 10px; }
+.traffic-heading { min-height: 44px; align-items: center; margin-bottom: 1px; }
+.traffic-heading > div { display: grid; gap: 2px; }
+.traffic-heading h2 { margin: 0; color: #f2f6f4; font-size: 17px; font-weight: 720; letter-spacing: -.025em; text-transform: none; }
+.traffic-kicker { color: #84cfc0; font-size: 8px; font-weight: 750; letter-spacing: .14em; }
+.traffic-heading .estimate-badge { padding: 5px 8px; border: 1px solid #46665f; border-radius: 999px; background: #1b302b; color: #b9e1d8; font-size: 9px; letter-spacing: 0; text-transform: none; }
+.traffic-view-toggles { margin-bottom: 0; border-color: #34413e; border-radius: 8px; background: #151c1a; }
+.traffic-view-toggles label { min-height: 34px; font-size: 10px; }
+.traffic-view-toggles label:has(input:checked) { background: #24594e; color: #e6fff8; }
+.traffic-card { gap: 9px; padding: 11px; border: 1px solid #303d39; border-radius: 9px; background: #171e1c; box-shadow: 0 5px 16px #0002; }
+.traffic-card-heading { min-height: 22px; color: #e7eeeb; font-size: 11px; letter-spacing: 0; }
+.traffic-card-heading > span { gap: 8px; }
+.traffic-card-heading b { width: 20px; height: 20px; background: #244c43; color: #b6e5d9; font-size: 10px; }
+.traffic-live-card { border-color: #315248; background: linear-gradient(135deg, #1b2b26, #171e1c 78%); }
+.traffic-live-actions .freshness { max-width: 150px; color: #9bc9bc; font-size: 8px; text-align: right; }
+.traffic-live-actions .freshness.stale { color: #e2bd7a; }
+.traffic-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #54d4a8; box-shadow: 0 0 0 3px #54d4a81b; }
+.traffic-data-note { margin: -2px 0 0; color: #92a39d; font-size: 9px; line-height: 1.4; }
+.traffic-control-grid { gap: 8px; }
+.traffic-panel label { color: #bdc9c4; font-size: 10px; }
+.traffic-panel select { min-height: 35px; margin-top: 5px; border-color: #394943; border-radius: 6px; background: #111715; font-size: 10px; }
+.traffic-duration-label output { color: #b2dfd3; font-size: 10px; }
+.traffic-panel input[type="range"] { accent-color: #60c9ac; }
+.traffic-closure-choice { gap: 6px; }
+.traffic-closure-choice button { min-height: 38px; border: 1px solid #34423e; border-radius: 6px; background: #202825; font-size: 10px; }
+.traffic-closure-choice button.active { border-color: #58bd9e; background: #21473c; color: #e5fff6; box-shadow: inset 0 0 0 1px #58bd9e44; }
+.traffic-selection-status { padding: 8px; border: 1px solid #34433d; border-radius: 6px; background: #121a17; color: #bac9c2; font-size: 9px; }
+.traffic-selection-list { display: grid; gap: 4px; max-height: 140px; overflow: auto; margin: -2px 0 0; padding: 0; list-style: none; }
+.traffic-selection-list[hidden] { display: none; }
+.traffic-selection-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 29px; padding: 4px 6px 4px 9px; border: 1px solid #303c37; border-radius: 5px; background: #131a17; color: #c8d4ce; font-size: 9px; }
+.traffic-selection-list li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.traffic-selection-list .traffic-section-remove { flex: 0 0 24px; width: 24px; min-height: 24px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #99aaa2; font-size: 16px; }
+.traffic-selection-list .traffic-section-remove:hover { background: #3b2826; color: #ffb7a7; }
+.traffic-actions { gap: 7px; }
+.traffic-actions #traffic-run { min-height: 39px; border-color: #398d76; background: #28745f; color: #f0fff9; }
+.traffic-actions #traffic-run:hover:not(:disabled) { border-color: #62c9a8; background: #338a70; }
+.traffic-actions #traffic-run span { float: right; font-size: 15px; line-height: 1; }
+.traffic-actions button.secondary { min-height: 39px; border: 1px solid #38433f; border-radius: 6px; background: #202725; }
+.traffic-status { color: #9eaca6; font-size: 9px; }
+.traffic-output-card { border-color: #3f4434; background: #1b1d18; }
+.traffic-impact-summary { border-radius: 6px; font-size: 10px; }
+.traffic-impact-summary strong { margin: 5px 0 4px; font-size: 12px; }
+.traffic-quality-pill { display: inline-flex; align-items: center; padding: 3px 7px; border: 1px solid #39715e; border-radius: 999px; background: #1d392e; color: #a9e4c9; font-size: 8px; font-weight: 750; letter-spacing: .02em; }
+.traffic-quality-pill.is-incomplete { border-color: #8b6331; background: #3a2c1b; color: #f2cb88; }
+.traffic-uncertainty { margin: -2px 0 0; padding: 8px; border: 1px solid #343b34; border-radius: 6px; background: #171a16; color: #c2c9bd; font-size: 9px; line-height: 1.45; }
+.traffic-results { gap: 5px; }
+.traffic-results span { border-radius: 5px; background: #272920; font-size: 9px; }
+.traffic-results b { font-size: 12px; }
+.traffic-report-button { min-height: 36px; border: 1px solid #4a4c3e; border-radius: 6px; background: #292a22; color: #e8e4ce; }
+.traffic-calibration-details { padding-top: 9px; border-color: #303a36; }
+.traffic-calibration-details summary { display: flex; justify-content: space-between; gap: 8px; color: #b5c3bd; cursor: pointer; }
+.traffic-calibration-details summary span { color: #91b5a6; font-size: 8px; }
+.traffic-calibration-details summary span.is-ready { color: #6ed2a9; }
+.traffic-calibration-details p { margin: 8px 0 0; color: #98a49f; }
+.traffic-data-link { display: inline-block; margin-top: 8px; color: #91d6c0; font-size: 9px; text-decoration: none; }
+.traffic-data-link:hover { color: #c8f4e4; text-decoration: underline; }
+@media (max-width: 620px) {
+  .traffic-card { padding: 10px; }
+  .traffic-control-grid { grid-template-columns: 1fr 1fr; }
+}
 
 .compact-about {
   margin-top: 2px;
@@ -1791,3 +2112,542 @@ select, input[type="date"], input[type="number"] {
 }
 
 .heat-weather-inputs { font-size: 11px; line-height: 1.5; color: #eee; }
+
+/* Shared neutral grey panel language, based on the existing Sun controls. */
+.panel { --panel-line: #4c4c4c; --panel-copy: #dedbd3; --panel-muted: #aaa69d; }
+.panel .panel-header { border-bottom-color: var(--panel-line); }
+.panel .eyebrow { color: #c7c7c4; }
+.panel .menu-tab.active,
+.panel .menu-tab.active:hover {
+  color: #f2f0eb;
+  background: linear-gradient(180deg, #56534e, #3b3a37);
+  box-shadow: inset 0 0 16px #ffffff0b;
+}
+.panel .menu-tab.active::after { background: #b8b5ae; }
+.panel .menu-tab:hover { color: #f1efea; background: #3d3c39; }
+.panel .menu-section:not(.sun-panel) { color: var(--panel-copy); }
+.panel .menu-section:not(.sun-panel).menu-active { animation: panel-section-in .28s ease-out both; }
+@keyframes panel-section-in { from { opacity: .55; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.panel .current-panel {
+  border-color: var(--panel-line);
+  border-left-color: #aaa69d;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #343330, #292826 78%);
+}
+.panel .tool-disclosure { border-color: var(--panel-line); border-radius: 5px; background: #30302e; }
+.panel .tool-disclosure > summary { color: var(--panel-copy); }
+.panel .tool-disclosure > summary span { color: var(--panel-muted); }
+.panel .tool-layer-grid label { border-color: var(--panel-line); border-radius: 4px; background: #292826; }
+.panel .tool-layer-grid label:has(select) { border-color: transparent; background: transparent; }
+.panel .menu-section:not(.sun-panel) > :is(.heat-heading, .wind-heading, .traffic-heading, .transport-heading) { color: #e7e5df; }
+.panel .menu-section:not(.sun-panel) :is(label, .method-note, .wind-intro, .traffic-status, .transport-status) { color: var(--panel-muted); }
+.panel .menu-section:not(.sun-panel) :is(select, input[type="date"], input[type="time"], input[type="text"], input[type="number"], textarea) {
+  border-color: var(--panel-line);
+  border-radius: 4px;
+  background: #343330;
+  color: var(--panel-copy);
+}
+.panel .menu-section:not(.sun-panel) :is(select, input, textarea):focus-visible {
+  border-color: #aaa69d;
+  outline-color: #c7c7c4;
+  box-shadow: 0 0 0 2px #ffffff18;
+}
+.panel .menu-section:not(.sun-panel) input[type="range"] { accent-color: #b7b4ad; }
+.panel .menu-section:not(.sun-panel) :is(.heat-switch, .wind-switch, .traffic-switch, .transport-show-switch, .compact-switch):has(input:checked) {
+  border-color: #74716b;
+  background: #55534e;
+  color: #f1efea;
+}
+.panel .menu-section:not(.sun-panel) :is(button, .transport-service-link) { transition: background-color .18s ease, border-color .18s ease, color .18s ease, transform .18s ease, box-shadow .18s ease; }
+.panel .menu-section:not(.sun-panel) button:hover:not(:disabled) { border-color: #aaa69d; }
+.panel .menu-section:not(.sun-panel) :is(.wind-analysis-tabs, .wind-cfd-view-tabs, .transport-mode-tabs, .heat-view-groups) {
+  border-color: var(--panel-line);
+  border-radius: 4px;
+  background: #343330;
+}
+.panel .menu-section:not(.sun-panel) :is(.wind-analysis-tabs button.active, .wind-cfd-view-tabs button.active, .transport-mode-tabs button.active, .heat-view-groups button[aria-pressed="true"]) {
+  border-color: #74716b;
+  background: #55534e;
+  color: #f1efea;
+  box-shadow: inset 0 0 0 1px #ffffff12;
+}
+.panel .menu-section:not(.sun-panel) :is(.compact-section, .wind-control-section, .transport-section) { border-color: var(--panel-line); }
+.panel .menu-section:not(.sun-panel) :is(.heat-control-card, .wind-cfd-controls, .wind-flow-box-controls, .traffic-simulator, .transport-simulator, .transport-event-planner) {
+  border-color: var(--panel-line);
+  border-radius: 5px;
+  background: linear-gradient(145deg, #343330, #292826);
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-summary span, .wind-results span, .transport-live-board, .current-metrics > div) {
+  border-color: var(--panel-line);
+  border-radius: 4px;
+  background: #30302e;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run) {
+  border-color: #74716b;
+  border-radius: 4px;
+  background: #55534e;
+  color: #f1efea;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-actions button:hover, .wind-run-button:hover, .transport-analyse:hover, .transport-playback #transport-play:hover, #traffic-run:hover) {
+  background: #65625c;
+  box-shadow: 0 4px 14px #ffffff0c;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-status, .wind-status, .traffic-status, .current-status) {
+  border-color: var(--panel-line);
+  border-radius: 4px;
+  background: #292826;
+}
+.panel .menu-section:not(.sun-panel) :is(details > summary, .tool-disclosure > summary) { color: #d9d6ce; }
+@media (prefers-reduced-motion: reduce) {
+  .panel .menu-section:not(.sun-panel).menu-active { animation: none; }
+  .panel .menu-section:not(.sun-panel) :is(button, .transport-service-link) { transition: none; }
+}
+
+/* Remove the leftover green treatment from the non-Sun analysis panels. */
+.panel .menu-section:not(.sun-panel) :is(input[type="checkbox"], input[type="radio"]) { accent-color: #aaa69d; }
+.panel .menu-section:not(.sun-panel) :is(
+  .heat-layer-section, .heat-results-section, .heat-control-card, .heat-screening-controls,
+  .wind-data-banner, .wind-analysis-tabs, .wind-cfd-controls, .wind-flow-box-controls,
+  .wind-design-compare, .wind-status, .wind-results span, .wind-metric-card,
+  .traffic-card, .traffic-live-card, .traffic-view-toggles, .traffic-closure-choice,
+  .traffic-selection-status, .traffic-selection-list li, .traffic-actions button.secondary,
+  .traffic-output-card, .traffic-uncertainty, .traffic-results span, .traffic-report-button,
+  .transport-data-banner, .transport-mode-tabs, .transport-simulator, .transport-live-board,
+  .transport-event-planner, .transport-venue-label
+) { border-color: #4c4c4c; background-color: #30302e; }
+.panel .menu-section:not(.sun-panel) :is(.wind-data-banner, .traffic-live-card, .traffic-card, .transport-simulator, .transport-event-planner) {
+  background: linear-gradient(145deg, #343330, #292826);
+}
+.panel .menu-section:not(.sun-panel) :is(
+  .wind-data-banner b, .wind-analysis-tabs button.active, .wind-cfd-controls > summary,
+  .wind-mode-badge, .wind-run-button, .traffic-card-heading b, .traffic-closure-choice button.active,
+  .traffic-actions #traffic-run, .traffic-report-button, .transport-mode-tabs button.active,
+  .transport-analyse, .transport-playback #transport-play
+) { border-color: #74716b; background: #55534e; color: #f1efea; }
+.panel .menu-section:not(.sun-panel) :is(
+  .wind-data-banner i, .traffic-live-dot, .traffic-live-actions .freshness,
+  .traffic-kicker, .traffic-duration-label output, .traffic-quality-pill,
+  .traffic-calibration-details summary span, .traffic-data-link, .transport-data-banner > i,
+  .transport-live-board strong, .transport-status-row button
+) { border-color: #74716b; color: #d6d3cc; }
+.panel .menu-section:not(.sun-panel) :is(.wind-data-banner i, .traffic-live-dot, .transport-data-banner > i) { background: #aaa69d; box-shadow: none; }
+.panel .menu-section:not(.sun-panel) :is(.traffic-quality-pill, .transport-status-row button) { background: #41403d; }
+.panel .menu-section:not(.sun-panel) :is(.traffic-actions #traffic-run:hover, .traffic-closure-choice button.active:hover, .transport-analyse:hover, .transport-playback #transport-play:hover) { background: #65625c; }
+.panel .menu-section:not(.sun-panel) button.active,
+.panel .menu-section:not(.sun-panel) button[aria-pressed="true"] {
+  border-color: #74716b;
+  background: #55534e;
+  color: #f1efea;
+  box-shadow: inset 0 0 0 1px #ffffff12;
+}
+.panel .menu-section:not(.sun-panel) {
+  --wind-accent: #aaa69d;
+  --transport-accent: #aaa69d;
+  --transport-pale: #d6d3cc;
+}
+.panel .menu-section:not(.sun-panel) :is(
+  .wind-mode-help, .wind-tool-card, .wind-validation-card, .heat-spin-selector,
+  .heat-spin-controls button, .heat-spin-wheel, .heat-loading-state,
+  .traffic-data-note, .traffic-uncertainty, .transport-map-controls .transport-chip
+) { border-color: #4c4c4c; background: #30302e; color: #dedbd3; }
+.panel .menu-section:not(.sun-panel) .heat-spin-wheel { background: linear-gradient(90deg, transparent, #55534e 50%, transparent); }
+.panel .menu-section:not(.sun-panel) .heat-loading-state span { background: linear-gradient(90deg, #77746d, #c0bdb5); }
+.panel .menu-section:not(.sun-panel) .wind-panel,
+.panel .menu-section:not(.sun-panel) .wind-cfd-controls > summary { border-color: #4c4c4c; }
+.panel .menu-section:not(.sun-panel) :is(.wind-compass-presets button.active, #wind-inspect-toggle[aria-pressed="true"], .transport-pick.active) {
+  border-color: #74716b;
+  background: #55534e;
+  color: #f1efea;
+}
+
+/* Compact, flat grayscale finish for the supporting panels. */
+.panel {
+  border-color: #494949;
+  border-radius: 6px;
+  background: #2b2b2bfa;
+  box-shadow: 0 14px 42px #0009;
+}
+.panel-header, .panel-footer { background: #252525; }
+.panel-brand { padding-top: 11px; padding-bottom: 8px; }
+.panel .menu-tabs { padding-right: 8px; padding-left: 8px; }
+.panel .menu-tab { height: 48px; }
+.panel .menu-tab svg { width: 16px; height: 16px; }
+.panel .menu-tab span { font-size: 9px; }
+.panel .panel-body { padding: 11px; }
+.panel .menu-section:not(.sun-panel) { gap: 8px; font-size: 11px; }
+.panel .menu-section:not(.sun-panel) > :is(.heat-heading, .wind-heading, .traffic-heading, .transport-heading) {
+  min-height: 31px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #484848;
+  color: #e1e1e1;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.panel .menu-section:not(.sun-panel) :is(
+  .compact-section, .wind-control-section, .transport-section, .heat-climate-controls
+) { gap: 6px; padding-top: 8px; padding-bottom: 8px; border-color: #484848; }
+.panel .menu-section:not(.sun-panel) :is(
+  .heat-control-card, .wind-cfd-controls, .wind-flow-box-controls, .traffic-simulator,
+  .transport-simulator, .transport-event-planner, .wind-tool-card, .wind-validation-card,
+  .traffic-card, .current-panel
+) {
+  padding: 8px;
+  border-color: #484848;
+  border-radius: 3px;
+  background: #333;
+  box-shadow: none;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-view-groups, .wind-analysis-tabs, .wind-cfd-view-tabs, .transport-mode-tabs, .traffic-view-toggles) {
+  gap: 2px;
+  padding: 2px;
+  border-color: #484848;
+  border-radius: 3px;
+  background: #3a3a3a;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-view-groups button, .wind-analysis-tabs button, .wind-cfd-view-tabs button, .transport-mode-tabs button, .traffic-view-toggles label) {
+  min-height: 28px;
+  border-radius: 2px;
+  color: #c7c7c7;
+  font-size: 9px;
+}
+.panel .menu-section:not(.sun-panel) :is(button.active, button[aria-pressed="true"], .traffic-view-toggles label:has(input:checked)) {
+  border-color: #777;
+  border-radius: 2px;
+  background: #666;
+  color: #f4f4f4;
+  box-shadow: none;
+}
+.panel .menu-section:not(.sun-panel) :is(button, select, input[type="date"], input[type="time"], input[type="text"], input[type="number"], textarea) {
+  min-height: 30px;
+  border-radius: 3px;
+  box-shadow: none;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run) {
+  min-height: 32px;
+  border-color: #777;
+  border-radius: 3px;
+  background: #5c5c5c;
+  color: #f4f4f4;
+  box-shadow: none;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-summary span, .wind-results span, .transport-live-board, .traffic-results span, .current-metrics > div) {
+  border-color: #484848;
+  border-radius: 3px;
+  background: #373737;
+  box-shadow: none;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-status, .wind-status, .traffic-status, .traffic-selection-status, .current-status) {
+  padding: 6px 8px;
+  border-color: #484848;
+  border-radius: 3px;
+  background: #303030;
+  color: #c2c2c2;
+}
+.panel .menu-section:not(.sun-panel) :is(.wind-intro, .heat-legend-help, .traffic-data-note, .method-note, .transport-status) { color: #aaa; }
+.panel .menu-section:not(.sun-panel) :is(details, .tool-disclosure) { border-color: #484848; border-radius: 3px; }
+.panel .menu-section:not(.sun-panel) :is(details > summary, .tool-disclosure > summary) { padding-top: 7px; padding-bottom: 7px; }
+.panel .menu-section:not(.sun-panel) :is(.heat-spin-selector, .wind-mode-help, .wind-design-compare, .traffic-uncertainty, .transport-live-board) {
+  border-color: #484848;
+  border-radius: 3px;
+  background: #363636;
+}
+.panel .menu-section:not(.sun-panel) :is(button, select, input, textarea) { transition-duration: .14s; }
+.panel .menu-section:not(.sun-panel) .wind-compass-presets button.active {
+  border-color: #55a9ff;
+  background: #174e82;
+  color: #e6f3ff;
+  box-shadow: inset 0 0 0 1px #86c5ff55, 0 0 8px #318be533;
+}
+.panel .menu-section:not(.sun-panel) .heat-spin-selector {
+  border-color: #3d5145;
+  background: linear-gradient(110deg, #242b32 0%, #253a35 48%, #32352b 100%);
+}
+.panel .menu-section:not(.sun-panel) .heat-spin-wheel {
+  background: linear-gradient(90deg, transparent, #4a644d 50%, transparent);
+  color: #eef8e9;
+}
+.panel .menu-section:not(.sun-panel) .heat-spin-controls button {
+  border-color: #586b5b;
+  background: #303e35;
+  color: #e0ebd7;
+}
+.panel .menu-section:not(.sun-panel) .traffic-oneway-toggle {
+  border-color: #3c526c;
+  background: linear-gradient(110deg, #202d3a, #252c32);
+  color: #e4edf7;
+}
+#wind-cfd-controls[open] {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  padding: 13px;
+}
+#wind-cfd-controls[open] > summary { margin: 0 0 3px; }
+#wind-cfd-controls[open] > label {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  margin: 0 0 3px;
+}
+#wind-cfd-controls[open] > label select { width: 100%; }
+#wind-cfd-controls[open] > .wind-cfd-view-tabs {
+  flex: 0 0 auto;
+  margin: 2px 0 5px;
+  gap: 5px;
+}
+#wind-cfd-controls[open] > .wind-cfd-view-tabs button { min-height: 36px; }
+#wind-cfd-controls[open] > #wind-ground-controls,
+#wind-cfd-controls[open] > #wind-slice-controls { flex: 0 0 auto; margin-top: 2px; }
+#menu-wind .wind-compass-presets button.active,
+#menu-wind .wind-compass-presets button.active:hover {
+  border-color: #55a9ff;
+  background: #174e82;
+  color: #e6f3ff;
+  box-shadow: inset 0 0 0 1px #86c5ff55, 0 0 8px #318be533;
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel .menu-section:not(.sun-panel) :is(button, select, input, textarea) { transition: none; }
+}
+
+/* Darken the neutral shell and supporting control surfaces to match the reference. */
+.panel { background: #242424fa; }
+.panel-header, .panel-footer { background: #202020; }
+.panel .tool-disclosure { background: #292929; }
+.panel .tool-layer-grid label { background: #252525; }
+.panel .menu-section:not(.sun-panel) :is(
+  .heat-control-card, .wind-cfd-controls, .wind-flow-box-controls, .traffic-simulator,
+  .transport-simulator, .transport-event-planner, .wind-tool-card, .wind-validation-card,
+  .traffic-card, .current-panel, .heat-layer-section, .heat-results-section,
+  .wind-control-section, .transport-section
+) { background: #2b2b2b; }
+.panel .menu-section:not(.sun-panel) :is(select, input[type="date"], input[type="time"], input[type="text"], input[type="number"], textarea) { background: #282828; }
+.panel .menu-section:not(.sun-panel) :is(.heat-view-groups, .wind-analysis-tabs, .wind-cfd-view-tabs, .transport-mode-tabs, .traffic-view-toggles) { background: #303030; }
+.panel .menu-section:not(.sun-panel) :is(.heat-summary span, .wind-results span, .transport-live-board, .traffic-results span, .current-metrics > div) { background: #303030; }
+.panel .menu-section:not(.sun-panel) :is(.heat-status, .wind-status, .traffic-status, .traffic-selection-status, .current-status) { background: #272727; }
+.panel .menu-section:not(.sun-panel) :is(.heat-spin-selector, .wind-mode-help, .wind-design-compare, .traffic-uncertainty) { background: #2d2d2d; }
+
+/* Traffic: make the workflow read as three compact, evenly spaced steps. */
+#menu-traffic { gap: 7px; }
+#menu-traffic > .traffic-heading {
+  min-height: 34px;
+  margin: 0;
+  padding: 0 1px 6px;
+  border-bottom: 1px solid #484848;
+}
+#menu-traffic .traffic-heading h2 { color: #e5e5e5; font-size: 15px; font-weight: 650; letter-spacing: 0; }
+#menu-traffic .traffic-kicker { color: #aaa; font-size: 7px; letter-spacing: .12em; }
+#menu-traffic .traffic-heading .estimate-badge {
+  padding: 4px 6px;
+  border-color: #555;
+  border-radius: 3px;
+  background: #363636;
+  color: #c6c6c6;
+  font-size: 8px;
+}
+#menu-traffic .traffic-view-toggles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+#menu-traffic .traffic-view-toggles label {
+  justify-content: flex-start;
+  min-height: 30px;
+  padding: 6px 8px;
+  border: 1px solid #484848;
+  border-radius: 3px;
+  background: #2b2b2b;
+  color: #c6c6c6;
+  text-align: left;
+}
+#menu-traffic .traffic-view-toggles label:has(input:checked) {
+  border-color: #777;
+  background: #444;
+  color: #f0f0f0;
+}
+#menu-traffic .traffic-card {
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid #484848;
+  border-radius: 3px;
+  background: #2a2a2a;
+}
+#menu-traffic .traffic-live-card { gap: 5px; background: #292929; }
+#menu-traffic .traffic-card-heading {
+  min-height: 19px;
+  color: #e0e0e0;
+  font-size: 10px;
+  font-weight: 650;
+}
+#menu-traffic .traffic-card-heading b {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid #666;
+  border-radius: 3px;
+  background: #444;
+  color: #eee;
+  font-size: 9px;
+}
+#menu-traffic .traffic-live-dot { width: 6px; height: 6px; background: #aaa; box-shadow: none; }
+#menu-traffic .traffic-live-actions { align-items: center; }
+#menu-traffic .traffic-live-actions .freshness { color: #bdbdbd; font-size: 8px; }
+#menu-traffic .traffic-data-note { margin: 0; color: #999; font-size: 8px; line-height: 1.35; }
+#menu-traffic :is(.traffic-control-grid, .traffic-closure-choice, .traffic-actions) { gap: 5px; }
+#menu-traffic :is(label, .traffic-duration-label) { display: grid; gap: 4px; color: #bcbcbc; font-size: 9px; }
+#menu-traffic select { width: 100%; min-height: 30px; margin: 0; padding: 5px 7px; border-color: #505050; border-radius: 3px; background: #292929; color: #e0e0e0; font-size: 9px; text-align: left; }
+#menu-traffic .traffic-card:has(#traffic-control-model) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+#menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-card-heading,
+#menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-control-grid { grid-column: 1 / -1; }
+#menu-traffic .traffic-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#menu-traffic .traffic-card:has(#traffic-control-model) .traffic-control-grid label:last-child { grid-column: 1 / -1; }
+#menu-traffic .traffic-duration-label output { color: #e0e0e0; font-size: 9px; }
+#menu-traffic .traffic-duration-label input { grid-column: 1 / -1; width: 100%; margin: 0; }
+#menu-traffic .traffic-closure-choice button {
+  min-height: 34px;
+  padding: 5px;
+  border: 1px solid #4d4d4d;
+  border-radius: 3px;
+  background: #383838;
+  color: #d0d0d0;
+  font-size: 9px;
+}
+#menu-traffic .traffic-closure-choice button.active { border-color: #888; background: #555; color: #fff; box-shadow: none; }
+#menu-traffic .traffic-selection-status { min-height: 29px; padding: 7px 8px; border: 1px solid #484848; border-radius: 3px; background: #252525; color: #bcbcbc; font-size: 9px; }
+#menu-traffic .traffic-selection-list { margin: 0; }
+#menu-traffic .traffic-selection-list li { min-height: 27px; border-color: #484848; border-radius: 3px; background: #303030; }
+#menu-traffic .traffic-actions { grid-template-columns: minmax(0, 1fr) auto; }
+#menu-traffic .traffic-actions #traffic-run { min-height: 34px; padding: 6px 9px; border: 1px solid #777; border-radius: 3px; background: #555; color: #f4f4f4; font-size: 9px; }
+#menu-traffic .traffic-actions #traffic-run:disabled { opacity: .55; }
+#menu-traffic .traffic-actions #traffic-clear { min-width: 66px; min-height: 34px; border: 1px solid #4d4d4d; border-radius: 3px; background: #303030; color: #ccc; }
+#menu-traffic .traffic-status { padding: 0; color: #aaa; font-size: 8px; }
+#menu-traffic .traffic-output-card { background: #292929; }
+#menu-traffic .traffic-output-card > label { display: grid; grid-template-columns: 1fr 1.2fr; align-items: center; gap: 8px; }
+#menu-traffic .traffic-output-card > label select { max-width: 170px; }
+#menu-traffic .traffic-impact-summary { padding: 8px; border-left-color: #888; border-radius: 3px; background: #343434; }
+#menu-traffic .traffic-results { gap: 4px; }
+#menu-traffic .traffic-results span { border: 1px solid #484848; border-radius: 3px; background: #333; }
+#menu-traffic .traffic-report-button { min-height: 31px; border: 1px solid #555; border-radius: 3px; background: #3a3a3a; color: #ddd; }
+#menu-traffic .traffic-gradient { height: 10px; border-radius: 2px; }
+#menu-traffic .traffic-legend-labels { color: #aaa; font-size: 8px; }
+#menu-traffic .traffic-map-key { border: 0; border-top: 1px solid #484848; border-radius: 0; }
+#menu-traffic .traffic-calibration-details { padding: 7px 8px; border: 1px solid #484848; border-radius: 3px; }
+#menu-traffic .traffic-calibration-details summary { color: #c5c5c5; font-size: 9px; }
+#menu-traffic .traffic-calibration-details summary span { color: #aaa; }
+#menu-traffic .traffic-calibration-details p { color: #a9a9a9; font-size: 9px; }
+@media (max-width: 420px) {
+  #menu-traffic .traffic-card:has(#traffic-control-model) { grid-template-columns: 1fr; }
+  #menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-card-heading,
+  #menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-control-grid,
+  #menu-traffic .traffic-card:has(#traffic-control-model) .traffic-control-grid label:last-child { grid-column: auto; }
+}
+
+/* Transport: reduce the always-open control stack and keep evidence close to results. */
+#menu-transport { gap: 7px; }
+#menu-transport .transport-intro { margin: -2px 1px 2px; color: #aaa; font-size: 9px; line-height: 1.45; }
+#menu-transport .transport-simulator { gap: 7px; margin-bottom: 0; padding: 9px; border-color: #454545; border-radius: 6px; background: #292929; }
+#menu-transport .transport-live-board { border-radius: 4px; }
+#menu-transport .transport-event-planner { margin: 0; border-color: #454545; border-radius: 6px; background: #292929; }
+#menu-transport .transport-event-planner > summary { min-height: 40px; padding: 9px 10px; }
+#menu-transport .transport-event-planner summary em { font-size: 8px; }
+#menu-transport .transport-planner-hint { margin: 9px 0 2px; padding: 8px 9px; border-left: 2px solid #7e9a91; background: #303633; color: #c1cbc6; font-size: 9px; line-height: 1.45; }
+#menu-transport .transport-map-key { padding: 6px 8px; border: 1px solid #414141; border-radius: 4px; background: #252525; }
+#menu-transport .transport-map-key summary { color: #bcbcb8; cursor: pointer; font-size: 8px; }
+#menu-transport .transport-key-items { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 8px 0 3px; color: #c4c4bf; font-size: 8px; }
+#menu-transport .transport-key-items span { display: flex; align-items: center; gap: 6px; }
+#menu-transport .transport-key-items i { display: inline-block; width: 15px; height: 3px; border-radius: 2px; background: #88b8aa; }
+#menu-transport .transport-key-items .transport-key-rail { background: #c49aa9; }
+#menu-transport .transport-key-items .transport-key-track { height: 1px; background: #999; }
+#menu-transport .transport-key-items .transport-key-stop { width: 7px; height: 7px; border: 1px solid #e8e8e2; border-radius: 50%; background: #888; }
+#menu-transport .transport-map-key p { margin: 5px 0 2px; color: #999; font-size: 8px; line-height: 1.45; }
+#menu-transport .transport-links { margin-top: 0; }
+.transport-grade-note { grid-column: 1 / -1; margin: 0; color: #92928f; font-size: 8px; line-height: 1.4; }
+.transport-capacity-breakdown { display: grid; gap: 4px; margin-top: 8px; padding: 8px; border: 1px solid #494949; border-radius: 4px; background: #303030; }
+.transport-capacity-breakdown span { display: flex; justify-content: space-between; gap: 8px; color: #aaa; font-size: 8px; }
+.transport-capacity-breakdown b { color: #e1e1dc; font-size: 9px; text-align: right; }
+.transport-capacity-breakdown span:last-child b { color: #e4c88c; }
+.transport-result-overview { align-content: center; }
+.transport-card-routes { display: flex; flex-wrap: wrap; gap: 4px; }
+.transport-card-route { min-width: 34px; min-height: 26px; padding: 3px 7px; border: 1px solid #56645f; border-radius: 3px; background: #303936; color: #d4e2dc; font-size: 8px; }
+.transport-card-route:hover { border-color: #9ab5a9; background: #3a4842; }
+@media (max-width: 620px) {
+  .transport-grade-note { grid-column: auto; }
+  .transport-result-overview { grid-template-columns: 76px 1fr; }
+  .transport-coverage-chart { width: 74px; height: 74px; }
+}
+
+/* Explorer polish: cyan active states, a persistent view summary, and clearer microcopy. */
+.panel-context {
+  display: grid;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 8px 12px 9px;
+  border-bottom: 1px solid var(--panel-line, var(--line));
+  background: #202a2b;
+}
+.panel-context > span {
+  color: #94aeb0;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.panel-context > strong {
+  overflow: hidden;
+  color: #e4f5f6;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.panel .menu-tab span { font-size: 10px; }
+.panel .menu-tab.active::after { background: #42c5d1; }
+.panel .menu-tab.active,
+.panel .menu-tab.active:hover {
+  color: #e4fbfc;
+  background: linear-gradient(180deg, #21494e, #30302e);
+  box-shadow: inset 0 -1px 0 #42c5d11c;
+}
+.panel .menu-section { font-size: 12px; line-height: 1.45; }
+.panel .menu-section :is(label, p, summary) { font-size: max(10px, 1em); line-height: 1.45; }
+.panel .menu-section :is(.method-note, .control-hint, .heat-legend-help, .sun-help, .wind-intro, .wind-mode-help, .wind-tool-status, .traffic-uncertainty, .transport-planner-hint, .current-status, .streetview-status) {
+  font-size: max(10px, 1em);
+  line-height: 1.45;
+}
+.panel .menu-section:not(.sun-panel) :is(input, select, textarea) { accent-color: #24b7c7; }
+.panel .menu-section:not(.sun-panel) :is(select, input[type="date"], input[type="time"], input[type="text"], input[type="number"], textarea):focus-visible {
+  border-color: #42c5d1;
+  outline-color: #8de5eb;
+  box-shadow: 0 0 0 2px #42c5d14a;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-switch, .wind-switch, .traffic-switch, .transport-show-switch, .compact-switch):has(input:checked) {
+  border-color: #25838d;
+  background: #21484c;
+  color: #e0fbfc;
+}
+.panel .menu-section:not(.sun-panel) :is(.wind-analysis-tabs button.active, .wind-cfd-view-tabs button.active, .transport-mode-tabs button.active, .heat-view-groups button[aria-pressed="true"], button[aria-pressed="true"], button.active) {
+  border-color: #258b96;
+  background: #20545b;
+  color: #e5fbfc;
+  box-shadow: inset 0 0 0 1px #48c4ce38;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run, .current-actions button:first-child) {
+  border-color: #168492;
+  background: #087f8c;
+  color: #fff;
+}
+.panel .menu-section:not(.sun-panel) :is(.heat-actions button:hover, .wind-run-button:hover, .transport-analyse:hover, .transport-playback #transport-play:hover, #traffic-run:hover, .current-actions button:first-child:hover) {
+  border-color: #43c4ce;
+  background: #0a929f;
+}
+#menu-traffic #traffic-run { border-color: #168492; background: #087f8c; color: #fff; }
+#menu-traffic #traffic-run:hover:not(:disabled) { border-color: #43c4ce; background: #0a929f; }
+#menu-traffic .traffic-closure-choice button.active { border-color: #258b96; background: #20545b; color: #e5fbfc; }

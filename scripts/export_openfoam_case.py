@@ -780,6 +780,7 @@ def main() -> None:
         "terrain_spacing_m": args.terrain_spacing_m,
         "full_scene": args.full_scene,
         "source_building_records": len(scene["buildings"]),
+        "source_scene": str(args.scene.resolve()),
         "building_parts": building_count,
         "raw_building_triangles": raw_building_triangle_count,
         "building_triangles": building_triangle_count,

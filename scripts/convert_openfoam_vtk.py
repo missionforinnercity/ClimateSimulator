@@ -98,7 +98,7 @@ def convert(vtk_path: Path, case_path: Path, output_dir: Path, spacing: tuple[fl
     mask.astype(np.uint8).tofile(output_dir / mask_name)
 
     ranges = {name: robust_range(interleaved[:, index], mask) for index, name in enumerate(CHANNELS)}
-    scene_path = PROJECT_ROOT / "public/assets/fallback.json"
+    scene_path = Path(case.get("source_scene", PROJECT_ROOT / "public/assets/fallback.json"))
     coverage = None
     if scene_path.exists():
         buildings = json.loads(scene_path.read_text(encoding="utf-8")).get("buildings", [])

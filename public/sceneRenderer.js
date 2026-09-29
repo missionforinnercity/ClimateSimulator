@@ -289,14 +289,22 @@ export async function startScene(canvas, status) {
   const heatMaximumLabel = document.querySelector('#heat-maximum-label');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
+  const sunAnalysisDate = document.querySelector('#sun-analysis-date');
   const sunTime = document.querySelector('#sun-time');
   const sunTimeValue = document.querySelector('#sun-time-value');
+  const sunPositionMarker = document.querySelector('#sun-position-marker');
+  const sunPositionGlow = document.querySelector('#sun-position-glow');
+  const sunPositionAltitude = document.querySelector('#sun-position-altitude');
+  const sunPositionCaption = document.querySelector('#sun-position-caption');
   const sunGenerate = document.querySelector('#sun-generate');
   const sunStatus = document.querySelector('#sun-status');
   const sunModeButtons = [...document.querySelectorAll('[data-sun-mode]')];
   const sunInstantControl = document.querySelector('#sun-instant-control');
+  const sunShadowControls = document.querySelector('#sun-shadow-controls');
+  const sunTimeTools = document.querySelector('#sun-time-tools');
   const sunWindowControls = document.querySelector('#sun-window-controls');
   const sunDateTimeHeading = document.querySelector('#sun-date-time-heading');
+  const sunHoursMethod = document.querySelector('#sun-hours-method');
   const sunStartTime = document.querySelector('#sun-start-time');
   const sunEndTime = document.querySelector('#sun-end-time');
   const sunStepTime = document.querySelector('#sun-step-time');
@@ -313,6 +321,13 @@ export async function startScene(canvas, status) {
     data: null,
     baselineData: null,
   };
+  let heatCurrentSummary = null;
+  let heatSavedComparison = null;
+  let heatInspectPending = false;
+  const heatInspectButton = document.querySelector('#heat-inspect-place');
+  const heatInspectResult = document.querySelector('#heat-inspect-result');
+  const heatSaveComparison = document.querySelector('#heat-save-comparison');
+  const heatComparison = document.querySelector('#heat-comparison');
   let heatLoadToken = 0;
   const streetViewState = { placing: false, point: null };
   const shadowState = {
@@ -902,13 +917,27 @@ export async function startScene(canvas, status) {
     context.restore();
   }
 
+  function updateHeatComparison() {
+    if (!heatComparison) return;
+    if (!heatSavedComparison || !heatCurrentSummary) { heatComparison.hidden = true; return; }
+    heatComparison.hidden = false;
+    const before = heatSavedComparison, after = heatCurrentSummary;
+    const delta = after.mean - before.mean;
+    heatComparison.textContent = before.metric === after.metric && before.unit === after.unit
+      ? `Map-wide area-weighted mean · saved: ${before.label}, ${before.date}, ${before.mean.toFixed(1)}${before.unit}; now: ${after.date}, ${after.mean.toFixed(1)}${after.unit}. Change: ${delta > 0 ? '+' : ''}${delta.toFixed(1)}${after.unit}.`
+      : `Map-wide area-weighted mean · saved: ${before.label}, ${before.date}, ${before.mean.toFixed(1)}${before.unit}; now: ${after.label}, ${after.date}, ${after.mean.toFixed(1)}${after.unit}. Different measures cannot be subtracted.`;
+  }
+
   async function loadHeat(metric = heatState.metric) {
     const loadToken = ++heatLoadToken;
     let thermalFallback = false;
     if (['utci_c', 'tmrt_c'].includes(metric)) {
       thermalFallback = true;
       heatState.metric = 'pedestrian_priority_score';
-      if (heatMetric) heatMetric.value = heatState.metric;
+      if (heatMetric) {
+        heatMetric.value = heatState.metric;
+        heatMetric.dispatchEvent(new Event('change', { bubbles: true }));
+      }
       metric = heatState.metric;
       const status = document.querySelector('#heat-status');
       if (status) status.textContent = 'Near-live thermal rasters require WebGL 2; showing the legacy screening layer.';
@@ -919,6 +948,14 @@ export async function startScene(canvas, status) {
     if (heatForecastControl) heatForecastControl.hidden = true;
     heatState.metric = metric;
     heatStatus.textContent = 'Loading heat zones…';
+    const heatExplanations = {
+      pedestrian_priority_score: 'Screening rank: 70% fixed Summer 2025–26 surface-heat baseline + 30% shade deficit at the selected date and time. Not a health-risk score.',
+      pedestrian_heat_exposure_c: 'Satellite-derived exposure proxy in °C. It is not UTCI, PET, air temperature or measured pedestrian exposure.',
+      shade_deficit_score: 'Relative lack of mapped shade at the selected date and time. It does not measure surface temperature or health risk.',
+      heat_model_lst_c: 'Modelled land-surface temperature from the Summer 2025–26 product; it is not air temperature.',
+      rooftop_temperature_c: 'Land-surface temperature screened onto mapped roofs. It is not a measured roof-membrane temperature.',
+    };
+    if (heatLayerHelp) heatLayerHelp.textContent = heatExplanations[metric] || 'Satellite heat screening · separate from UTCI and measured street conditions.';
     heatStatus.setAttribute('aria-busy', 'true');
     try {
       const params = new URLSearchParams({
@@ -938,6 +975,7 @@ export async function startScene(canvas, status) {
       const formatValue = value => `${Number(value).toFixed(decimals)}${metadata.unit || ''}`;
       const summaryReady = summary?.area_weighted_mean != null && summary?.maximum != null;
       if (heatSummary) heatSummary.hidden = !summaryReady;
+      if (!summaryReady) { heatCurrentSummary = null; updateHeatComparison(); }
       if (summaryReady) {
         heatAverage.textContent = formatValue(summary.area_weighted_mean);
         heatMaximum.textContent = formatValue(summary.maximum);
@@ -945,6 +983,15 @@ export async function startScene(canvas, status) {
         if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum';
         const hotspotHectares = Number(summary.hotspot_area_m2 || 0) / 10000;
         heatPriorityArea.textContent = `${hotspotHectares.toFixed(1)} ha · ${Number(summary.hotspot_area_pct || 0).toFixed(0)}%`;
+        if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'Top 10% area';
+        heatCurrentSummary = {
+          metric, label: heatMetric?.selectedOptions[0]?.textContent.trim() || metric,
+          mean: Number(summary.area_weighted_mean), unit: metadata.unit || '',
+          date: ['heat_model_lst_c', 'rooftop_temperature_c', 'pedestrian_heat_exposure_c'].includes(metric)
+            ? `${heatState.data.window?.label || 'Fixed source baseline'}`
+            : `${heatDate?.value || 'Summer baseline'} · ${heatTime?.selectedOptions[0]?.textContent || '12:00'}`,
+        };
+        updateHeatComparison();
       }
       const range = heatState.data.color_range || heatState.data.range;
       const scale = heatState.data.color_scale || {};
@@ -965,6 +1012,8 @@ export async function startScene(canvas, status) {
     } catch (error) {
       if (loadToken !== heatLoadToken) return;
       heatState.data = null;
+      heatCurrentSummary = null;
+      updateHeatComparison();
       if (heatSummary) heatSummary.hidden = true;
       heatLegendMin.textContent = '—';
       heatLegendMax.textContent = '—';
@@ -982,7 +1031,7 @@ export async function startScene(canvas, status) {
     sunGenerate.disabled = true;
     try {
       const scenario = {
-        date: sunDate?.value || shadowState.date,
+        date: sunAnalysisDate?.value || sunDate?.value || shadowState.date,
         start_minutes: sunStartTime?.value || '480', end_minutes: sunEndTime?.value || '1080',
         step_minutes: sunStepTime?.value || '60',
       };
@@ -1075,6 +1124,8 @@ export async function startScene(canvas, status) {
 
   function setSunAnalysisMode(mode) {
     shadowState.mode = mode;
+    if (mode === 'hours' && sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
+    if (mode === 'shadows' && sunDate) sunDate.value = shadowState.date;
     shadowState.generated = null;
     shadowState.hoursData = null;
     const cumulative = mode === 'hours';
@@ -1084,9 +1135,12 @@ export async function startScene(canvas, status) {
       button.setAttribute('aria-pressed', String(active));
     }
     if (sunInstantControl) sunInstantControl.hidden = cumulative;
+    if (sunShadowControls) sunShadowControls.hidden = cumulative;
+    if (sunTimeTools) sunTimeTools.hidden = cumulative;
     if (sunWindowControls) sunWindowControls.hidden = !cumulative;
     if (sunDateTimeHeading) sunDateTimeHeading.textContent = cumulative ? 'Date & analysis window' : 'Date & time';
     if (sunHoursLegend) sunHoursLegend.hidden = !cumulative;
+    if (sunHoursMethod) sunHoursMethod.hidden = !cumulative;
     sunGenerate.textContent = cumulative ? 'Calculate sun hours' : 'Generate shadows';
     sunStatus.textContent = cumulative
       ? 'Choose a date and time window, then calculate cumulative direct sunlight.'
@@ -1329,6 +1383,23 @@ export async function startScene(canvas, status) {
     const hours = String(Math.floor(shadowState.minutes / 60)).padStart(2, '0');
     const minutes = String(shadowState.minutes % 60).padStart(2, '0');
     if (sunTimeValue) sunTimeValue.textContent = `${hours}:${minutes}`;
+    const altitudeDegrees = sun.altitude * 180 / Math.PI;
+    if (sunPositionAltitude) sunPositionAltitude.textContent = altitudeDegrees > 0 ? `Altitude ${Math.round(altitudeDegrees)}°` : 'Sun below horizon';
+    if (sunPositionMarker && sunPositionGlow) {
+      const visible = altitudeDegrees > 0;
+      sunPositionMarker.style.display = visible ? '' : 'none';
+      sunPositionGlow.style.display = visible ? '' : 'none';
+      if (visible) {
+        const x = clamp(120 - Math.sin(sun.azimuth) * 100, 20, 220);
+        const y = clamp(92 - Math.sin(sun.altitude) * 76, 16, 90);
+        for (const marker of [sunPositionMarker, sunPositionGlow]) {
+          marker.setAttribute('cx', x.toFixed(1));
+          marker.setAttribute('cy', y.toFixed(1));
+        }
+      }
+    }
+    if (sunPositionCaption) sunPositionCaption.textContent = altitudeDegrees > 0
+      ? `${Math.round(altitudeDegrees)}° high · ${sun.azimuth > Math.PI ? 'west' : 'east'} sky` : 'Below the horizon';
     sunStatus.textContent = sun.altitude <= 0
       ? 'Sun is below the horizon at this time.'
       : `Sun altitude ${Math.round(sun.altitude * 180 / Math.PI)}° · click Generate shadows when ready.`;
@@ -2264,6 +2335,22 @@ export async function startScene(canvas, status) {
       return;
     }
     if (cameraTouchTap) lastCameraTouchTap = performance.now();
+    const heatTap = drag && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 12;
+    if (heatInspectPending && heatTap) {
+      heatInspectPending = false;
+      const point = cameraProjection().screenToTerrain(event.clientX, event.clientY);
+      const features = heatState.data?.features || [];
+      const feature = point && features.find(item => geometryPolygons(item.geometry).some(polygon =>
+        pointInPolygon(point[0], point[1], polygon[0] || [])
+        && !polygon.slice(1).some(hole => pointInPolygon(point[0], point[1], hole))));
+      const value = feature?.value ?? feature?.properties?.[heatState.metric];
+      if (heatInspectResult) {
+        heatInspectResult.hidden = false;
+        heatInspectResult.textContent = value == null
+          ? 'No screening value covers that point. Try another place on the coloured surface.'
+          : `${heatState.data.metric_label || heatMetric?.selectedOptions[0]?.textContent}: ${Number(value).toFixed(Number(heatState.data.metric_metadata?.decimals ?? 1))}${heatState.data.metric_metadata?.unit || ''} at ${point[0].toFixed(0)}, ${point[1].toFixed(0)} m. Screening product · ${heatState.data.window?.label || 'source period'}.`;
+      }
+    }
     drag = null;
     windDrag = null;
     sunDrag = null;
@@ -2409,6 +2496,19 @@ export async function startScene(canvas, status) {
   heatMetric?.addEventListener('change', event => {
     loadHeat(event.target.value);
   });
+  heatSaveComparison?.addEventListener('click', () => {
+    if (!heatCurrentSummary) {
+      if (heatComparison) { heatComparison.hidden = false; heatComparison.textContent = 'Wait for a heat result before saving a comparison.'; }
+      return;
+    }
+    heatSavedComparison = { ...heatCurrentSummary };
+    updateHeatComparison();
+  });
+  heatInspectButton?.addEventListener('click', () => {
+    if (heatToggle && !heatToggle.checked) { heatToggle.checked = true; heatToggle.dispatchEvent(new Event('change', { bubbles: true })); }
+    heatInspectPending = true;
+    if (heatInspectResult) { heatInspectResult.hidden = false; heatInspectResult.textContent = 'Click a mapped place on the heat surface to inspect it.'; }
+  });
   heatDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
     loadHeat(heatMetric?.value);
@@ -2420,11 +2520,18 @@ export async function startScene(canvas, status) {
   sunToggle?.addEventListener('change', event => setShadowMode(event.target.checked));
   sunDate?.addEventListener('change', event => {
     shadowState.date = event.target.value || shadowState.date;
+    if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
     shadowState.generated = null;
     shadowGenerationToken += 1;
     sunGenerate.disabled = false;
     sunGenerate.textContent = shadowState.mode === 'hours' ? 'Calculate sun hours' : 'Generate shadows';
     updateSunStatus();
+    requestRender();
+  });
+  sunAnalysisDate?.addEventListener('change', event => {
+    shadowState.date = event.target.value || shadowState.date;
+    if (sunDate) sunDate.value = shadowState.date;
+    shadowState.generated = null;
     requestRender();
   });
   sunTime?.addEventListener('input', event => {
@@ -2488,6 +2595,7 @@ export async function startScene(canvas, status) {
       const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
       shadowState.minutes = Math.round((hour * 60 + minute) / 10) * 10;
       sunDate.value = shadowState.date;
+      if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
       sunTime.value = String(clamp(shadowState.minutes, Number(sunTime.min), Number(sunTime.max)));
       shadowState.minutes = Number(sunTime.value);
     }

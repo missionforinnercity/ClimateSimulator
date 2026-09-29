@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=49">
+    <link rel="stylesheet" href="/style.css?v=68">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -109,6 +109,10 @@
           </button>
         </nav>
       </header>
+      <div class="panel-context" aria-label="Current map view">
+        <span>Current view</span>
+        <strong id="panel-context-value">City model · base layers</strong>
+      </div>
       <div id="explorer-panel-body" class="panel-body">
       <section id="menu-tools" class="tools-panel menu-section menu-active" data-menu-panel="tools" role="tabpanel" aria-label="Map tools">
         <section class="tool-section current-panel">
@@ -158,8 +162,23 @@
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
         <div class="heat-heading"><div><strong>Urban heat</strong><small>UTCI &amp; satellite heat</small></div><label class="heat-switch compact-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
         <div class="compact-section heat-layer-section">
-          <b>Heat view</b>
-          <label>Layer
+          <b class="heat-section-title">Explore heat</b>
+          <div class="heat-view-groups" role="group" aria-label="Heat evidence type">
+            <button type="button" data-heat-view-group="current" aria-pressed="true">Current</button>
+            <button type="button" data-heat-view-group="history" aria-pressed="false">Historical</button>
+            <button type="button" data-heat-view-group="screening" aria-pressed="false">Heat + shade</button>
+          </div>
+          <div class="heat-spin-selector">
+            <button id="heat-spin" class="heat-spin-wheel" type="button" aria-label="Spin to choose a heat view">
+              <span id="heat-spin-value">UTCI</span>
+              <small>CLICK TO SPIN</small>
+            </button>
+            <div class="heat-spin-controls">
+              <button id="heat-spin-previous" type="button" aria-label="Previous heat view">‹</button>
+              <button id="heat-spin-next" type="button" aria-label="Next heat view">›</button>
+            </div>
+          </div>
+          <label class="heat-exact-select">Select a layer
             <select id="heat-metric">
               <optgroup label="Thermal comfort">
                 <option value="utci_c" selected>UTCI</option>
@@ -244,6 +263,12 @@
             <span><b id="heat-priority-area">—</b><i>Priority area</i></span>
             <span><b id="heat-maximum">—</b><i id="heat-maximum-label">Maximum</i></span>
           </div>
+          <div class="heat-actions">
+            <button id="heat-inspect-place" type="button">Inspect a place</button>
+            <button id="heat-save-comparison" type="button">Save this view</button>
+          </div>
+          <p id="heat-inspect-result" class="heat-action-result" role="status" hidden></p>
+          <div id="heat-comparison" class="heat-comparison" role="status" hidden></div>
           <div class="heat-gradient"></div>
           <div class="heat-legend-labels"><span id="heat-legend-min">Lower</span><span id="heat-legend-max">Higher</span></div>
           <p id="heat-legend-help" class="heat-legend-help" hidden>Colours show relative differences within this hour.</p>
@@ -265,13 +290,57 @@
         </div>
         <div class="sun-control-section">
           <b id="sun-date-time-heading">Date &amp; time</b>
+          <div id="sun-shadow-controls" class="sun-mode-controls">
+          <div class="sun-position-card" aria-label="Sun position in the sky">
+            <svg id="sun-position-graphic" viewBox="0 0 240 112" role="img" aria-labelledby="sun-position-title sun-position-description">
+              <title id="sun-position-title">Sun position over Cape Town</title>
+              <desc id="sun-position-description">Sky position diagram updates with the selected date and time.</desc>
+              <defs><linearGradient id="sun-sky-gradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#273d50"/><stop offset="1" stop-color="#d18b52"/></linearGradient></defs>
+              <path d="M18 92 A102 84 0 0 1 222 92 L222 96 L18 96 Z" fill="url(#sun-sky-gradient)" opacity=".72"/>
+              <path d="M18 92 A102 84 0 0 1 222 92" fill="none" stroke="#b7c4c4" stroke-width="1.5" stroke-dasharray="3 4"/>
+              <path d="M18 92 H222" stroke="#d6d2c5" stroke-width="2"/>
+              <path d="M120 92 V14 M42 92 H198" stroke="#a9b4b6" stroke-opacity=".32" stroke-dasharray="2 4"/>
+              <circle id="sun-position-glow" cx="120" cy="48" r="17" fill="#ffc867" opacity=".18"/>
+              <circle id="sun-position-marker" cx="120" cy="48" r="7" fill="#ffd578" stroke="#fff1c4" stroke-width="2"/>
+              <text x="18" y="107" fill="#d2d1c9" font-size="8">E</text><text x="117" y="107" fill="#d2d1c9" font-size="8">N</text><text x="217" y="107" fill="#d2d1c9" font-size="8">W</text>
+              <text id="sun-position-altitude" x="120" y="12" text-anchor="middle" fill="#f3e0bd" font-size="9">Sun altitude —</text>
+            </svg>
+            <span id="sun-position-caption">Sun path · Cape Town</span>
+          </div>
           <label>Date
             <input id="sun-date" type="date" value="2026-07-27">
           </label>
           <label id="sun-instant-control">Time <span id="sun-time-value">12:00</span>
             <input id="sun-time" type="range" min="0" max="1430" step="10" value="720">
           </label>
+          <div id="sun-time-tools" class="sun-time-tools">
+            <button id="sun-play" type="button" aria-pressed="false">▶ Play day</button>
+            <div class="sun-time-shortcuts" role="group" aria-label="Solar time shortcuts">
+              <button type="button" data-sun-time="sunrise">Sunrise</button>
+              <button type="button" data-sun-time="noon">Solar noon</button>
+              <button type="button" data-sun-time="sunset">Sunset</button>
+            </div>
+          </div>
+          </div>
           <div id="sun-window-controls" class="sun-window-controls" hidden>
+            <label class="sun-wide-control">Study date
+              <input id="sun-analysis-date" type="date" value="2026-07-27">
+            </label>
+            <div class="sun-detail-preset sun-wide-control" role="group" aria-label="Sun-hours detail level">
+              <button type="button" data-sun-detail="quick" class="active" aria-pressed="true">Quick · wider area</button>
+              <button type="button" data-sun-detail="detailed" aria-pressed="false">Detailed · smaller area</button>
+            </div>
+            <p class="sun-help sun-wide-control">Sun hours count direct sunlight during this window. Compare the same place across dates to see seasonal changes.</p>
+            <label class="sun-wide-control">Compare with date
+              <input id="sun-compare-date" type="date" value="2026-12-21">
+            </label>
+            <button id="sun-compare" class="secondary sun-wide-control" type="button">Compare dates</button>
+            <div id="sun-compare-switch" class="sun-compare-switch sun-wide-control" role="group" aria-label="Choose seasonal sun-hours view" hidden>
+              <button type="button" data-sun-result="first" aria-pressed="true" class="active">First</button>
+              <button type="button" data-sun-result="second" aria-pressed="false">Compare</button>
+              <button type="button" data-sun-result="difference" aria-pressed="false">Difference</button>
+            </div>
+            <p id="sun-compare-summary" class="sun-help sun-wide-control" hidden></p>
             <label class="sun-wide-control">Analysis surfaces
               <select id="sun-analysis-surfaces">
                 <option value="all" selected>Ground + building surfaces</option>
@@ -300,13 +369,13 @@
                 <option value="60" selected>60 min</option>
               </select>
             </label>
-            <label>Building grid
+            <label>Surface detail
               <select id="sun-surface-resolution">
-                <option value="10" selected>10 m · faster</option>
-                <option value="5">5 m · smoother</option>
+                <option value="10" selected>10 m · quicker</option>
+                <option value="5">5 m · more detail</option>
               </select>
             </label>
-            <label>Analysis area
+            <label>Study area
               <select id="sun-domain-size">
                 <option value="300">300 m · fastest</option>
                 <option value="500" selected>500 m · local</option>
@@ -318,22 +387,24 @@
         </div>
         <button id="sun-generate" type="button">Generate shadows</button>
         <progress id="sun-progress" class="sun-progress" max="100" hidden aria-label="Sun-hours calculation progress"></progress>
-        <p id="sun-status" class="sun-status">Choose a date and time, then generate terrain-aware shadows.</p>
+        <p id="sun-status" class="sun-status">Loading current Cape Town shadows…</p>
         <div id="sun-hours-legend" class="sun-hours-legend" hidden>
           <div class="sun-energy-gradient"></div>
           <div class="heat-legend-labels"><span id="sun-hours-min">Least sun</span><span id="sun-hours-max">Most sun</span></div>
         </div>
-        <details class="sun-advanced"><summary>Method &amp; limitations</summary><p>Binary clear-sky 3D rays are cast from ground zones and roof/façade cells inside the selected area toward each sampled sun position. All mapped buildings and canopies remain shadow blockers. Roof results use simplified planes and do not include diffuse or reflected light.</p></details>
-        <p class="sun-note">Modelled solar geometry · mapped buildings and canopies</p>
+        <button id="sun-inspect" class="secondary" type="button" hidden>Inspect a surface</button>
+        <p id="sun-inspect-result" class="sun-help" role="status" hidden></p>
+        <details id="sun-hours-method" class="sun-advanced"><summary>How to read this · method</summary><p>Sun hours are accumulated direct sun, not total daylight or solar energy. A brighter cell means more sampled time in direct sun within the chosen window. Compare different dates using the same area and time window to explore seasonal change. Results use mapped buildings and canopies; roofs are simplified planes. Clouds, diffuse and reflected light are not included, and rough LiDAR roof detail is not treated as engineering-grade solar geometry.</p></details>
+        <p class="sun-note">Planning-level comparison · not measured radiation</p>
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
-        <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · FULL CBD</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show</label></div>
-        <div class="wind-data-banner"><i></i><span><b id="wind-source-title">OpenFOAM urban airflow</b><small id="wind-source-detail">SE 135° · RANS k–ε · iteration 500</small></span></div>
-
+        <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · COMFORT (PARTIAL)</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
+        <p class="wind-intro">See where wind may affect people at street level. Start with comfort, or inspect a wind direction.</p>
         <div class="wind-analysis-tabs" role="group" aria-label="Wind analysis mode">
-          <button class="active" type="button" data-wind-lens="direction" aria-pressed="true">Direction</button>
-          <button type="button" data-wind-lens="comfort" aria-pressed="false">Comfort</button>
+          <button type="button" data-wind-lens="direction" aria-pressed="false">By direction</button>
+          <button class="active" type="button" data-wind-lens="comfort" aria-pressed="true">Wind comfort</button>
         </div>
+        <p class="wind-mode-help" id="wind-mode-help">Combines available solved directions with Cape Town's wind rose to screen pedestrian comfort.</p>
 
         <div class="wind-control-section" data-wind-direction-controls hidden>
           <b>Wind direction</b>
@@ -371,7 +442,8 @@
           </div>
         </div>
 
-        <div id="wind-cfd-controls" class="wind-control-section wind-cfd-controls">
+        <details id="wind-cfd-controls" class="wind-control-section wind-cfd-controls">
+          <summary>Advanced CFD views</summary>
           <b>Diagnostic view</b>
           <label>Field
             <select id="wind-cfd-field">
@@ -421,9 +493,10 @@
             <button id="wind-slice-reset" class="secondary" type="button">Reset full slice</button>
           </div>
           <p class="wind-cfd-hint" id="wind-cfd-view-hint">Pedestrian is terrain-following CFD. Drag the slice directly in the scene, or use Pressure on Façades.</p>
-        </div>
+        </details>
 
-        <div id="wind-flow-box-controls" class="wind-control-section" hidden>
+        <details id="wind-flow-box-controls" class="wind-control-section" hidden>
+          <summary>Flow display options</summary>
           <b>Flow region</b>
           <button id="wind-move-domain" class="secondary wind-domain-button" type="button" aria-pressed="false">Box · <span id="wind-size-value">300</span> × <span id="wind-size-value-copy">300</span> m</button>
           <label class="wind-size-control">Box size
@@ -441,7 +514,7 @@
             <input id="wind-animation-speed" type="range" min="25" max="200" step="25" value="100">
           </label>
           <p class="wind-cfd-hint">Drag this box directly in the scene (or use the handle to resize); flowlines seed and stay inside it, sampled live from the OpenFOAM volume.</p>
-        </div>
+        </details>
 
         <div id="wind-climate-controls" class="wind-control-section" hidden>
           <b>Date &amp; climate</b>
@@ -458,8 +531,8 @@
           </label>
         </div>
 
-        <button id="wind-simulate" class="wind-run-button" type="button">Load OpenFOAM result</button>
-        <p id="wind-status" class="wind-status">Show wind to load the terrain-following CFD result.</p>
+        <button id="wind-simulate" class="wind-run-button" type="button">Run comfort assessment</button>
+        <p id="wind-status" class="wind-status">Run a comfort assessment to view available solved directions.</p>
         <div id="wind-results" class="wind-results" hidden></div>
         <button id="wind-report" class="wind-report-button secondary" type="button" disabled hidden>Generate detailed wind report</button>
 
@@ -469,6 +542,40 @@
           <div class="wind-legend-labels"><span id="wind-legend-low"><b id="wind-legend-min">0.0</b> m/s · low</span><span id="wind-legend-high"><b id="wind-legend-max">—</b> m/s · high</span></div>
           <div id="wind-comfort-chips" class="wind-comfort-chips" hidden></div>
         </div>
+        <div class="wind-map-tools">
+          <button id="wind-inspect-toggle" class="secondary" type="button" aria-pressed="false">Inspect a place</button>
+          <p id="wind-inspect-result" role="status" hidden>Click a point on the map to inspect wind speed and comfort.</p>
+        </div>
+        <details class="wind-tool-card wind-compare-card">
+          <summary id="wind-compare-title">Compare scenarios</summary>
+          <p>Save a result, change direction or period, then run it again. Comfort compares activity classes; direction compares pedestrian speeds.</p>
+          <div class="wind-tool-actions"><button id="wind-save-baseline" class="secondary" type="button" disabled>Save current baseline</button><button id="wind-clear-baseline" class="secondary" type="button" hidden>Clear baseline</button></div>
+          <p id="wind-compare-status" class="wind-tool-status" role="status">Run a wind study to start a comparison.</p>
+          <div id="wind-comparison-result" class="wind-comparison-result" hidden></div>
+          <div class="wind-design-compare">
+            <b>Proposed design</b>
+            <label>Solved proposal <select id="wind-design-select" disabled><option>No solved proposals yet</option></select></label>
+            <button id="wind-design-load" class="secondary" type="button" disabled>Load proposal for comparison</button>
+            <small>Load a baseline direction and save it first. Then load the solved proposal and compare pedestrian speed at the same direction.</small>
+          </div>
+        </details>
+
+        <details class="wind-tool-card wind-validation-card">
+          <summary>Check against measurements</summary>
+          <p>Compare at least three pedestrian observations with the screening model. Coordinates are viewer-local metres (x east, z south-positive); CSV columns: x, z, speed_mps, height_m, id, observed_at.</p>
+          <label>Observation CSV <input id="wind-observation-file" type="file" accept=".csv,text/csv"></label>
+          <label>Or paste observations <textarea id="wind-observation-json" rows="4" placeholder='[{"x":-40,"z":-20,"speed_mps":4.8,"height_m":2}]'></textarea></label>
+          <div class="wind-validation-scenario">
+            <label>Reference wind <span><input id="wind-validation-speed" type="number" min="0" max="50" step="0.1" value="10"> m/s</span></label>
+            <label>Wind direction <select id="wind-validation-direction"><option value="135">SE · 135°</option><option value="150">Cape Doctor · 150°</option><option value="315">NW · 315°</option></select></label>
+            <label>Domain width <span><input id="wind-validation-size" type="number" min="100" max="1200" step="50" value="500"> m</span></label>
+            <label>Centre x <input id="wind-validation-center-x" type="number" step="10" value="0"></label>
+            <label>Centre z <input id="wind-validation-center-z" type="number" step="10" value="0"></label>
+          </div>
+          <button id="wind-validate-button" class="secondary" type="button">Compare measurements</button>
+          <p id="wind-validation-status" class="wind-tool-status" role="status">This check uses the screening model; it does not validate the OpenFOAM result.</p>
+          <div id="wind-validation-result" class="wind-validation-result" hidden></div>
+        </details>
 
         <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for all mapped buildings. SE 135° and NW 315° are solved today; other directions will appear as their cases are meshed, solved and converted. Comfort weights each <em>solved</em> OpenFOAM direction's pedestrian-height field by its ERA5 wind-rose frequency and Weibull exceedance; directions without a solved case are excluded from the weighted sum rather than interpolated or assumed calm, so today's comfort result is a lower-bound estimate covering only the resolved sector(s), not a complete annual study. Neither mode has passed domain/mesh sensitivity or field validation and must not be used for certification.</p></details>
       </section>
@@ -478,6 +585,7 @@
           <label class="transport-show-switch"><input id="transport-toggle" type="checkbox" checked><span>Network on</span></label>
         </div>
         <div class="transport-data-banner"><i aria-hidden="true"></i><span><b>Schedule-powered simulation</b><small id="transport-data-source">Loading PRASA + MyCiTi data…</small></span><em>NOT LIVE</em></div>
+        <p class="transport-intro">Explore scheduled bus and rail service across the CBD. Select a route or click a stop for modelled departures.</p>
         <div class="transport-mode-tabs" role="group" aria-label="Transport modes">
           <button class="active" type="button" data-transport-mode="both" aria-pressed="true"><span aria-hidden="true">⌘</span> Network</button>
           <button type="button" data-transport-mode="bus" aria-pressed="false"><span aria-hidden="true">▰</span> Bus</button>
@@ -505,12 +613,17 @@
             <label class="transport-chip"><input id="transport-routes-toggle" type="checkbox" checked> Lines</label>
             <label class="transport-chip"><input id="transport-stops-toggle" type="checkbox" checked> Stops</label>
           </div>
+          <details class="transport-map-key"><summary>Map key &amp; data confidence</summary>
+            <div class="transport-key-items"><span><i class="transport-key-bus"></i>MyCiTi route</span><span><i class="transport-key-rail"></i>Rail corridor</span><span><i class="transport-key-track"></i>Mapped track</span><span><i class="transport-key-stop"></i>Stop / station</span></div>
+            <p>MyCiTi times are interpolated from supplied weekday timetable endpoints. PRASA times use the supplied CSV where matched; unmatched corridors use a planning cadence. Vehicle positions are schedule-derived estimates, never live GPS.</p>
+          </details>
           <div class="transport-status-row"><p id="transport-status" class="transport-status" aria-live="polite">Loading scheduled services…</p><button id="transport-next-rail" type="button" hidden>Show next train →</button></div>
         </section>
 
-        <details class="transport-event-planner" open>
+        <details class="transport-event-planner">
           <summary><span><i>02</i><b>Event access planner</b></span><em>Test last-mile capacity</em></summary>
           <div class="transport-event-body">
+            <p class="transport-planner-hint">Estimate whether scheduled services connect nearby stops to an event, and where extra service may be needed. Results are planning proxies, not a live capacity check.</p>
             <div class="transport-section transport-event-basics">
               <label>Event name<input id="transport-event-name" type="text" value="Cape Town evening event" maxlength="80"></label>
               <div class="transport-control-grid">
@@ -524,7 +637,7 @@
             </div>
             <div class="transport-section">
               <div class="transport-mini-heading"><b>Venue &amp; assumptions</b><span>Walk shed</span></div>
-              <label>Arrival hub<select id="transport-event-venue"></select></label>
+              <label>Venue near a stop or station<select id="transport-event-venue"></select></label>
               <button id="transport-event-pick" class="secondary transport-pick" type="button">⌖ Pick venue on map</button>
               <p id="transport-event-venue-label" class="transport-venue-label">No venue set</p>
               <div class="transport-control-grid">
@@ -544,8 +657,8 @@
       </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
         <div class="traffic-heading">
-          <span>Traffic</span>
-          <span class="estimate-badge">Exploratory</span>
+          <div><span class="traffic-kicker">STREET SCENARIOS</span><h2>Traffic</h2></div>
+          <span class="estimate-badge">Planning estimate</span>
         </div>
         <div class="traffic-view-toggles" aria-label="Traffic map display">
           <label class="traffic-switch"><input id="traffic-toggle" type="checkbox"> Vehicles</label>
@@ -554,7 +667,7 @@
 
         <div class="traffic-card traffic-live-card compact-section">
           <div class="traffic-card-heading">
-            <span>Current traffic</span>
+            <span><i class="traffic-live-dot"></i>Observed street conditions</span>
             <div class="traffic-live-actions">
               <span id="traffic-freshness" class="freshness">Not loaded</span>
               <button id="traffic-refresh" class="icon-button" type="button" aria-label="Refresh live traffic" title="Refresh live traffic">↻</button>
@@ -562,10 +675,11 @@
           </div>
           <p id="traffic-live-status" class="traffic-status">Loading live traffic…</p>
           <div id="traffic-live-metrics" class="current-metrics" hidden></div>
+          <p class="traffic-data-note">TomTom speed samples · map context only; closure outcomes below are simulated.</p>
         </div>
 
         <div class="traffic-card compact-section">
-          <div class="traffic-card-heading"><span>Scenario</span></div>
+          <div class="traffic-card-heading"><span><b>1</b> Traffic conditions</span></div>
           <div class="traffic-control-grid">
             <label>Period
               <select id="traffic-scenario"><option value="am_peak">Morning peak · 07:00–09:00</option></select>
@@ -597,24 +711,25 @@
         </div>
 
         <div class="traffic-card compact-section">
-          <div class="traffic-card-heading"><span>Intervention</span></div>
+          <div class="traffic-card-heading"><span><b>2</b> Add a closure</span></div>
           <div class="traffic-closure-choice" role="group" aria-label="Choose closure drawing tool">
             <button id="traffic-draw-lane" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v18M17 3v18M12 4v3m0 4v3m0 4v2"/></svg><span>Lane</span></button>
             <button id="traffic-draw-road" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M6 12h12"/></svg><span>Street</span></button>
             <button id="traffic-draw-oneway" class="secondary" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h14M13 6l6 6-6 6"/></svg><span>One-way</span></button>
           </div>
-          <label id="traffic-oneway-row" class="traffic-oneway-toggle" hidden><input id="traffic-oneway" type="checkbox"> Also close the return lane <small>(streets with 2+ lanes each way)</small></label>
+          <label id="traffic-oneway-row" class="traffic-oneway-toggle" hidden><span class="traffic-toggle-copy"><b>Close both directions</b><small>Also close the return lane when the street has 2+ lanes each way.</small></span><input id="traffic-oneway" type="checkbox" aria-label="Also close the return lane"></label>
           <button id="traffic-flip-direction" class="secondary traffic-flip-direction" type="button" hidden>⇄ Close the other direction instead</button>
           <p id="traffic-selection-status" class="traffic-selection-status">Choose a tool and draw on the map.</p>
+          <ul id="traffic-selection-list" class="traffic-selection-list" aria-label="Selected road sections" hidden></ul>
           <div class="traffic-actions">
-            <button id="traffic-run" type="button" disabled>Simulate</button>
+            <button id="traffic-run" type="button" disabled>Run comparison <span aria-hidden="true">→</span></button>
             <button id="traffic-clear" class="secondary" type="button">Clear</button>
           </div>
           <p id="traffic-status" class="traffic-status">Draw a closure to begin</p>
         </div>
 
         <div class="traffic-card traffic-output-card compact-section">
-          <div class="traffic-card-heading"><span>Results</span></div>
+          <div class="traffic-card-heading"><span><b>3</b> Compare results</span></div>
           <label>View
             <select id="traffic-compare" disabled>
               <option value="baseline">Before</option>
@@ -622,6 +737,7 @@
             </select>
           </label>
           <div id="traffic-impact-summary" class="traffic-impact-summary" hidden></div>
+          <p id="traffic-uncertainty" class="traffic-uncertainty" hidden></p>
           <div id="traffic-results" class="traffic-results" hidden></div>
           <button id="traffic-report" class="traffic-report-button secondary" type="button" disabled>Open report</button>
           <div class="traffic-gradient"></div>
@@ -638,7 +754,12 @@
             </div>
           </details>
         </div>
-        <details class="compact-about"><summary>About this simulation</summary><p>Synthetic planning comparison using mapped Cape Town roads. Validate preferred options with observed traffic data.</p></details>
+        <details id="traffic-calibration-details" class="compact-about traffic-calibration-details">
+          <summary>Data coverage &amp; model assumptions <span id="traffic-calibration-badge">Checking…</span></summary>
+          <p id="traffic-calibration-status">Checking available traffic observations…</p>
+          <p>Live speed patterns help identify peak timing; they do not provide vehicle counts. Simulation demand remains synthetic until observed counts are supplied. Use results to screen options, then validate preferred designs with surveyed counts and turning movements.</p>
+          <a href="/docs#traffic" class="traffic-data-link">Calibration and validation notes <span aria-hidden="true">↗</span></a>
+        </details>
       </section>
       </div>
       <footer class="panel-footer">
@@ -663,9 +784,10 @@
       <div class="transport-results-grid">
         <section class="transport-result-overview" aria-label="Overall result">
           <div class="transport-coverage-chart" id="transport-coverage-chart" style="--coverage:0deg">
-            <div><b id="transport-event-cover">—</b><span>event demand proxy covered</span></div>
+            <div><b id="transport-event-cover">—</b><span>nominal return places / estimated trips</span></div>
           </div>
           <div id="transport-event-recommendation" class="transport-event-recommendation"></div>
+          <p class="transport-grade-note">Assessment labels summarize this model’s assumptions; they are not operator service ratings.</p>
         </section>
         <section class="transport-result-supply" aria-label="Service supply">
           <h3>Service supply</h3>
@@ -673,6 +795,11 @@
             <span><b id="transport-event-areas">—</b><i>Direct origin areas</i></span>
             <span><b id="transport-event-arrivals">—</b><i>Arrivals before start</i></span>
             <span><b id="transport-event-returns">—</b><i>Returns after event</i></span>
+          </div>
+          <div class="transport-capacity-breakdown" aria-label="Return capacity calculation">
+            <span>Estimated event trips <b id="transport-demand-value">—</b></span>
+            <span>Nominal return places <b id="transport-capacity-value">—</b></span>
+            <span>Indicative gap <b id="transport-gap-value">—</b></span>
           </div>
           <div class="transport-supply-chart" aria-label="Arrival and return service comparison">
             <div><span>Arrivals</span><i><b id="transport-arrival-bar"></b></i></div>
@@ -711,6 +838,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-6"></script>
+    <script type="module" src="/app.js?v=experience-18"></script>
 </body>
 </html>

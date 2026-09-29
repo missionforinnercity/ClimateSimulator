@@ -235,8 +235,8 @@
         <ol class="workflow">
           <li>Choose time period, demand level, junction behaviour and a 5–20 minute duration.</li>
           <li>Select <strong>Lane</strong>, <strong>Street</strong>, or <strong>One-way</strong>, then draw over one or more mapped sections.</li>
-          <li>Confirm the snapped selection, adjust direction where available, and simulate.</li>
-          <li>Compare Before and With closure, inspect diversion colours, then open the printable report.</li>
+          <li>Review the named selected sections and remove any individual section that should stay open.</li>
+          <li>Run the comparison, check its quality status and seed range, then inspect diversions and open the report.</li>
         </ol>
         <div class="doc-subhead">Controls and outputs</div>
         <div class="reference-table" role="table" aria-label="Traffic controls and outputs">
@@ -246,7 +246,7 @@
           <div class="reference-row" role="row"><b>Lane</b><span>Closes the left-side kerbside lane on selected directional edges, consistent with South African left-hand traffic.</span></div>
           <div class="reference-row" role="row"><b>Street / One-way</b><span>Closes full selected edges, or the opposite-direction sibling to screen a one-way conversion.</span></div>
           <div class="reference-row" role="row"><b>Comparison</b><span>Journey time, delay, speed, completion, queue, diversion, emissions, fuel and relative edge-noise differences.</span></div>
-          <div class="reference-row" role="row"><b>Quality checks</b><span>Comparison metrics are shown only when the baseline, run completion and paired-trip sample meet the model's reliability thresholds.</span></div>
+          <div class="reference-row" role="row"><b>Quality and seed range</b><span>The result labels whether reliability gates passed. Three or five seeds show a median and range; one seed cannot estimate run-to-run variation.</span></div>
         </div>
 
         <div class="doc-subhead">What it shows</div>
@@ -263,10 +263,20 @@
 
         <div class="doc-subhead">Data &amp; method</div>
         <ul>
+          <li>The live card shows timestamped provider speed samples for mapped roads. These are observed conditions; closure outcomes come from the synthetic SUMO model.</li>
+          <li>Accumulated speed observations can calibrate peak timing, not vehicle counts. Count and turning-movement data are needed for count-calibrated demand.</li>
           <li>The reference load is stability-tuned at 50 corridor departures per minute, with consistent demand used in the before-and-after runs.</li>
-          <li>Built-in quality checks protect the comparison from incomplete baselines, timed-out runs and undersized paired samples.</li>
+          <li>Quality checks flag overloaded baselines, timeouts and undersized paired samples. A failed comparison keeps its diagnostics but should not be read as a reliable travel-time estimate.</li>
           <li>Nearby parking and pedestrian crossings are included as useful street context alongside the modelled vehicle network.</li>
         </ul>
+
+        <div class="doc-subhead">Adding observed counts</div>
+        <ol class="workflow">
+          <li>Collect time-period counts for the modelled corridor, including edge entry flows and turning movements at key junctions.</li>
+          <li>Copy <code>data/traffic_calibration.example.json</code> to <code>data/traffic_calibration.json</code>. Replace every example edge ID and count with surveyed values, set the observation period, then enable route sampling for the matching scenario.</li>
+          <li>Restart the API and rerun the comparison. Check the report's route-sampler match diagnostics, then validate against a separate count or travel-time period.</li>
+        </ol>
+        <p class="muted">Do not treat TomTom speed ratios as traffic counts, or add overlapping edge counts as if they were unique vehicles. The comparison report identifies which calibration was actually applied.</p>
 
         <div class="caveat-box"><strong>Purpose-built for comparing interventions.</strong> Use paired scenarios to understand direction and relative scale of network effects, identify diversion routes and refine staging options. Confirm selected schemes with observed counts and operational analysis before implementation.</div>
 

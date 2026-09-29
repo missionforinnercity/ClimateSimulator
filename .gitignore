@@ -17,7 +17,9 @@ data/thermal/climatology/
 data/thermal/surfaces/
 data/thermal/suews/checkpoints/
 data/thermal/suews/config.yml
-/public/assets/cfd/
+/public/assets/cfd/*
+!/public/assets/cfd/design-cases.json
+/data/era5_monthly*/
 
 # Local CFD batch-run notes and solver output.
 /SuPy.log
