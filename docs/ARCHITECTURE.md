@@ -10,7 +10,7 @@
 | Scenario schema | `public/scenarioState.js` | Versioned allow-list; bounded numeric/date/mode/camera validation; no event names or secrets |
 | Requests | `public/requestClient.js` | Abort previous request with same key; bound request/body lifetime; retry only a small metadata GET allow-list |
 | Map interaction adapter | `public/sceneExperience.js` | Keyboard camera control, camera restore/capture, selected-location handoff |
-| 3D viewer | `public/webglRenderer.js` | Pinned Three.js, compact terrain/buildings, CFD sampling and analysis overlays |
+| 3D viewer | `public/webglRenderer.js` | Pinned Three.js, compact terrain/buildings, CFD sampling, wind analysis and OpenFOAM-driven pollutant dispersion overlays |
 | Compatibility viewer | `public/sceneRenderer.js` | Canvas geometry and screening API; not equivalent to the CFD viewer |
 | Transport | `public/transportLayer.js` | Timetable-derived vehicles and event access; no live GPS |
 | API boundary | `server/app.py` | FastAPI validation, protected routes, bounded concurrency and rate history, request IDs |

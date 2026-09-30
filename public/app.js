@@ -53,7 +53,12 @@ function setupMenuNavigation() {
       const lens = document.querySelector('[data-wind-lens].active')?.textContent.trim() || 'Direction';
       const direction = selectedLabel('#wind-direction');
       const season = selectedLabel('#wind-season');
-      context = [lens, direction, season].filter(Boolean).join(' · ');
+      const trafficPollution = document.querySelector('#pollution-source-type')?.value === 'traffic';
+      context = lens.toLowerCase().includes('pollutant')
+        ? (trafficPollution
+          ? [lens, selectedLabel('#pollution-traffic-scenario'), selectedLabel('#pollution-class'), selectedLabel('#pollution-direction')].filter(Boolean).join(' · ')
+          : [lens, selectedLabel('#pollution-class'), selectedLabel('#pollution-height'), selectedLabel('#pollution-direction')].filter(Boolean).join(' · '))
+        : [lens, direction, season].filter(Boolean).join(' · ');
     } else if (name === 'traffic') {
       context = `${selectedLabel('#traffic-scenario') || 'Street simulation'} · ${selectedLabel('#traffic-demand') || 'Current demand'}`;
     } else if (name === 'transport') {
@@ -369,7 +374,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=121');
+    const module = await import('./webglRenderer.js?v=128');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -378,7 +383,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=86');
+      const module = await import('./sceneRenderer.js?v=88');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);

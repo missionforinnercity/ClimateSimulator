@@ -184,7 +184,7 @@
           <h2>Wind analysis</h2>
           <span class="status-chip screening">Planning analysis</span>
         </div>
-        <p class="dek">Resolved OpenFOAM airflow for the directions that have a solved case, plus a comfort view weighted by real ERA5 wind-rose frequency.</p>
+        <p class="dek">Resolved OpenFOAM airflow, ERA5-weighted comfort, and a traffic-emissions screen that traces road-fed pollution plumes.</p>
 
         <div class="doc-subhead">Quick workflow</div>
         <ol class="workflow">
@@ -192,6 +192,7 @@
           <li>Switch between the <strong>Pedestrian</strong>, <strong>Flow</strong>, <strong>Slice</strong> and <strong>Façades</strong> diagnostic views.</li>
           <li>In Flow, drag the seed box directly in the scene (or use its handle to resize) and set its height; in Slice, drag the plane directly in the scene.</li>
           <li>Switch to <strong>Comfort</strong> to combine every solved direction, weighted by its ERA5 wind-rose frequency.</li>
+          <li>Open <strong>Pollutant dispersal</strong>, choose a weekday traffic profile, then run the NOx road-emission map and scrub its plume. Switch to single-source mode to compare PM settling.</li>
         </ol>
         <div class="doc-subhead">Controls and outputs</div>
         <div class="reference-table" role="table" aria-label="Wind controls and outputs">
@@ -200,6 +201,7 @@
           <div class="reference-row" role="row"><b>Pedestrian / Flow / Slice / Façades</b><span>Terrain-following speed at 1.5/2/4 m; seeded 3D flowlines in a movable box; a draggable speed/pressure/turbulence slice plane; kinematic pressure on building façades.</span></div>
           <div class="reference-row" role="row"><b>Flow region</b><span>A resizable box (drag it, or its handle) that bounds where flowlines seed; its height and ground-only-vs-full-height seeding are both adjustable.</span></div>
           <div class="reference-row" role="row"><b>Comfort</b><span>Weights every <em>solved</em> direction's pedestrian field by ERA5 frequency and Weibull exceedance; reports the actual annual-hours coverage achieved rather than assuming full coverage.</span></div>
+          <div class="reference-row" role="row"><b>Pollutant dispersal</b><span>Runs whole-CBD SUMO/HBEFA3 traffic and maps link-level NOx fume sources. Inspect top emitting roads, then trace emission-weighted parcels through one solved OpenFOAM direction; particle settling is available for map-selected point releases.</span></div>
         </div>
 
         <div class="doc-subhead">What it shows</div>
@@ -211,14 +213,27 @@
           solved, so its coverage percentage is an honest lower bound, not a full annual study.
         </p>
 
+        <p>
+          Citywide mode samples a synthetic SUMO weekday traffic profile and uses the
+          existing HBEFA3 fleet estimates to rank road-link NOx fume sources. The
+          <strong>Road emissions</strong> layer shows the strongest links and
+          top emitting streets. The accelerated timeline then traces equal-mass parcels
+          sampled from those sources through OpenFOAM velocity and k–epsilon fields;
+          the near-ground layer highlights relative plume residence. SUMO's exhaust PMx is not split
+          by particle size and is not used for citywide PM2.5/PM10 settling. No pollutant scalar
+          is solved, and no layer reports ambient concentration units.
+        </p>
+
         <div class="doc-subhead">Data &amp; method</div>
         <ul>
           <li>Each solved direction is a steady RANS k-epsilon OpenFOAM case over the full mapped CBD, with a uniform neutral inlet — exploratory, not yet validated against pedestrian-level observations.</li>
+          <li>SUMO assigns a synthetic weekday population to the whole CBD unless observed edge counts are configured. TomTom speed ratios do not provide vehicle counts. HBEFA3 emissions are tailpipe estimates and omit non-exhaust particles and pollutant chemistry.</li>
           <li>ERA5 reanalysis supplies each sector's observed frequency and Weibull speed distribution for the Comfort weighting.</li>
           <li>Mapped building geometry is meshed directly into the solved domain; tree canopy is not yet represented in the CFD mesh.</li>
         </ul>
 
         <div class="caveat-box"><strong>Built for option comparison.</strong> Use the flow and pressure patterns to locate exposed routes, sheltered spaces and areas that benefit from design refinement. Final structural or safety decisions should use a validated, project-specific wind assessment.</div>
+        <div class="caveat-box"><strong>Exploratory pollution and greening screen.</strong> Use road-emission hotspots and the relative plume to identify streets for further investigation. The SUMO scenario is synthetic unless count-calibrated; the CFD cases use a uniform 10 m/s inlet, and trees are not modelled as porous wind obstacles. This does not quantify concentration or simulate a planting intervention's air-quality effect.</div>
 
         <div class="doc-links"><a href="/app?tool=wind">Open in Conditions →</a></div>
       </section>

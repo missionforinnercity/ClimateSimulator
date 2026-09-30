@@ -12,6 +12,7 @@ if [[ ! -x "$UVICORN" ]]; then
   exit 1
 fi
 
+export PATH="$PROJECT_ROOT/.venv/bin:$PATH"
 PORT="${PORT:-8000}"
 cd "$PROJECT_ROOT"
 echo "Starting Conditions at http://localhost:$PORT (Ctrl+C to stop)"

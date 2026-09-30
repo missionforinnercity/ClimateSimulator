@@ -249,6 +249,12 @@ export async function startScene(canvas, status) {
   const windSizeValue = document.querySelector('#wind-size-value');
   const windStatus = document.querySelector('#wind-status');
   const windSimulate = document.querySelector('#wind-simulate');
+  // Pollutant dispersal is coupled to converted OpenFOAM U/k/epsilon volumes;
+  // this Canvas compatibility renderer only has the separate wind screening proxy.
+  document.querySelector('[data-wind-lens="pollution"]')?.setAttribute('hidden', '');
+  document.querySelector('#pollution-controls')?.setAttribute('hidden', '');
+  const windLensTabs = document.querySelector('.wind-analysis-tabs');
+  if (windLensTabs) windLensTabs.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
   const windMoveDomain = document.querySelector('#wind-move-domain');
   const windLegendMin = document.querySelector('#wind-legend-min');
   const windLegendMax = document.querySelector('#wind-legend-max');

@@ -20,13 +20,21 @@ the VM transfer procedure.
 | Direction | Sector | Case directory | Browser asset |
 | --- | --- | --- | --- |
 | 0° | N | `data/openfoam/cases/cbd_n_full` | `public/assets/cfd/cbd_n_full/` |
+| 22.5° | NNE | `data/openfoam/cases/cbd_22p5_full` | `public/assets/cfd/cbd_22p5_full/` |
 | 45° | NE | `data/openfoam/cases/cbd_ne_full` | `public/assets/cfd/cbd_ne_full/` |
+| 67.5° | ENE | `data/openfoam/cases/cbd_67p5_full` | `public/assets/cfd/cbd_67p5_full/` |
 | 90° | E | `data/openfoam/cases/cbd_e_full` | `public/assets/cfd/cbd_e_full/` |
+| 112.5° | ESE | `data/openfoam/cases/cbd_112p5_full` | `public/assets/cfd/cbd_112p5_full/` |
 | 135° | SE | `data/openfoam/cases/cbd_se_full` | `public/assets/cfd/cbd_se_full/` |
+| 157.5° | SSE | `data/openfoam/cases/cbd_157p5_full` | `public/assets/cfd/cbd_157p5_full/` |
 | 180° | S | `data/openfoam/cases/cbd_s_full` | `public/assets/cfd/cbd_s_full/` |
+| 202.5° | SSW | `data/openfoam/cases/cbd_202p5_full` | `public/assets/cfd/cbd_202p5_full/` |
 | 225° | SW | `data/openfoam/cases/cbd_sw_full` | `public/assets/cfd/cbd_sw_full/` |
+| 247.5° | WSW | `data/openfoam/cases/cbd_247p5_full` | `public/assets/cfd/cbd_247p5_full/` |
 | 270° | W | `data/openfoam/cases/cbd_w_full` | `public/assets/cfd/cbd_w_full/` |
+| 292.5° | WNW | `data/openfoam/cases/cbd_292p5_full` | `public/assets/cfd/cbd_292p5_full/` |
 | 315° | NW | `data/openfoam/cases/cbd_nw_full` | `public/assets/cfd/cbd_nw_full/` |
+| 337.5° | NNW | `data/openfoam/cases/cbd_337p5_full` | `public/assets/cfd/cbd_337p5_full/` |
 
 These are full-CBD domains enclosing all 1,891 source building centroids: 2600
 m analysis size, 24 m base grid refined locally, 220 m top, 300 m
@@ -35,12 +43,12 @@ unvalidated steady k-epsilon RANS solve with a uniform 10 m/s neutral inlet —
 proves geometry, meshing and solver integration; it is not yet the
 atmospheric-boundary-layer configuration validated planning evidence needs.
 
-The browser's `CFD_CASES` registry (`public/webglRenderer.js`) is the single
-source of truth for which directions the UI will offer. Adding a case to
-`data/openfoam/cases/` and converting it to `public/assets/cfd/` does nothing
-until you also add a `{ direction_deg, sector, label, base }` entry there and
-enable the matching compass button (remove `disabled`/`title` from its
-`data-wind-direction` button in `public/app/index.html`).
+The browser's `CFD_CASES` registry (`public/webglRenderer.js`) contains all
+sixteen converted directions. Comfort weights every solved direction against
+the ERA5 wind rose. The compass offers the eight main points for Direction
+mode; those presets select their matching solved cases. When adding or
+replacing a case, keep its registry entry's direction, ERA5 sector name, label,
+and asset path aligned with the volume manifest.
 
 ## Generating a new direction
 
@@ -123,9 +131,15 @@ grid points so narrow streets between them aren't left as holes.
 - Comfort statistics combining every *solved* direction with the ERA5 wind
   rose (`GET /api/wind/climatology/sectors`) — summed, never interpolated
   between directions that lack a solved case.
+- Pollutant dispersal combines road-level SUMO/HBEFA3 NOx fumes with paths
+  derived from the selected volume's velocity and k–epsilon fields. Aggregate
+  exhaust PMx is not split into particle sizes for citywide settling. This is a
+  browser-side Lagrangian screening estimate, not a transported pollutant
+  scalar from OpenFOAM; see
+  [pollutant dispersal method and limits](POLLUTANT_DISPERSION.md).
 
 Not yet built: wake/recirculation inspection via vorticity or Q-criterion
-exports. Proposed geometry comparisons are available through the reviewed JSON
+exports, and transient pollutant scalar transport in OpenFOAM. Proposed geometry comparisons are available through the reviewed JSON
 geometry workflow in `scripts/build_wind_design_case.py`; a graphical geometry
 editor remains future work.
 
@@ -133,6 +147,12 @@ editor remains future work.
 
 - Label volume results with solver, mesh, case, direction and validation
   status (the manifest already carries these; the panel surfaces them).
+- Do not present traffic-source or particle-screening layers as ambient
+  concentration. HBEFA3 tailpipe estimates use a synthetic citywide SUMO
+  scenario unless configured edge counts are available; they are not an
+  observed emissions inventory. The model has no pollutant chemistry or
+  measured air-quality validation and must remain separate from any future
+  OpenFOAM scalar solve.
 - Never interpolate between directional CFD cases for certification without
   a documented validation method — Comfort enforces this by construction
   (see `runComfortStudy` in `public/webglRenderer.js`).

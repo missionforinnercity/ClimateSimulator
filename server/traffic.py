@@ -2537,6 +2537,7 @@ def _run_simulation(
     sample_interval_s: int = TRAJECTORY_SAMPLE_INTERVAL_S,
     wall_clock_budget_s: float = MIN_SIMULATION_WALL_CLOCK_BUDGET_S,
     sumo_seed: int | None = None,
+    record_tracks: bool = True,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     import traci
 
@@ -2555,17 +2556,18 @@ def _run_simulation(
     ]
     expected_vehicle_ids = {item.get("id") for item in trip_definitions}
     trip_endpoints = {}
-    for item in trip_definitions:
-        origin_id, destination_id = item.get("from"), item.get("to")
-        embedded_route = item.find("route")
-        if embedded_route is not None:
-            route_edges = str(embedded_route.get("edges") or "").split()
-            if route_edges:
-                origin_id, destination_id = route_edges[0], route_edges[-1]
-        trip_endpoints[str(item.get("id"))] = {
-            "origin_edge_id": origin_id,
-            "destination_edge_id": destination_id,
-        }
+    if record_tracks:
+        for item in trip_definitions:
+            origin_id, destination_id = item.get("from"), item.get("to")
+            embedded_route = item.find("route")
+            if embedded_route is not None:
+                route_edges = str(embedded_route.get("edges") or "").split()
+                if route_edges:
+                    origin_id, destination_id = route_edges[0], route_edges[-1]
+            trip_endpoints[str(item.get("id"))] = {
+                "origin_edge_id": origin_id,
+                "destination_edge_id": destination_id,
+            }
     sumo_binary = _sumo_executable("sumo")
     routing_config = _traffic_calibration().get("routing") or {}
     if not isinstance(routing_config, dict):
@@ -2624,6 +2626,9 @@ def _run_simulation(
             "speed_vehicle_sum": 0.0,
             "halted": 0.0,
             "throughput_vehicle_ids": set(),
+            "co2_mg": 0.0,
+            "nox_mg": 0.0,
+            "pmx_mg": 0.0,
         }
         for edge_id in (monitored_edges or [])
     }
@@ -2656,7 +2661,7 @@ def _run_simulation(
             signal_calibration = _apply_signal_calibration(traci, scenario_key)
         if edge_totals:
             for edge_id in edge_totals:
-                traci.edge.subscribe(edge_id, (
+                variables = [
                     traci.constants.LAST_STEP_VEHICLE_NUMBER,
                     traci.constants.LAST_STEP_MEAN_SPEED,
                     traci.constants.LAST_STEP_VEHICLE_HALTING_NUMBER,
@@ -2665,8 +2670,10 @@ def _run_simulation(
                     traci.constants.VAR_PMXEMISSION,
                     traci.constants.VAR_FUELCONSUMPTION,
                     traci.constants.VAR_NOISEEMISSION,
-                    traci.constants.LAST_STEP_VEHICLE_ID_LIST,
-                ))
+                ]
+                if record_tracks:
+                    variables.append(traci.constants.LAST_STEP_VEHICLE_ID_LIST)
+                traci.edge.subscribe(edge_id, variables)
 
         step = 0
         while traci.simulation.getMinExpectedNumber() > 0 and step < end_s:
@@ -2680,17 +2687,24 @@ def _run_simulation(
                 if measured_vehicle:
                     departed_measurement_ids.add(vehicle_id)
                 try:
-                    route = list(traci.vehicle.getRoute(vehicle_id))
-                    # A route sampled from observed counts may cross a fully
-                    # closed edge. Recompute only those invalid routes. A lane
-                    # reduction leaves the route legal and must not imply that
-                    # every driver has perfect advance knowledge.
-                    if set(route) & closed_edge_set:
-                        traci.vehicle.rerouteTraveltime(vehicle_id)
+                    route = None
+                    if record_tracks or activity_events or closed_edge_set:
                         route = list(traci.vehicle.getRoute(vehicle_id))
-                    if measured_vehicle:
-                        vehicle_routes[vehicle_id] = route
-                    vehicle_type = traci.vehicle.getTypeID(vehicle_id)
+                        # A route sampled from observed counts may cross a fully
+                        # closed edge. Recompute only those invalid routes. A lane
+                        # reduction leaves the route legal and must not imply that
+                        # every driver has perfect advance knowledge.
+                        if set(route) & closed_edge_set:
+                            traci.vehicle.rerouteTraveltime(vehicle_id)
+                            route = list(traci.vehicle.getRoute(vehicle_id))
+                    if measured_vehicle and record_tracks:
+                        vehicle_routes[vehicle_id] = route or []
+                    if activity_events:
+                        if route is None:
+                            route = list(traci.vehicle.getRoute(vehicle_id))
+                        vehicle_type = traci.vehicle.getTypeID(vehicle_id)
+                    else:
+                        vehicle_type = ""
                     for event in (activity_events or []):
                         # Origin-edge stops can be too close for a vehicle to
                         # brake, while destination-edge stops can fall beyond
@@ -2725,7 +2739,7 @@ def _run_simulation(
                 traci.edge.getAllSubscriptionResults() or {}
                 if edge_totals and sample_now else {}
             )
-            if sample_now:
+            if sample_now and record_tracks:
                 for edge_id, totals in edge_totals.items():
                     result = edge_results.get(edge_id) or {}
                     totals["throughput_vehicle_ids"].update(
@@ -2752,57 +2766,64 @@ def _run_simulation(
                     totals["halted"] += halted
                     queued_now += halted
                     # Edge emission variables are instantaneous mg/s. Sampling
-                    # every three seconds and multiplying by that interval is
-                    # a compact integral over the animated simulation window.
-                    environment["co2_mg"] += max(0.0, result.get(traci.constants.VAR_CO2EMISSION, 0.0)) * sample_interval_s
-                    environment["nox_mg"] += max(0.0, result.get(traci.constants.VAR_NOXEMISSION, 0.0)) * sample_interval_s
-                    environment["pmx_mg"] += max(0.0, result.get(traci.constants.VAR_PMXEMISSION, 0.0)) * sample_interval_s
+                    # periodically and multiplying by the interval approximates
+                    # a compact integral over the measurement window.
+                    co2_mg = max(0.0, result.get(traci.constants.VAR_CO2EMISSION, 0.0)) * sample_interval_s
+                    nox_mg = max(0.0, result.get(traci.constants.VAR_NOXEMISSION, 0.0)) * sample_interval_s
+                    pmx_mg = max(0.0, result.get(traci.constants.VAR_PMXEMISSION, 0.0)) * sample_interval_s
+                    environment["co2_mg"] += co2_mg
+                    environment["nox_mg"] += nox_mg
+                    environment["pmx_mg"] += pmx_mg
                     environment["fuel_mg"] += max(0.0, result.get(traci.constants.VAR_FUELCONSUMPTION, 0.0)) * sample_interval_s
+                    totals["co2_mg"] += co2_mg
+                    totals["nox_mg"] += nox_mg
+                    totals["pmx_mg"] += pmx_mg
                     noise_db = float(result.get(traci.constants.VAR_NOISEEMISSION, 0.0) or 0.0)
                     if noise_db > 0.0 and vehicle_count > 0:
                         environment["noise_energy"] += 10.0 ** (noise_db / 10.0)
                         environment["noise_samples"] += 1
                 network_queue_samples.append(queued_now)
-                present = set(traci.vehicle.getIDList())
-                for vehicle_id in present:
-                    if not str(vehicle_id).startswith("v"):
-                        continue
-                    vehicle_routes[vehicle_id] = list(traci.vehicle.getRoute(vehicle_id))
-                    if traci.vehicle.getSpeed(vehicle_id) < 0.1:
-                        standstill_s[vehicle_id] = (
-                            standstill_s.get(vehicle_id, 0) + sample_interval_s
-                        )
-                        max_standstill_s[vehicle_id] = max(
-                            max_standstill_s.get(vehicle_id, 0), standstill_s[vehicle_id]
-                        )
-                    else:
-                        standstill_s[vehicle_id] = 0
-                for vehicle_id in present:
-                    track = open_tracks.get(vehicle_id)
-                    if track is None:
-                        if vehicle_id in retired_ids:
-                            continue  # already sampled and closed out earlier
-                        if len(open_tracks) >= MAX_CONCURRENT_TRACKED:
+                if record_tracks:
+                    present = set(traci.vehicle.getIDList())
+                    for vehicle_id in present:
+                        if not str(vehicle_id).startswith("v"):
                             continue
-                        if len(finished_tracks) >= MAX_TOTAL_TRACKS:
-                            continue
-                        track = {
-                            "id": vehicle_id,
-                            "type": traci.vehicle.getTypeID(vehicle_id),
-                            "t0": step - measurement_start_s,
-                            "x": [],
-                            "y": [],
-                        }
-                        open_tracks[vehicle_id] = track
-                    x, y = traci.vehicle.getPosition(vehicle_id)
-                    track["x"].append(x)
-                    track["y"].append(y)
-                # Close out tracks whose vehicle has left, so each track stays
-                # a contiguous run of samples and the viewer can reconstruct
-                # sample times from t0 alone.
-                for vehicle_id in [key for key in open_tracks if key not in present]:
-                    finished_tracks.append(open_tracks.pop(vehicle_id))
-                    retired_ids.add(vehicle_id)
+                        vehicle_routes[vehicle_id] = list(traci.vehicle.getRoute(vehicle_id))
+                        if traci.vehicle.getSpeed(vehicle_id) < 0.1:
+                            standstill_s[vehicle_id] = (
+                                standstill_s.get(vehicle_id, 0) + sample_interval_s
+                            )
+                            max_standstill_s[vehicle_id] = max(
+                                max_standstill_s.get(vehicle_id, 0), standstill_s[vehicle_id]
+                            )
+                        else:
+                            standstill_s[vehicle_id] = 0
+                    for vehicle_id in present:
+                        track = open_tracks.get(vehicle_id)
+                        if track is None:
+                            if vehicle_id in retired_ids:
+                                continue  # already sampled and closed out earlier
+                            if len(open_tracks) >= MAX_CONCURRENT_TRACKED:
+                                continue
+                            if len(finished_tracks) >= MAX_TOTAL_TRACKS:
+                                continue
+                            track = {
+                                "id": vehicle_id,
+                                "type": traci.vehicle.getTypeID(vehicle_id),
+                                "t0": step - measurement_start_s,
+                                "x": [],
+                                "y": [],
+                            }
+                            open_tracks[vehicle_id] = track
+                        x, y = traci.vehicle.getPosition(vehicle_id)
+                        track["x"].append(x)
+                        track["y"].append(y)
+                    # Close out tracks whose vehicle has left, so each track stays
+                    # a contiguous run of samples and the viewer can reconstruct
+                    # sample times from t0 alone.
+                    for vehicle_id in [key for key in open_tracks if key not in present]:
+                        finished_tracks.append(open_tracks.pop(vehicle_id))
+                        retired_ids.add(vehicle_id)
             step += 1
     finally:
         traci.close()
@@ -2815,7 +2836,7 @@ def _run_simulation(
         sum(network_queue_samples) / len(network_queue_samples) if network_queue_samples else 0.0
     )
     metrics["max_queued_vehicles"] = max(network_queue_samples, default=0)
-    metrics["edge_stats"] = _summarize_edge_totals(edge_totals)
+    metrics["edge_stats"] = _summarize_edge_totals(edge_totals, include_emissions=not record_tracks)
     metrics["expected_vehicle_count"] = len(expected_vehicle_ids)
     metrics["departed_vehicle_count"] = len(departed_measurement_ids)
     metrics["insertion_failure_count"] = len(expected_vehicle_ids - departed_measurement_ids)
@@ -2834,8 +2855,8 @@ def _run_simulation(
         "period_s": rerouting_period_s,
         "threshold_factor": rerouting_threshold,
     }
-    metrics["vehicle_routes"] = vehicle_routes
-    metrics["trip_endpoints"] = trip_endpoints
+    metrics["vehicle_routes"] = vehicle_routes if record_tracks else {}
+    metrics["trip_endpoints"] = trip_endpoints if record_tracks else {}
     metrics["street_activity"] = {
         "available_event_locations": len(activity_events or []),
         "stops_applied": len(applied_activity_ids),
@@ -2854,7 +2875,7 @@ def _run_simulation(
             10.0 * math.log10(environment["noise_energy"] / environment["noise_samples"])
             if environment["noise_samples"] else 0.0
         ),
-        "scope": "simulated_corridor_during_animation_window",
+        "scope": "simulated_network_during_measurement_window" if not record_tracks else "simulated_corridor_during_animation_window",
         "model": "SUMO HBEFA3 fleet-class estimate",
         "exclusions": (
             "tailpipe model only; excludes vehicles waiting to enter the network, "
@@ -2866,10 +2887,12 @@ def _run_simulation(
 
 def _summarize_edge_totals(
     edge_totals: dict[str, dict[str, Any]],
+    include_emissions: bool = False,
 ) -> dict[str, dict[str, float]]:
     """Convert sampled edge totals into occupancy and vehicle-weighted speed."""
-    return {
-        edge_id: {
+    summary = {}
+    for edge_id, totals in edge_totals.items():
+        row = {
             "mean_vehicle_count": (
                 totals["vehicle_count"] / totals["samples"] if totals["samples"] else 0.0
             ),
@@ -2880,7 +2903,183 @@ def _summarize_edge_totals(
             "mean_halted": totals["halted"] / totals["samples"] if totals["samples"] else 0.0,
             "throughput_vehicles": float(len(totals.get("throughput_vehicle_ids") or ())),
         }
-        for edge_id, totals in edge_totals.items()
+        if include_emissions:
+            row.update({
+                "co2_kg": totals.get("co2_mg", 0.0) / 1_000_000.0,
+                "nox_g": totals.get("nox_mg", 0.0) / 1_000.0,
+                "pmx_g": totals.get("pmx_mg", 0.0) / 1_000.0,
+            })
+        summary[edge_id] = row
+    return summary
+
+
+def traffic_emissions_preview(payload: dict[str, Any]) -> dict[str, Any]:
+    """Run one bounded synthetic whole-CBD SUMO emissions sample.
+
+    This supplies road-specific HBEFA tailpipe source strengths for the
+    OpenFOAM-driven screening viewer. It is an exploratory scenario, not an
+    observed citywide traffic inventory.
+    """
+    scenario_key = str(payload.get("scenario", "am_peak"))
+    if scenario_key not in {"am_peak", "midday", "pm_peak", "evening"}:
+        raise ValueError("scenario must be am_peak, midday, pm_peak, or evening")
+    try:
+        duration_min = float(payload.get("duration_min", 10.0))
+        demand_multiplier = float(payload.get("demand_multiplier", 1.0))
+        seed = int(payload.get("seed", 240917))
+    except (TypeError, ValueError) as error:
+        raise ValueError("duration, demand multiplier, and seed must be numeric") from error
+    if not 5.0 <= duration_min <= 15.0:
+        raise ValueError("duration_min must be between 5 and 15 minutes")
+    if not 0.5 <= demand_multiplier <= 1.5:
+        raise ValueError("demand_multiplier must be between 0.5 and 1.5")
+    if seed < 0:
+        raise ValueError("seed must be non-negative")
+
+    visible_roads = [record for record in _edge_index().values() if record["visible"]]
+    if len(visible_roads) < MIN_CORRIDOR_EDGES:
+        raise ValueError("the visible CBD SUMO network is not available")
+    scenario = resolve_scenario(scenario_key)
+    scenario_calibration = _scenario_calibration(scenario_key)
+    duration_s = int(duration_min * 60)
+    warmup_s = min(DEFAULT_WARMUP_S, 180)
+    observed_departure_rate = scenario_calibration.get("departures_per_min")
+    try:
+        departure_rate = max(1.0, float(observed_departure_rate)) if observed_departure_rate is not None else BASE_VEHICLES_PER_MIN
+    except (TypeError, ValueError):
+        departure_rate = BASE_VEHICLES_PER_MIN
+        observed_departure_rate = None
+    scenario_scale = 1.0 if observed_departure_rate is not None else scenario["demand_scale"]
+    planned_vehicles = max(1, int(departure_rate * duration_min * scenario_scale * demand_multiplier))
+    seed = _sumo_seed(seed)
+    sample_interval_s = max(3, min(6, math.ceil(duration_s / 180)))
+    wall_clock_budget_s = min(120.0, 60.0 + duration_min * 3.0)
+    municipal_speed_limits, speed_limit_counts = _speed_limit_overrides(visible_roads)
+
+    route_sampler_config = scenario_calibration.get("route_sampler") or {}
+    route_sampler_applied = False
+    route_sampler_result: dict[str, Any] | None = None
+    with tempfile.TemporaryDirectory(prefix="traffic_emissions_") as tmp:
+        workdir = Path(tmp)
+        demand_arguments = {
+            "corridor": visible_roads,
+            "duration_s": duration_s,
+            "vehicle_count": planned_vehicles,
+            "inbound_bias": scenario["inbound_bias"],
+            "seed": seed,
+            "workdir": workdir,
+            "warmup_s": warmup_s,
+            "scenario_key": scenario_key,
+        }
+        if isinstance(route_sampler_config, dict) and route_sampler_config.get("enabled"):
+            trip_file, generated_vehicles, route_sampler_result = _generate_route_sampled_trips(
+                **demand_arguments,
+                route_sampler=route_sampler_config,
+                demand_multiplier=demand_multiplier,
+            )
+            route_sampler_applied = bool(route_sampler_result.get("applied"))
+        else:
+            trip_file, generated_vehicles = _generate_trips(**demand_arguments)
+        if generated_vehicles <= 0:
+            raise ValueError("no citywide traffic trips could be generated")
+        disabled_config = _traffic_calibration().get("network_overrides") or {}
+        if not isinstance(disabled_config, dict):
+            disabled_config = {}
+        net = _sumo_net()
+        edge_ids = {edge.getID() for edge in net.getEdges()}
+        lane_ids = {lane.getID() for edge in net.getEdges() for lane in edge.getLanes()}
+        disabled_edges = [str(item) for item in disabled_config.get("disabled_edge_ids", []) if str(item) in edge_ids]
+        disabled_lanes = [str(item) for item in disabled_config.get("disabled_lane_ids", []) if str(item) in lane_ids]
+        _, metrics = _run_simulation(
+            trip_file=trip_file,
+            duration_s=duration_s,
+            closed_lanes=disabled_lanes,
+            closed_edges=disabled_edges,
+            workdir=workdir / "whole_cbd",
+            monitored_edges=[record["id"] for record in visible_roads],
+            traffic_control="signalized",
+            edge_speed_limits=municipal_speed_limits,
+            warmup_s=warmup_s,
+            scenario_key=scenario_key,
+            sample_interval_s=sample_interval_s,
+            wall_clock_budget_s=wall_clock_budget_s,
+            sumo_seed=seed,
+            record_tracks=False,
+        )
+    if metrics.get("truncated_by_time_budget"):
+        raise RuntimeError("the whole-CBD emissions run exceeded its processing time limit; try a shorter run")
+    if not metrics.get("departed_vehicle_count"):
+        raise RuntimeError("SUMO could not insert traffic into the CBD network")
+
+    edge_index = _edge_index()
+    edge_emissions = []
+    roads_by_name: dict[str, dict[str, float]] = {}
+    totals = {"co2_kg": 0.0, "nox_g": 0.0, "pmx_g": 0.0}
+    for edge_id, values in (metrics.get("edge_stats") or {}).items():
+        record = edge_index.get(edge_id)
+        if record is None:
+            continue
+        nox_g = max(0.0, float(values.get("nox_g", 0.0)))
+        pmx_g = max(0.0, float(values.get("pmx_g", 0.0)))
+        co2_kg = max(0.0, float(values.get("co2_kg", 0.0)))
+        vehicle_seconds = max(0.0, float(values.get("mean_vehicle_count", 0.0))) * duration_s
+        if not (nox_g or pmx_g or co2_kg or vehicle_seconds):
+            continue
+        edge_emissions.append({
+            "edge_id": edge_id,
+            "road_name": record.get("name") or "Unnamed road",
+            "length_m": round(float(record.get("length_m") or record["line"].length), 1),
+            "nox_g": round(nox_g, 6),
+            "pmx_g": round(pmx_g, 6),
+            "co2_kg": round(co2_kg, 6),
+            "vehicle_seconds": round(vehicle_seconds, 2),
+        })
+        totals["co2_kg"] += co2_kg
+        totals["nox_g"] += nox_g
+        totals["pmx_g"] += pmx_g
+        road = roads_by_name.setdefault(record.get("name") or "Unnamed road", {key: 0.0 for key in totals})
+        for key, value in (("co2_kg", co2_kg), ("nox_g", nox_g), ("pmx_g", pmx_g)):
+            road[key] += value
+    if not edge_emissions:
+        raise RuntimeError("the traffic run produced no mapped tailpipe emissions")
+    top_roads = sorted(
+        ({"name": name, **{key: round(value, 4) for key, value in values.items()}}
+         for name, values in roads_by_name.items()),
+        key=lambda item: item["nox_g"], reverse=True,
+    )[:12]
+    return {
+        "scenario": {"key": scenario_key, "label": scenario["label"]},
+        "duration_min": duration_min,
+        "warmup_s": warmup_s,
+        "seed": seed,
+        "planned_vehicle_count": generated_vehicles,
+        "requested_vehicle_count": planned_vehicles,
+        "departed_vehicle_count": metrics["departed_vehicle_count"],
+        "completed_vehicle_count": metrics["trip_count"],
+        "traffic_demand": {
+            "kind": "count_calibrated_SUMO_demand" if route_sampler_applied else "synthetic_citywide_SUMO_demand",
+            "departure_rate_per_min": departure_rate,
+            "scenario_profile_scale": scenario_scale,
+            "departure_rate_source": "configured_departure_rate" if observed_departure_rate is not None else "synthetic_base_rate",
+            "multiplier": demand_multiplier,
+            "observed_count_calibration": route_sampler_applied,
+            "route_sampler_match_ratio": (
+                (route_sampler_result.get("fit") or {}).get("match_ratio")
+                if route_sampler_result else None
+            ),
+            "tomtom_used_as_vehicle_count": False,
+        },
+        "emissions": {key: round(value, 6) for key, value in totals.items()},
+        "emissions_model": metrics["environment"]["model"],
+        "exclusions": metrics["environment"]["exclusions"],
+        "validation_status": "exploratory_synthetic_demand_unvalidated",
+        "road_emissions": edge_emissions,
+        "top_roads_by_nox": top_roads,
+        "road_data": {
+            "visible_edges": len(visible_roads),
+            "edges_with_activity": len(edge_emissions),
+            "municipal_speed_limits_applied": speed_limit_counts,
+        },
     }
 
 

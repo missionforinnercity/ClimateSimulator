@@ -2084,6 +2084,8 @@ export async function startWebGLScene(canvas, status) {
   const heatGroup = new THREE.Group();
   const sunDomainGroup = new THREE.Group();
   const windGroup = new THREE.Group();
+  const pollutionGroup = new THREE.Group();
+  windGroup.add(pollutionGroup);
   const trafficGroup = new THREE.Group();
   const trafficStatusGroup = new THREE.Group();
   const trafficDrawingGroup = new THREE.Group();
@@ -2215,6 +2217,8 @@ export async function startWebGLScene(canvas, status) {
   const windSizeValue = document.querySelector('#wind-size-value');
   const windStatus = document.querySelector('#wind-status');
   const windSimulate = document.querySelector('#wind-simulate');
+  const windResults = document.querySelector('#wind-results');
+  const windReport = document.querySelector('#wind-report');
   const windMoveDomain = document.querySelector('#wind-move-domain');
   const windLegendMin = document.querySelector('#wind-legend-min');
   const windLegendMax = document.querySelector('#wind-legend-max');
@@ -2260,6 +2264,34 @@ export async function startWebGLScene(canvas, status) {
   const windSliceReset = document.querySelector('#wind-slice-reset');
   const windDirectionControls = document.querySelector('[data-wind-direction-controls]');
   const windDirectionPresets = [...document.querySelectorAll('[data-wind-direction]')];
+  const pollutionControls = document.querySelector('#pollution-controls');
+  const pollutionPickSource = document.querySelector('#pollution-pick-source');
+  const pollutionSourceStatus = document.querySelector('#pollution-source-status');
+  const pollutionDirection = document.querySelector('#pollution-direction');
+  const pollutionSourceType = document.querySelector('#pollution-source-type');
+  const pollutionTrafficOptions = document.querySelector('#pollution-traffic-options');
+  const pollutionTrafficLoadControl = document.querySelector('#pollution-traffic-load-control');
+  const pollutionAdvanced = document.querySelector('#pollution-advanced');
+  const pollutionPointControls = document.querySelector('#pollution-point-controls');
+  const pollutionTrafficScenario = document.querySelector('#pollution-traffic-scenario');
+  const pollutionTrafficLoad = document.querySelector('#pollution-traffic-load');
+  const pollutionClass = document.querySelector('#pollution-class');
+  const pollutionHeight = document.querySelector('#pollution-height');
+  const pollutionDisplay = document.querySelector('#pollution-display');
+  const pollutionTime = document.querySelector('#pollution-time');
+  const pollutionTimeLabel = document.querySelector('#pollution-time-label');
+  const pollutionPlay = document.querySelector('#pollution-play');
+  const pollutionInspectToggle = document.querySelector('#pollution-inspect-toggle');
+  const pollutionInspectResult = document.querySelector('#pollution-inspect-result');
+  const pollutionResults = document.querySelector('#pollution-results');
+  const pollutionLegend = document.querySelector('#pollution-legend');
+  const pollutionLegendTitle = document.querySelector('#pollution-legend-title');
+  const pollutionGradientLegend = document.querySelector('#pollution-gradient-legend');
+  const pollutionContinuousLabels = document.querySelector('#pollution-continuous-labels');
+  const pollutionTierLegend = document.querySelector('#pollution-tier-legend');
+  const pollutionLegendNote = document.querySelector('#pollution-legend-note');
+  const pollutionTimelineTitle = document.querySelector('#pollution-timeline-title');
+  const pollutionTimeEndpoints = document.querySelector('#pollution-time-endpoints');
   const trafficToggle = document.querySelector('#traffic-toggle');
   const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
   const trafficFreshness = document.querySelector('#traffic-freshness');
@@ -2374,6 +2406,40 @@ export async function startWebGLScene(canvas, status) {
     moveMode: false,
     lastTime: performance.now(),
   };
+  const pollutionState = {
+    source: [0, 0],
+    sourceMode: pollutionSourceType?.value || 'traffic',
+    sourceHeight: Number(pollutionHeight?.value) || 2,
+    particleClass: pollutionClass?.value || 'nox',
+    display: pollutionDisplay?.value || 'exposure',
+    durationS: 900,
+    emissionWindowS: 360,
+    parcelWeightG: 1,
+    emissionTotals: null,
+    trafficEmissionEdges: [],
+    trafficSourceMassG: 0,
+    roadEmissionBins: null,
+    topEmissionRoads: [],
+    demandMetadata: null,
+    trafficRunData: null,
+    timeS: 0,
+    playing: false,
+    lastTime: performance.now(),
+    trajectories: [],
+    deposits: [],
+    exposureBins: [],
+    currentExposureSmooth: null,
+    exposureThresholds: null,
+    topExposureHotspots: [],
+    groundDeposited: 0,
+    buildingDeposited: 0,
+    escaped: 0,
+    particleCount: 420,
+    studyReady: false,
+    streetVisibilityBeforePollution: null,
+  };
+  const POLLUTION_GRID_SIZE = 112;
+  let pollutionStudyRevision = 0;
   const trafficState = {
     sceneActive: document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'traffic',
     enabled: Boolean(trafficToggle?.checked),
@@ -2438,6 +2504,16 @@ export async function startWebGLScene(canvas, status) {
   let windPoints = null;
   let windCfdSlice = null;
   let windFacadePressure = null;
+  let pollutionSourceMarker = null;
+  let pollutionSurface = null;
+  let pollutionSurfaceTexture = null;
+  let pollutionTrails = null;
+  let pollutionCloud = null;
+  let pollutionPuffCloud = null;
+  let pollutionDepositPoints = null;
+  let pollutionRoadEmissions = null;
+  let pollutionGlowTexture = null;
+  let pollutionSmokeTexture = null;
   let trafficCars = null;
   let windBox = null;
   let windEdges = null;
@@ -6653,13 +6729,21 @@ export async function startWebGLScene(canvas, status) {
   // read this registry and never synthesize an unlisted direction.
   const CFD_CASES = [
     { direction_deg: 0, sector: 'n', label: 'N 0°', base: '/assets/cfd/cbd_n_full/' },
+    { direction_deg: 22.5, sector: 'nne', label: 'NNE 22.5°', base: '/assets/cfd/cbd_22p5_full/' },
     { direction_deg: 45, sector: 'ne', label: 'NE 45°', base: '/assets/cfd/cbd_ne_full/' },
+    { direction_deg: 67.5, sector: 'ene', label: 'ENE 67.5°', base: '/assets/cfd/cbd_67p5_full/' },
     { direction_deg: 90, sector: 'e', label: 'E 90°', base: '/assets/cfd/cbd_e_full/' },
+    { direction_deg: 112.5, sector: 'ese', label: 'ESE 112.5°', base: '/assets/cfd/cbd_112p5_full/' },
     { direction_deg: 135, sector: 'se', label: 'SE 135°', base: '/assets/cfd/cbd_se_full/' },
+    { direction_deg: 157.5, sector: 'sse', label: 'SSE 157.5°', base: '/assets/cfd/cbd_157p5_full/' },
     { direction_deg: 180, sector: 's', label: 'S 180°', base: '/assets/cfd/cbd_s_full/' },
+    { direction_deg: 202.5, sector: 'ssw', label: 'SSW 202.5°', base: '/assets/cfd/cbd_202p5_full/' },
     { direction_deg: 225, sector: 'sw', label: 'SW 225°', base: '/assets/cfd/cbd_sw_full/' },
+    { direction_deg: 247.5, sector: 'wsw', label: 'WSW 247.5°', base: '/assets/cfd/cbd_247p5_full/' },
     { direction_deg: 270, sector: 'w', label: 'W 270°', base: '/assets/cfd/cbd_w_full/' },
+    { direction_deg: 292.5, sector: 'wnw', label: 'WNW 292.5°', base: '/assets/cfd/cbd_292p5_full/' },
     { direction_deg: 315, sector: 'nw', label: 'NW 315°', base: '/assets/cfd/cbd_nw_full/' },
+    { direction_deg: 337.5, sector: 'nnw', label: 'NNW 337.5°', base: '/assets/cfd/cbd_337p5_full/' },
   ];
   let CFD_DESIGN_CASES = [];
   fetch('/assets/cfd/design-cases.json', { cache: 'no-store' })
@@ -6742,6 +6826,7 @@ export async function startWebGLScene(canvas, status) {
       checkWindRevision(revision);
       const manifest = windState.cfd.manifest;
       windState.direction = manifest.direction_deg_from;
+      if (pollutionDirection) pollutionDirection.value = String(windState.direction);
       windState.domainCenter = [...manifest.coordinates.viewer_center_xz];
       windState.domainSize = Math.max(
         manifest.spacing_foam_m[0] * (manifest.dimensions[0] - 1),
@@ -6800,7 +6885,8 @@ export async function startWebGLScene(canvas, status) {
       windStatus.textContent = `CFD volume unavailable (${error.message})`;
     } finally {
       windSimulate.disabled = false;
-      windSimulate.textContent = 'Reload OpenFOAM result';
+      windSimulate.textContent = windState.analysisMode === 'pollution'
+        ? pollutionRunActionLabel() : 'Reload OpenFOAM result';
       requestRender();
     }
   }
@@ -6888,7 +6974,1142 @@ export async function startWebGLScene(canvas, status) {
     windCfdSlice = null;
     windFacadePressure = null;
     windState.particles = [];
+    clearPollutantStudy(true);
     restoreStreetLayersAfterWind();
+  }
+
+  function syncPollutionView() {
+    const active = windState.analysisMode === 'pollution';
+    if (active) for (const object of [windHeatMesh, windPoints, windCfdSlice, windFacadePressure, windBox, windEdges, windHandle]) {
+      if (object) object.visible = false;
+    }
+    pollutionGroup.visible = active;
+  }
+
+  function clearPollutantStudy(removeSource = false, invalidate = true) {
+    if (invalidate) pollutionStudyRevision += 1;
+    for (const object of [pollutionSourceMarker, pollutionSurface, pollutionTrails, pollutionCloud, pollutionPuffCloud, pollutionDepositPoints, pollutionRoadEmissions]) {
+      if (!object) continue;
+      pollutionGroup.remove(object);
+      if (object === pollutionSourceMarker) object.children.filter(child => child.isSprite).forEach(child => child.material?.map?.dispose());
+      disposeObject(object);
+    }
+    pollutionSourceMarker = null;
+    pollutionSurface = null;
+    pollutionSurfaceTexture?.dispose();
+    pollutionSurfaceTexture = null;
+    pollutionTrails = null;
+    pollutionCloud = null;
+    pollutionPuffCloud = null;
+    pollutionDepositPoints = null;
+    pollutionRoadEmissions = null;
+    pollutionState.trajectories = [];
+    pollutionState.deposits = [];
+    pollutionState.exposureBins = [];
+    pollutionState.currentExposureSmooth = null;
+    pollutionState.exposureThresholds = null;
+    pollutionState.topExposureHotspots = [];
+    pollutionState.groundDeposited = 0;
+    pollutionState.buildingDeposited = 0;
+    pollutionState.escaped = 0;
+    pollutionState.emissionTotals = null;
+    pollutionState.trafficEmissionEdges = [];
+    pollutionState.trafficSourceMassG = 0;
+    pollutionState.roadEmissionBins = null;
+    pollutionState.topEmissionRoads = [];
+    pollutionState.demandMetadata = null;
+    pollutionState.parcelWeightG = 1;
+    pollutionState.studyReady = false;
+    pollutionState.playing = false;
+    pollutionState.timeS = 0;
+    syncPollutionLegend();
+    if (pollutionTime) {
+      pollutionTime.value = '0';
+      pollutionTime.disabled = true;
+    }
+    if (pollutionTimeLabel) pollutionTimeLabel.textContent = '0 min';
+    if (pollutionPlay) {
+      pollutionPlay.disabled = true;
+      pollutionPlay.textContent = 'Play plume';
+    }
+    if (pollutionInspectToggle) pollutionInspectToggle.disabled = true;
+    if (invalidate && windState.analysisMode === 'pollution' && windSimulate) {
+      windSimulate.disabled = false;
+      windSimulate.textContent = pollutionRunActionLabel();
+    }
+    if (pollutionResults) {
+      pollutionResults.replaceChildren();
+      pollutionResults.hidden = true;
+    }
+    if (pollutionLegend) pollutionLegend.hidden = windState.analysisMode !== 'pollution';
+    if (pollutionInspectResult) pollutionInspectResult.hidden = true;
+    if (removeSource) pollutionSourceMarker = null;
+  }
+
+  function pollutionProperties() {
+    // Stokes settling for spherical mineral particles (rho=1500 kg/m³,
+    // air viscosity=1.81e-5 Pa·s); this is a size-based screening estimate.
+    if (pollutionState.particleClass === 'nox') return { label: 'traffic NOx fumes', settlingMps: 0 };
+    const diameter = pollutionState.particleClass === 'pm25' ? 2.5e-6 : 10e-6;
+    const slip = pollutionState.particleClass === 'pm25' ? 1.06 : 1.02;
+    return {
+      label: pollutionState.particleClass === 'pm25' ? 'PM2.5 fine particles' : 'PM10 coarse particles',
+      settlingMps: 1500 * 9.80665 * diameter * diameter / (18 * 1.81e-5) * slip,
+    };
+  }
+
+  function makePollutionGlow(color = '#a9ffe1') {
+    if (pollutionGlowTexture) return pollutionGlowTexture;
+    const sprite = document.createElement('canvas');
+    sprite.width = sprite.height = 96;
+    const context = sprite.getContext('2d');
+    const gradient = context.createRadialGradient(48, 48, 1, 48, 48, 47);
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(0.12, 'rgba(169,255,225,0.9)');
+    gradient.addColorStop(0.42, 'rgba(102,255,213,0.25)');
+    gradient.addColorStop(1, 'rgba(50,230,200,0)');
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, 96, 96);
+    pollutionGlowTexture = new THREE.CanvasTexture(sprite);
+    return pollutionGlowTexture;
+  }
+
+  function makePollutionSmokeTexture() {
+    if (pollutionSmokeTexture) return pollutionSmokeTexture;
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const context = canvas.getContext('2d');
+    const image = context.createImageData(size, size);
+    const noiseSize = 12;
+    const noise = new Float32Array(noiseSize * noiseSize);
+    let seed = 71423;
+    for (let index = 0; index < noise.length; index += 1) {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      noise[index] = seed / 4294967296;
+    }
+    const sampleNoise = (x, y) => {
+      const gx = x * (noiseSize - 1), gy = y * (noiseSize - 1);
+      const x0 = Math.floor(gx), y0 = Math.floor(gy);
+      const x1 = Math.min(noiseSize - 1, x0 + 1), y1 = Math.min(noiseSize - 1, y0 + 1);
+      const tx = gx - x0, ty = gy - y0;
+      const a = noise[y0 * noiseSize + x0] * (1 - tx) + noise[y0 * noiseSize + x1] * tx;
+      const b = noise[y1 * noiseSize + x0] * (1 - tx) + noise[y1 * noiseSize + x1] * tx;
+      return a * (1 - ty) + b * ty;
+    };
+    for (let y = 0; y < size; y += 1) for (let x = 0; x < size; x += 1) {
+      const nx = (x / (size - 1) - 0.5) * 2;
+      const ny = (y / (size - 1) - 0.5) * 2;
+      const turbulence = sampleNoise(x / (size - 1), y / (size - 1));
+      const warpedX = nx + (turbulence - 0.5) * 0.2;
+      const warpedY = ny + (sampleNoise(y / (size - 1), x / (size - 1)) - 0.5) * 0.2;
+      const radius = Math.sqrt(warpedX * warpedX * 0.9 + warpedY * warpedY * 1.3);
+      const edge = clamp((1 - radius) * 3.4, 0, 1);
+      const density = Math.exp(-radius * radius * 2.6) * edge * (0.28 + turbulence * 0.62);
+      const offset = (y * size + x) * 4;
+      image.data[offset] = 255;
+      image.data[offset + 1] = 255;
+      image.data[offset + 2] = 255;
+      image.data[offset + 3] = Math.round(clamp(density, 0, 0.72) * 255);
+    }
+    context.putImageData(image, 0, 0);
+    pollutionSmokeTexture = new THREE.CanvasTexture(canvas);
+    pollutionSmokeTexture.minFilter = THREE.LinearFilter;
+    pollutionSmokeTexture.magFilter = THREE.LinearFilter;
+    pollutionSmokeTexture.generateMipmaps = false;
+    pollutionSmokeTexture.needsUpdate = true;
+    return pollutionSmokeTexture;
+  }
+
+  function buildPollutionSourceMarker() {
+    if (pollutionState.sourceMode !== 'point') {
+      if (pollutionSourceMarker) {
+        pollutionGroup.remove(pollutionSourceMarker);
+        pollutionSourceMarker.children.filter(child => child.isSprite).forEach(child => child.material?.map?.dispose());
+        disposeObject(pollutionSourceMarker);
+        pollutionSourceMarker = null;
+      }
+      return;
+    }
+    if (pollutionSourceMarker) {
+      pollutionGroup.remove(pollutionSourceMarker);
+      pollutionSourceMarker.children.filter(child => child.isSprite).forEach(child => child.material?.map?.dispose());
+      disposeObject(pollutionSourceMarker);
+    }
+    const [x, z] = pollutionState.source;
+    const ground = terrainHeightAt(x, z);
+    const height = pollutionState.sourceHeight;
+    const marker = new THREE.Group();
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(5.5, 0.65, 8, 40),
+      new THREE.MeshBasicMaterial({ color: 0x7dffca, transparent: true, opacity: 0.95, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = ground + 0.8;
+    const stem = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.8, 1.7, Math.max(height, 3), 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x5ce8bc, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    stem.position.y = ground + Math.max(height, 3) * 0.5;
+    const emitter = new THREE.Mesh(
+      new THREE.SphereGeometry(2.8, 16, 10),
+      new THREE.MeshBasicMaterial({ color: 0xd5ff75, depthWrite: false }),
+    );
+    emitter.position.y = ground + height;
+    const labelCanvas = document.createElement('canvas');
+    labelCanvas.width = 256; labelCanvas.height = 64;
+    const labelContext = labelCanvas.getContext('2d');
+    labelContext.fillStyle = 'rgba(14, 30, 25, 0.94)';
+    labelContext.beginPath();
+    labelContext.roundRect(3, 3, 250, 58, 20);
+    labelContext.fill();
+    labelContext.strokeStyle = 'rgba(125,255,202,0.9)';
+    labelContext.lineWidth = 3;
+    labelContext.stroke();
+    labelContext.fillStyle = '#a9ffe1';
+    labelContext.font = '700 27px system-ui, sans-serif';
+    labelContext.textAlign = 'center';
+    labelContext.textBaseline = 'middle';
+    labelContext.fillText('POLLUTANT SOURCE', 128, 33);
+    const labelTexture = new THREE.CanvasTexture(labelCanvas);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: labelTexture, transparent: true, depthTest: false, depthWrite: false,
+    }));
+    label.scale.set(36, 9, 1);
+    label.position.set(x, ground + height + 10, z);
+    marker.add(ring, stem, emitter, label);
+    marker.name = 'pollutant-source';
+    marker.renderOrder = 8;
+    pollutionGroup.add(marker);
+    pollutionSourceMarker = marker;
+  }
+
+  function pollutionRunActionLabel() {
+    return pollutionState.sourceMode === 'traffic' ? 'Run traffic plume' : 'Run point-source plume';
+  }
+
+  function pollutionRunProgressLabel() {
+    return pollutionState.sourceMode === 'traffic' ? 'Running traffic scenario…' : 'Tracing point plume…';
+  }
+
+  function syncPollutionControls() {
+    const trafficMode = pollutionState.sourceMode === 'traffic';
+    for (const option of pollutionDirection?.options || []) {
+      option.disabled = !findCfdCase(Number(option.value));
+    }
+    if (pollutionTrafficOptions) pollutionTrafficOptions.hidden = !trafficMode;
+    if (pollutionTrafficLoadControl) pollutionTrafficLoadControl.hidden = !trafficMode;
+    if (pollutionPointControls) pollutionPointControls.hidden = trafficMode;
+    if (!trafficMode && pollutionAdvanced) pollutionAdvanced.open = true;
+    if (pollutionTimelineTitle) pollutionTimelineTitle.textContent = trafficMode ? 'Traffic plume timeline' : 'Release timeline';
+    if (pollutionTimeEndpoints) pollutionTimeEndpoints.innerHTML = trafficMode
+      ? '<span>0 · traffic release begins</span><span>10 · traffic sample ends</span><span>15 min · plume record</span>'
+      : '<span>0 · release begins</span><span>6 · source ends</span><span>15 min · plume record</span>';
+    for (const option of pollutionClass?.options || []) {
+      option.disabled = trafficMode && option.value !== 'nox';
+    }
+    if (trafficMode && pollutionClass?.value !== 'nox') {
+      pollutionClass.value = 'nox';
+      pollutionState.particleClass = 'nox';
+    }
+    const depositionOption = pollutionDisplay?.querySelector('option[value="deposition"]');
+    if (depositionOption) {
+      depositionOption.disabled = pollutionState.particleClass === 'nox';
+      if (depositionOption.disabled && pollutionState.display === 'deposition') {
+        pollutionState.display = 'exposure';
+        pollutionDisplay.value = 'exposure';
+      }
+    }
+    syncPollutionLegend();
+    if (windState.analysisMode === 'pollution' && windSimulate && !windSimulate.disabled) {
+      windSimulate.textContent = pollutionRunActionLabel();
+    }
+  }
+
+  function pollutionCell(x, z) {
+    const columns = POLLUTION_GRID_SIZE;
+    const rows = POLLUTION_GRID_SIZE;
+    const width = (right - left) / columns;
+    const depth = (maxZ - minZ) / rows;
+    const column = Math.floor((x - left) / width);
+    const row = Math.floor((z - minZ) / depth);
+    if (column < 0 || row < 0 || column >= columns || row >= rows) return -1;
+    return { index: row * columns + column, column, row, columns, rows, width, depth };
+  }
+
+  function pollutionColor(value, maximum) {
+    const stops = [0x2bbfe2, 0x42e5c0, 0xd8ed56, 0xff9748, 0xf24d91];
+    const t = clamp(Math.sqrt(Math.max(0, value) / Math.max(maximum, 1e-9)), 0, 1) * (stops.length - 1);
+    const low = Math.floor(t);
+    return new THREE.Color(stops[low]).lerp(new THREE.Color(stops[Math.min(stops.length - 1, low + 1)]), t - low);
+  }
+
+  const POLLUTION_TIER_COLORS = [0x49b8d2, 0xf1d45b, 0xff923f, 0xe84d56];
+  const POLLUTION_TIER_NAMES = ['Lower half', 'Middle 30%', 'High · next 15%', 'Very high · top 5%'];
+  const POLLUTION_EXPOSURE_PALETTE = [0x204750, ...POLLUTION_TIER_COLORS].map(color => new THREE.Color(color));
+
+  function writePollutionExposureColor(value, thresholds, pixels, offset) {
+    const levels = [0, thresholds?.[0] || 0, thresholds?.[1] || 0, thresholds?.[2] || 0, thresholds?.[3] || thresholds?.[2] || 0];
+    let lower = 0;
+    while (lower < levels.length - 1 && value >= levels[lower + 1]) lower += 1;
+    const upper = Math.min(POLLUTION_EXPOSURE_PALETTE.length - 1, lower + 1);
+    const span = levels[upper] - levels[lower];
+    const amount = span > 1e-9 ? clamp((value - levels[lower]) / span, 0, 1) : 1;
+    const from = POLLUTION_EXPOSURE_PALETTE[lower], to = POLLUTION_EXPOSURE_PALETTE[upper];
+    pixels[offset] = Math.round((from.r + (to.r - from.r) * amount) * 255);
+    pixels[offset + 1] = Math.round((from.g + (to.g - from.g) * amount) * 255);
+    pixels[offset + 2] = Math.round((from.b + (to.b - from.b) * amount) * 255);
+  }
+
+  function pollutionQuantile(sortedValues, quantile) {
+    if (!sortedValues.length) return 0;
+    return sortedValues[Math.floor((sortedValues.length - 1) * quantile)];
+  }
+
+  function pollutionTier(value, thresholds = pollutionState.exposureThresholds) {
+    if (!(value > 0) || !thresholds) return -1;
+    if (value >= thresholds[2]) return 3;
+    if (value >= thresholds[1]) return 2;
+    if (value >= thresholds[0]) return 1;
+    return 0;
+  }
+
+  function smoothPollutionGrid(values) {
+    const columns = POLLUTION_GRID_SIZE, rows = POLLUTION_GRID_SIZE;
+    const radius = 3, sigma = 1.35;
+    const weights = [];
+    let weightTotal = 0;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const weight = Math.exp(-(offset * offset) / (2 * sigma * sigma));
+      weights.push(weight);
+      weightTotal += weight;
+    }
+    for (let index = 0; index < weights.length; index += 1) weights[index] /= weightTotal;
+    const horizontal = new Float32Array(values.length);
+    const smooth = new Float32Array(values.length);
+    for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+      let total = 0;
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const sourceColumn = clamp(column + offset, 0, columns - 1);
+        total += values[row * columns + sourceColumn] * weights[offset + radius];
+      }
+      horizontal[row * columns + column] = total;
+    }
+    for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+      let total = 0;
+      for (let offset = -radius; offset <= radius; offset += 1) {
+        const sourceRow = clamp(row + offset, 0, rows - 1);
+        total += horizontal[sourceRow * columns + column] * weights[offset + radius];
+      }
+      smooth[row * columns + column] = total;
+    }
+    return smooth;
+  }
+
+  function nearestPollutionRoadName(x, z) {
+    let bestDistance = Infinity;
+    let bestName = 'Unnamed street';
+    for (const road of trafficState.networkEdges) {
+      if (!road.points?.length) continue;
+      for (let index = 1; index < road.points.length; index += 1) {
+        const [ax, az] = road.points[index - 1], [bx, bz] = road.points[index];
+        const dx = bx - ax, dz = bz - az;
+        const lengthSquared = dx * dx + dz * dz;
+        if (lengthSquared < 0.04) continue;
+        const t = clamp(((x - ax) * dx + (z - az) * dz) / lengthSquared, 0, 1);
+        const distance = Math.hypot(x - (ax + t * dx), z - (az + t * dz));
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestName = road.name || road.road_name || 'Unnamed street';
+        }
+      }
+    }
+    return { name: bestName, distance: bestDistance };
+  }
+
+  function summarizePollutionExposure() {
+    const count = POLLUTION_GRID_SIZE * POLLUTION_GRID_SIZE;
+    const total = new Float32Array(count);
+    for (const bin of pollutionState.exposureBins) {
+      if (!bin) continue;
+      for (let index = 0; index < count; index += 1) total[index] += bin[index];
+    }
+    const smooth = smoothPollutionGrid(total);
+    const positive = [];
+    for (const value of smooth) if (value > 0) positive.push(value);
+    positive.sort((a, b) => a - b);
+    pollutionState.exposureThresholds = positive.length ? [
+      pollutionQuantile(positive, 0.5), pollutionQuantile(positive, 0.8),
+      pollutionQuantile(positive, 0.95), pollutionQuantile(positive, 0.99),
+    ] : null;
+    pollutionState.topExposureHotspots = [];
+    if (!pollutionState.exposureThresholds || !trafficState.networkEdges.length) return;
+
+    const columns = POLLUTION_GRID_SIZE, rows = POLLUTION_GRID_SIZE;
+    const spacingX = (right - left) / columns, spacingZ = (maxZ - minZ) / rows;
+    const candidates = [];
+    for (let row = 3; row < rows - 3; row += 1) for (let column = 3; column < columns - 3; column += 1) {
+      const index = row * columns + column;
+      const value = smooth[index];
+      if (value < pollutionState.exposureThresholds[1]) continue;
+      let localMaximum = true;
+      for (let dy = -3; dy <= 3 && localMaximum; dy += 1) for (let dx = -3; dx <= 3; dx += 1) {
+        if (smooth[(row + dy) * columns + column + dx] > value) { localMaximum = false; break; }
+      }
+      if (!localMaximum) continue;
+      const x = left + (column + 0.5) * spacingX;
+      const z = minZ + (row + 0.5) * spacingZ;
+      if (!pointInLidarFootprint(x, z) || !terrainValidAt(x, z)) continue;
+      candidates.push({ x, z, value, tier: pollutionTier(value) });
+    }
+    candidates.sort((a, b) => b.value - a.value);
+    for (const candidate of candidates) {
+      if (pollutionState.topExposureHotspots.some(item => Math.hypot(item.x - candidate.x, item.z - candidate.z) < 180)) continue;
+      if (windPointInsideBuilding(candidate.x, candidate.z, terrainHeightAt(candidate.x, candidate.z) + 1.5)) continue;
+      const road = nearestPollutionRoadName(candidate.x, candidate.z);
+      pollutionState.topExposureHotspots.push({ ...candidate, road: road.name, roadDistance: road.distance });
+      if (pollutionState.topExposureHotspots.length >= 5) break;
+    }
+  }
+
+  function buildRoadEmissionOverlay() {
+    if (pollutionRoadEmissions) {
+      pollutionGroup.remove(pollutionRoadEmissions);
+      disposeObject(pollutionRoadEmissions);
+      pollutionRoadEmissions = null;
+    }
+    if (!pollutionState.trafficEmissionEdges.length) return;
+    const property = pollutionState.particleClass === 'pmx' ? 'pmx_g' : pollutionState.particleClass === 'nox' ? 'nox_g' : 'pmx_g';
+    const active = pollutionState.trafficEmissionEdges.map(item => {
+      const road = trafficState.edgesById.get(item.edge_id);
+      if (!road?.points?.length) return null;
+      return { item, road, intensity: Math.max(0, Number(item[property]) || 0) / Math.max(0.01, Number(item.length_m) / 1000) };
+    }).filter(row => row && row.intensity > 0);
+    if (!active.length) return;
+    const intensities = active.map(row => row.intensity).sort((a, b) => a - b);
+    const maximum = intensities[Math.min(intensities.length - 1, Math.floor(intensities.length * 0.95))] || intensities.at(-1) || 1;
+    const positions = [], colors = [], indices = [];
+    for (const { road, intensity } of active) {
+      const points = road.points;
+      const color = pollutionColor(Math.min(maximum, intensity), maximum);
+      const halfWidth = clamp((Number(road.lane_count) || 1) * 1.05, 1.8, 5.5);
+      for (let index = 1; index < points.length; index += 1) {
+        const [ax, az] = points[index - 1], [bx, bz] = points[index];
+        const dx = bx - ax, dz = bz - az, length = Math.hypot(dx, dz);
+        if (length < 0.2) continue;
+        const ox = -dz / length * halfWidth, oz = dx / length * halfWidth;
+        const base = positions.length / 3;
+        for (const [x, z] of [[ax + ox, az + oz], [bx + ox, bz + oz], [bx - ox, bz - oz], [ax - ox, az - oz]]) {
+          positions.push(x, terrainHeightAt(x, z) + 1.45, z);
+          colors.push(color.r, color.g, color.b);
+        }
+        indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+    }
+    if (!positions.length) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setIndex(indices);
+    pollutionRoadEmissions = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
+      depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4,
+    }));
+    pollutionRoadEmissions.name = 'sumo-hbefa-road-emission-intensity';
+    pollutionRoadEmissions.renderOrder = 7;
+    pollutionGroup.add(pollutionRoadEmissions);
+  }
+
+  function syncPollutionLegend() {
+    if (pollutionLegendTitle) pollutionLegendTitle.textContent = pollutionState.display === 'deposition'
+      ? 'Relative surface contacts' : pollutionState.display === 'emissions'
+        ? 'Road emissions per length' : 'Near-ground fume exposure';
+    if (pollutionContinuousLabels) pollutionContinuousLabels.innerHTML = pollutionState.display === 'deposition'
+      ? '<span>Fewer contacts</span><span>More contacts</span>'
+      : '<span>Lower emissions</span><span>Higher emissions</span>';
+    const tieredExposure = pollutionState.display === 'exposure';
+    if (pollutionGradientLegend) pollutionGradientLegend.hidden = tieredExposure;
+    if (pollutionContinuousLabels) pollutionContinuousLabels.hidden = tieredExposure;
+    if (pollutionTierLegend) pollutionTierLegend.hidden = !tieredExposure;
+    if (pollutionLegendNote) pollutionLegendNote.textContent = pollutionState.display === 'exposure'
+      ? pollutionState.studyReady
+        ? 'Colours rank modelled exposure within this run. Blank areas may have no plume or only trace; they are not proof of clean air.'
+        : 'After running, colours rank relative exposure within this scenario. They are not measured concentrations.'
+      : pollutionState.display === 'emissions'
+        ? 'Relative SUMO source emissions by road; not measured traffic counts or ambient air quality.'
+        : 'Relative modelled surface contacts; not measured deposition or a health-risk map.';
+  }
+
+  function buildPollutionSurface() {
+    pollutionSurfaceTexture?.dispose();
+    pollutionSurfaceTexture = null;
+    if (pollutionSurface) {
+      pollutionGroup.remove(pollutionSurface);
+      disposeObject(pollutionSurface);
+      pollutionSurface = null;
+    }
+    syncPollutionLegend();
+    if (pollutionState.display === 'emissions') {
+      buildRoadEmissionOverlay();
+      return;
+    }
+    if (pollutionRoadEmissions) {
+      pollutionGroup.remove(pollutionRoadEmissions);
+      disposeObject(pollutionRoadEmissions);
+      pollutionRoadEmissions = null;
+    }
+    if (!pollutionState.studyReady || !windState.cfd) return;
+    const columns = POLLUTION_GRID_SIZE, rows = POLLUTION_GRID_SIZE, count = columns * rows;
+    const values = new Float32Array(count);
+    const timeBin = Math.min(pollutionState.exposureBins.length - 1, Math.ceil(pollutionState.timeS / 5) - 1);
+    if (pollutionState.display === 'exposure') {
+      for (let bin = 0; bin <= timeBin; bin += 1) {
+        const source = pollutionState.exposureBins[bin];
+        if (!source) continue;
+        for (let cell = 0; cell < count; cell += 1) values[cell] += source[cell];
+      }
+    } else {
+      for (const item of pollutionState.deposits) {
+        if (item.kind !== 'ground' || item.time > pollutionState.timeS) continue;
+        const cell = pollutionCell(item.x, item.z);
+        if (cell && typeof cell === 'object' && cell.index < count) values[cell.index] += item.weightG || 1;
+      }
+    }
+    // Smooth only the displayed field to reduce parcel-sampling speckle. The
+    // underlying residence bins and deposition events remain unchanged.
+    const smooth = smoothPollutionGrid(values);
+    if (pollutionState.display === 'exposure') pollutionState.currentExposureSmooth = smooth;
+    let maximum = 0;
+    for (const value of smooth) maximum = Math.max(maximum, value);
+    if (!(maximum > 0)) return;
+    const validCells = new Uint8Array(count);
+    const cellWidth = (right - left) / columns;
+    const cellDepth = (maxZ - minZ) / rows;
+    for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
+      const centerX = left + (column + 0.5) * cellWidth;
+      const centerZ = minZ + (row + 0.5) * cellDepth;
+      validCells[row * columns + column] = pointInLidarFootprint(centerX, centerZ)
+        && !windPointInsideBuilding(centerX, centerZ, terrainHeightAt(centerX, centerZ) + 1.5) ? 1 : 0;
+    }
+
+    // Interpolate the smoothed field into a higher-resolution texture so the
+    // severity colours blend continuously instead of outlining source cells.
+    const textureSize = columns * 2;
+    const pixels = new Uint8Array(textureSize * textureSize * 4);
+    const bilinearValue = (x, y) => {
+      const sampleX = clamp(x, 0, columns - 1), sampleY = clamp(y, 0, rows - 1);
+      const x0 = Math.floor(sampleX), y0 = Math.floor(sampleY);
+      const x1 = Math.min(columns - 1, x0 + 1), y1 = Math.min(rows - 1, y0 + 1);
+      const tx = sampleX - x0, ty = sampleY - y0;
+      const a = smooth[y0 * columns + x0] * (1 - tx) + smooth[y0 * columns + x1] * tx;
+      const b = smooth[y1 * columns + x0] * (1 - tx) + smooth[y1 * columns + x1] * tx;
+      return a * (1 - ty) + b * ty;
+    };
+    for (let row = 0; row < textureSize; row += 1) for (let column = 0; column < textureSize; column += 1) {
+      const offset = (row * textureSize + column) * 4;
+      const u = (column + 0.5) / textureSize;
+      const v = (row + 0.5) / textureSize;
+      const sourceColumn = u * columns - 0.5;
+      const sourceRow = v * rows - 0.5;
+      const maskColumn = clamp(Math.floor(u * columns), 0, columns - 1);
+      const maskRow = clamp(Math.floor(v * rows), 0, rows - 1);
+      if (!validCells[maskRow * columns + maskColumn]) continue;
+      const value = bilinearValue(sourceColumn, sourceRow);
+      if (!(value > maximum * 0.001)) continue;
+      if (pollutionState.display === 'exposure') {
+        writePollutionExposureColor(value, pollutionState.exposureThresholds, pixels, offset);
+        const lowReference = Math.max(1e-9, (pollutionState.exposureThresholds?.[0] || maximum) * 0.35);
+        const highReference = Math.max(1e-9, pollutionState.exposureThresholds?.[3] || pollutionState.exposureThresholds?.[2] || maximum);
+        const feather = clamp(value / lowReference, 0, 1);
+        const strength = 0.22 + 0.78 * Math.sqrt(clamp(value / highReference, 0, 1));
+        pixels[offset + 3] = Math.round(clamp(strength * feather, 0, 0.97) * 255);
+      } else {
+        const color = pollutionColor(value, maximum);
+        pixels[offset] = Math.round(color.r * 255);
+        pixels[offset + 1] = Math.round(color.g * 255);
+        pixels[offset + 2] = Math.round(color.b * 255);
+        pixels[offset + 3] = Math.round(clamp(Math.sqrt(value / maximum), 0, 0.8) * 255);
+      }
+    }
+    pollutionSurfaceTexture = new THREE.DataTexture(pixels, textureSize, textureSize, THREE.RGBAFormat);
+    pollutionSurfaceTexture.magFilter = THREE.LinearFilter;
+    pollutionSurfaceTexture.minFilter = THREE.LinearFilter;
+    pollutionSurfaceTexture.generateMipmaps = false;
+    pollutionSurfaceTexture.needsUpdate = true;
+
+    const meshResolution = textureSize;
+    const vertexCount = (meshResolution + 1) * (meshResolution + 1);
+    const positions = new Float32Array(vertexCount * 3);
+    const uvs = new Float32Array(vertexCount * 2);
+    let positionOffset = 0, uvOffset = 0;
+    for (let row = 0; row <= meshResolution; row += 1) for (let column = 0; column <= meshResolution; column += 1) {
+      const x = left + (right - left) * column / meshResolution;
+      const z = minZ + (maxZ - minZ) * row / meshResolution;
+      positions[positionOffset++] = x;
+      positions[positionOffset++] = terrainHeightAt(x, z) + 0.62;
+      positions[positionOffset++] = z;
+      uvs[uvOffset++] = column / meshResolution;
+      uvs[uvOffset++] = row / meshResolution;
+    }
+    const indices = new Uint16Array(meshResolution * meshResolution * 6);
+    let indexOffset = 0;
+    const verticesPerRow = meshResolution + 1;
+    for (let row = 0; row < meshResolution; row += 1) for (let column = 0; column < meshResolution; column += 1) {
+      const a = row * verticesPerRow + column, b = a + 1;
+      const d = a + verticesPerRow, c = d + 1;
+      indices[indexOffset++] = a; indices[indexOffset++] = b; indices[indexOffset++] = c;
+      indices[indexOffset++] = a; indices[indexOffset++] = c; indices[indexOffset++] = d;
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    pollutionSurface = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      map: pollutionSurfaceTexture, transparent: true, opacity: pollutionState.display === 'deposition' ? 0.84 : 0.96,
+      side: THREE.DoubleSide, depthWrite: false,
+      blending: pollutionState.display === 'exposure' ? THREE.NormalBlending : THREE.AdditiveBlending,
+      polygonOffset: true, polygonOffsetFactor: -3,
+    }));
+    pollutionSurface.name = pollutionState.display === 'deposition' ? 'relative-surface-deposition' : 'relative-near-ground-exposure';
+    pollutionSurface.renderOrder = 6;
+    pollutionGroup.add(pollutionSurface);
+  }
+
+  function pollutionRng(seed) {
+    let state = seed >>> 0;
+    return () => {
+      state = (1664525 * state + 1013904223) >>> 0;
+      return state / 4294967296;
+    };
+  }
+
+  function pollutionNormal(random) {
+    const u = Math.max(1e-9, random());
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * random());
+  }
+
+  function createPollutionMarkerAtSource() {
+    const [x, z] = pollutionState.source;
+    const terrainY = terrainHeightAt(x, z);
+    if (!terrainValidAt(x, z)) throw new Error('Choose a point inside the mapped city terrain.');
+    if (windPointInsideBuilding(x, z, terrainY + pollutionState.sourceHeight)) {
+      let candidate = null;
+      for (let radius = 10; radius <= 180 && !candidate; radius += 10) {
+        for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 12) {
+          const cx = x + Math.cos(angle) * radius, cz = z + Math.sin(angle) * radius;
+          if (terrainValidAt(cx, cz) && !windPointInsideBuilding(cx, cz, terrainHeightAt(cx, cz) + pollutionState.sourceHeight)) {
+            candidate = [cx, cz];
+            break;
+          }
+        }
+      }
+      if (!candidate) throw new Error('No open-air source location was found near that point.');
+      pollutionState.source = candidate;
+      if (pollutionSourceStatus) pollutionSourceStatus.textContent = `Snapped to nearby open air · ${candidate[0].toFixed(0)} m east, ${candidate[1].toFixed(0)} m south.`;
+    }
+    buildPollutionSourceMarker();
+  }
+
+  function createPollutionVisuals() {
+    if (pollutionTrails) { pollutionGroup.remove(pollutionTrails); disposeObject(pollutionTrails); }
+    if (pollutionCloud) { pollutionGroup.remove(pollutionCloud); disposeObject(pollutionCloud); }
+    if (pollutionPuffCloud) { pollutionGroup.remove(pollutionPuffCloud); disposeObject(pollutionPuffCloud); }
+    if (pollutionDepositPoints) { pollutionGroup.remove(pollutionDepositPoints); disposeObject(pollutionDepositPoints); }
+    let maxSegments = 0;
+    let maxPuffs = 0;
+    for (const trajectory of pollutionState.trajectories) {
+      const pointCount = trajectory.positions.length / 3;
+      maxSegments += Math.max(0, pointCount - 1);
+      maxPuffs += Math.ceil(pointCount / 2) + 1;
+    }
+    const lineGeometry = new THREE.BufferGeometry();
+    lineGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(maxSegments * 6), 3));
+    lineGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(maxSegments * 6), 3));
+    pollutionTrails = new THREE.LineSegments(lineGeometry, new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.16, depthWrite: false, blending: THREE.NormalBlending,
+    }));
+    pollutionTrails.name = 'openfoam-particle-paths';
+    pollutionTrails.renderOrder = 7;
+    pollutionGroup.add(pollutionTrails);
+    const puffGeometry = new THREE.BufferGeometry();
+    puffGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(maxPuffs * 3), 3));
+    puffGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(maxPuffs * 3), 3));
+    pollutionPuffCloud = new THREE.Points(puffGeometry, new THREE.PointsMaterial({
+      map: makePollutionSmokeTexture(), size: 70, vertexColors: true, transparent: true, opacity: 0.34,
+      depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true,
+    }));
+    pollutionPuffCloud.name = 'soft-smoke-plume-puffs';
+    pollutionPuffCloud.renderOrder = 8;
+    pollutionGroup.add(pollutionPuffCloud);
+    const cloudGeometry = new THREE.BufferGeometry();
+    cloudGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pollutionState.trajectories.length * 3), 3));
+    cloudGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(pollutionState.trajectories.length * 3), 3));
+    pollutionCloud = new THREE.Points(cloudGeometry, new THREE.PointsMaterial({
+      map: makePollutionGlow(), size: 8, vertexColors: true, transparent: true, opacity: 0.48,
+      depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true,
+    }));
+    pollutionCloud.name = 'airborne-pollutant-particles';
+    pollutionCloud.renderOrder = 9;
+    pollutionGroup.add(pollutionCloud);
+    const depositPositions = [], depositColors = [];
+    for (const item of [...pollutionState.deposits].sort((a, b) => a.time - b.time)) {
+      depositPositions.push(item.x, item.y + 0.5, item.z);
+      depositColors.push(item.kind === 'building' ? 1 : 0.82, item.kind === 'building' ? 0.44 : 0.82, 0.25);
+    }
+    const depositGeometry = new THREE.BufferGeometry();
+    depositGeometry.setAttribute('position', new THREE.Float32BufferAttribute(depositPositions, 3));
+    depositGeometry.setAttribute('color', new THREE.Float32BufferAttribute(depositColors, 3));
+    pollutionDepositPoints = new THREE.Points(depositGeometry, new THREE.PointsMaterial({
+      map: makePollutionGlow(), size: 14, vertexColors: true, transparent: true, opacity: 0.8,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    }));
+    pollutionDepositPoints.name = 'particle-deposition-sites';
+    pollutionDepositPoints.renderOrder = 10;
+    pollutionGroup.add(pollutionDepositPoints);
+    updatePollutionVisuals(performance.now(), true);
+    buildPollutionSurface();
+  }
+
+  function updatePollutionVisuals(now, force = false) {
+    if (!pollutionState.studyReady || !pollutionTrails || !pollutionCloud) return;
+    if (pollutionState.playing && !force) {
+      const elapsed = Math.min(0.12, (now - pollutionState.lastTime) / 1000);
+      pollutionState.timeS = Math.min(pollutionState.durationS, pollutionState.timeS + elapsed * 30);
+      if (pollutionState.timeS >= pollutionState.durationS) {
+        pollutionState.playing = false;
+        if (pollutionPlay) pollutionPlay.textContent = 'Replay plume';
+      }
+      if (pollutionTime) pollutionTime.value = String(Math.round(pollutionState.timeS / 5) * 5);
+      if (pollutionTimeLabel) pollutionTimeLabel.textContent = `${(pollutionState.timeS / 60).toFixed(1)} min`;
+      const bin = Math.floor(pollutionState.timeS / 30);
+      if (bin !== pollutionState.lastSurfaceBin) {
+        pollutionState.lastSurfaceBin = bin;
+        buildPollutionSurface();
+      }
+    }
+    pollutionState.lastTime = now;
+    const positions = pollutionTrails.geometry.attributes.position.array;
+    const colors = pollutionTrails.geometry.attributes.color.array;
+    let segmentCount = 0;
+    const puffPositions = pollutionPuffCloud.geometry.attributes.position.array;
+    const puffColors = pollutionPuffCloud.geometry.attributes.color.array;
+    let puffCount = 0;
+    const cloudPositions = pollutionCloud.geometry.attributes.position.array;
+    const cloudColors = pollutionCloud.geometry.attributes.color.array;
+    let cloudCount = 0;
+    const trailWindow = 180;
+    for (const trajectory of pollutionState.trajectories) {
+      const localTime = pollutionState.timeS - trajectory.emittedAt;
+      if (localTime < 0) continue;
+      if (localTime > trajectory.endAge && trajectory.landedAt < 0) continue;
+      let step = 0;
+      while (step + 1 < trajectory.times.length && trajectory.times[step + 1] <= localTime) step += 1;
+      if (trajectory.landedAt >= 0 && step >= trajectory.landedAt) continue;
+      let start = step;
+      while (start > 0 && localTime - trajectory.times[start - 1] <= trailWindow) start -= 1;
+      const puffStride = 2;
+      const puffStart = start + ((puffStride - (start % puffStride)) % puffStride);
+      const writePuff = point => {
+        const offset = puffCount * 3;
+        const source = point * 3;
+        puffPositions[offset] = trajectory.positions[source];
+        puffPositions[offset + 1] = trajectory.positions[source + 1];
+        puffPositions[offset + 2] = trajectory.positions[source + 2];
+        const age = Math.max(0, localTime - trajectory.times[point]);
+        const fade = Math.max(0, 1 - age / trailWindow);
+        const brightness = 0.32 + 0.68 * fade;
+        puffColors[offset] = 0.64 * brightness;
+        puffColors[offset + 1] = 0.72 * brightness;
+        puffColors[offset + 2] = 0.71 * brightness;
+        puffCount += 1;
+      };
+      for (let point = puffStart; point <= step; point += puffStride) writePuff(point);
+      if (step >= start && (step - puffStart) % puffStride !== 0) writePuff(step);
+      for (let point = start + 1; point <= step; point += 1) {
+        const offset = segmentCount * 6;
+        const previous = (point - 1) * 3, current = point * 3;
+        positions[offset] = trajectory.positions[previous];
+        positions[offset + 1] = trajectory.positions[previous + 1];
+        positions[offset + 2] = trajectory.positions[previous + 2];
+        positions[offset + 3] = trajectory.positions[current];
+        positions[offset + 4] = trajectory.positions[current + 1];
+        positions[offset + 5] = trajectory.positions[current + 2];
+        const fade = 0.18 + 0.82 * (point - start) / Math.max(1, step - start);
+        for (let color = 0; color < 6; color += 3) {
+          colors[offset + color] = 0.52 * fade;
+          colors[offset + color + 1] = 0.66 * fade;
+          colors[offset + color + 2] = 0.65 * fade;
+        }
+        segmentCount += 1;
+      }
+      const cloudOffset = cloudCount * 3;
+      cloudPositions[cloudOffset] = trajectory.positions[step * 3];
+      cloudPositions[cloudOffset + 1] = trajectory.positions[step * 3 + 1];
+      cloudPositions[cloudOffset + 2] = trajectory.positions[step * 3 + 2];
+      const altitude = Math.max(0, cloudPositions[cloudOffset + 1] - terrainHeightAt(cloudPositions[cloudOffset], cloudPositions[cloudOffset + 2]));
+      cloudColors[cloudOffset] = altitude > 20 ? 0.62 : 0.78;
+      cloudColors[cloudOffset + 1] = altitude > 20 ? 0.75 : 0.74;
+      cloudColors[cloudOffset + 2] = altitude > 20 ? 0.78 : 0.68;
+      cloudCount += 1;
+    }
+    pollutionTrails.geometry.setDrawRange(0, segmentCount * 2);
+    pollutionTrails.geometry.attributes.position.needsUpdate = true;
+    pollutionTrails.geometry.attributes.color.needsUpdate = true;
+    pollutionPuffCloud.geometry.setDrawRange(0, puffCount);
+    pollutionPuffCloud.geometry.attributes.position.needsUpdate = true;
+    pollutionPuffCloud.geometry.attributes.color.needsUpdate = true;
+    pollutionCloud.geometry.setDrawRange(0, cloudCount);
+    pollutionCloud.geometry.attributes.position.needsUpdate = true;
+    pollutionCloud.geometry.attributes.color.needsUpdate = true;
+    const visibleDeposits = pollutionState.deposits.filter(item => item.time <= pollutionState.timeS).length;
+    pollutionDepositPoints.geometry.setDrawRange(0, visibleDeposits);
+  }
+
+  function updatePollutionResults() {
+    if (!pollutionResults) return;
+    const properties = pollutionProperties();
+    const trafficData = pollutionState.sourceMode === 'traffic' ? pollutionState.trafficRunData : null;
+    const massProperty = pollutionState.particleClass === 'nox' ? 'nox_g' : 'pmx_g';
+    const massLabel = pollutionState.particleClass === 'nox' ? 'NOx' : 'exhaust PMx';
+    const hotspotSummary = pollutionState.topExposureHotspots.length
+      ? `<span class="pollution-summary-wide"><b>Highest relative plume pockets · full 15-minute run</b>${pollutionState.topExposureHotspots.map((hotspot, index) => `<i>${index + 1}. ${reportEscape(hotspot.road)} · ${POLLUTION_TIER_NAMES[hotspot.tier]}${hotspot.roadDistance < 80 ? '' : ` · ${Math.round(hotspot.roadDistance)} m from mapped road`}</i>`).join('')}</span>`
+      : '<span class="pollution-summary-wide"><b>Relative plume pockets</b><i>No persistent near-ground hotspot was resolved in this run.</i></span>';
+    const trafficSummary = trafficData ? `
+      <span><b>${Number(trafficData.emissions?.[massProperty] || 0).toFixed(2)} g</b>SUMO HBEFA3 ${massLabel} in this run</span>
+      <span><b>${Number(trafficData.departed_vehicle_count || 0).toLocaleString()}</b>vehicles inserted across the CBD</span>
+      <span class="pollution-summary-wide"><b>${trafficData.scenario?.label || 'Synthetic weekday traffic'}</b>${Number(trafficData.duration_min || 10)}-minute source window · ${trafficData.traffic_demand?.observed_count_calibration ? 'configured edge counts used' : 'synthetic demand'}</span>
+      ${hotspotSummary}
+      <span class="pollution-summary-wide"><b>Top emitting roads · ${massLabel}</b>${pollutionState.topEmissionRoads.slice(0, 5).map((road, index) => `<i>${index + 1}. ${reportEscape(road.name)} · ${road.value.toFixed(3)} g</i>`).join('') || '<i>No mapped road emissions in this run</i>'}</span>` : `
+      <span><b>${pollutionState.trajectories.length.toLocaleString()}</b>released model particles</span>
+      <span><b>${pollutionState.groundDeposited.toLocaleString()}</b>ground contacts</span>
+      <span><b>${pollutionState.buildingDeposited.toLocaleString()}</b>building contacts</span>`;
+    const mapLabel = pollutionState.display === 'exposure' ? 'relative near-ground fume persistence' : pollutionState.display === 'emissions'
+      ? 'relative SUMO emissions per road length' : 'relative particle surface contacts';
+    pollutionResults.innerHTML = `${trafficSummary}
+      <span class="pollution-summary-wide"><b>${Math.round(windState.direction)}° · ${properties.label}</b>OpenFOAM ${windState.cfd.manifest.solver.version} · ${windState.cfd.manifest.solver.case_id} · 10 m/s reference inflow</span>
+      <span class="pollution-summary-wide">Colours show ${mapLabel}. No map layer represents concentration in µg/m³.</span>`;
+    pollutionResults.hidden = false;
+  }
+
+  async function loadCityTrafficEmissions(revision) {
+    const scenario = pollutionTrafficScenario?.value || 'am_peak';
+    const demandMultiplier = Number(pollutionTrafficLoad?.value) || 1;
+    const cacheKey = `${scenario}|${demandMultiplier}`;
+    if (pollutionState.trafficRunData?.cacheKey === cacheKey) return pollutionState.trafficRunData;
+    windStatus.textContent = 'Loading SUMO road network…';
+    if (!trafficState.networkEdges.length) await loadTrafficRoads();
+    if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return null;
+    if (!trafficState.networkEdges.length) throw new Error('Run the FastAPI app to load the SUMO road network.');
+    windStatus.textContent = 'Running whole-CBD SUMO traffic and HBEFA3 emissions…';
+    const startResponse = await fetch(`${windApi}/traffic/emissions-preview/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ duration_min: 10, scenario, demand_multiplier: demandMultiplier, seed: 240917 }),
+    });
+    const startPayload = await startResponse.json();
+    if (!startResponse.ok) throw new Error(startPayload.detail || `SUMO job HTTP ${startResponse.status}`);
+    const jobId = startPayload.job_id;
+    if (!jobId) throw new Error('SUMO did not return a traffic job identifier.');
+    let status = startPayload.status;
+    let payload = startPayload;
+    while (status !== 'complete') {
+      if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return null;
+      if (status === 'error') throw new Error(payload.detail || 'The SUMO emissions job failed.');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const response = await fetch(`${windApi}/traffic/emissions-preview/jobs/${encodeURIComponent(jobId)}`);
+      payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `SUMO job HTTP ${response.status}`);
+      status = payload.status;
+      if (status !== 'complete') {
+        const elapsed = Math.max(0, Math.round(Number(payload.elapsed_s) || 0));
+        windStatus.textContent = `Simulating CBD traffic and tailpipe emissions… ${elapsed}s`;
+      }
+    }
+    const result = payload.result;
+    if (!result?.road_emissions?.length) throw new Error('The traffic run returned no road-level emissions.');
+    result.cacheKey = cacheKey;
+    pollutionState.trafficRunData = result;
+    return result;
+  }
+
+  function prepareTrafficReleaseSources(result, massProperty) {
+    const byRoad = new Map();
+    const rows = [];
+    let totalMassG = 0;
+    for (const item of result.road_emissions || []) {
+      const road = trafficState.edgesById.get(item.edge_id);
+      const massG = Math.max(0, Number(item[massProperty]) || 0);
+      if (!road?.points?.length || !(massG > 0)) continue;
+      const segments = [];
+      let lengthM = 0;
+      for (let index = 1; index < road.points.length; index += 1) {
+        const a = road.points[index - 1], b = road.points[index];
+        const segmentLength = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (segmentLength < 0.2) continue;
+        lengthM += segmentLength;
+        segments.push({ a, b, lengthM: segmentLength, endAtM: lengthM });
+      }
+      if (!segments.length || !(lengthM > 0)) continue;
+      rows.push({ edge: road, item, massG, segments, lengthM });
+      const name = item.road_name || road.name || 'Unnamed road';
+      byRoad.set(name, (byRoad.get(name) || 0) + massG);
+      totalMassG += massG;
+    }
+    if (!(totalMassG > 0) || !rows.length) throw new Error('No mapped road sources emitted this pollutant in the selected traffic profile.');
+    const topRoads = [...byRoad.entries()].map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value).slice(0, 12);
+    pollutionState.topEmissionRoads = topRoads;
+    pollutionState.trafficEmissionEdges = result.road_emissions;
+    pollutionState.trafficSourceMassG = totalMassG;
+    pollutionState.emissionTotals = result.emissions;
+    pollutionState.demandMetadata = result.traffic_demand;
+    pollutionState.parcelWeightG = totalMassG / pollutionState.particleCount;
+    pollutionState.emissionWindowS = Math.min(pollutionState.durationS, Math.round(Number(result.duration_min || 10) * 60));
+    return { rows, totalMassG };
+  }
+
+  function sampleTrafficRoadSource(sourceDistribution, random) {
+    let roll = random() * sourceDistribution.totalMassG;
+    let selected = sourceDistribution.rows.at(-1);
+    for (const row of sourceDistribution.rows) {
+      roll -= row.massG;
+      if (roll <= 0) { selected = row; break; }
+    }
+    const distance = random() * selected.lengthM;
+    const segment = selected.segments.find(item => distance <= item.endAtM) || selected.segments.at(-1);
+    const previousEnd = segment.endAtM - segment.lengthM;
+    const along = clamp((distance - previousEnd) / segment.lengthM, 0, 1);
+    return [
+      segment.a[0] + (segment.b[0] - segment.a[0]) * along,
+      segment.a[1] + (segment.b[1] - segment.a[1]) * along,
+    ];
+  }
+
+  function buildPollutionRoadEmissionBins(massProperty) {
+    const columns = POLLUTION_GRID_SIZE, rows = POLLUTION_GRID_SIZE;
+    const bins = new Float32Array(columns * rows);
+    const cellWidth = (right - left) / columns;
+    const cellDepth = (maxZ - minZ) / rows;
+    for (const item of pollutionState.trafficEmissionEdges) {
+      const road = trafficState.edgesById.get(item.edge_id);
+      const massG = Math.max(0, Number(item[massProperty]) || 0);
+      if (!road?.points?.length || !(massG > 0)) continue;
+      let totalLength = 0;
+      const segments = [];
+      for (let index = 1; index < road.points.length; index += 1) {
+        const a = road.points[index - 1], b = road.points[index];
+        const lengthM = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (lengthM < 0.2) continue;
+        segments.push({ a, b, lengthM });
+        totalLength += lengthM;
+      }
+      if (!(totalLength > 0)) continue;
+      for (const segment of segments) {
+        const samples = Math.max(1, Math.ceil(segment.lengthM / 8));
+        const parcelMass = massG * segment.lengthM / totalLength / samples;
+        for (let sample = 0; sample < samples; sample += 1) {
+          const t = (sample + 0.5) / samples;
+          const x = segment.a[0] + (segment.b[0] - segment.a[0]) * t;
+          const z = segment.a[1] + (segment.b[1] - segment.a[1]) * t;
+          const cell = pollutionCell(x, z);
+          if (cell && typeof cell === 'object') bins[cell.index] += parcelMass;
+        }
+      }
+    }
+    return bins;
+  }
+
+  async function runPollutantDispersal() {
+    const revision = ++pollutionStudyRevision;
+    pollutionState.sourceMode = pollutionSourceType?.value || pollutionState.sourceMode;
+    pollutionState.particleClass = pollutionClass?.value || pollutionState.particleClass;
+    pollutionState.display = pollutionDisplay?.value || pollutionState.display;
+    syncPollutionControls();
+    pollutionResults.hidden = true;
+    pollutionLegend.hidden = false;
+    windSimulate.disabled = true;
+    windSimulate.textContent = pollutionRunProgressLabel();
+    if (!windState.cfd || Math.round(windState.cfd.manifest.direction_deg_from) !== Math.round(windState.direction)) {
+      try {
+        await loadCfdWind(windState.direction);
+      } catch (error) {
+        if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return;
+        windStatus.textContent = `OpenFOAM field unavailable (${error.message})`;
+        windSimulate.disabled = false;
+        windSimulate.textContent = pollutionRunActionLabel();
+        return;
+      }
+    }
+    if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return;
+    if (!windState.cfd || Math.round(windState.cfd.manifest.direction_deg_from) !== Math.round(windState.direction)) {
+      windStatus.textContent = 'The selected OpenFOAM direction could not be loaded. Choose a solved direction and retry.';
+      windSimulate.disabled = false;
+      windSimulate.textContent = pollutionRunActionLabel();
+      return;
+    }
+    windSimulate.disabled = true;
+    windSimulate.textContent = pollutionRunProgressLabel();
+    try {
+      let trafficData = null;
+      if (pollutionState.sourceMode === 'traffic') {
+        trafficData = await loadCityTrafficEmissions(revision);
+        if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return;
+        if (!trafficData) return;
+      } else {
+        pollutionState.sourceHeight = Number(pollutionHeight?.value) || 2;
+        createPollutionMarkerAtSource();
+      }
+      if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return;
+      clearPollutantStudy(false, false);
+      pollutionState.sourceMode = pollutionSourceType?.value || pollutionState.sourceMode;
+      pollutionState.particleClass = pollutionClass?.value || pollutionState.particleClass;
+      pollutionState.sourceHeight = pollutionState.sourceMode === 'traffic' ? 1.2 : Number(pollutionHeight?.value) || 2;
+      pollutionState.display = pollutionDisplay?.value || 'exposure';
+      buildPollutionSourceMarker();
+      const massProperty = pollutionState.particleClass === 'nox' ? 'nox_g' : 'pmx_g';
+      const sourceDistribution = trafficData ? prepareTrafficReleaseSources(trafficData, massProperty) : null;
+      if (trafficData) pollutionState.trafficRunData = trafficData;
+      else {
+        pollutionState.emissionWindowS = 360;
+        pollutionState.parcelWeightG = 1;
+        pollutionState.topEmissionRoads = [];
+        pollutionState.trafficEmissionEdges = [];
+        pollutionState.trafficSourceMassG = 0;
+        pollutionState.emissionTotals = null;
+        pollutionState.demandMetadata = null;
+      }
+      pollutionState.exposureBins = Array.from({ length: 181 }, () => new Float32Array(POLLUTION_GRID_SIZE * POLLUTION_GRID_SIZE));
+      const properties = pollutionProperties();
+      const sourceSeed = trafficData
+        ? `${trafficData.seed}|${pollutionState.particleClass}|${windState.direction}`
+        : `${pollutionState.source[0]}|${pollutionState.source[1]}|${windState.direction}|${pollutionState.sourceHeight}`;
+      let seedValue = 0;
+      for (let index = 0; index < sourceSeed.length; index += 1) seedValue = (Math.imul(seedValue, 31) + sourceSeed.charCodeAt(index)) >>> 0;
+      const random = pollutionRng(seedValue);
+      pollutionState.roadEmissionBins = trafficData ? buildPollutionRoadEmissionBins(massProperty) : null;
+      windStatus.textContent = `Tracing ${pollutionState.particleCount} ${properties.label} parcels through the ${Math.round(windState.direction)}° OpenFOAM field…`;
+    const dt = 1;
+    let groundDeposited = 0, buildingDeposited = 0, escaped = 0;
+    const trajectories = [];
+    const domain = windState.cfd.manifest;
+    const topY = domain.coordinates.vertical_datum_m + domain.origin_foam_m[2]
+      + domain.spacing_foam_m[2] * (domain.dimensions[2] - 1);
+    for (let particleIndex = 0; particleIndex < pollutionState.particleCount; particleIndex += 1) {
+      const emittedAt = particleIndex / Math.max(1, pollutionState.particleCount - 1) * pollutionState.emissionWindowS;
+      const [sourceX, sourceZ] = sourceDistribution
+        ? sampleTrafficRoadSource(sourceDistribution, random) : pollutionState.source;
+      let x = sourceX, z = sourceZ;
+      let y = terrainHeightAt(x, z) + pollutionState.sourceHeight;
+      const positions = [x, y, z], times = [0];
+      let turbulent = [0, 0, 0];
+      let landedAt = -1;
+      let endAge = pollutionState.durationS - emittedAt;
+      for (let age = dt; emittedAt + age <= pollutionState.durationS; age += dt) {
+        const local = sampleCfd(x, y, z);
+        if (!local) { escaped += 1; endAge = age; break; }
+        const k = Math.max(0.01, local.k || 0.01);
+        const epsilon = Math.max(0.0004, local.epsilon || 0.0004);
+        const tau = clamp(2 * k / (3 * epsilon), 0.7, 25);
+        const sigma = Math.sqrt(2 * k / 3);
+        const decay = Math.exp(-dt / tau);
+        const innovation = sigma * Math.sqrt(Math.max(0, 1 - decay * decay));
+        for (let axis = 0; axis < 3; axis += 1) turbulent[axis] = turbulent[axis] * decay + innovation * pollutionNormal(random);
+        const u = local.u + turbulent[0], w = local.w + turbulent[1] - properties.settlingMps, v = local.v + turbulent[2];
+        const midX = x + u * dt * 0.5, midY = y + w * dt * 0.5, midZ = z + v * dt * 0.5;
+        const midpoint = sampleCfd(midX, midY, midZ);
+        const flow = midpoint || local;
+        const nextX = x + (flow.u + turbulent[0]) * dt;
+        const nextY = y + (flow.w + turbulent[1] - properties.settlingMps) * dt;
+        const nextZ = z + (flow.v + turbulent[2]) * dt;
+        const endpointSample = sampleCfd(nextX, nextY, nextZ);
+        const outsideVolume = !endpointSample || nextY >= topY;
+        const ground = terrainHeightAt(nextX, nextZ);
+        const insideScene = terrainValidAt(nextX, nextZ) && pointInLidarFootprint(nextX, nextZ);
+        const midGround = terrainHeightAt(midX, midZ);
+        const insideMidScene = terrainValidAt(midX, midZ) && pointInLidarFootprint(midX, midZ);
+        const midBuilding = insideMidScene && windPointInsideBuilding(midX, midZ, midY);
+        const endBuilding = insideScene && windPointInsideBuilding(nextX, nextZ, nextY);
+        const midGroundHit = insideMidScene && midY <= midGround + 0.45;
+        const endGroundHit = insideScene && nextY <= ground + 0.45;
+        const impact = midBuilding ? { x: midX, y: midY, z: midZ, kind: 'building', time: emittedAt + age - dt * 0.5 }
+          : midGroundHit ? { x: midX, y: midGround + 0.32, z: midZ, kind: 'ground', time: emittedAt + age - dt * 0.5 }
+            : endBuilding ? { x: nextX, y: nextY, z: nextZ, kind: 'building', time: emittedAt + age }
+              : endGroundHit ? { x: nextX, y: ground + 0.32, z: nextZ, kind: 'ground', time: emittedAt + age } : null;
+        if (impact) {
+          x = impact.x; z = impact.z; y = impact.y;
+          landedAt = Math.round(age / dt);
+          pollutionState.deposits.push({ ...impact, weightG: pollutionState.parcelWeightG });
+          if (impact.kind === 'building') buildingDeposited += 1;
+          else groundDeposited += 1;
+        } else if (outsideVolume) {
+          escaped += 1;
+          endAge = age;
+          break;
+        } else {
+          x = nextX; y = nextY; z = nextZ;
+          if (insideScene && nextY - ground <= 10 && !windPointInsideBuilding(nextX, nextZ, ground + 1.5)) {
+            const cell = pollutionCell(nextX, nextZ);
+            if (cell && typeof cell === 'object') pollutionState.exposureBins[Math.min(180, Math.floor((emittedAt + age) / 5))][cell.index] += dt * pollutionState.parcelWeightG;
+          }
+        }
+        if (age % 3 === 0 || landedAt >= 0) {
+          positions.push(x, y, z);
+          times.push(age);
+        }
+        if (landedAt >= 0) break;
+      }
+      const finalPositionCount = positions.length / 3;
+      trajectories.push({
+        emittedAt, dt, positions: new Float32Array(positions), times: new Float32Array(times), endAge,
+        landedAt: landedAt >= 0 ? Math.max(0, finalPositionCount - 1) : -1,
+      });
+      if (particleIndex % 20 === 19) {
+        windStatus.textContent = `Tracing OpenFOAM plume… ${particleIndex + 1}/${pollutionState.particleCount} emission parcels`;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return;
+      }
+    }
+    pollutionState.trajectories = trajectories;
+    pollutionState.groundDeposited = groundDeposited;
+    pollutionState.buildingDeposited = buildingDeposited;
+    pollutionState.escaped = escaped;
+    summarizePollutionExposure();
+    pollutionState.timeS = 0;
+    pollutionState.lastSurfaceBin = -1;
+    pollutionState.studyReady = true;
+    pollutionState.playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    pollutionState.lastTime = performance.now();
+    if (pollutionPlay) {
+      pollutionPlay.disabled = false;
+      pollutionPlay.textContent = pollutionState.playing ? 'Pause plume' : 'Play plume';
+    }
+    if (pollutionTime) pollutionTime.value = '0';
+    if (pollutionTime) pollutionTime.disabled = false;
+    pollutionTimeLabel.textContent = '0.0 min';
+    if (pollutionInspectToggle) pollutionInspectToggle.disabled = false;
+    updatePollutionResults();
+    createPollutionVisuals();
+    windStatus.textContent = pollutionState.sourceMode === 'traffic'
+      ? 'Citywide road emissions are mapped · playback follows the resulting plume. Scrub the timeline to see which streets stay exposed.'
+      : 'Particle paths ready · playback is accelerated. Scrub the release to inspect the plume and surface contacts.';
+    windSimulate.disabled = false;
+    windSimulate.textContent = 'Run scenario again';
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind', metadata: {
+      description: `Exploratory Lagrangian ${properties.label} dispersal, driven by OpenFOAM ${windState.cfd.manifest.solver.case_id}. Relative exposure/deposition only; no scalar concentration solve.`,
+      solver: windState.cfd.manifest.solver, direction: windState.direction,
+      particles: trajectories.length, ground_deposited: groundDeposited, building_intercepted: buildingDeposited,
+      traffic_emissions: trafficData ? trafficData.emissions : undefined,
+      traffic_scenario: trafficData?.scenario,
+      validation: windState.cfd.manifest.validation_status,
+    } } }));
+    requestRender();
+    } catch (error) {
+      if (revision !== pollutionStudyRevision || windState.analysisMode !== 'pollution') return;
+      pollutionState.playing = false;
+      windStatus.textContent = `Pollutant dispersal unavailable (${error.message})`;
+      windSimulate.disabled = false;
+      windSimulate.textContent = pollutionRunActionLabel();
+    }
   }
 
   function cfdGridSample(ix, iy, iz) {
@@ -7246,6 +8467,8 @@ export async function startWebGLScene(canvas, status) {
         && !matchMedia('(prefers-reduced-motion: reduce)').matches;
     }
     updateCfdLegend();
+    syncPollutionView();
+    if (windState.analysisMode === 'pollution') restoreStreetLayersAfterWind();
   }
 
   function buildWindHeatmap() {
@@ -7518,6 +8741,10 @@ export async function startWebGLScene(canvas, status) {
   async function simulateWind() {
     if (windState.analysisMode === 'comfort') {
       await runComfortStudy();
+      return;
+    }
+    if (windState.analysisMode === 'pollution') {
+      await runPollutantDispersal();
       return;
     }
     await loadCfdWind(windState.direction);
@@ -8697,58 +9924,273 @@ export async function startWebGLScene(canvas, status) {
   });
 
   function setWindAnalysisMode(mode) {
-    if (!['direction', 'comfort'].includes(mode)) return;
+    if (!['direction', 'comfort', 'pollution'].includes(mode)) return;
+    const previousMode = windState.analysisMode;
+    if (previousMode === 'pollution' && mode !== 'pollution'
+      && (pollutionPickSource?.getAttribute('aria-pressed') === 'true'
+        || pollutionInspectToggle?.getAttribute('aria-pressed') === 'true')) {
+      requestGroundPick(null);
+      pollutionPickSource?.setAttribute('aria-pressed', 'false');
+      pollutionPickSource.textContent = 'Place source on map';
+      pollutionInspectToggle?.setAttribute('aria-pressed', 'false');
+      pollutionInspectToggle.textContent = 'Inspect an area';
+      canvas.style.cursor = '';
+    }
     windState.analysisMode = mode;
-    // Both lenses are OpenFOAM-sourced now; the screening proxy is retired
-    // from this UI. dataMode stays 'cfd' so the particle/sampling code paths
-    // that already special-case CFD keep working unchanged.
+    // All three lenses use the converted OpenFOAM volumes. The older
+    // screening proxy is retired from this WebGL panel; dataMode stays 'cfd'
+    // so the existing CFD sampling paths remain shared.
     windState.dataMode = 'cfd';
-    windLensButtons.filter(button => ['direction', 'comfort'].includes(button.dataset.windLens)).forEach(button => {
+    windLensButtons.filter(button => ['direction', 'comfort', 'pollution'].includes(button.dataset.windLens)).forEach(button => {
       const active = button.dataset.windLens === mode;
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
     });
-    if (windDirectionControls) windDirectionControls.hidden = mode !== 'direction';
+    if (windDirectionControls) windDirectionControls.hidden = !['direction', 'pollution'].includes(mode);
+    const compassPresets = windDirectionControls?.querySelector('.wind-compass-presets');
+    if (compassPresets) compassPresets.hidden = mode === 'pollution';
     if (windCfdControls) windCfdControls.hidden = mode !== 'direction';
     if (windClimateControls) windClimateControls.hidden = mode !== 'comfort';
+    if (pollutionControls) pollutionControls.hidden = mode !== 'pollution';
+    if (mode === 'pollution') syncPollutionControls();
     // Flow region (box move/resize + flowline appearance) only applies to
     // Direction's Flow view.
     if (windFlowBoxControls) windFlowBoxControls.hidden = mode !== 'direction' || windState.cfdView !== 'flow';
     updateWindBox();
     windPanel?.classList.add('cfd-active');
-    if (windModeBadge) windModeBadge.textContent = mode === 'comfort' ? 'CFD · COMFORT (PARTIAL)' : 'CFD · FULL CBD';
+    if (windModeBadge) windModeBadge.textContent = mode === 'comfort' ? 'CFD · COMFORT (PARTIAL)' : mode === 'pollution' ? 'CFD · DISPERSION SCREEN' : 'CFD · FULL CBD';
     const windModeHelp = document.querySelector('#wind-mode-help');
     if (windModeHelp) windModeHelp.textContent = mode === 'comfort'
       ? 'Combines available solved directions with Cape Town’s wind rose. Unsolved directions are excluded, so coverage is partial.'
-      : 'Inspect one solved wind direction. Select a direction, then load its full-CBD OpenFOAM result.';
-    if (windFlowlinesVisible) windFlowlinesVisible.disabled = mode === 'comfort';
-    if (windVolumeVisible) windVolumeVisible.disabled = mode === 'comfort';
+      : mode === 'pollution'
+        ? 'Choose a traffic period and wind direction, then run the plume screen.'
+        : 'Inspect one solved wind direction. Select a direction, then load its full-CBD OpenFOAM result.';
+    const directionHint = windDirectionControls?.querySelector('.wind-cfd-hint');
+    if (directionHint) directionHint.textContent = mode === 'pollution'
+      ? 'The city plume uses road-level SUMO emissions and this steady OpenFOAM flow and turbulence field.'
+      : 'Comfort uses all 16 solved sectors. Direction view offers the eight main compass points. Results are exploratory and unvalidated.';
+    if (windFlowlinesVisible) windFlowlinesVisible.disabled = mode !== 'direction';
+    if (windVolumeVisible) windVolumeVisible.disabled = mode !== 'direction';
     if (mode === 'comfort' && windState.volumeVisible) {
       windState.volumeVisible = false;
       if (windVolumeVisible) windVolumeVisible.checked = false;
     }
-    windSimulate.textContent = mode === 'comfort' ? 'Run comfort assessment' : 'Load direction result';
+    windSimulate.textContent = mode === 'comfort' ? 'Run comfort assessment' : mode === 'pollution' ? pollutionRunActionLabel() : 'Load direction result';
     windState.field = null;
     clearWindSimulation();
+    if (mode === 'pollution') {
+      if (previousMode !== 'pollution') {
+        pollutionState.streetVisibilityBeforePollution = {
+          roads: layerGroups.roads.visible,
+          paths: layerGroups.paths.visible,
+        };
+      }
+      layerGroups.roads.visible = true;
+      layerGroups.paths.visible = true;
+      syncLayerControls();
+      windState.enabled = true;
+      if (windToggle) windToggle.checked = true;
+      windGroup.visible = true;
+      pollutionState.sourceHeight = Number(pollutionHeight?.value) || pollutionState.sourceHeight;
+      if (pollutionDirection) pollutionDirection.value = String(windState.direction);
+      buildPollutionSourceMarker();
+    } else if (previousMode === 'pollution' && pollutionState.streetVisibilityBeforePollution) {
+      layerGroups.roads.visible = pollutionState.streetVisibilityBeforePollution.roads;
+      layerGroups.paths.visible = pollutionState.streetVisibilityBeforePollution.paths;
+      pollutionState.streetVisibilityBeforePollution = null;
+      syncLayerControls();
+    }
+    const legacyLegend = document.querySelector('.wind-legend-scale');
+    const legacyInspect = document.querySelector('.wind-map-tools');
+    const windCompareCard = document.querySelector('.wind-compare-card');
+    const windValidationCard = document.querySelector('.wind-validation-card');
+    if (legacyLegend) legacyLegend.hidden = mode === 'pollution';
+    if (legacyInspect) legacyInspect.hidden = mode === 'pollution';
+    if (windCompareCard) windCompareCard.hidden = mode === 'pollution';
+    if (windValidationCard) windValidationCard.hidden = mode === 'pollution';
+    if (mode === 'pollution' && windResults) windResults.hidden = true;
+    syncPollutionView();
+    if (pollutionLegend) pollutionLegend.hidden = mode !== 'pollution';
+    if (mode === 'pollution' && windReport) windReport.hidden = true;
     windStatus.textContent = mode === 'comfort'
       ? 'Weights solved OpenFOAM directions by ERA5 wind-rose frequency. Unsolved directions are excluded, not assumed calm.'
-      : 'Pick a solved wind direction, then load its OpenFOAM result.';
+      : mode === 'pollution'
+        ? 'Choose a wind direction and run the plume scenario.'
+        : 'Pick a solved wind direction, then load its OpenFOAM result.';
     requestRender();
   }
 
   windLensButtons.forEach(button => button.addEventListener('click', () => {
     const lens = button.dataset.windLens;
-    if (lens === 'direction' || lens === 'comfort') setWindAnalysisMode(lens);
+    if (lens === 'direction' || lens === 'comfort' || lens === 'pollution') setWindAnalysisMode(lens);
   }));
+
+  function invalidatePollutionStudy(message) {
+    clearPollutantStudy(true);
+    if (windState.analysisMode === 'pollution') buildPollutionSourceMarker();
+    if (message) windStatus.textContent = message;
+    requestRender();
+  }
+
+  pollutionPickSource?.addEventListener('click', () => {
+    const active = pollutionPickSource.getAttribute('aria-pressed') !== 'true';
+    pollutionPickSource.setAttribute('aria-pressed', String(active));
+    pollutionPickSource.textContent = active ? 'Click the map to place source · Esc to cancel' : 'Place source on map';
+    if (!active) {
+      requestGroundPick(null);
+      return;
+    }
+    requestGroundPick((x, z) => {
+      pollutionPickSource.setAttribute('aria-pressed', 'false');
+      pollutionPickSource.textContent = 'Place source on map';
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+      pollutionState.source = [x, z];
+      try {
+        createPollutionMarkerAtSource();
+        clearPollutantStudy(false);
+        buildPollutionSourceMarker();
+        pollutionSourceStatus.textContent = `Source set · ${pollutionState.source[0].toFixed(0)} m east, ${pollutionState.source[1].toFixed(0)} m south.`;
+        windStatus.textContent = 'Source moved · run the dispersion study again to trace this plume.';
+      } catch (error) {
+        pollutionSourceStatus.textContent = error.message;
+      }
+      requestRender();
+    });
+  });
+
+  pollutionSourceType?.addEventListener('change', event => {
+    pollutionState.sourceMode = event.target.value === 'point' ? 'point' : 'traffic';
+    syncPollutionControls();
+    clearPollutantStudy(true);
+    if (windState.analysisMode === 'pollution') buildPollutionSourceMarker();
+    windStatus.textContent = pollutionState.sourceMode === 'traffic'
+      ? 'Run a citywide SUMO traffic profile to locate the strongest road-emission hotspots.'
+      : 'Choose a map location and run a single-source plume screen.';
+    requestRender();
+  });
+
+  for (const control of [pollutionTrafficScenario, pollutionTrafficLoad]) {
+    control?.addEventListener('change', () => {
+      pollutionState.trafficRunData = null;
+      invalidatePollutionStudy('Traffic profile changed · run the citywide emissions scenario again.');
+    });
+  }
+
+  pollutionClass?.addEventListener('change', event => {
+    pollutionState.particleClass = event.target.value;
+    syncPollutionControls();
+    invalidatePollutionStudy('Pollutant changed · run the dispersion study again.');
+  });
+  pollutionDirection?.addEventListener('change', event => {
+    const direction = Number(event.target.value);
+    if (!findCfdCase(direction)) {
+      windStatus.textContent = `No converted OpenFOAM case is available for ${direction}°.`;
+      return;
+    }
+    windState.direction = direction;
+    windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === direction));
+    const label = event.target.selectedOptions[0]?.textContent.trim() || `${direction}°`;
+    invalidatePollutionStudy(`${label} selected · run the dispersion study when ready.`);
+  });
+  pollutionHeight?.addEventListener('change', event => {
+    pollutionState.sourceHeight = Number(event.target.value) || 2;
+    invalidatePollutionStudy('Release height changed · run the dispersion study again.');
+  });
+  pollutionDisplay?.addEventListener('change', event => {
+    pollutionState.display = event.target.value;
+    syncPollutionControls();
+    syncPollutionLegend();
+    if (pollutionState.studyReady) {
+      updatePollutionResults();
+      buildPollutionSurface();
+      requestRender();
+    }
+  });
+  pollutionTime?.addEventListener('input', event => {
+    if (!pollutionState.studyReady) return;
+    pollutionState.playing = false;
+    pollutionState.timeS = Number(event.target.value) || 0;
+    pollutionState.lastSurfaceBin = -1;
+    pollutionTimeLabel.textContent = `${(pollutionState.timeS / 60).toFixed(1)} min`;
+    pollutionPlay.textContent = pollutionState.timeS >= pollutionState.durationS ? 'Replay plume' : 'Play plume';
+    buildPollutionSurface();
+    updatePollutionVisuals(performance.now(), true);
+    requestRender();
+  });
+  pollutionPlay?.addEventListener('click', () => {
+    if (!pollutionState.studyReady) return;
+    if (pollutionState.playing) {
+      pollutionState.playing = false;
+      pollutionPlay.textContent = 'Play plume';
+    } else {
+      if (pollutionState.timeS >= pollutionState.durationS) pollutionState.timeS = 0;
+      pollutionState.playing = true;
+      pollutionState.lastSurfaceBin = -1;
+      pollutionState.lastTime = performance.now();
+      pollutionPlay.textContent = 'Pause plume';
+    }
+    requestRender();
+  });
+  pollutionInspectToggle?.addEventListener('click', () => {
+    const active = pollutionInspectToggle.getAttribute('aria-pressed') !== 'true';
+    pollutionInspectToggle.setAttribute('aria-pressed', String(active));
+    pollutionInspectToggle.textContent = active ? 'Click the map · Esc to cancel' : 'Inspect an area';
+    canvas.style.cursor = active ? 'crosshair' : '';
+    if (!active) {
+      requestGroundPick(null);
+      return;
+    }
+    requestGroundPick((x, z) => {
+      pollutionInspectToggle.setAttribute('aria-pressed', 'false');
+      pollutionInspectToggle.textContent = 'Inspect an area';
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+      if (!pollutionState.studyReady) {
+        pollutionInspectResult.textContent = 'Run a dispersion study first.';
+      } else {
+        const cell = pollutionCell(x, z);
+        if (!cell || typeof cell !== 'object') pollutionInspectResult.textContent = 'Outside the modelled city area.';
+        else if (pollutionState.display === 'emissions') {
+          const mass = pollutionState.roadEmissionBins?.[cell.index] || 0;
+          const species = pollutionState.particleClass === 'nox' ? 'NOx' : 'exhaust PMx';
+          pollutionInspectResult.textContent = `${mass.toFixed(4)} g modelled ${species} emitted from road links crossing this map cell during the SUMO sample. This is a source estimate, not ambient concentration.`;
+        }
+        else if (pollutionState.display === 'exposure') {
+          let seconds = 0;
+          for (let bin = 0; bin <= Math.ceil(pollutionState.timeS / 5) - 1; bin += 1) seconds += pollutionState.exposureBins[bin]?.[cell.index] || 0;
+          const smoothedValue = pollutionState.currentExposureSmooth?.[cell.index] || 0;
+          if (!(smoothedValue > 0)) {
+            pollutionInspectResult.textContent = 'No plume was recorded here at this timeline position. This sample cannot establish that the air is clean.';
+          } else {
+            const tier = pollutionTier(smoothedValue);
+            const location = pollutionState.sourceMode === 'traffic'
+              ? nearestPollutionRoadName(x, z)
+              : { name: `${Math.hypot(x - pollutionState.source[0], z - pollutionState.source[1]).toFixed(0)} m from the source`, distance: Infinity };
+            pollutionInspectResult.textContent = `${POLLUTION_TIER_NAMES[tier] || 'Lower half'} relative plume band · ${location.name}${Number.isFinite(location.distance) ? ` (${Math.round(location.distance)} m)` : ''}. Bands rank positive cells across the full run; this is not an ambient concentration. The unblurred cell total is ${seconds.toFixed(3)} relative emission-weighted particle-seconds.`;
+          }
+        } else {
+          const deposited = pollutionState.deposits.reduce((sum, item) => {
+            const depositedCell = pollutionCell(item.x, item.z);
+            return sum + (item.kind === 'ground' && item.time <= pollutionState.timeS
+              && depositedCell && typeof depositedCell === 'object' && depositedCell.index === cell.index ? (item.weightG || 1) : 0);
+          }, 0);
+          pollutionInspectResult.textContent = `${deposited.toFixed(3)} relative model-parcel index reached this map cell · not a measured deposition amount.`;
+        }
+      }
+      pollutionInspectResult.hidden = false;
+      requestRender();
+    });
+  });
 
   windDirectionPresets.forEach(button => button.addEventListener('click', () => {
     const directionDeg = Number(button.dataset.windDirection);
     if (!findCfdCase(directionDeg)) return;
     windState.direction = directionDeg;
+    if (pollutionDirection) pollutionDirection.value = String(directionDeg);
     windDirectionPresets.forEach(item => item.classList.toggle('active', Number(item.dataset.windDirection) === directionDeg));
     windState.field = null;
     clearWindSimulation();
-    windStatus.textContent = `${button.textContent} selected · load the direction result when ready.`;
+    if (windState.analysisMode === 'pollution') buildPollutionSourceMarker();
+    windStatus.textContent = `${button.textContent} selected · ${windState.analysisMode === 'pollution' ? 'run the dispersion study when ready.' : 'load the direction result when ready.'}`;
     requestRender();
   }));
   windFlowlinesVisible?.addEventListener('change', event => {
@@ -8899,12 +10341,15 @@ export async function startWebGLScene(canvas, status) {
     windGroup.visible = windState.enabled;
     if (windState.enabled) {
       if (windState.field && windState.surfaceVisible) hideStreetLayersForWind();
-      if (windState.analysisMode === 'direction' && !windState.cfd) loadCfdWind();
+      if (['direction', 'pollution'].includes(windState.analysisMode)
+        && (!windState.cfd || Math.round(windState.cfd.manifest.direction_deg_from) !== Math.round(windState.direction))) loadCfdWind();
     } else {
       restoreStreetLayersAfterWind();
     }
     windStatus.textContent = windState.enabled
-      ? (windState.field ? 'Existing wind heatmap and gusts shown.' : '3D domain ready · position it, then simulate.')
+      ? (windState.analysisMode === 'pollution'
+        ? 'Pollutant dispersal view shown · run a particle study to trace the plume.'
+        : windState.field ? 'Existing wind heatmap and gusts shown.' : '3D domain ready · position it, then simulate.')
       : 'Wind display hidden.';
     requestRender();
   });
@@ -9021,6 +10466,14 @@ export async function startWebGLScene(canvas, status) {
       event.preventDefault();
       const handler = groundPickHandler;
       requestGroundPick(null);
+      if (pollutionPickSource) {
+        pollutionPickSource.setAttribute('aria-pressed', 'false');
+        pollutionPickSource.textContent = 'Place source on map';
+      }
+      if (pollutionInspectToggle) {
+        pollutionInspectToggle.setAttribute('aria-pressed', 'false');
+        pollutionInspectToggle.textContent = 'Inspect an area';
+      }
       handler(null, null);
       return;
     }
@@ -9031,6 +10484,24 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
+    if (name !== 'wind' && windState.analysisMode === 'pollution') {
+      pollutionState.playing = false;
+      if (pollutionPlay && pollutionState.studyReady) pollutionPlay.textContent = 'Play plume';
+      if (!pollutionState.studyReady && windSimulate?.disabled) {
+        pollutionStudyRevision += 1;
+        windSimulate.disabled = false;
+        windSimulate.textContent = pollutionRunActionLabel();
+      }
+      if (pollutionPickSource?.getAttribute('aria-pressed') === 'true'
+        || pollutionInspectToggle?.getAttribute('aria-pressed') === 'true') {
+        requestGroundPick(null);
+        pollutionPickSource?.setAttribute('aria-pressed', 'false');
+        pollutionPickSource.textContent = 'Place source on map';
+        pollutionInspectToggle?.setAttribute('aria-pressed', 'false');
+        pollutionInspectToggle.textContent = 'Inspect an area';
+        canvas.style.cursor = '';
+      }
+    }
     if (name === 'traffic' && !trafficState.networkEdges.length) void loadTrafficRoads();
     if (name === 'transport') void ensureTransportLayer();
     transportLayer?.setPanelActive(name === 'transport');
@@ -9071,6 +10542,11 @@ export async function startWebGLScene(canvas, status) {
     }
     syncTrafficSceneVisibility();
     applySectionLayerProfile(name);
+    if (name === 'wind' && windState.analysisMode === 'pollution') {
+      layerGroups.roads.visible = true;
+      layerGroups.paths.visible = true;
+      syncLayerControls();
+    }
     requestRender();
   });
   addEventListener('climate-streetview-mode', event => {
@@ -9132,6 +10608,7 @@ export async function startWebGLScene(canvas, status) {
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     resize();
     updateWindParticles(now);
+    updatePollutionVisuals(now);
     updateTrafficCars(now);
     const transportAnimating = transportLayer?.update(now) || false;
     if (trafficStatusGroup.visible && scenarioStatusGroup.children.length) {
@@ -9153,7 +10630,8 @@ export async function startWebGLScene(canvas, status) {
     }
     renderer.render(scene, camera);
     renderRequested = false;
-    if (!reducedMotion && ((windState.enabled && windState.field && windPoints?.visible)
+    if ((!reducedMotion || pollutionState.playing) && ((windState.enabled && windState.field && windPoints?.visible)
+      || (windState.enabled && pollutionState.playing)
       || (trafficGroup.visible && trafficState.tracks.length)
       || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)
       || transportAnimating)) {
