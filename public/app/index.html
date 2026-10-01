@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=74">
+    <link rel="stylesheet" href="/style.css?v=75">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -90,6 +90,10 @@
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-heat" data-menu-target="heat" title="Urban heat">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14.8V5a3 3 0 0 1 6 0v9.8a5 5 0 1 1-6 0Z"/><path d="M12 7v9"/></svg>
             <span>Heat</span>
+          </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-walking" data-menu-target="walking" title="Climate-aware walking routes">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13.5" cy="4.5" r="2"/><path d="m11 8 3-1 2.4 3.1 3.1 1M11 8l-2 4 3 2-1 5m3-8-3 3 4 2 1 3M7 21l2-2m9 2-1-2"/></svg>
+            <span>Walk</span>
           </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-sun" data-menu-target="sun" title="Sunlight and shadows">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
@@ -758,6 +762,27 @@
 
         <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a><details class="compact-about"><summary>Data &amp; accuracy</summary><p>Vehicles interpolate along mapped routes using supplied schedule times. Positions are inferred, not live GPS. Event capacity is a planning proxy and should be verified with operators.</p></details></div>
       </section>
+      <section id="menu-walking" class="walking-panel menu-section" data-menu-panel="walking" role="tabpanel" aria-label="Climate-aware walking routes" hidden>
+        <div class="walking-heading"><div><span class="walking-kicker">PEDESTRIAN ROUTING</span><strong>Walk the CBD</strong></div><span class="walking-network-badge">OSM network</span></div>
+        <p class="walking-intro">Choose two points on the map, then compare the fastest walk with routes that reduce direct sun or modelled heat at your departure time.</p>
+        <div class="walking-endpoints">
+          <div class="walking-endpoint"><span class="walking-endpoint-dot origin"></span><div><b>Start</b><small id="walking-origin-label">Not set</small></div><button id="walking-pick-origin" class="secondary" type="button">Pick</button></div>
+          <div class="walking-endpoint"><span class="walking-endpoint-dot destination"></span><div><b>Destination</b><small id="walking-destination-label">Not set</small></div><button id="walking-pick-destination" class="secondary" type="button">Pick</button></div>
+        </div>
+        <div class="walking-time-grid">
+          <label>Departure date<input id="walking-date" type="date"></label>
+          <label>Local time<input id="walking-time" type="time" step="60"></label>
+        </div>
+        <div class="walking-actions"><button id="walking-find" type="button" disabled>Compare routes <span aria-hidden="true">→</span></button><button id="walking-clear" class="secondary" type="button">Clear</button></div>
+        <p id="walking-status" class="walking-status" aria-live="polite">Pick a start and destination on the map.</p>
+        <div id="walking-results" class="walking-results" hidden></div>
+        <details class="walking-traffic-context"><summary>Road-emissions context <span>Optional SUMO run</span></summary>
+          <p>Run a separate synthetic traffic sample for the selected time. This reports road-source NOx on named route streets; it is not pedestrian pollution concentration or dose and does not affect route ranking.</p>
+          <button id="walking-traffic-run" class="secondary" type="button" disabled>Run road-emissions context</button>
+          <p id="walking-traffic-status" class="walking-status" aria-live="polite">Available after route comparison.</p>
+        </details>
+        <details class="walking-method"><summary>Data coverage &amp; assumptions</summary><p>Routes use the checked-in OpenStreetMap pedestrian network and an estimated walking speed of 4.8 km/h. Shade uses mapped building and tree-canopy shadows in five-minute traversal-time bins. UTCI and pedestrian wind use the nearest complete hourly forecast frame within 30 minutes. Missing or stale thermal data does not prevent routing. OSM segments without explicit foot-access tags are retained and marked uncertain. Mapped steps are included; this does not assess wheelchair accessibility.</p></details>
+      </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
         <div class="traffic-heading">
           <div><span class="traffic-kicker">STREET SCENARIOS</span><h2>Traffic</h2></div>
@@ -941,6 +966,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-24"></script>
+    <script type="module" src="/app.js?v=experience-25"></script>
 </body>
 </html>

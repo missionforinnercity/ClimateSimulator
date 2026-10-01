@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -53,6 +54,43 @@ def test_sector_bins_and_frame_ids_are_deterministic():
     assert sector_index(11.25) == 1
     assert sector_index(359.9) == 0
     assert frame_id("2026-09-20T10:00:00Z") == "20260920T1000Z"
+
+
+def test_batch_sampler_reuses_nearest_frame_and_reports_partial_coverage(tmp_path, monkeypatch):
+    root, run_id = _product(tmp_path)
+    manifest_path = root / run_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["generated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(products, "PRODUCT_ROOT", root)
+    monkeypatch.setattr(products, "CURRENT_FILE", root / "CURRENT")
+
+    result = products.sample_points_at([
+        (1, 1, datetime.fromisoformat("2026-09-20T10:00:00+00:00")),
+        (5, 1, datetime.fromisoformat("2026-09-20T10:00:00+00:00")),
+    ])
+
+    assert result["status"] == "partial"
+    assert result["samples"][0]["utci_c"] == 28.0
+    assert result["samples"][0]["wind_1p5m_mps"] == 1.25
+    assert result["samples"][1] is None
+    assert result["channel_coverage"]["utci_c"]["coverage_percent"] == 50
+    assert result["channel_coverage"]["wind_1p5m_mps"]["coverage_percent"] == 50
+
+
+def test_batch_sampler_marks_stale_forecast_unavailable(tmp_path, monkeypatch):
+    root, run_id = _product(tmp_path)
+    manifest_path = root / run_id / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["generated_at"] = "2020-01-01T00:00:00Z"
+    manifest_path.write_text(json.dumps(manifest))
+    monkeypatch.setattr(products, "PRODUCT_ROOT", root)
+    monkeypatch.setattr(products, "CURRENT_FILE", root / "CURRENT")
+
+    result = products.sample_points_at([(1, 1, datetime.fromisoformat("2026-09-20T10:00:00+00:00"))])
+
+    assert result["status"] == "stale"
+    assert result["samples"] == [None]
 
 
 def test_forecast_status_reports_cold_start_without_raising(tmp_path, monkeypatch):

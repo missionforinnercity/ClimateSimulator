@@ -16,4 +16,8 @@ export PATH="$PROJECT_ROOT/.venv/bin:$PATH"
 PORT="${PORT:-8000}"
 cd "$PROJECT_ROOT"
 echo "Starting Conditions at http://localhost:$PORT (Ctrl+C to stop)"
+if [[ "${CONDITIONS_RELOAD:-1}" == "1" ]]; then
+  exec "$UVICORN" server.app:app --host 127.0.0.1 --port "$PORT" --reload \
+    --reload-dir "$PROJECT_ROOT/server" --reload-dir "$PROJECT_ROOT/data/derived" --reload-include '*.gz'
+fi
 exec "$UVICORN" server.app:app --host 127.0.0.1 --port "$PORT"

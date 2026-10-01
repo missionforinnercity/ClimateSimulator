@@ -7,6 +7,7 @@ const cheapReads = new Set([
 const retryableRead = path => cheapReads.has(path) || path.startsWith('/api/thermal/frames/') || path.startsWith('/api/thermal/climatology/frames/');
 const toolFor = path => path.includes('/sunlight/') ? 'sun' : path.includes('/heat/') || path.includes('/thermal/') ? 'heat'
   : path.includes('/wind/') || path.includes('/cfd/') ? 'wind' : path.includes('/traffic/') ? 'traffic'
+    : path.includes('/walking/') ? 'walking'
     : path.includes('transport.json') ? 'transport' : 'tools';
 function announce(detail) {
   if (typeof globalThis.CustomEvent === 'function' && globalThis.dispatchEvent) {
@@ -93,8 +94,12 @@ export async function scopedFetch(input, options = {}) {
     }
     detail.requestId = response.headers.get('X-Request-ID');
     if (!response.ok) {
+      const payload = await response.clone().json().catch(() => null);
       await response.body?.cancel();
-      const error = new Error(requestError(response.status, detail.requestId));
+      const message = typeof payload?.detail === 'string' && payload.detail.trim()
+        ? payload.detail : requestError(response.status, detail.requestId);
+      const error = new Error(message);
+      error.detail = message;
       error.status = response.status;
       error.requestId = detail.requestId;
       throw error;

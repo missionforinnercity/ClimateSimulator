@@ -63,6 +63,8 @@ from .thermal_climatology import (
     manifest as thermal_climatology_manifest,
 )
 from .thermal_scenario import shade_scenario
+from .walking_routes import NETWORK_PATH as WALKING_NETWORK_PATH
+from .walking_routes import walking_agent_comparison, walking_routes
 from .traffic import SCENARIOS as TRAFFIC_SCENARIOS
 from .traffic import (
     DEFAULT_TRAFFIC_OBSERVATION_INTERVAL_S,
@@ -119,6 +121,7 @@ HEAVY_PATH_LIMITS = {
     "/api/traffic/closure-preview": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
     "/api/traffic/closure-preview/jobs": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
     "/api/traffic/emissions-preview/jobs": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
+    "/api/walking/routes": int(os.getenv("WALKING_ROUTE_CONCURRENCY", "1")),
 }
 HEAVY_SEMAPHORES = {path: asyncio.Semaphore(max(1, limit)) for path, limit in HEAVY_PATH_LIMITS.items()}
 RATE_LIMIT_REQUESTS = max(1, int(os.getenv("SIMULATION_RATE_LIMIT", "12")))
@@ -137,6 +140,11 @@ TRAFFIC_JOB_TTL_S = max(60, int(os.getenv("TRAFFIC_JOB_TTL_S", "900")))
 TRAFFIC_JOB_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="traffic-preview")
 TRAFFIC_JOBS: OrderedDict[str, dict[str, Any]] = OrderedDict()
 TRAFFIC_JOBS_LOCK = threading.Lock()
+WALKING_AGENT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="walking-agents")
+WALKING_AGENT_JOBS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+WALKING_AGENT_JOBS_LOCK = threading.Lock()
+WALKING_AGENT_JOB_TTL_S = 900
+WALKING_AGENT_MAX_PENDING = 3
 
 
 async def _traffic_observation_loop() -> None:
@@ -346,6 +354,17 @@ class ThermalScenarioPayload(BaseModel):
     intervention: Literal["tree", "shade"] = "tree"
 
 
+class WalkingPoint(BaseModel):
+    x: float = Field(ge=-5000, le=5000)
+    z: float = Field(ge=-5000, le=5000)
+
+
+class WalkingRoutesPayload(BaseModel):
+    origin: WalkingPoint
+    destination: WalkingPoint
+    departure_at: str = Field(min_length=10, max_length=40)
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     checks: dict[str, Any] = {}
@@ -392,6 +411,12 @@ def health() -> dict[str, Any]:
     checks["sumo"].update(required=False, affects=["traffic_closure_preview", "traffic_emissions_preview"])
     checks["database"].update(required=False, affects=["database_backed_layers"])
     checks["thermal"] = product_health()
+    checks["walking_routes"] = {
+        "status": "ok" if WALKING_NETWORK_PATH.is_file() else "unavailable",
+        "required": False,
+        "affects": ["walking_route_analysis"],
+        "network_asset": WALKING_NETWORK_PATH.name,
+    }
     return {
         "status": "ok" if required_ok else "degraded",
         "optional_degraded": [name for name, check in checks.items()
@@ -499,6 +524,63 @@ def location_streetview(x: float, z: float) -> dict[str, Any]:
         return streetview_location(x, z)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/walking/routes")
+def walking_route_analysis(payload: WalkingRoutesPayload) -> dict[str, Any]:
+    try:
+        response, path_records, departure = walking_routes(
+            payload.model_dump(), include_agents=False, return_plan=True,
+        )
+        now = time.monotonic()
+        with WALKING_AGENT_JOBS_LOCK:
+            for old_id, old in list(WALKING_AGENT_JOBS.items()):
+                if old["status"] in {"complete", "error"} and now - old.get("finished_at", now) > WALKING_AGENT_JOB_TTL_S:
+                    del WALKING_AGENT_JOBS[old_id]
+            while len(WALKING_AGENT_JOBS) >= 48:
+                old_id = next((key for key, job in WALKING_AGENT_JOBS.items() if job["status"] in {"complete", "error"}), None)
+                if old_id is None:
+                    break
+                del WALKING_AGENT_JOBS[old_id]
+            pending = sum(job["status"] in {"queued", "running"} for job in WALKING_AGENT_JOBS.values())
+            if pending >= WALKING_AGENT_MAX_PENDING:
+                response["route_generation"]["agent_status"] = "busy"
+                return response
+            job_id = secrets.token_urlsafe(12)
+            WALKING_AGENT_JOBS[job_id] = {"status": "queued", "created_at": now}
+
+        def run_agents() -> None:
+            with WALKING_AGENT_JOBS_LOCK:
+                WALKING_AGENT_JOBS[job_id]["status"] = "running"
+            try:
+                result = walking_agent_comparison(path_records, departure)
+            except Exception as error:
+                LOGGER.exception("Walking agent comparison failed")
+                with WALKING_AGENT_JOBS_LOCK:
+                    WALKING_AGENT_JOBS[job_id].update(status="error", error=str(error), finished_at=time.monotonic())
+            else:
+                with WALKING_AGENT_JOBS_LOCK:
+                    WALKING_AGENT_JOBS[job_id].update(status="complete", result=result, finished_at=time.monotonic())
+
+        WALKING_AGENT_EXECUTOR.submit(run_agents)
+        response["agent_job_id"] = job_id
+        return response
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        LOGGER.exception("Walking route analysis failed")
+        raise HTTPException(status_code=503, detail=f"walking route analysis unavailable: {error}") from error
+
+
+@app.get("/api/walking/agents/jobs/{job_id}")
+def walking_agent_job(job_id: str) -> dict[str, Any]:
+    with WALKING_AGENT_JOBS_LOCK:
+        job = WALKING_AGENT_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="walking agent comparison expired or was not found")
+        return {key: job[key] for key in ("status", "result", "error") if key in job}
 
 
 @app.get("/api/heat/zones")

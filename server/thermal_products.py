@@ -249,6 +249,105 @@ def sample_point(x: float, z: float, frame_id: str, run_id: str | None = None) -
     }
 
 
+def sample_points_at(
+    samples: list[tuple[float, float, datetime]], *, max_offset_seconds: int = 1800,
+) -> dict[str, Any]:
+    """Batch-sample route points from their nearest complete forecast frames.
+
+    Each required frame is decoded once for the whole batch. Input times must
+    be timezone-aware, and each result includes the selected frame and offset
+    so the route caller can report temporal coverage.
+    """
+    if not samples:
+        return {"status": "unavailable", "reason": "no route samples", "samples": []}
+    if any(when.tzinfo is None or when.utcoffset() is None for _, _, when in samples):
+        raise ValueError("thermal sample times must include a timezone")
+    try:
+        manifest = public_manifest()
+    except (ThermalProductUnavailable, ValueError, KeyError, json.JSONDecodeError) as error:
+        return {"status": "unavailable", "reason": str(error), "samples": [None] * len(samples)}
+    if manifest.get("stale"):
+        return {
+            "status": "stale", "reason": "the latest thermal forecast is stale",
+            "run_id": manifest.get("run_id"), "samples": [None] * len(samples),
+        }
+    frames = manifest.get("frames") or []
+    if not frames:
+        return {"status": "unavailable", "reason": "no complete thermal frames", "samples": [None] * len(samples)}
+
+    def parse_time(value: str) -> datetime:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+
+    timed_frames = [(parse_time(frame["valid_at"]), frame) for frame in frames if frame.get("valid_at")]
+    channels = {item.get("name"): index for index, item in enumerate(manifest.get("channels", []))}
+    utci_channel = channels.get("utci_c")
+    wind_channel = channels.get("wind_1p5m_mps")
+    if utci_channel is None and wind_channel is None:
+        return {"status": "unavailable", "reason": "forecast has no pedestrian heat or wind channels", "samples": [None] * len(samples)}
+
+    chosen: list[tuple[dict[str, Any] | None, int | None]] = []
+    grouped: set[str] = set()
+    for _, _, when in samples:
+        valid_at, record = min(timed_frames, key=lambda item: abs((item[0] - when.astimezone(timezone.utc)).total_seconds()))
+        offset = int(round((valid_at - when.astimezone(timezone.utc)).total_seconds()))
+        if abs(offset) > max_offset_seconds:
+            chosen.append((None, None))
+            continue
+        chosen.append((record, offset))
+        grouped.add(str(record["id"]))
+
+    decoded = {
+        frame_id: _decode_frame(manifest, frame_path(manifest["run_id"], frame_id))
+        for frame_id in grouped
+    }
+    grid = manifest["grid"]
+    min_x, min_z, max_x, max_z = map(float, grid["bounds"])
+    resolution = float(grid["resolution_m"])
+    nodata = int(manifest.get("nodata", -32768))
+    outputs: list[dict[str, Any] | None] = []
+    for (x, z, _), (record, offset) in zip(samples, chosen):
+        if record is None or not (min_x <= x < max_x and min_z <= z < max_z):
+            outputs.append(None)
+            continue
+        column = int((x - min_x) // resolution)
+        row = int((z - min_z) // resolution)
+        raw = decoded[str(record["id"])][row, column]
+
+        def value(channel_index: int | None) -> float | None:
+            if channel_index is None or int(raw[channel_index]) == nodata:
+                return None
+            channel = manifest["channels"][channel_index]
+            return round(float(raw[channel_index]) * float(channel["scale"]) + float(channel.get("offset", 0)), 3)
+
+        outputs.append({
+            "utci_c": value(utci_channel),
+            "wind_1p5m_mps": value(wind_channel),
+            "frame_id": record["id"],
+            "valid_at": record["valid_at"],
+            "offset_seconds": offset,
+        })
+    valid_count = sum(
+        item is not None and (item["utci_c"] is not None or item["wind_1p5m_mps"] is not None)
+        for item in outputs
+    )
+    channel_coverage = {}
+    for channel_name in ("utci_c", "wind_1p5m_mps"):
+        sampled = sum(item is not None and item[channel_name] is not None for item in outputs)
+        channel_coverage[channel_name] = {
+            "sampled_points": sampled,
+            "total_points": len(samples),
+            "coverage_percent": round(100 * sampled / len(samples), 1) if samples else 0.0,
+        }
+    return {
+        "status": "available" if valid_count == len(outputs) else "partial" if valid_count else "unavailable",
+        "reason": None if valid_count else "route times are outside complete forecast coverage",
+        "run_id": manifest.get("run_id"),
+        "validation_status": manifest.get("validation_status"),
+        "channel_coverage": channel_coverage,
+        "samples": outputs,
+    }
+
+
 def utci_category(value: float | None) -> str | None:
     if value is None:
         return None

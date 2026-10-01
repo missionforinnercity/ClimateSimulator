@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from pyproj import Transformer
+from shapely import points as shapely_points
 from shapely.geometry import Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
 from shapely.strtree import STRtree
@@ -158,6 +159,33 @@ def _shadow_surface(
 def _dynamic_shade_deficits(date_text: str, minutes: int) -> tuple[float, ...]:
     geometries = tuple(shape(feature["geometry"]) for feature in _load_heat_zones()["features"])
     return _shade_deficits_for_geometries(date_text, minutes, geometries)
+
+
+def ground_shade_samples(
+    date_text: str, minutes: int, positions: list[tuple[float, float]],
+    domain_bounds: tuple[float, float, float, float] | None = None,
+) -> list[bool | None]:
+    """Return direct-sun blockage at viewer-local ground points for one minute.
+
+    ``None`` means the sun is below the horizon, so the point has no direct
+    sunlight to block. Buildings and the mapped opaque canopy volumes use the
+    same geometry and shadow projection as the existing heat screening layer.
+    """
+    if not positions:
+        return []
+    altitude, _, _ = sun_position(date_text, minutes)
+    if altitude <= 0.008:
+        return [None] * len(positions)
+    shadows = _shadow_surface(date_text, minutes, domain_bounds)
+    if not shadows:
+        return [False] * len(positions)
+    tree = STRtree(shadows)
+    samples = shapely_points(positions)
+    pairs = tree.query(samples, predicate="intersects")
+    shaded = [False] * len(positions)
+    for point_index in pairs[0]:
+        shaded[int(point_index)] = True
+    return shaded
 
 
 def _shade_deficits_for_geometries(

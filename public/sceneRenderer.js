@@ -285,6 +285,7 @@ export async function startScene(canvas, status) {
   const heatTimeControl = document.querySelector('#heat-time-control');
   const heatForecastControl = document.querySelector('#heat-forecast-control');
   const heatStatus = document.querySelector('#heat-status');
+  const heatLayerHelp = document.querySelector('#heat-layer-help');
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
   const heatSummary = document.querySelector('#heat-summary');
@@ -336,6 +337,7 @@ export async function startScene(canvas, status) {
   const heatComparison = document.querySelector('#heat-comparison');
   let heatLoadToken = 0;
   const streetViewState = { placing: false, point: null };
+  const walkingRouteState = { routes: [], selectedId: 'fastest', pickRole: null, points: { origin: null, destination: null }, progress: null };
   const shadowState = {
     enabled: Boolean(sunToggle?.checked),
     date: sunDate?.value || '2026-07-27',
@@ -2130,6 +2132,7 @@ export async function startScene(canvas, status) {
     drawWindDirection(project);
     drawWindBox(project, projectPolygon);
     drawSunDomain(project, projectPolygon);
+    drawWalkingRoutes(project);
     if (streetViewState.point) {
       const [x, z] = streetViewState.point;
       const base = project([x, terrainHeightAt(x, z) + 0.8, z]);
@@ -2152,8 +2155,69 @@ export async function startScene(canvas, status) {
     }
   }
 
+  function drawWalkingRoutes(project) {
+    const colors = { fastest: '#b99cff', least_sun: '#42d8cf', lowest_heat: '#ff8465' };
+    for (const route of [...walkingRouteState.routes].sort((a, b) => Number(a.id === walkingRouteState.selectedId) - Number(b.id === walkingRouteState.selectedId))) {
+      const coords = route.geometry || [];
+      const projected = coords.map(([x, z]) => project([Number(x), terrainHeightAt(Number(x), Number(z)) + 2.1, Number(z)]));
+      if (projected.length < 2 || projected.some(point => !point)) continue;
+      const selected = route.id === walkingRouteState.selectedId;
+      const color = colors[route.id] || '#eee';
+      mainContext.save();
+      mainContext.globalAlpha = selected ? 1 : 0.42;
+      mainContext.lineJoin = 'round';
+      mainContext.lineCap = 'round';
+      mainContext.beginPath();
+      mainContext.moveTo(projected[0][0], projected[0][1]);
+      for (let index = 1; index < projected.length; index += 1) mainContext.lineTo(projected[index][0], projected[index][1]);
+      mainContext.strokeStyle = 'rgba(0,0,0,.78)';
+      mainContext.lineWidth = selected ? 8 : 6;
+      mainContext.stroke();
+      mainContext.strokeStyle = color;
+      mainContext.lineWidth = selected ? 5 : 3.5;
+      mainContext.stroke();
+      mainContext.restore();
+    }
+    const drawPin = (point, color, radius = 7) => {
+      if (!point) return;
+      const screen = project([Number(point.x), terrainHeightAt(Number(point.x), Number(point.z)) + 3, Number(point.z)]);
+      if (!screen) return;
+      mainContext.save();
+      mainContext.shadowColor = color;
+      mainContext.shadowBlur = 13;
+      mainContext.beginPath();
+      mainContext.arc(screen[0], screen[1], radius + 3, 0, Math.PI * 2);
+      mainContext.fillStyle = 'rgba(8,20,22,.88)';
+      mainContext.fill();
+      mainContext.beginPath();
+      mainContext.arc(screen[0], screen[1], radius, 0, Math.PI * 2);
+      mainContext.fillStyle = color;
+      mainContext.fill();
+      mainContext.strokeStyle = '#fff';
+      mainContext.lineWidth = 2;
+      mainContext.stroke();
+      mainContext.restore();
+    };
+    drawPin(walkingRouteState.points.origin, '#77d89d');
+    drawPin(walkingRouteState.points.destination, '#f39d73');
+    drawPin(walkingRouteState.progress, '#ffffff', 5);
+  }
+
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('pointerdown', event => {
+    if (walkingRouteState.pickRole && event.button === 0) {
+      const { screenToTerrain } = cameraProjection();
+      const ground = screenToTerrain(event.clientX, event.clientY);
+      if (ground) {
+        const role = walkingRouteState.pickRole;
+        walkingRouteState.pickRole = null;
+        canvas.style.cursor = streetViewState.placing ? 'crosshair' : 'grab';
+        dispatchEvent(new CustomEvent('climate-route-point', {
+          detail: { role, x: Number(ground[0].toFixed(3)), z: Number(ground[1].toFixed(3)) },
+        }));
+      }
+      return;
+    }
     if (streetViewState.placing && event.button === 0) {
       const { screenToPlane } = cameraProjection();
       const ground = screenToPlane(event.clientX, event.clientY, terrainHeightAt(camera.target[0], camera.target[2]));
@@ -2587,6 +2651,43 @@ export async function startScene(canvas, status) {
     streetViewState.placing = false;
     streetViewState.point = null;
     canvas.style.cursor = 'grab';
+    requestRender();
+  });
+  addEventListener('climate-route-pick-request', event => {
+    walkingRouteState.pickRole = event.detail?.role || null;
+    canvas.style.cursor = walkingRouteState.pickRole || streetViewState.placing ? 'crosshair' : 'grab';
+  });
+  addEventListener('climate-walking-routes', event => {
+    walkingRouteState.routes = event.detail?.routes || [];
+    walkingRouteState.selectedId = walkingRouteState.routes.some(route => route.id === walkingRouteState.selectedId)
+      ? walkingRouteState.selectedId : walkingRouteState.routes[0]?.id;
+    requestRender();
+  });
+  addEventListener('climate-walking-route-select', event => {
+    walkingRouteState.selectedId = event.detail?.routeId || 'fastest';
+    requestRender();
+  });
+  addEventListener('climate-walking-points', event => {
+    walkingRouteState.points = event.detail || { origin: null, destination: null };
+    requestRender();
+  });
+  addEventListener('climate-walking-progress', event => {
+    const point = event.detail?.point;
+    walkingRouteState.progress = point ? { x: Number(point[0]), z: Number(point[1]) } : null;
+    requestRender();
+  });
+  addEventListener('climate-walking-routes-clear', () => {
+    walkingRouteState.routes = [];
+    walkingRouteState.progress = null;
+    requestRender();
+  });
+  addEventListener('climate-walking-clear', () => {
+    walkingRouteState.routes = [];
+    walkingRouteState.selectedId = 'fastest';
+    walkingRouteState.pickRole = null;
+    walkingRouteState.points = { origin: null, destination: null };
+    walkingRouteState.progress = null;
+    canvas.style.cursor = streetViewState.placing ? 'crosshair' : 'grab';
     requestRender();
   });
   addEventListener('climate-current-weather', event => {

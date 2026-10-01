@@ -1,4 +1,5 @@
 import { setupExplorerExperience } from './explorerExperience.js?v=3';
+import { setupWalkingRoutes } from './walkingRoutes.js?v=2';
 import { scopedFetch as fetch } from './requestClient.js';
 
 let canvas = document.querySelector('#scene');
@@ -17,7 +18,7 @@ function setupMenuNavigation() {
   const panelBody = document.querySelector('#explorer-panel-body');
   if (!tabs.length || !panels.length) return;
 
-  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', sun: 'SUNLIGHT', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
+  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', walking: 'WALK ROUTES', sun: 'SUNLIGHT', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
   const selectedLabel = selector => document.querySelector(`${selector} option:checked`)?.textContent.trim() || '';
   const inputValue = selector => document.querySelector(selector)?.value?.trim() || '';
   const textValue = selector => document.querySelector(selector)?.textContent.trim() || '';
@@ -63,6 +64,8 @@ function setupMenuNavigation() {
       context = `${selectedLabel('#traffic-scenario') || 'Street simulation'} · ${selectedLabel('#traffic-demand') || 'Current demand'}`;
     } else if (name === 'transport') {
       context = `${selectedLabel('#transport-service-day') || 'Weekday'} · ${textValue('#transport-time-value') || 'Service timetable'}`;
+    } else if (name === 'walking') {
+      context = `Walking routes · ${inputValue('#walking-date') || 'Select date'} · ${inputValue('#walking-time') || 'Select time'}`;
     }
     panelContextValue.textContent = context;
   };
@@ -78,6 +81,11 @@ function setupMenuNavigation() {
     updatePanelContext(name);
     if (name === 'tools') {
       sceneModeDetail.textContent = 'City layers · drag to orbit';
+      return;
+    }
+    if (name === 'walking') {
+      sceneModeDetail.textContent = 'Pedestrian routes · pick two map points';
+      document.querySelector('.scene-mode')?.classList.add('is-active');
       return;
     }
     const toggle = document.querySelector(`#${name}-toggle`);
@@ -1007,6 +1015,7 @@ function setupWindResults() {
 setupExplorerExperience();
 setupMenuNavigation();
 setupHeatViewSelector();
+setupWalkingRoutes();
 setupFullscreenControls();
 setupWindResults();
 freshCanvas();

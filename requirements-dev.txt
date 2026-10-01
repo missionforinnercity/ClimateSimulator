@@ -11,3 +11,8 @@ greenlet==3.5.5
 # Only needed to run scripts/convert_openfoam_vtk.py (offline OpenFOAM ->
 # browser-asset conversion); never imported at runtime.
 vtk==9.7.0
+# Builds the clipped pedestrian graph from the checked-in OSM extract.
+osmnx==2.1.1
+geopandas==1.2.0
+pandas==2.3.3
+pyogrio==0.13.0

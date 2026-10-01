@@ -25,16 +25,17 @@ closures.
 - **Wind:** Inspect solved OpenFOAM direction fields and a wind-rose-weighted
   Comfort view where solved data exists; the legacy screening proxy remains
   available for compatibility and its own reports.
-- **Pollutant dispersal:** Run a whole-CBD SUMO/HBEFA traffic-emissions scenario,
-  map road-by-road NOx hotspots, then trace a weighted plume
-  through a selected OpenFOAM wind case. Demand is synthetic unless observed
-  edge counts are configured; outputs are screening layers, not concentrations.
 - **Traffic:** Draw road closures and compare paired SUMO runs, including
   routing, queue, emissions and report outputs. Demand is synthetic and
   exploratory.
 - **Public transport:** Animate timetable-derived MyCiTi and Metrorail services
   and estimate event access. Vehicle positions are schedule estimates, not live
   GPS.
+- **Walking routes:** Compare fastest, lower-sun and (when thermal coverage is
+  available) lower-heat CBD walks using OSM footways, mapped shade, UTCI and
+  pedestrian wind. Matched synthetic walker cohorts are included per path;
+  traffic NOx remains separate road-source context. See
+  [walking route method and limits](docs/WALKING_ROUTES.md).
 
 Scientific status and coverage matter: the OpenFOAM wind cases are exploratory,
 thermal outputs are experimental model estimates, and traffic and event-access
@@ -43,6 +44,7 @@ documents linked below and in each feature section.
 
 Developer handoff: [architecture](docs/ARCHITECTURE.md),
 [QA checklist](docs/QA_CHECKLIST.md),
+[walking routes](docs/WALKING_ROUTES.md),
 [thermal deployment](docs/THERMAL_DEPLOYMENT.md), and
 [proposed feature roadmap](docs/FEATURE_ROADMAP.md).
 
@@ -93,13 +95,13 @@ GPU gusts, heat geometry, and directional-light shadow maps. The existing
 Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
 is unavailable.
 
-The Wind panel's Direction, Comfort and Pollutant dispersal lenses use the
-full-CBD OpenFOAM volumes, not the older screening proxy. Direction loads a
-solved directional case (all 16 sectors are converted; the compass offers the
-eight main points) and shows resolved 3D flowlines, a movable/resizable flow
-box with an adjustable seed height, horizontal/vertical speed and turbulence
-slices you can drag directly in the scene, and pressure mapped onto building
-façades. Its pedestrian view is
+The Wind panel's Direction and Comfort lenses are both driven by full-CBD
+OpenFOAM volumes, not the older screening proxy — Direction loads whichever
+solved directional case you pick (SE 135° and NW 315° today; a compass preset
+lights up once a direction has a solved case) and shows resolved 3D
+flowlines, a movable/resizable flow box with an adjustable seed height,
+horizontal/vertical speed and turbulence slices you can drag directly in the
+scene, and pressure mapped onto building façades. Its pedestrian view is
 sampled from the same 3D CFD volume at a terrain-following 1.5, 2 or 4 m
 height. Comfort weights every *solved* direction's pedestrian field by its
 ERA5 wind-rose frequency and Weibull exceedance and reports the resulting
@@ -108,24 +110,10 @@ weighted sum, never interpolated or assumed calm, so today's Comfort result is
 a labelled lower bound, not a complete annual study. The fast horizontal
 screening proxy (mass-conserving terrain + building/canopy drag) still powers
 the Canvas 2D compatibility fallback, `/api/wind/preview`, and
-`/api/wind/validate`, but no longer drives the main WebGL wind panel. The
-converted CFD cases are exploratory rather than validated planning evidence.
+`/api/wind/validate`, but no longer drives the main WebGL wind panel. Both
+CFD cases are explicitly exploratory rather than validated planning evidence.
 Case generation, result refresh and validation requirements are documented in
 [docs/OPENFOAM.md](docs/OPENFOAM.md).
-Pollutant dispersal derives a stochastic plume screen from solved velocity, k
-and epsilon and uses SUMO's HBEFA3 fleet estimates to place citywide NOx fumes
-on active road links. The road-emissions layer shows strongest modelled NOx
-sources; the plume layer shows smoothed near-ground residence in four
-within-run severity bands and ranks up to five separated hotspot pockets by
-their nearest mapped road. This separates likely source corridors from places
-where the selected wind case carries and retains the modelled plume. Aggregate HBEFA3
-exhaust PM is not split into PM2.5 and PM10, so size-specific settling is
-available only in single-source mode. This is not an OpenFOAM pollutant scalar
-solve. Demand is synthetic unless observed edge counts are configured, TomTom
-speed samples are not vehicle counts, and the CFD cases are unvalidated.
-Colours are not ambient concentrations. See
-[docs/POLLUTANT_DISPERSION.md](docs/POLLUTANT_DISPERSION.md) for assumptions
-and limits.
 
 The semantic model gives each object a stable `identifier` and version-specific
 `featureId`, named geometry, source records, lifecycle fields, geometry quality,
@@ -286,7 +274,7 @@ Deployment controls are environment variables:
   an unbounded queue.
 
 `GET /api/health` checks generated assets and model compatibility, the SUMO
-binary/network, and the optional database connection. Request logs are
+binary/network, and theA optional database connection. Request logs are
 structured JSON and include an `X-Request-ID`. `.env` is excluded from both Git
 and the Docker build context.
 
@@ -401,33 +389,6 @@ that hasn't been solved. Clicking the city normally orbits the camera;
 dragging the flow box or a slice plane takes over only when the click lands
 on that object.
 
-The **Pollutant dispersal** lens defaults to citywide road traffic. Run one
-bounded SUMO weekday profile to estimate road-level NOx with the existing
-HBEFA3 car, taxi, van and shuttle fleet. The **Road emissions**
-layer highlights links with stronger modelled tailpipe emissions, ranks the
-top emitting streets, and lets you inspect a map cell. The plume layer smooths
-parcel-sampling noise, shows four percentile bands relative to positive cells
-in the full run, and ranks the strongest separated plume pockets by nearby
-road. Then scrub the accelerated 15-minute timeline to see where
-emission-weighted tracer parcels spend time near the ground under a selected
-OpenFOAM direction. An uncoloured location may have no parcel residence or
-only trace below the display cutoff; it does not establish clean air. HBEFA3's
-aggregate exhaust PM is not split into PM2.5 and PM10, so settling screens for
-those particle sizes are available only in single-source mode. A map-selected
-point source remains available for controlled comparisons.
-
-Traffic activity follows simulated vehicles and speeds on each link. Demand
-uses a synthetic weekday population unless observed edge counts are configured;
-TomTom speed samples do not provide vehicle counts. HBEFA3 outputs are
-tailpipe estimates and omit non-exhaust particles and chemistry. The plume is
-a client-side Lagrangian screen derived from OpenFOAM velocity, k and epsilon,
-not a transported pollutant scalar. Road colours and near-ground residence are
-relative screening evidence, not µg/m³ or ambient concentrations. Trees are
-not included as porous CFD obstacles, and the steady 10 m/s inlet cases remain
-unvalidated. This can help identify streets to investigate for greening; it
-does not simulate a planting intervention's air-quality effect. See
-[the pollutant dispersal method and limits](docs/POLLUTANT_DISPERSION.md).
-
 The **Urban heat** layer opens on experimental UTCI thermal comfort, with a
 near-live forecast and a separate historical climate profile. Mean radiant
 temperature is available as an explanatory companion layer. Satellite-based
@@ -495,8 +456,7 @@ archive.
 the scenario definition, a reproducible pedestrian-speed field map, comfort
 distribution, exceedance/uncertainty indicators, ERA5 evidence and
 data-quality notes) is wired to the screening proxy's output shape and is not
-currently offered for the OpenFOAM Direction/Comfort or Pollutant dispersal
-lenses.
+currently offered for the OpenFOAM Direction/Comfort lenses.
 
 ## Current conditions and planning guidance
 

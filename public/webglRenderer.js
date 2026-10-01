@@ -2095,6 +2095,7 @@ export async function startWebGLScene(canvas, status) {
   const scenarioStatusGroup = new THREE.Group();
   trafficStatusGroup.add(permanentStatusGroup, liveClosureGroup, selectedRoadDirectionGroup, scenarioStatusGroup);
   const streetViewGroup = new THREE.Group();
+  const walkingRouteGroup = new THREE.Group();
   const streetViewStem = new THREE.Mesh(
     new THREE.CylinderGeometry(0.9, 0.9, 10, 10),
     new THREE.MeshBasicMaterial({ color: 0x249ee9, depthTest: false }),
@@ -2108,7 +2109,7 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup);
+  scene.add(heatGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup, walkingRouteGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
@@ -10558,6 +10559,123 @@ export async function startWebGLScene(canvas, status) {
     streetViewState.point = null;
     streetViewGroup.visible = false;
     canvas.style.cursor = '';
+    requestRender();
+  });
+  const walkingRouteColors = { fastest: 0xb99cff, least_sun: 0x42d8cf, lowest_heat: 0xff8465 };
+  let walkingRoutes = [];
+  let selectedWalkingRoute = 'fastest';
+  let walkingPoints = { origin: null, destination: null };
+  const walkingReplayMarker = new THREE.Mesh(
+    new THREE.SphereGeometry(4.2, 16, 12),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }),
+  );
+  walkingReplayMarker.visible = false;
+  walkingReplayMarker.renderOrder = 1003;
+  scene.add(walkingReplayMarker);
+  const clearWalkingRouteGroup = () => {
+    for (const child of [...walkingRouteGroup.children]) {
+      walkingRouteGroup.remove(child);
+      disposeObject(child);
+    }
+  };
+  const routeRibbon = (points, width, color, opacity, order) => {
+    const vertices = [];
+    const sides = points.map((point, index) => {
+      const before = points[Math.max(0, index - 1)];
+      const after = points[Math.min(points.length - 1, index + 1)];
+      const dx = after.x - before.x;
+      const dz = after.z - before.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const ox = -dz / length * width / 2;
+      const oz = dx / length * width / 2;
+      return [
+        [point.x + ox, terrainHeightAt(point.x + ox, point.z + oz) + 2.3, point.z + oz],
+        [point.x - ox, terrainHeightAt(point.x - ox, point.z - oz) + 2.3, point.z - oz],
+      ];
+    });
+    for (let index = 1; index < sides.length; index += 1) {
+      const [a, b] = sides[index - 1];
+      const [c, d] = sides[index];
+      vertices.push(...a, ...b, ...c, ...b, ...d, ...c);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    const material = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = order;
+    return mesh;
+  };
+  const drawWalkingRoutes = () => {
+    clearWalkingRouteGroup();
+    for (const route of [...walkingRoutes].sort((a, b) => Number(a.id === selectedWalkingRoute) - Number(b.id === selectedWalkingRoute))) {
+      const coordinates = route.geometry || [];
+      if (coordinates.length < 2) continue;
+      const color = walkingRouteColors[route.id] || 0xe8e8e8;
+      const selected = route.id === selectedWalkingRoute;
+      const points = coordinates.map(([x, z]) => new THREE.Vector3(
+        Number(x), terrainHeightAt(Number(x), Number(z)) + 2.1, Number(z),
+      ));
+      const outline = routeRibbon(points, selected ? 9 : 5, 0x071719, selected ? 0.94 : 0.5, selected ? 1000 : 998);
+      const ribbon = routeRibbon(points, selected ? 6.5 : 2.7, color, selected ? 1 : 0.55, selected ? 1001 : 999);
+      ribbon.userData.walkingRouteId = route.id;
+      walkingRouteGroup.add(outline, ribbon);
+    }
+    for (const [role, markerColor] of [['origin', 0x77d89d], ['destination', 0xf39d73]]) {
+      const point = walkingPoints[role];
+      if (!point) continue;
+      const markerPosition = new THREE.Vector3(Number(point.x), terrainHeightAt(Number(point.x), Number(point.z)) + 7, Number(point.z));
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(6.2, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }),
+      );
+      halo.position.copy(markerPosition);
+      halo.renderOrder = 1002;
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(4.8, 16, 12),
+        new THREE.MeshBasicMaterial({ color: markerColor, depthTest: false, depthWrite: false }),
+      );
+      marker.position.copy(markerPosition);
+      marker.renderOrder = 1003;
+      walkingRouteGroup.add(halo, marker);
+    }
+    requestRender();
+  };
+  addEventListener('climate-route-pick-request', event => {
+    const role = event.detail?.role;
+    requestGroundPick(role ? (x, z) => dispatchEvent(new CustomEvent('climate-route-point', { detail: { role, x, z } })) : null);
+  });
+  addEventListener('climate-walking-routes', event => {
+    walkingRoutes = event.detail?.routes || [];
+    selectedWalkingRoute = walkingRoutes.some(route => route.id === selectedWalkingRoute)
+      ? selectedWalkingRoute : walkingRoutes[0]?.id;
+    drawWalkingRoutes();
+  });
+  addEventListener('climate-walking-route-select', event => {
+    selectedWalkingRoute = event.detail?.routeId || 'fastest';
+    drawWalkingRoutes();
+  });
+  addEventListener('climate-walking-points', event => {
+    walkingPoints = event.detail || { origin: null, destination: null };
+    drawWalkingRoutes();
+  });
+  addEventListener('climate-walking-progress', event => {
+    const point = event.detail?.point;
+    walkingReplayMarker.visible = Boolean(point);
+    if (point) walkingReplayMarker.position.set(Number(point[0]), terrainHeightAt(Number(point[0]), Number(point[1])) + 6, Number(point[1]));
+    requestRender();
+  });
+  addEventListener('climate-walking-routes-clear', () => {
+    walkingRoutes = [];
+    walkingReplayMarker.visible = false;
+    drawWalkingRoutes();
+  });
+  addEventListener('climate-walking-clear', () => {
+    walkingRoutes = [];
+    selectedWalkingRoute = 'fastest';
+    walkingPoints = { origin: null, destination: null };
+    walkingReplayMarker.visible = false;
+    clearWalkingRouteGroup();
+    requestGroundPick(null);
     requestRender();
   });
   addEventListener('climate-current-weather', event => {

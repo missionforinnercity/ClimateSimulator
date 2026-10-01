@@ -121,10 +121,33 @@ used to smoke-test configuration generation.
 
 ## Benchmark observations
 
-Send at least three co-located measurements to `POST /api/wind/validate`.
-Coordinates use viewer-local metres (`x` east, `z` south-positive). Speeds at
-other sensor heights are converted to the scenario result height with the
-selected stability profile.
+Use [`wind_observations_template.csv`](wind_observations_template.csv) as the
+field log. Replace the example rows; do not treat them as real observations.
+Record each sensor's calibration details, averaging window, height, wind
+direction, stability assessment and whether the site is for calibration or
+holdout evaluation. Use one batch per synchronized averaging window and
+forcing scenario. Coordinates use viewer-local metres (`x` east, `z`
+south-positive); retain the original survey coordinates and CRS in the field
+notes so the transformation can be reproduced.
+
+Start with SE/Cape Doctor, NW, W and SSW flow. At each campaign window, measure
+the upstream reference wind and at least three pedestrian locations at the
+same time, preferably with fixed sensors. Repeat across unstable, neutral and
+stable conditions. Keep holdout sites out of any tuning and do not mix them
+into calibration batches. Use the same mean-wind averaging period at reference
+and pedestrian sensors; retain gust and direction as separate fields. Obtain
+site access and follow the sensor maker's exposure and mounting guidance.
+
+The browser workbench accepts CSV with at least three rows and `x`, `z`, and
+`speed_mps` columns; optional accepted columns are `id`, `height_m`, and
+`observed_at`. It posts to `POST /api/wind/validate`, which currently evaluates
+the screening model, not the OpenFOAM field. This is useful for checking the
+workbench and screening calculation, but it does not complete CFD validation.
+For CFD validation, observations must be sampled from the matching solved
+volume at the same locations, height, direction, reference forcing and
+averaging window, then scored on separate calibration and holdout datasets.
+The endpoint's height adjustment uses the selected stability profile and is a
+screening approximation.
 
 ```json
 {
@@ -156,9 +179,9 @@ evidence of accuracy away from sensors.
 
 For each representative sector (start with SE/Cape Doctor, NW, W and SSW),
 collect simultaneous forcing and pedestrian observations under unstable,
-neutral and stable conditions. Record sensor model, calibration, averaging
-period, height, coordinates, timestamp, mean speed, gust speed and direction.
-Keep calibration sites separate from final hold-out validation sites.
+neutral and stable conditions. Keep calibration sites separate from final
+holdout validation sites. Use the field log template above and preserve its
+raw rows unchanged alongside any cleaned analysis dataset.
 
 Benchmark the same geometry and boundary conditions against:
 

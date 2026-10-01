@@ -9,6 +9,13 @@ const EVIDENCE = {
     limits: 'No co-located CBD observations yet. Results are not measured pedestrian conditions, a heat-health forecast, or a verified intervention benefit.',
     legend: 'UTCI is an outdoor comfort index. Satellite surface temperature and shade-priority scores are separate screening measures, not UTCI.',
   },
+  walking: {
+    status: 'Modelled · CBD only', method: 'OSM pedestrian graph routing with mapped building/canopy shade and hourly UTCI/pedestrian wind where available. One hundred seeded matched synthetic walkers are sampled per route.',
+    sources: 'Checked-in OSM XML, mapped city geometry, and the published thermal forecast. Optional NOx context is a separate SUMO/HBEFA road-source estimate.',
+    supports: 'Compare estimated walking time, direct sun, modelled heat load, and pedestrian wind across route alternatives.',
+    limits: 'OSM foot-access attributes can be incomplete; forecast layers are not street observations. Steps remain in the graph, and no wheelchair-accessibility, personal dose, or crowd-interaction claim is made.',
+    legend: 'Minutes are estimated at 4.8 km/h. Heat load is cumulative UTCI above 26°C. Road NOx is not pedestrian concentration or dose.',
+  },
   sun: {
     status: 'Modelled · Exploratory', method: 'Solar geometry, mapped building/canopy shadows, and clear-sky direct-sun sampling.',
     sources: 'Mapped hybrid building geometry and canopy; 2025 LiDAR terrain. Roof shapes and coarse terrain contain inferred geometry.',
@@ -40,7 +47,7 @@ const EVIDENCE = {
 };
 const GUIDE = [
   ['Navigate the city', 'Mouse and one-finger drags orbit in the same direction. Shift, middle/right mouse, or two fingers pan; wheel or pinch zooms. Arrow keys, + / − and Home also work.'],
-  ['Choose a lens', 'Choose Heat, Sun, Wind, Traffic or Transport. Each answers a different question using its own model and assumptions.'],
+  ['Choose a lens', 'Choose Heat, Walk, Sun, Wind, Traffic or Transport. Each answers a different question using its own model and assumptions.'],
   ['Choose the scenario', 'Set the date, time and available controls. Sun, wind and traffic have explicit run actions. A picked map location can be passed to the sun or wind analysis area.'],
   ['Read the evidence', 'Read the units, evidence status and limitations before using a result. Save Before and After settings to compare assumptions, or share a settings link.'],
 ];
