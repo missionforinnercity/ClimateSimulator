@@ -39,17 +39,17 @@
       "sample_spacing_m": 2,
       "height_semantics": "height_above_dtm",
       "bytes": 8666008,
-      "cache_key": "2e5fb4e9f05ac7fa"
+      "cache_key": "982da7e23f4a1dcc"
     },
     "fallback": {
       "buildings": 1891,
       "trees": 2903,
       "roads": 2208,
       "railways": 100,
-      "grass": 82,
-      "bytes": 1382630,
+      "grass": 61,
+      "bytes": 2199491,
       "water": 16,
-      "cache_key": "bdf03236df36c522"
+      "cache_key": "2020a77d6d5e5ea6"
     },
     "canopy": {
       "components": 2659,
@@ -58,7 +58,7 @@
       "cache_key": "e217a646f65eb4f3"
     },
     "city_model": {
-      "objects": 18042,
+      "objects": 18021,
       "types": {
         "ReliefFeature": 1,
         "Building": 1891,
@@ -71,17 +71,25 @@
         "BuildingInstallation": 196,
         "WaterBody": 16,
         "Railway": 100,
-        "PlantCover": 82,
+        "PlantCover": 61,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 18947158,
-      "cache_key": "29bf8ef4397ffa74"
+      "bytes": 19751209,
+      "cache_key": "09c50e7616e54d86"
+    },
+    "lighting": {
+      "objects": 3672,
+      "publicLights": 3664,
+      "festoonInstallations": 8,
+      "bytes": 2428788,
+      "cache_key": "9da89dc42c7b2f47"
     }
   },
   "assets": {
     "fallback": "fallback.json",
     "city_model": "city_model.json",
     "canopy": "canopy.json",
+    "lighting": "lighting.json",
     "roof_surface": "roof_surface.bin"
   },
   "buildInputs": {
@@ -111,8 +119,8 @@
     },
     "roads": {
       "path": "data/osm_cbd_roads.geojson",
-      "sha256": "0f7469769ef42d10daf1d580d75fffaab614b72a9ef6a1c287344f4cc916765d",
-      "bytes": 792074,
+      "sha256": "8e10e121390741deb26e9983d14479252e0e7f4ded616d643ca03becfd503eb4",
+      "bytes": 947567,
       "files": 1
     },
     "railways": {

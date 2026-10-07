@@ -180,24 +180,29 @@ def local_osm_transport(osm_path, clip, keys):
 def local_green_areas(green_path, clip):
     collection = json.loads(green_path.read_text(encoding="utf-8"))
     transformer = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
+    polygons = []
     for feature in collection.get("features", []):
         geometry = transform_geometry(lambda x, y, z=None: transformer.transform(x, y), shape(feature["geometry"])).intersection(clip)
         parts = geometry.geoms if geometry.geom_type == "MultiPolygon" else (geometry,)
         for polygon in parts:
             if not polygon.is_empty and polygon.area >= 12.0:
-                yield polygon
+                polygons.append(polygon)
+    # Multiple source green-area records often overlap at park boundaries.
+    # Drawing each as a separate terrain-hugging mesh causes depth fighting
+    # and dark serrated seams, so dissolve overlaps before exporting them.
+    dissolved = unary_union(polygons)
+    parts = dissolved.geoms if dissolved.geom_type == "MultiPolygon" else (dissolved,)
+    yield from (polygon for polygon in parts if not polygon.is_empty and polygon.area >= 12.0)
 
 
-def canvas_terrain_grid(dtm, valid, transform, bounds, origin_x, origin_y, footprint, size=192):
+def canvas_terrain_grid(dtm, valid, transform, bounds, origin_x, origin_y, footprint, size=384):
     """An elevation grid grounds the renderer's roads and terrain mesh.
 
     The CBD climbs almost 50m from the harbour toward the mountain, and a
-    single grid cell at the old size=32 spanned ~65m x ~58m - wide enough for
-    the DTM to vary by several metres within one cell. Roads and the terrain
-    mesh are draped on this bilinearly-interpolated grid, while buildings use
-    a direct per-building DTM sample, so that coarse grid made roads drift
-    vertically relative to nearby building bases and visibly cut through
-    rooftops on sloped blocks.
+    cell on this 384 x 384 grid spans roughly 5.4m x 4.7m. The previous
+    192 x 192 renderer grid was too coarse around small landforms and water
+    edges, so roads and grass could look stepped even though the source DTM
+    is sampled at 2m. Buildings retain their direct per-building DTM heights.
     """
     left, bottom, right, top = bounds
     heights = []
@@ -206,7 +211,9 @@ def canvas_terrain_grid(dtm, valid, transform, bounds, origin_x, origin_y, footp
         y = top - (top - bottom) * row / (size - 1)
         for column in range(size):
             x = left + (right - left) * column / (size - 1)
-            heights.append(round(sample(dtm, transform, x, y), 2))
+            # A small median rejects isolated returns while retaining more
+            # local slope detail for the denser renderer grid.
+            heights.append(round(sample_median(dtm, transform, x, y, radius=1, default=sample(dtm, transform, x, y)), 2))
             validity.append(1 if sample(valid, transform, x, y, default=0) > 0 else 0)
     polygon_parts = footprint.geoms if footprint.geom_type == "MultiPolygon" else (footprint,)
     footprint_polygons = []
@@ -1055,6 +1062,40 @@ def write_canopy_asset(asset, output):
     }
 
 
+def write_lighting_asset(model, output):
+    """Write the small subset of city furniture used by the lighting renderer.
+
+    The full semantic model is intentionally kept out of the first scene load.
+    Public lamp records are a compact, independently cacheable sidecar so the
+    browser can render the mapped fixtures without parsing every city object.
+    """
+    fixtures = []
+    for item in model.get("cityObjects", {}).values():
+        if item.get("type") != "CityFurniture":
+            continue
+        geometry = item.get("geometry") or {}
+        attributes = item.get("attributes") or {}
+        fixture_class = attributes.get("class")
+        if fixture_class not in {"publicLight", "festoonLighting"}:
+            continue
+        fixtures.append({
+            "identifier": item.get("identifier"),
+            "class": fixture_class,
+            "coordinates": geometry.get("coordinates"),
+            "centerline": geometry.get("centerline"),
+            "attributes": attributes,
+        })
+    output.write_text(json.dumps({"cityFurniture": fixtures}, separators=(",", ":")) + "\n", encoding="utf-8")
+    payload = output.read_bytes()
+    return {
+        "objects": len(fixtures),
+        "publicLights": sum(item["class"] == "publicLight" for item in fixtures),
+        "festoonInstallations": sum(item["class"] == "festoonLighting" for item in fixtures),
+        "bytes": len(payload),
+        "cache_key": hashlib.sha256(payload).hexdigest()[:16],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dtm", type=Path, default=Path("data/derived/company_gardens_hybrid_dem_2m.tif"))
@@ -1096,6 +1137,7 @@ def main():
             "fallback": "fallback.json",
             "city_model": "city_model.json",
             "canopy": "canopy.json",
+            "lighting": "lighting.json",
             "roof_surface": "roof_surface.bin",
         },
         "buildInputs": {
@@ -1157,6 +1199,7 @@ def main():
         "cache_key": hashlib.sha256(fallback_path.read_bytes()).hexdigest()[:16],
     })
     manifest["layers"]["city_model"] = write_city_model(city_model, args.out / "city_model.json")
+    manifest["layers"]["lighting"] = write_lighting_asset(city_model, args.out / "lighting.json")
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
 

@@ -3,29 +3,28 @@ import * as THREE from './vendor/three.module.min.js';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { orbitFromDrag, panFromDrag } from './cameraControls.js';
-import { createTransportLayer } from './transportLayer.js?v=13';
+import { createTransportLayer } from './transportLayer.js?v=15';
 
 const COLORS = {
   background: 0x101719,
-  terrain: 0x3a4447,
+  terrain: 0x50574f,
   terrainSun: 0xf4f3ee,
-  terrainEdge: 0x30393c,
-  terrainEdgeDeep: 0x171e20,
-  grass: 0x50745a,
+  terrainEdge: 0x353b38,
+  terrainEdgeDeep: 0x1d211f,
+  grass: 0x5f864f,
   water: 0x2f86a6,
   wall: 0x657076,
   wallSun: 0xffffff,
   roof: 0xaeb5b8,
   roofSun: 0xffffff,
-  road: 0x444746,
-  roadMajor: 0xb8a04a,
-  roadSecondary: 0x58656a,
+  road: 0x706b62,
+  roadMajor: 0x7c786e,
+  roadSecondary: 0x74736b,
   // Permanent pedestrian streets should read as context, while the brighter
   // red/orange simulation ribbons remain the attention-grabbing states.
-  pedestrian: 0x657d7b,
-  path: 0x858f90,
+  pedestrian: 0xb78370,
+  path: 0x9d907e,
   rail: 0x929b9c,
-  sleeper: 0x3f4545,
 };
 
 // Surface height and draw priority are separate concerns. The small physical
@@ -45,9 +44,11 @@ export async function startWebGLScene(canvas, status) {
     powerPreference: 'high-performance',
     failIfMajorPerformanceCaveat: true,
   });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(COLORS.background, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.04;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
@@ -58,28 +59,326 @@ export async function startWebGLScene(canvas, status) {
     // full semantic model and dense roof mesh remain available for analysis,
     // but parsing them here adds substantial startup and rendering overhead.
     const expectedWater = manifest.layers?.fallback?.water || 0;
-    const fallbackResponse = await fetch(
-      `/assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`,
-    );
+    const fallbackResponse = await fetch(`/assets/${manifest.assets?.fallback || 'fallback.json'}?v=${manifest.layers?.fallback?.cache_key || manifest.layers?.fallback?.bytes || 0}`);
     if (!fallbackResponse.ok) throw new Error(`compact scene HTTP ${fallbackResponse.status}`);
     const fallback = await fallbackResponse.json();
     if (expectedWater && (fallback.water || []).length !== expectedWater) {
       throw new Error(`compact scene contains ${(fallback.water || []).length}/${expectedWater} water bodies`);
     }
+    // The separate municipal lighting inventory contains thousands of
+    // fixtures. Keep it out of the interactive scene to avoid its startup,
+    // memory, and rendering cost.
+    fallback.cityFurniture = [];
     return fallback;
   };
   const [data, canopyAsset, roofSurfaceBuffer] = await Promise.all([
     loadRendererScene(),
     fetch(`/assets/canopy.json?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
-    Promise.resolve(null),
+    manifest.assets?.roof_surface
+      ? fetch(`/assets/${manifest.assets.roof_surface}?v=${manifest.layers?.roof_surface?.cache_key || manifest.layers?.roof_surface?.bytes || 0}`)
+        .then(response => response.ok ? response.arrayBuffer() : null)
+        .catch(error => { console.warn(`Detailed roof surface unavailable: ${error.message}`); return null; })
+      : Promise.resolve(null),
   ]);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(COLORS.background);
+  // Procedural atmospheric sky rendered on an inward-facing sphere. It follows
+  // the camera position while retaining world orientation, so celestial bodies
+  // stay at their calculated compass bearings as the camera moves.
+  const skyUniforms = {
+    sunDirection: { value: new THREE.Vector3(0, 1, 0) },
+    moonDirection: { value: new THREE.Vector3(0, 1, 0) },
+    moonSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+    cloudCover: { value: 0 },
+    isDay: { value: 1 },
+    isRainy: { value: 0 },
+    sunStrength: { value: 0 },
+    moonStrength: { value: 0 },
+    twilight: { value: 0 },
+  };
+  const skyMaterial = new THREE.ShaderMaterial({
+    uniforms: skyUniforms,
+    side: THREE.BackSide,
+    depthWrite: false,
+    depthTest: false,
+    vertexShader: `
+      varying vec3 vSkyDirection;
+      void main() {
+        vSkyDirection = normalize(position);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 sunDirection;
+      uniform vec3 moonDirection;
+      uniform vec3 moonSunDirection;
+      uniform float cloudCover;
+      uniform float isDay;
+      uniform float isRainy;
+      uniform float sunStrength;
+      uniform float moonStrength;
+      uniform float twilight;
+      varying vec3 vSkyDirection;
+      float hash31(vec3 p) {
+        p = fract(p * 0.1031);
+        p += dot(p, p.yzx + 33.33);
+        return fract((p.x + p.y) * p.z);
+      }
+      float noise3(vec3 p) {
+        vec3 i = floor(p), f = fract(p);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(hash31(i), hash31(i + vec3(1,0,0)), f.x),
+                       mix(hash31(i + vec3(0,1,0)), hash31(i + vec3(1,1,0)), f.x), f.y),
+                   mix(mix(hash31(i + vec3(0,0,1)), hash31(i + vec3(1,0,1)), f.x),
+                       mix(hash31(i + vec3(0,1,1)), hash31(i + vec3(1,1,1)), f.x), f.y), f.z);
+      }
+      float cloudNoise(vec3 p) {
+        float value = 0.0;
+        float amplitude = 0.55;
+        for (int i = 0; i < 4; i++) {
+          value += noise3(p) * amplitude;
+          p *= 2.03;
+          amplitude *= 0.5;
+        }
+        return value;
+      }
+      void main() {
+        vec3 direction = normalize(vSkyDirection);
+        float horizon = 1.0 - smoothstep(-0.08, 0.48, direction.y);
+        vec3 dayZenith = mix(vec3(0.20, 0.39, 0.62), vec3(0.38, 0.58, 0.77), isRainy);
+        vec3 dayHorizon = mix(vec3(0.77, 0.83, 0.84), vec3(0.53, 0.60, 0.64), isRainy);
+        dayHorizon = mix(dayHorizon, vec3(0.98, 0.46, 0.25), twilight * (1.0 - isRainy) * 0.92);
+        dayZenith = mix(dayZenith, vec3(0.50, 0.27, 0.40), twilight * (1.0 - isRainy) * 0.36);
+        vec3 dayColor = mix(dayZenith, dayHorizon, pow(horizon, 0.72));
+        vec3 nightZenith = vec3(0.018, 0.035, 0.085);
+        vec3 nightHorizon = vec3(0.11, 0.15, 0.23);
+        vec3 skyColor = mix(mix(nightZenith, nightHorizon, pow(horizon, 0.8)), dayColor, isDay);
+        vec3 twilightSky = mix(vec3(0.37, 0.24, 0.39), vec3(0.96, 0.39, 0.20), pow(horizon, 0.72));
+        skyColor = mix(skyColor, twilightSky, twilight * (1.0 - isRainy) * 0.82);
+        float stars = pow(hash31(floor(direction * 850.0)), 42.0) * (1.0 - isDay) * smoothstep(0.02, 0.42, direction.y);
+        skyColor += vec3(0.55, 0.68, 0.88) * stars * 0.8;
+        float cloudField = cloudNoise(direction * vec3(8.0, 5.0, 8.0) + vec3(0.0, 2.0, 0.0));
+        float cloudThreshold = 0.77 - cloudCover * 0.48;
+        float clouds = smoothstep(cloudThreshold, cloudThreshold + 0.12, cloudField) * smoothstep(-0.18, 0.16, direction.y);
+        vec3 cloudColor = mix(vec3(0.88, 0.91, 0.91), vec3(0.33, 0.39, 0.44), isRainy);
+        cloudColor = mix(cloudColor * 0.48, cloudColor, isDay);
+        skyColor = mix(skyColor, cloudColor, clouds * cloudCover * 0.92);
+        float sunDot = dot(direction, normalize(sunDirection));
+        float disc = smoothstep(0.999985, 0.999995, sunDot) * sunStrength;
+        float sunGlare = (pow(max(sunDot, 0.0), 110.0) * 1.8
+          + pow(max(sunDot, 0.0), 28.0) * 0.42
+          + pow(max(sunDot, 0.0), 8.0) * 0.055)
+          * sunStrength * (1.0 - clouds * cloudCover * 0.78);
+        skyColor += vec3(1.0, 0.74, 0.38) * sunGlare;
+        skyColor = mix(skyColor, vec3(4.0, 3.7, 2.8), disc);
+        vec3 moonRight = normalize(cross(moonDirection, vec3(0.0, 1.0, 0.0)) + vec3(0.0001, 0.0, 0.0001));
+        vec3 moonUp = normalize(cross(moonRight, moonDirection));
+        vec2 moonPoint = vec2(dot(direction, moonRight), dot(direction, moonUp)) / 0.0046;
+        float moonRadius = dot(moonPoint, moonPoint);
+        float moonFront = sqrt(max(0.0, 1.0 - moonRadius));
+        vec3 projectedSun = moonSunDirection - moonDirection * dot(moonSunDirection, moonDirection);
+        vec2 moonLightRaw = vec2(dot(projectedSun, moonRight), dot(projectedSun, moonUp));
+        vec2 moonLight = length(moonLightRaw) > 0.0001 ? normalize(moonLightRaw) : vec2(1.0, 0.0);
+        float moonLightAngle = dot(vec2(moonPoint.x, moonFront), moonLight);
+        float moonLit = smoothstep(-0.045, 0.045, moonLightAngle);
+        float moonDisc = (1.0 - smoothstep(0.94, 1.02, moonRadius)) * moonStrength;
+        float maria = noise3(vec3(moonPoint * 5.5, moonFront * 3.0));
+        float craterGrain = noise3(vec3(moonPoint * 17.0, moonFront * 11.0));
+        float lunarSurface = smoothstep(0.30, 0.72, maria) * 0.22 + craterGrain * 0.09;
+        float limbShade = mix(0.62, 1.0, moonFront);
+        vec3 moonStone = mix(vec3(0.48, 0.51, 0.56), vec3(0.77, 0.79, 0.81), clamp(0.56 + lunarSurface, 0.0, 1.0));
+        vec3 moonLitColor = moonStone * limbShade * (0.72 + 0.48 * moonLit);
+        float earthshine = (1.0 - moonLit) * 0.075;
+        skyColor = mix(skyColor, vec3(0.055, 0.067, 0.09), moonDisc * 0.72);
+        skyColor += moonLitColor * moonDisc * moonLit * 1.35;
+        skyColor += vec3(0.19, 0.23, 0.29) * moonDisc * earthshine;
+        gl_FragColor = vec4(skyColor, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+  const skySphere = new THREE.Mesh(new THREE.SphereGeometry(10000, 48, 32), skyMaterial);
+  skySphere.renderOrder = -10000;
+  skySphere.visible = false;
+  scene.add(skySphere);
+  let skyWeather = null;
+  function updateWeatherSky(weather = skyWeather, sun = null) {
+    skyWeather = weather;
+    const skyActive = Boolean(shadowState.enabled && shadowState.mode === 'shadows');
+    skySphere.visible = skyActive;
+    const day = sun ? sun.altitude > 0 : weather?.is_day !== false;
+    const clouds = clamp(Number(weather?.cloud_cover_pct) || 0, 0, 100) / 100;
+    const rainy = Number(weather?.precipitation_mm) > 0.1 || Number(weather?.weather_code) >= 51;
+    skyUniforms.cloudCover.value = clouds;
+    const daylight = sun ? clamp((sun.altitude + 0.15) / 0.24, 0, 1) : (day ? 1 : 0);
+    skyUniforms.isDay.value = daylight;
+    skyUniforms.isRainy.value = rainy ? 1 : 0;
+    const twilight = sun ? Math.exp(-Math.abs(sun.altitude) / 0.18) : 0;
+    skyUniforms.twilight.value = twilight;
+    if (scene.fog) scene.fog.color.set(skyActive
+      ? (twilight > 0.28 && !rainy ? '#bb8175' : daylight > 0.5 ? (rainy ? '#89979f' : '#becdd2') : '#202b42')
+      : COLORS.background);
+    const phaseDate = new Date(`${shadowState.date}T12:00:00+02:00`);
+    const newMoonReference = Date.UTC(2000, 0, 6, 18, 14);
+    const lunarDays = (phaseDate.getTime() - newMoonReference) / 86400000;
+    const phase = ((lunarDays / 29.530588853) % 1 + 1) % 1;
+    const sunVisible = Boolean(sun && sun.altitude > -0.018);
+    const moon = sun ? moonPosition(shadowState.date, shadowState.minutes) : null;
+    const moonVisible = Boolean(moon && moon.altitude > -0.018
+      && 0.5 - 0.5 * Math.cos(phase * Math.PI * 2) > 0.015);
+    skyUniforms.sunStrength.value = sunVisible ? Math.max(0.24, 1 - clouds * 0.64) : 0;
+    skyUniforms.moonStrength.value = moonVisible ? 1 - clouds * 0.68 : 0;
+    if (sun) {
+      skyUniforms.sunDirection.value.copy(sun.vector);
+      skyUniforms.moonSunDirection.value.copy(sun.vector);
+      if (moon) skyUniforms.moonDirection.value.copy(moon.vector);
+    }
+  }
+
+  // Low precision lunar ephemeris (Schlyter orbital elements), sufficient for
+  // rendering the Moon's real local azimuth/altitude on the sky dome.
+  function moonPosition(dateText, minutes) {
+    const [year, month, day] = dateText.split('-').map(Number);
+    const utc = Date.UTC(year || 2026, (month || 7) - 1, day || 27, 0, minutes - 120);
+    const jd = utc / 86400000 + 2440587.5;
+    const d = jd - 2451543.5;
+    const rad = Math.PI / 180;
+    const n = (125.1228 - 0.0529538083 * d) * rad;
+    const inclination = 5.1454 * rad;
+    const periapsis = (318.0634 + 0.1643573223 * d) * rad;
+    const eccentricity = 0.0549;
+    const meanAnomaly = ((115.3654 + 13.0649929509 * d) % 360) * rad;
+    const eccentricAnomaly = meanAnomaly + eccentricity * Math.sin(meanAnomaly) * (1 + eccentricity * Math.cos(meanAnomaly));
+    const xv = Math.cos(eccentricAnomaly) - eccentricity;
+    const yv = Math.sqrt(1 - eccentricity * eccentricity) * Math.sin(eccentricAnomaly);
+    const trueAnomaly = Math.atan2(yv, xv);
+    const radius = Math.hypot(xv, yv);
+    const longitude = trueAnomaly + periapsis;
+    const x = radius * (Math.cos(n) * Math.cos(longitude) - Math.sin(n) * Math.sin(longitude) * Math.cos(inclination));
+    const y = radius * (Math.sin(n) * Math.cos(longitude) + Math.cos(n) * Math.sin(longitude) * Math.cos(inclination));
+    const z = radius * Math.sin(longitude) * Math.sin(inclination);
+    const eclipticLongitude = Math.atan2(y, x);
+    const eclipticLatitude = Math.atan2(z, Math.hypot(x, y));
+    const obliquity = 23.4393 * rad;
+    const ra = Math.atan2(Math.sin(eclipticLongitude) * Math.cos(obliquity) - Math.tan(eclipticLatitude) * Math.sin(obliquity), Math.cos(eclipticLongitude));
+    const declination = Math.asin(Math.sin(eclipticLatitude) * Math.cos(obliquity) + Math.cos(eclipticLatitude) * Math.sin(obliquity) * Math.sin(eclipticLongitude));
+    const t = (jd - 2451545) / 36525;
+    const gmst = ((280.46061837 + 360.98564736629 * (jd - 2451545) + 0.000387933 * t * t - t * t * t / 38710000) % 360) * rad;
+    const hourAngle = gmst + 18.4241 * rad - ra;
+    const latitude = -33.9249 * rad;
+    const altitude = Math.asin(clamp(Math.sin(latitude) * Math.sin(declination) + Math.cos(latitude) * Math.cos(declination) * Math.cos(hourAngle), -1, 1));
+    const azimuth = (Math.atan2(Math.sin(hourAngle), Math.cos(hourAngle) * Math.sin(latitude) - Math.tan(declination) * Math.cos(latitude)) + Math.PI) % (2 * Math.PI);
+    return { altitude, vector: new THREE.Vector3(Math.sin(azimuth) * Math.cos(altitude), Math.sin(altitude), -Math.cos(azimuth) * Math.cos(altitude)) };
+  }
   // Soft distance fog gives the model atmospheric depth at city-wide zoom
   // without hiding anything at typical street/building inspection distances.
   scene.fog = new THREE.Fog(COLORS.background, 1900, 4600);
   const camera = new THREE.PerspectiveCamera(46, 1, 1, 12000);
+  const postTarget = new THREE.WebGLRenderTarget(1, 1, {
+    format: THREE.RGBAFormat,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+  postTarget.depthTexture = new THREE.DepthTexture(1, 1, THREE.UnsignedIntType);
+  postTarget.depthTexture.format = THREE.DepthFormat;
+  const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const postScene = new THREE.Scene();
+  const postMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      sceneColor: { value: postTarget.texture },
+      sceneDepth: { value: postTarget.depthTexture },
+      inverseProjection: { value: camera.projectionMatrixInverse },
+      resolution: { value: new THREE.Vector2(1, 1) },
+      focalPixels: { value: 1 },
+      cameraNear: { value: camera.near },
+      cameraFar: { value: camera.far },
+      aoRadius: { value: 1.8 },
+      aoStrength: { value: 0.34 },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D sceneColor;
+      uniform sampler2D sceneDepth;
+      uniform mat4 inverseProjection;
+      uniform vec2 resolution;
+      uniform float focalPixels;
+      uniform float cameraNear;
+      uniform float cameraFar;
+      uniform float aoRadius;
+      uniform float aoStrength;
+      varying vec2 vUv;
+
+      vec3 positionFromDepth(vec2 uv, float depth) {
+        vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+        vec4 viewPosition = inverseProjection * clip;
+        return viewPosition.xyz / max(viewPosition.w, 0.00001);
+      }
+
+      void main() {
+        vec4 color = texture2D(sceneColor, vUv);
+        float centerDepth = texture2D(sceneDepth, vUv).x;
+        if (centerDepth >= 0.99999) {
+          gl_FragColor = color;
+          #include <colorspace_fragment>
+          return;
+        }
+
+        vec3 center = positionFromDepth(vUv, centerDepth);
+        vec2 texel = 1.0 / resolution;
+        float leftDepth = texture2D(sceneDepth, vUv - vec2(texel.x, 0.0)).x;
+        float rightDepth = texture2D(sceneDepth, vUv + vec2(texel.x, 0.0)).x;
+        float downDepth = texture2D(sceneDepth, vUv - vec2(0.0, texel.y)).x;
+        float upDepth = texture2D(sceneDepth, vUv + vec2(0.0, texel.y)).x;
+        vec3 leftPosition = leftDepth < 0.99999 ? positionFromDepth(vUv - vec2(texel.x, 0.0), leftDepth) : center - vec3(0.001, 0.0, 0.0);
+        vec3 rightPosition = rightDepth < 0.99999 ? positionFromDepth(vUv + vec2(texel.x, 0.0), rightDepth) : center + vec3(0.001, 0.0, 0.0);
+        vec3 downPosition = downDepth < 0.99999 ? positionFromDepth(vUv - vec2(0.0, texel.y), downDepth) : center - vec3(0.0, 0.001, 0.0);
+        vec3 upPosition = upDepth < 0.99999 ? positionFromDepth(vUv + vec2(0.0, texel.y), upDepth) : center + vec3(0.0, 0.001, 0.0);
+        vec3 normal = normalize(cross(rightPosition - leftPosition, upPosition - downPosition));
+        if (dot(normal, -center) < 0.0) normal = -normal;
+
+        float viewDepth = -center.z;
+        float pixelRadius = clamp(aoRadius * focalPixels / max(viewDepth, 0.01), 1.0, 14.0);
+        float occlusion = 0.0;
+        for (int sampleIndex = 0; sampleIndex < 8; sampleIndex++) {
+          float angle = float(sampleIndex) * 0.78539816339;
+          vec2 direction = vec2(cos(angle), sin(angle));
+          vec2 sampleUv = clamp(vUv + direction * pixelRadius * texel, texel, 1.0 - texel);
+          float sampleDepth = texture2D(sceneDepth, sampleUv).x;
+          if (sampleDepth < 0.99999) {
+            vec3 samplePosition = positionFromDepth(sampleUv, sampleDepth);
+            vec3 delta = samplePosition - center;
+            float distanceToSample = length(delta);
+            float hemisphere = max(dot(normal, normalize(delta)) - 0.08, 0.0);
+            float falloff = 1.0 - smoothstep(0.0, aoRadius, distanceToSample);
+            occlusion += hemisphere * falloff;
+          }
+        }
+        float shade = 1.0 - min(0.30, occlusion * aoStrength * 1.25 / 8.0);
+        vec3 graded = color.rgb * shade;
+        float luminance = dot(graded, vec3(0.2126, 0.7152, 0.0722));
+        graded = mix(vec3(luminance), graded, 1.035);
+        graded = (graded - 0.5) * 1.025 + 0.5;
+        gl_FragColor = vec4(graded, color.a);
+        #include <colorspace_fragment>
+      }
+    `,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  const postQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial);
+  postScene.add(postQuad);
+  const postSize = new THREE.Vector2(1, 1);
   const cameraState = {
     azimuth: 0.75,
     elevation: 0.68,
@@ -88,6 +387,7 @@ export async function startWebGLScene(canvas, status) {
   };
   let animationFrame = 0;
   let renderRequested = true;
+  let sceneReadyToRender = false;
   let transportLayer = null;
   let transportLoading = null;
   // Scene picking shared by overlay layers: a click that did not turn into a
@@ -108,12 +408,14 @@ export async function startWebGLScene(canvas, status) {
   };
   Object.values(layerGroups).forEach(group => scene.add(group));
 
-  // Decorative and municipal lighting share the same solar switch. Thousands
-  // of street lamps use one point-sprite draw call; only the handful of
-  // festoon fill lights are real PointLights.
+  // Decorative and municipal lighting share the same solar switch. Street
+  // lamp glows and ground pools are batched; only festoon fill lights use
+  // individual PointLights.
   const nightLighting = {
     streetGlow: null,
     streetBulbMaterial: null,
+    streetPool: null,
+    streetPoolMaterial: null,
     festoonGlow: null,
     festoonBulbMaterial: null,
     festoonPointLights: [],
@@ -175,6 +477,24 @@ export async function startWebGLScene(canvas, status) {
     return a * (1 - tz) + b * tz;
   }
 
+  // Sample the same two-triangle surface that the terrain mesh actually
+  // renders. Draped features use this to avoid the small height mismatch
+  // between bilinear sampling and the mesh's diagonal cell split.
+  function terrainSurfaceHeightAt(x, z) {
+    const u = clamp((x - left) / terrainWidth, 0, 1) * (terrain.columns - 1);
+    const v = clamp((z - minZ) / terrainDepth, 0, 1) * (terrain.rows - 1);
+    const column = Math.min(terrain.columns - 2, Math.floor(u));
+    const row = Math.min(terrain.rows - 2, Math.floor(v));
+    const tx = u - column;
+    const tz = v - row;
+    const at = (r, c) => terrain.heights[r * terrain.columns + c];
+    const a = at(row, column), b = at(row, column + 1);
+    const c = at(row + 1, column), d = at(row + 1, column + 1);
+    return tx + tz <= 1
+      ? a * (1 - tx - tz) + b * tx + c * tz
+      : b * (1 - tz) + c * (1 - tx) + d * (tx + tz - 1);
+  }
+
   // Roads are designed surfaces, so they should not inherit every small DTM
   // bump or seam. A local median rejects isolated spikes while retaining the
   // broader street slope and avoids twisting markings across the carriageway.
@@ -189,6 +509,8 @@ export async function startWebGLScene(canvas, status) {
     ].sort((a, b) => a - b);
     return samples[Math.floor(samples.length / 2)];
   }
+
+  const roadSurfaceHeightAt = (x, z) => Math.max(roadTerrainHeightAt(x, z), terrainSurfaceHeightAt(x, z));
 
   // terrainHeightAt clamps to the grid edge, so anything asked about a point
   // beyond the terrain gets the nearest edge height and appears to float over
@@ -217,6 +539,102 @@ export async function startWebGLScene(canvas, status) {
     return inside;
   }
 
+  const waterMasks = (data.water || []).map(water => {
+    const [outer, ...holes] = water.rings || [];
+    if (!outer?.length) return null;
+    return {
+      outer,
+      holes,
+      bounds: [
+        Math.min(...outer.map(([x]) => x)), Math.min(...outer.map(([, z]) => z)),
+        Math.max(...outer.map(([x]) => x)), Math.max(...outer.map(([, z]) => z)),
+      ],
+    };
+  }).filter(Boolean);
+
+  const boundsOverlap = (a, b) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+  function waterMasksOverlapping(bounds, masks = waterMasks) {
+    return masks.filter(mask => boundsOverlap(bounds, mask.bounds));
+  }
+
+  function pointInMappedWater(x, z, masks = waterMasks) {
+    for (const mask of masks) {
+      const [minX, minZ, maxX, maxZ] = mask.bounds;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      if (pointInRing(x, z, mask.outer) && !mask.holes.some(hole => pointInRing(x, z, hole))) return true;
+    }
+    return false;
+  }
+
+  function pointInTriangle2d(point, triangle) {
+    const cross = (a, b, p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    const signs = [
+      cross(triangle[0], triangle[1], point),
+      cross(triangle[1], triangle[2], point),
+      cross(triangle[2], triangle[0], point),
+    ];
+    return !(signs.some(value => value < -1e-7) && signs.some(value => value > 1e-7));
+  }
+
+  function segmentsIntersect2d(a, b, c, d) {
+    if (Math.max(a[0], b[0]) < Math.min(c[0], d[0]) - 1e-8
+      || Math.max(c[0], d[0]) < Math.min(a[0], b[0]) - 1e-8
+      || Math.max(a[1], b[1]) < Math.min(c[1], d[1]) - 1e-8
+      || Math.max(c[1], d[1]) < Math.min(a[1], b[1]) - 1e-8) return false;
+    const cross = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    const abC = cross(a, b, c), abD = cross(a, b, d);
+    const cdA = cross(c, d, a), cdB = cross(c, d, b);
+    return abC * abD <= 1e-10 && cdA * cdB <= 1e-10;
+  }
+
+  function waterCoverageOfTriangle(triangle, masks) {
+    if (!masks.length) return 'dry';
+    const center = [
+      (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3,
+      (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3,
+    ];
+    const samples = [...triangle.map(([x, , z]) => [x, z]), center];
+    if (masks.some(mask => !mask.holes.length && samples.every(([x, z]) => pointInRing(x, z, mask.outer)))) return 'wet';
+    if (samples.some(([x, z]) => pointInMappedWater(x, z, masks))) return 'edge';
+
+    const triangleBounds = [
+      Math.min(...triangle.map(([x]) => x)), Math.min(...triangle.map(([, , z]) => z)),
+      Math.max(...triangle.map(([x]) => x)), Math.max(...triangle.map(([, , z]) => z)),
+    ];
+    const triangleEdges = [[samples[0], samples[1]], [samples[1], samples[2]], [samples[2], samples[0]]];
+    for (const mask of masks) {
+      for (const ring of [mask.outer, ...mask.holes]) {
+        for (let index = 0; index < ring.length; index += 1) {
+          const a = ring[index], b = ring[(index + 1) % ring.length];
+          if (a[0] >= triangleBounds[0] && a[0] <= triangleBounds[2] && a[1] >= triangleBounds[1] && a[1] <= triangleBounds[3]
+            && pointInTriangle2d(a, samples.slice(0, 3))) return 'edge';
+          const segmentBounds = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+          if (!boundsOverlap(segmentBounds, triangleBounds)) continue;
+          if (triangleEdges.some(([c, d]) => segmentsIntersect2d(a, b, c, d))) return 'edge';
+        }
+      }
+    }
+    return 'dry';
+  }
+
+  function pointNearMappedWaterBoundary(x, z, tolerance = 2) {
+    const toleranceSquared = tolerance * tolerance;
+    for (const mask of waterMasks) {
+      const [minX, minZ, maxX, maxZ] = mask.bounds;
+      if (x < minX - tolerance || x > maxX + tolerance || z < minZ - tolerance || z > maxZ + tolerance) continue;
+      for (const ring of [mask.outer, ...mask.holes]) {
+        for (let index = 0; index < ring.length; index += 1) {
+          const [ax, az] = ring[index], [bx, bz] = ring[(index + 1) % ring.length];
+          const dx = bx - ax, dz = bz - az;
+          const t = clamp(((x - ax) * dx + (z - az) * dz) / Math.max(dx * dx + dz * dz, 1e-8), 0, 1);
+          const px = ax + dx * t, pz = az + dz * t;
+          if ((x - px) ** 2 + (z - pz) ** 2 <= toleranceSquared) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   function pointInLidarFootprint(x, z) {
     if (!terrain.footprint?.length) return true;
     return terrain.footprint.some(polygon => (
@@ -240,9 +658,16 @@ export async function startWebGLScene(canvas, status) {
   // Edges used by exactly one triangle sit on the outer silhouette of the
   // (possibly footprint-clipped) terrain mesh — both the rectangular grid
   // border and any interior gaps eroded by pointInLidarFootprint.
-  function boundaryEdgesOf(indices) {
+  function boundaryEdgesOf(indices, positions) {
     const counts = new Map();
-    const edgeKey = (a, b) => (a < b ? a * 100000 + b : b * 100000 + a);
+    const pointKey = index => {
+      const offset = index * 3;
+      return `${Math.round(positions[offset] * 100)}:${Math.round(positions[offset + 1] * 100)}:${Math.round(positions[offset + 2] * 100)}`;
+    };
+    const edgeKey = (a, b) => {
+      const first = pointKey(a), second = pointKey(b);
+      return first < second ? `${first}|${second}` : `${second}|${first}`;
+    };
     for (let i = 0; i < indices.length; i += 3) {
       const a = indices[i], b = indices[i + 1], c = indices[i + 2];
       for (const [p, q] of [[a, b], [b, c], [c, a]]) {
@@ -264,7 +689,13 @@ export async function startWebGLScene(canvas, status) {
   // terrain reads as a solid slab cut out of the land rather than a zero
   // thickness sheet floating over the background.
   function makeTerrainSkirt(positions, indices) {
-    const edges = boundaryEdgesOf(indices);
+    // The water surface fills terrain cuts along mapped shorelines. A deep
+    // terrain skirt there would rise through the water and create dark seams.
+    const edges = boundaryEdgesOf(indices, positions).filter(([a, b]) => {
+      const midpointX = (positions[a * 3] + positions[b * 3]) * 0.5;
+      const midpointZ = (positions[a * 3 + 2] + positions[b * 3 + 2]) * 0.5;
+      return !pointNearMappedWaterBoundary(midpointX, midpointZ, 2.5);
+    });
     if (!edges.length) return null;
     let minHeight = Infinity;
     for (let i = 1; i < positions.length; i += 3) minHeight = Math.min(minHeight, positions[i]);
@@ -307,6 +738,44 @@ export async function startWebGLScene(canvas, status) {
         positions.push(x, terrain.heights[row * terrain.columns + column], z);
       }
     }
+    const pushClippedTriangle = (triangle, depth = 0, candidateWater = [], clipFootprint = false) => {
+      const [a, b, c] = triangle;
+      const center = [(a[0] + b[0] + c[0]) / 3, (a[2] + b[2] + c[2]) / 3];
+      const triangleBounds = [
+        Math.min(a[0], b[0], c[0]), Math.min(a[2], b[2], c[2]),
+        Math.max(a[0], b[0], c[0]), Math.max(a[2], b[2], c[2]),
+      ];
+      const localWater = waterMasksOverlapping(triangleBounds, candidateWater);
+      const edgeLength = Math.max(
+        Math.hypot(a[0] - b[0], a[2] - b[2]),
+        Math.hypot(b[0] - c[0], b[2] - c[2]),
+        Math.hypot(c[0] - a[0], c[2] - a[2]),
+      );
+      const waterCoverage = waterCoverageOfTriangle(triangle, localWater);
+      if (waterCoverage === 'wet') return;
+      const append = () => {
+        if (clipFootprint && !terrainValidAt(center[0], center[1])) return;
+        const first = positions.length / 3;
+        for (const [x, y, z] of triangle) positions.push(x, y, z);
+        indices.push(first, first + 1, first + 2);
+      };
+      if (waterCoverage === 'dry') {
+        append();
+        return;
+      }
+      if (edgeLength <= (localWater.length ? 0.65 : 2.5) || depth >= 6) {
+        if (clipFootprint && !terrainValidAt(center[0], center[1])) return;
+        if (pointInMappedWater(center[0], center[1], localWater)) return;
+        append();
+        return;
+      }
+      const midpoint = (p, q) => [(p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5, (p[2] + q[2]) * 0.5];
+      const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
+      pushClippedTriangle([a, ab, ca], depth + 1, localWater, clipFootprint);
+      pushClippedTriangle([ab, b, bc], depth + 1, localWater, clipFootprint);
+      pushClippedTriangle([ca, bc, c], depth + 1, localWater, clipFootprint);
+      pushClippedTriangle([ab, bc, ca], depth + 1, localWater, clipFootprint);
+    };
     for (let row = 0; row < terrain.rows - 1; row += 1) {
       for (let column = 0; column < terrain.columns - 1; column += 1) {
         const a = row * terrain.columns + column;
@@ -317,14 +786,29 @@ export async function startWebGLScene(canvas, status) {
         const x1 = left + terrainWidth * (column + 1) / (terrain.columns - 1);
         const z0 = minZ + terrainDepth * row / (terrain.rows - 1);
         const z1 = minZ + terrainDepth * (row + 1) / (terrain.rows - 1);
-        // Test triangle centroids against the full-resolution footprint.
-        // Requiring all coarse-grid vertices to be valid eroded narrow edge
-        // streets and produced visible gaps around Company's Garden.
-        if (pointInLidarFootprint((x0 + x0 + x1) / 3, (z0 + z1 + z0) / 3)) {
-          indices.push(a, c, b);
-        }
-        if (pointInLidarFootprint((x1 + x0 + x1) / 3, (z0 + z1 + z1) / 3)) {
-          indices.push(b, c, d);
+        // Keep the regular terrain grid in the interior, but refine only cells
+        // that cross the lidar footprint. This cuts the city edge to the survey
+        // outline instead of extending whole coarse cells into the void.
+        const triangles = [
+          [[[x0, terrain.heights[a], z0], [x0, terrain.heights[c], z1], [x1, terrain.heights[b], z0]], [a, c, b]],
+          [[[x1, terrain.heights[b], z0], [x0, terrain.heights[c], z1], [x1, terrain.heights[d], z1]], [b, c, d]],
+        ];
+        for (const [triangle, baseIndices] of triangles) {
+          const triangleBounds = [
+            Math.min(...triangle.map(([x]) => x)), Math.min(...triangle.map(([, , z]) => z)),
+            Math.max(...triangle.map(([x]) => x)), Math.max(...triangle.map(([, , z]) => z)),
+          ];
+          const candidateWater = waterMasksOverlapping(triangleBounds);
+          const flags = triangle.map(([x, , z]) => terrainValidAt(x, z));
+          const centerX = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
+          const centerZ = (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3;
+          flags.push(terrainValidAt(centerX, centerZ));
+          if (candidateWater.length) {
+            if (flags.some(Boolean)) pushClippedTriangle(triangle, 0, candidateWater, !flags.every(Boolean));
+            continue;
+          }
+          if (flags.every(Boolean)) indices.push(...baseIndices);
+          else if (flags.some(Boolean)) pushClippedTriangle(triangle, 0, [], true);
         }
       }
     }
@@ -436,16 +920,13 @@ export async function startWebGLScene(canvas, status) {
     const wallTriangles = [];
     const roofPositions = [];
     const wallColors = [];
-    const roofColors = [];
     const wallElevationColors = [];
-    const roofElevationColors = [];
     data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0, , , holes = [], attributes = {}], buildingIndex) => {
       const baseY = ground + Math.max(0, Number(minHeight) || 0);
       const simpleWallHeight = roofSurfaceBuffer ? wallHeight : height;
       const roofY = ground + simpleWallHeight;
       const colour = elevationColour(height);
       const facadeColour = subtleHeightColour(COLORS.wall, height, 0.22);
-      const roofColour = subtleHeightColour(COLORS.roof, height, 0.16);
       for (const [ringIndex, wallRing] of [ring, ...holes].entries()) {
         for (let index = 0; index < wallRing.length; index += 1) {
           const next = (index + 1) % wallRing.length;
@@ -477,10 +958,6 @@ export async function startWebGLScene(canvas, status) {
           const normalY = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]);
           if (normalY < 0) [b, c] = [c, b];
           roofPositions.push(a[0], roofY, a[1], b[0], roofY, b[1], c[0], roofY, c[1]);
-          for (let vertex = 0; vertex < 3; vertex += 1) {
-            roofColors.push(roofColour.r, roofColour.g, roofColour.b);
-            roofElevationColors.push(colour.r, colour.g, colour.b);
-          }
         }
       }
     });
@@ -494,14 +971,10 @@ export async function startWebGLScene(canvas, status) {
     wallGeometry.computeVertexNormals();
     const roofGeometry = new THREE.BufferGeometry();
     roofGeometry.setAttribute('position', new THREE.Float32BufferAttribute(roofPositions, 3));
-    roofGeometry.setAttribute('color', new THREE.Float32BufferAttribute(roofColors, 3));
-    roofGeometry.userData.appearanceColors = new Float32Array(roofColors);
-    roofGeometry.userData.elevationColors = new Float32Array(roofElevationColors);
     roofGeometry.computeVertexNormals();
     const wallMaterial = new THREE.MeshLambertMaterial({ color: COLORS.wall, vertexColors: true, side: THREE.DoubleSide });
     const roofMaterial = new THREE.MeshLambertMaterial({
       color: COLORS.roof,
-      vertexColors: true,
       side: THREE.DoubleSide,
     });
     const walls = new THREE.Mesh(wallGeometry, wallMaterial);
@@ -552,50 +1025,12 @@ export async function startWebGLScene(canvas, status) {
     if (indexOffset + indexCount * 4 > roofSurfaceBuffer.byteLength) return null;
 
     const positions = new Float32Array(roofSurfaceBuffer, positionOffset, vertexCount * 3);
-    const heights = new Float32Array(roofSurfaceBuffer, heightOffset, vertexCount);
     const indices = new Uint32Array(roofSurfaceBuffer, indexOffset, indexCount);
     detailedRoofGeometrySource = { positions, indices };
-    const colours = new Float32Array(vertexCount * 3);
-    const elevationColours = new Float32Array(vertexCount * 3);
-    const roofColourCellSize = 50;
-    const roofColourGrid = new Map();
-    for (const building of data.buildings || []) {
-      if (!building[6] || !building[2]?.length) continue;
-      const ring = building[2];
-      const bounds = [
-        Math.min(...ring.map(point => point[0])), Math.min(...ring.map(point => point[1])),
-        Math.max(...ring.map(point => point[0])), Math.max(...ring.map(point => point[1])),
-      ];
-      const roofAttributes = building[14] || {};
-      const item = {
-        ring, holes: building[13] || [],
-        colour: osmColour(roofAttributes['roof:colour'], materialColour(roofAttributes['roof:material'], COLORS.roof, true)),
-      };
-      for (let row = Math.floor(bounds[1] / roofColourCellSize); row <= Math.floor(bounds[3] / roofColourCellSize); row += 1) {
-        for (let column = Math.floor(bounds[0] / roofColourCellSize); column <= Math.floor(bounds[2] / roofColourCellSize); column += 1) {
-          const key = `${column}:${row}`;
-          if (!roofColourGrid.has(key)) roofColourGrid.set(key, []);
-          roofColourGrid.get(key).push(item);
-        }
-      }
-    }
-    const mappedRoofColourAt = (x, z) => {
-      const candidates = roofColourGrid.get(`${Math.floor(x / roofColourCellSize)}:${Math.floor(z / roofColourCellSize)}`) || [];
-      const building = candidates.find(item => pointInRing(x, z, item.ring) && !item.holes.some(hole => pointInRing(x, z, hole)));
-      return building?.colour || new THREE.Color(COLORS.roof);
-    };
     for (let index = 0; index < vertexCount; index += 1) {
-      const colour = elevationColour(heights[index]);
       const x = positions[index * 3];
       const y = positions[index * 3 + 1];
       const z = positions[index * 3 + 2];
-      const mappedColour = mappedRoofColourAt(x, z);
-      colours[index * 3] = mappedColour.r;
-      colours[index * 3 + 1] = mappedColour.g;
-      colours[index * 3 + 2] = mappedColour.b;
-      elevationColours[index * 3] = colour.r;
-      elevationColours[index * 3 + 1] = colour.g;
-      elevationColours[index * 3 + 2] = colour.b;
       const key = detailedRoofCellKey(Math.floor(x / detailedRoofHeightCellSize), Math.floor(z / detailedRoofHeightCellSize));
       if (!detailedRoofHeightGrid.has(key)) detailedRoofHeightGrid.set(key, []);
       detailedRoofHeightGrid.get(key).push([x, y, z]);
@@ -603,15 +1038,11 @@ export async function startWebGLScene(canvas, status) {
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
-    geometry.userData.appearanceColors = colours;
-    geometry.userData.elevationColors = elevationColours;
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     const material = new THREE.MeshLambertMaterial({
       color: COLORS.roof,
-      vertexColors: true,
       side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -665,33 +1096,20 @@ export async function startWebGLScene(canvas, status) {
 
   function makeWaterAndOsmDetails() {
     const waterPositions = [];
-    // Boundary-only triangulation can bridge over small terrain undulations
-    // and bury the middle of a pond. Subdivide each face so the visual water
-    // surface follows the same terrain sampler as the rest of the scene.
-    const pushDrapedWaterTriangle = (a, b, c, depth = 0) => {
-      const longest = Math.max(
-        Math.hypot(a[0] - b[0], a[1] - b[1]),
-        Math.hypot(b[0] - c[0], b[1] - c[1]),
-        Math.hypot(c[0] - a[0], c[1] - a[1]),
-      );
-      if (longest > 6 && depth < 7) {
-        const ab = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
-        const bc = [(b[0] + c[0]) * 0.5, (b[1] + c[1]) * 0.5];
-        const ca = [(c[0] + a[0]) * 0.5, (c[1] + a[1]) * 0.5];
-        pushDrapedWaterTriangle(a, ab, ca, depth + 1);
-        pushDrapedWaterTriangle(ab, b, bc, depth + 1);
-        pushDrapedWaterTriangle(ca, bc, c, depth + 1);
-        pushDrapedWaterTriangle(ab, bc, ca, depth + 1);
-        return;
-      }
-      for (const [x, z] of [a, b, c]) waterPositions.push(x, terrainHeightAt(x, z) + 0.32, z);
-    };
     for (const water of data.water || []) {
       const [outer, ...holes] = water.rings || [];
       if (!outer?.length) continue;
+      // Water is level. Use the median shoreline height to avoid a low plane
+      // that lets the coarse terrain poke through it. makeTerrain cuts the
+      // mapped water footprint from the land mesh, leaving a clean shore edge.
+      const shoreline = outer.map(([x, z]) => terrainSurfaceHeightAt(x, z)).sort((a, b) => a - b);
+      const waterLevel = shoreline[Math.floor((shoreline.length - 1) * 0.5)] + 0.08;
       const triangulated = triangulateRings(outer, holes);
       for (const face of triangulated.faces) {
-        pushDrapedWaterTriangle(...face.map(index => triangulated.vertices[index]));
+        for (const index of face) {
+          const [x, z] = triangulated.vertices[index];
+          waterPositions.push(x, waterLevel, z);
+        }
       }
     }
     if (waterPositions.length) {
@@ -925,34 +1343,102 @@ export async function startWebGLScene(canvas, status) {
 
   function makeGrass() {
     const positions = [];
+    const clipToTerrainTriangle = (subject, clip) => {
+      const signedArea = clip.reduce((sum, point, index) => {
+        const next = clip[(index + 1) % clip.length];
+        return sum + point[0] * next[1] - next[0] * point[1];
+      }, 0);
+      const orientation = Math.sign(signedArea) || 1;
+      let output = subject;
+      for (let edge = 0; edge < clip.length && output.length; edge += 1) {
+        const a = clip[edge], b = clip[(edge + 1) % clip.length];
+        const signedDistance = ([x, z]) => orientation * ((b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0]));
+        const input = output;
+        output = [];
+        for (let index = 0; index < input.length; index += 1) {
+          const current = input[index], previous = input[(index + input.length - 1) % input.length];
+          const currentDistance = signedDistance(current), previousDistance = signedDistance(previous);
+          const currentInside = currentDistance >= -1e-7, previousInside = previousDistance >= -1e-7;
+          if (currentInside !== previousInside) {
+            const amount = previousDistance / (previousDistance - currentDistance);
+            output.push([
+              previous[0] + (current[0] - previous[0]) * amount,
+              previous[1] + (current[1] - previous[1]) * amount,
+            ]);
+          }
+          if (currentInside) output.push(current);
+        }
+      }
+      return output;
+    };
+    const pushTerrainMatchedPolygon = polygon => {
+      if (polygon.length < 3) return;
+      const first = polygon[0];
+      for (let index = 1; index < polygon.length - 1; index += 1) {
+        const triangle = [first, polygon[index], polygon[index + 1]];
+        const centerX = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
+        const centerZ = (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3;
+        if (pointInMappedWater(centerX, centerZ) || !terrainValidAt(centerX, centerZ)) continue;
+        for (const [x, z] of triangle) positions.push(x, terrainSurfaceHeightAt(x, z) + 0.14, z);
+      }
+    };
     for (const ring of data.grass || []) {
       for (const face of triangulateRing(ring)) {
-        for (const index of face) {
-          const [x, z] = ring[index];
-          positions.push(x, terrainHeightAt(x, z) + 0.18, z);
+        const subject = face.map(index => ring[index]);
+        const minX = Math.min(...subject.map(([x]) => x));
+        const maxX = Math.max(...subject.map(([x]) => x));
+        const minZ = Math.min(...subject.map(([, z]) => z));
+        const maxZ = Math.max(...subject.map(([, z]) => z));
+        const firstColumn = clamp(Math.floor((minX - left) / terrainWidth * (terrain.columns - 1)), 0, terrain.columns - 2);
+        const lastColumn = clamp(Math.floor((maxX - left) / terrainWidth * (terrain.columns - 1)), 0, terrain.columns - 2);
+        const gridMinZ = -top;
+        const rowStart = clamp(Math.floor((minZ - gridMinZ) / terrainDepth * (terrain.rows - 1)), 0, terrain.rows - 2);
+        const rowEnd = clamp(Math.floor((maxZ - gridMinZ) / terrainDepth * (terrain.rows - 1)), 0, terrain.rows - 2);
+        for (let row = rowStart; row <= rowEnd; row += 1) {
+          for (let column = firstColumn; column <= lastColumn; column += 1) {
+            const x0 = left + terrainWidth * column / (terrain.columns - 1);
+            const x1 = left + terrainWidth * (column + 1) / (terrain.columns - 1);
+            const z0 = gridMinZ + terrainDepth * row / (terrain.rows - 1);
+            const z1 = gridMinZ + terrainDepth * (row + 1) / (terrain.rows - 1);
+            const cellTriangles = [
+              [[x0, z0], [x0, z1], [x1, z0]],
+              [[x1, z0], [x0, z1], [x1, z1]],
+            ];
+            for (const terrainTriangle of cellTriangles) {
+              pushTerrainMatchedPolygon(clipToTerrainTriangle(subject, terrainTriangle));
+            }
+          }
         }
       }
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.computeVertexNormals();
-    const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color: COLORS.grass, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({
+      color: COLORS.grass, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    }));
     mesh.receiveShadow = true;
+    mesh.renderOrder = 1;
     layerGroups.grass.add(mesh);
   }
 
   function makeRoads() {
-    const textureSize = 64;
+    const textureSize = 256;
     const textureData = new Uint8Array(textureSize * textureSize * 4);
     for (let y = 0; y < textureSize; y += 1) {
       for (let x = 0; x < textureSize; x += 1) {
         const index = (y * textureSize + x) * 4;
         const noise = Math.sin(x * 91.73 + y * 37.19 + x * y * 0.17) * 43758.5453;
         const grain = noise - Math.floor(noise);
-        const aggregate = grain > 0.975 ? 204 : 231 + Math.round(grain * 16);
-        textureData[index] = aggregate;
-        textureData[index + 1] = aggregate;
-        textureData[index + 2] = aggregate;
+        const broad = Math.sin(x * 0.035 + Math.sin(y * 0.021) * 2.4) * 7.2
+          + Math.sin(y * 0.047 - x * 0.013) * 5.4;
+        const fine = Math.sin(x * 0.29 + y * 0.18) * 2.8 + Math.cos(y * 0.31 - x * 0.12) * 2.2;
+        const aggregate = grain > 0.995 ? 158 : Math.round(clamp(239 + broad + fine + (grain - 0.5) * 23, 176, 255));
+        const warmAggregate = Math.sin(x * 0.08 - y * 0.03) * 3.2;
+        textureData[index] = clamp(aggregate + warmAggregate, 0, 255);
+        textureData[index + 1] = clamp(aggregate + Math.sin(y * 0.07 + x * 0.02) * 1.4, 0, 255);
+        textureData[index + 2] = clamp(aggregate - warmAggregate * 0.65, 0, 255);
         textureData[index + 3] = 255;
       }
     }
@@ -972,13 +1458,19 @@ export async function startWebGLScene(canvas, status) {
       const length = Math.hypot(dx, dz) || 1;
       return [x - dz / length * offset, z + dx / length * offset];
     });
-    const inferredVerticalOffset = attributes => {
+    const inferredVerticalOffset = (attributes, highway) => {
       const explicit = Number(attributes?.inferredVerticalOffsetM);
       if (Number.isFinite(explicit)) return explicit;
       const layer = clamp(Number.parseInt(attributes?.layer || '0', 10) || 0, -5, 5);
       const bridge = attributes?.bridge && attributes.bridge !== 'no';
       const tunnel = attributes?.tunnel && attributes.tunnel !== 'no';
-      if (bridge) return Math.max(4.5, Math.max(layer, 1) * 3);
+      if (bridge) {
+        // Footbridges across small channels need only a modest clearance.
+        // The generic 4.5 m road-overpass assumption left the castle crossing
+        // visibly floating above its approaches.
+        if (paths.has(highway) || highway === 'pedestrian') return Math.max(1.2, Math.max(layer, 1) * 1.2);
+        return Math.max(4.5, Math.max(layer, 1) * 3);
+      }
       if (tunnel) return -Math.max(3, Math.abs(Math.min(layer, -1)) * 3);
       return layer * 0.35;
     };
@@ -994,16 +1486,22 @@ export async function startWebGLScene(canvas, status) {
       const baseStyle = highway === 'pedestrian' ? 4 : paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
       const styleIndex = baseStyle >= 3 ? baseStyle : unsealed.has(surface) ? 5 : pavedUnits.has(surface) ? 6 : surface === 'concrete' || surface === 'concrete:plates' ? 7 : baseStyle;
       if (points.length > 1) {
-        const verticalOffset = inferredVerticalOffset(attributes);
-        positionsByStyle[styleIndex].push({
+        const verticalOffset = inferredVerticalOffset(attributes, highway);
+        const roadRecord = {
           points,
           width: clamp(Number(mappedWidth) || 4, paths.has(highway) ? 0.8 : 2.5, 18),
           verticalOffset,
           surfaceOffset: ROAD_CLASS_OFFSETS[baseStyle] ?? ROAD_CLASS_OFFSETS[0],
+          highway,
+          styleIndex,
+          baseStyle,
+          surface,
+          attributes,
           // Paths < local streets < secondary streets < primary/trunk roads.
           // Keep this even when surface material changes the colour bucket.
           priority: baseStyle >= 3 ? 0 : baseStyle === 1 ? 3 : baseStyle === 2 ? 2 : 1,
-        });
+        };
+        positionsByStyle[styleIndex].push(roadRecord);
         if (!paths.has(highway) && highway !== 'pedestrian') {
           const width = clamp(Number(mappedWidth) || 4, 2.5, 18);
           const sidewalk = String(attributes.sidewalk || '').toLowerCase();
@@ -1015,7 +1513,7 @@ export async function startWebGLScene(canvas, status) {
         }
       }
     }
-    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian, 0x716b5e, 0x77756e, 0x747a7a];
+    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian, 0x807564, 0x948878, 0x8d8980];
     // Higher-priority carriageways sit a few centimetres above lower classes
     // at overlaps. Footways remain contextual and below carriageways so they
     // cannot slice a visible road into disconnected pieces at junctions.
@@ -1023,28 +1521,30 @@ export async function startWebGLScene(canvas, status) {
       const vertices = [];
       const uvs = [];
       const indices = [];
-      const pushVertex = (x, z, elevationOffset, surfaceY = roadTerrainHeightAt(x, z)) => {
+      const pushVertex = (x, z, elevationOffset, surfaceY = roadSurfaceHeightAt(x, z)) => {
         const index = vertices.length / 3;
         vertices.push(x, surfaceY + elevationOffset, z);
         uvs.push(x / 12, z / 12);
         return index;
       };
       const addDisc = (x, z, radius, elevationOffset) => {
-        const surfaceY = roadTerrainHeightAt(x, z);
+        const surfaceY = roadSurfaceHeightAt(x, z);
         const center = pushVertex(x, z, elevationOffset, surfaceY);
         const segments = 12;
         for (let segment = 0; segment < segments; segment += 1) {
           const angle = segment / segments * Math.PI * 2;
-          pushVertex(x + Math.cos(angle) * radius, z + Math.sin(angle) * radius, elevationOffset, surfaceY);
+          const edgeX = x + Math.cos(angle) * radius;
+          const edgeZ = z + Math.sin(angle) * radius;
+          pushVertex(edgeX, edgeZ, elevationOffset, Math.max(roadSurfaceHeightAt(edgeX, edgeZ), surfaceY - 0.08));
         }
         for (let segment = 0; segment < segments; segment += 1) {
           indices.push(center, center + 1 + segment, center + 1 + ((segment + 1) % segments));
         }
       };
       for (const road of roads) {
-        const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.24 : 0.48) : 0);
+        const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.12 : 0.20) : 0);
         const elevationOffset = (road.surfaceOffset ?? ROAD_CLASS_OFFSETS[styleIndex] ?? 0.26)
-          + (road.verticalOffset || 0) + (outer ? -0.10 : 0);
+          + (road.verticalOffset || 0) + (outer ? -0.02 : 0);
         const cleanPoints = road.points.filter(([x, z], index, points) => (
           Number.isFinite(x) && Number.isFinite(z)
           && (!index || Math.hypot(x - points[index - 1][0], z - points[index - 1][1]) > 0.05)
@@ -1070,12 +1570,16 @@ export async function startWebGLScene(canvas, status) {
             const sz = z1 + dz * startAmount;
             const ex = x1 + dx * endAmount;
             const ez = z1 + dz * endAmount;
-            const startY = roadTerrainHeightAt(sx, sz);
-            const endY = roadTerrainHeightAt(ex, ez);
-            const a = pushVertex(sx + nx, sz + nz, elevationOffset, startY);
-            const b = pushVertex(sx - nx, sz - nz, elevationOffset, startY);
-            const c = pushVertex(ex + nx, ez + nz, elevationOffset, endY);
-            const d = pushVertex(ex - nx, ez - nz, elevationOffset, endY);
+            const startY = roadSurfaceHeightAt(sx, sz);
+            const endY = roadSurfaceHeightAt(ex, ez);
+            const aX = sx + nx, aZ = sz + nz;
+            const bX = sx - nx, bZ = sz - nz;
+            const cX = ex + nx, cZ = ez + nz;
+            const dX = ex - nx, dZ = ez - nz;
+            const a = pushVertex(aX, aZ, elevationOffset, Math.max(roadSurfaceHeightAt(aX, aZ), startY - 0.08));
+            const b = pushVertex(bX, bZ, elevationOffset, Math.max(roadSurfaceHeightAt(bX, bZ), startY - 0.08));
+            const c = pushVertex(cX, cZ, elevationOffset, Math.max(roadSurfaceHeightAt(cX, cZ), endY - 0.08));
+            const d = pushVertex(dX, dZ, elevationOffset, Math.max(roadSurfaceHeightAt(dX, dZ), endY - 0.08));
             indices.push(a, b, c, b, d, c);
             segmentCount += 1;
           }
@@ -1093,9 +1597,11 @@ export async function startWebGLScene(canvas, status) {
       geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       geometry.setIndex(indices);
       geometry.computeVertexNormals();
-      const material = new THREE.MeshBasicMaterial({
-        color: outer ? 0x2c2f2e : colors[styleIndex],
+      const material = new THREE.MeshStandardMaterial({
+        color: outer ? 0x45443f : colors[styleIndex],
         map: !outer && styleIndex <= 2 ? asphaltTexture : null,
+        roughness: 0.94,
+        metalness: 0,
         transparent: false,
         opacity: 1,
         // At-grade road classes use the explicit painter hierarchy and do not
@@ -1111,6 +1617,7 @@ export async function startWebGLScene(canvas, status) {
       // Stay below mapped parking/crossing paint (orders 6 and 8) while still
       // preserving fine-grained ordering among the four network tiers.
       mesh.renderOrder = 2 + priority * 0.2 + (outer ? 0 : 0.1);
+      mesh.receiveShadow = true;
       return mesh;
     };
     positionsByStyle.forEach((roads, index) => {
@@ -1126,16 +1633,406 @@ export async function startWebGLScene(canvas, status) {
         }
       }
     });
+
+    // Build a proper timber pedestrian drawbridge where the mapped footpath
+    // actually crosses the Castle moat. The roadway ribbon remains the path
+    // surface; the close-set planks, stringers, abutments and open rails give
+    // its elevation a visible structural explanation.
+    const castleRings = (data.buildings || [])
+      .filter(building => building[14]?.['building:part'] === 'castle' || building[14]?.building === 'castle')
+      .map(building => building[2]).filter(ring => ring?.length);
+    if (castleRings.length) {
+      const allCastlePoints = castleRings.flat();
+      const castleBounds = [
+        Math.min(...allCastlePoints.map(point => point[0])) - 90,
+        Math.min(...allCastlePoints.map(point => point[1])) - 90,
+        Math.max(...allCastlePoints.map(point => point[0])) + 90,
+        Math.max(...allCastlePoints.map(point => point[1])) + 90,
+      ];
+      const details = [];
+      const planks = [];
+      for (const road of positionsByStyle.flat()) {
+        if (!road.attributes?.bridge || road.attributes.bridge === 'no' || road.points.length < 2) continue;
+        const nearby = road.points.some(([x, z]) => x >= castleBounds[0] && x <= castleBounds[2] && z >= castleBounds[1] && z <= castleBounds[3]);
+        if (!nearby || road.width > 9) continue;
+        for (let segment = 0; segment < road.points.length - 1; segment += 1) {
+          const [x1, z1] = road.points[segment], [x2, z2] = road.points[segment + 1];
+          const dx = x2 - x1, dz = z2 - z1, length = Math.hypot(dx, dz);
+          if (length < 2 || length > 20) continue;
+          const middleX = (x1 + x2) * 0.5, middleZ = (z1 + z2) * 0.5;
+          if (!pointInMappedWater(middleX, middleZ) && !pointNearMappedWaterBoundary(middleX, middleZ, 2.5)) continue;
+          const angle = Math.atan2(-dz, dx);
+          const half = road.width * 0.5;
+          const topAt = (x, z) => roadSurfaceHeightAt(x, z) + road.surfaceOffset + road.verticalOffset;
+          const top1 = topAt(x1, z1), top2 = topAt(x2, z2);
+          const centerTop = (top1 + top2) * 0.5;
+          const centerX = middleX, centerZ = middleZ;
+
+          // A shallow continuous deck hides the paved ribbon's exposed edges.
+          details.push({ x: centerX, z: centerZ, y: centerTop - 0.09, angle, length: length + 0.16, width: road.width + 0.28, height: 0.24, color: 0x5b4b3a });
+          // Two longitudinal beams carry the deck. No centre pier is added to
+          // this short drawbridge; it should span cleanly from bank to bank.
+          for (const side of [-1, 1]) {
+            const beamOffset = Math.max(0.12, half - 0.22) * side;
+            details.push({
+              x: centerX - dz / length * beamOffset,
+              z: centerZ + dx / length * beamOffset,
+              y: centerTop - 0.24, angle, length: length + 0.26, width: 0.18, height: 0.28, color: 0x493c30,
+            });
+            const railOffset = half + 0.08;
+            const railX = centerX - dz / length * railOffset * side;
+            const railZ = centerZ + dx / length * railOffset * side;
+            const postCount = Math.max(2, Math.ceil(length / 1.15));
+            for (let post = 0; post <= postCount; post += 1) {
+              const t = post / postCount;
+              const x = x1 + dx * t - dz / length * railOffset * side;
+              const z = z1 + dz * t + dx / length * railOffset * side;
+              const y = topAt(x1 + dx * t, z1 + dz * t);
+              details.push({ x, z, y: y + 0.34, angle, length: 0.16, width: 0.16, height: 0.68, color: 0x735c41 });
+            }
+            // Open, narrow handrails read as a pedestrian bridge rather than
+            // the solid raised curb that the earlier side beams resembled.
+            for (const [height, railHeight] of [[0.42, 0.1], [0.76, 0.14]]) {
+              details.push({ x: railX, z: railZ, y: centerTop + height, angle, length: length + 0.1, width: 0.12, height: railHeight, color: 0x826b4e });
+            }
+          }
+          // Stone bearing blocks meet the banks at both ends of the timber span.
+          for (const [x, z, top] of [[x1, z1, top1], [x2, z2, top2]]) {
+            const base = Math.min(terrainSurfaceHeightAt(x, z), top - 0.42);
+            const bearingTop = top + 0.03;
+            details.push({
+              x, z, y: (base + bearingTop) * 0.5, angle,
+              length: 0.58, width: road.width + 0.55, height: bearingTop - base, color: 0x77766f,
+            });
+          }
+
+          // Individual crosswise planks leave only narrow joints, so the deck
+          // reads continuously as timber instead of a road with a few marks.
+          const boardCount = Math.max(2, Math.ceil(length / 0.28));
+          const plankColors = [0x755d43, 0x80674a, 0x6b543d];
+          for (let board = 0; board < boardCount; board += 1) {
+            const t = (board + 0.5) / boardCount;
+            const x = x1 + dx * t, z = z1 + dz * t;
+            planks.push({
+              x, z, y: topAt(x, z) + 0.1,
+              angle, length: length / boardCount * 0.88, width: Math.max(1.4, road.width - 0.12), height: 0.14,
+              color: plankColors[board % plankColors.length],
+            });
+          }
+        }
+      }
+      const addBridgeParts = (parts, name) => {
+        if (!parts.length) return;
+        const group = new THREE.Group();
+        for (const part of parts) {
+          const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(part.length, part.height, part.width),
+            new THREE.MeshLambertMaterial({ color: part.color }),
+          );
+          mesh.position.set(part.x, part.y, part.z);
+          mesh.rotation.y = part.angle;
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          group.add(mesh);
+        }
+        group.userData[name] = true;
+        layerGroups.paths.add(group);
+      };
+      addBridgeParts(details, 'castleBridgeStructure');
+      addBridgeParts(planks, 'castleDrawbridgeDeck');
+    }
+
+    // OSM has no explicit crossing or stop-line features in this city extract,
+    // but connected road vertices are available. Use those shared nodes to let
+    // lane dashes and curb edges breathe at real junctions without inventing
+    // zebra crossings or traffic-control markings.
+    const roadVertices = new Map();
+    const roadVertexKey = (x, z) => `${Math.round(x / 2)}:${Math.round(z / 2)}`;
+    for (const road of positionsByStyle.flat()) {
+      if (road.baseStyle > 2 || road.styleIndex > 2) continue;
+      let distance = 0;
+      for (let index = 0; index < road.points.length; index += 1) {
+        const point = road.points[index];
+        if (index) distance += Math.hypot(point[0] - road.points[index - 1][0], point[1] - road.points[index - 1][1]);
+        const key = roadVertexKey(point[0], point[1]);
+        const entries = roadVertices.get(key) || [];
+        entries.push({ road, distance });
+        roadVertices.set(key, entries);
+      }
+    }
+    for (const entries of roadVertices.values()) {
+      for (const entry of entries) {
+        const joinsAnotherAtGrade = entries.some(other => other.road !== entry.road
+          && Math.abs((other.road.verticalOffset || 0) - (entry.road.verticalOffset || 0)) < 1);
+        if (!joinsAnotherAtGrade) continue;
+        const cuts = entry.road.junctionDistances || (entry.road.junctionDistances = []);
+        if (!cuts.some(distance => Math.abs(distance - entry.distance) < 1)) cuts.push(entry.distance);
+      }
+    }
+
+    const roadPaint = { white: [], yellow: [] };
+    const curbVertices = [];
+    const curbIndices = [];
+    const paintIndices = { white: [], yellow: [] };
+    const appendRoadQuad = (targetVertices, targetIndices, road, start, end, width, extraHeight) => {
+      const dx = end[0] - start[0];
+      const dz = end[1] - start[1];
+      const length = Math.hypot(dx, dz);
+      if (length < 0.04) return;
+      const nx = -dz / length * width * 0.5;
+      const nz = dx / length * width * 0.5;
+      const corners = [
+        [start[0] + nx, start[1] + nz], [start[0] - nx, start[1] - nz],
+        [end[0] + nx, end[1] + nz], [end[0] - nx, end[1] - nz],
+      ];
+      const first = targetVertices.length / 3;
+      for (const [x, z] of corners) {
+        targetVertices.push(x, roadSurfaceHeightAt(x, z) + road.surfaceOffset + (road.verticalOffset || 0) + extraHeight, z);
+      }
+      targetIndices.push(first, first + 1, first + 2, first + 1, first + 3, first + 2);
+    };
+    const cleanLine = points => points.filter(([x, z], index, source) => (
+      Number.isFinite(x) && Number.isFinite(z)
+      && (!index || Math.hypot(x - source[index - 1][0], z - source[index - 1][1]) > 0.05)
+    ));
+    const appendDashedRoadLine = (road, points, lateralOffset, colorBucket, dashLength = 3.2, gapLength = 4.8) => {
+      const line = offsetPolyline(points, lateralOffset);
+      const cycleLength = dashLength + gapLength;
+      let travelled = 0;
+      for (let index = 0; index < line.length - 1; index += 1) {
+        const start = line[index], end = line[index + 1];
+        const length = Math.hypot(end[0] - start[0], end[1] - start[1]);
+        if (length < 0.05) continue;
+        let cursor = 0;
+        while (cursor < length - 0.001) {
+          const phase = (travelled + cursor) % cycleLength;
+          const inDash = phase < dashLength;
+          const remaining = inDash ? dashLength - phase : cycleLength - phase;
+          const step = Math.min(length - cursor, Math.max(0.025, remaining));
+          const dashCenter = travelled + cursor + step * 0.5;
+          const atJunction = road.junctionDistances?.some(distance => Math.abs(distance - dashCenter) < 4.5);
+          if (inDash && !atJunction) {
+            const amountA = cursor / length;
+            const amountB = (cursor + step) / length;
+            appendRoadQuad(
+              roadPaint[colorBucket], paintIndices[colorBucket], road,
+              [start[0] + (end[0] - start[0]) * amountA, start[1] + (end[1] - start[1]) * amountA],
+              [start[0] + (end[0] - start[0]) * amountB, start[1] + (end[1] - start[1]) * amountB],
+              0.11, 0.075,
+            );
+          }
+          cursor += step;
+        }
+        travelled += length;
+      }
+    };
+    for (const road of positionsByStyle.flat()) {
+      // Offset sidewalk records share the road layer list but intentionally
+      // have no carriageway style fields. They must not enter lane/curb paint
+      // generation, which expects a mapped vehicle-road surface offset.
+      if (!Number.isFinite(road.baseStyle) || !Number.isFinite(road.styleIndex)
+        || road.baseStyle > 2 || road.styleIndex > 2 || !road.points?.length) continue;
+      const points = cleanLine(road.points);
+      if (points.length < 2) continue;
+      const oneway = ['yes', '1', 'true', '-1'].includes(String(road.attributes?.oneway || '').toLowerCase());
+      const taggedLanes = Number.parseInt(road.attributes?.lanes, 10);
+      const laneCount = clamp(Number.isFinite(taggedLanes) && taggedLanes > 0
+        ? taggedLanes : road.width >= 8 ? 2 : 1, 1, 6);
+      if (laneCount > 1 && !oneway) appendDashedRoadLine(road, points, 0, 'yellow');
+      const laneWidth = road.width / laneCount;
+      for (let divider = 1; divider < laneCount; divider += 1) {
+        const lateralOffset = -road.width * 0.5 + laneWidth * divider;
+        if (!oneway && Math.abs(lateralOffset) < 0.35) continue;
+        appendDashedRoadLine(road, points, lateralOffset, 'white', 2.8, 5.2);
+      }
+
+      const curbOffset = Math.max(0, road.width * 0.5 - 0.09);
+      for (const side of [-1, 1]) {
+        const curbLine = offsetPolyline(points, curbOffset * side);
+        let distance = 0;
+        for (let index = 0; index < curbLine.length - 1; index += 1) {
+          const segmentLength = Math.hypot(curbLine[index + 1][0] - curbLine[index][0], curbLine[index + 1][1] - curbLine[index][1]);
+          const clearance = Math.max(4.5, road.width * 0.5 + 1.5);
+          const besideJunction = road.junctionDistances?.some(cut => (
+            Math.abs(cut - distance) < clearance || Math.abs(cut - (distance + segmentLength)) < clearance
+          ));
+          if (!besideJunction) appendRoadQuad(curbVertices, curbIndices, road, curbLine[index], curbLine[index + 1], 0.14, 0.085);
+          distance += segmentLength;
+        }
+      }
+    }
+    const addRoadDetailMesh = (vertices, indices, material, name, nearDistance, farDistance) => {
+      if (!indices.length) return null;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = name;
+      mesh.renderOrder = 6;
+      mesh.userData.detailFade = { nearDistance, farDistance, opacity: material.opacity };
+      mesh.material.transparent = true;
+      mesh.material.depthWrite = false;
+      mesh.material.polygonOffset = true;
+      mesh.material.polygonOffsetFactor = -8;
+      mesh.material.polygonOffsetUnits = -8;
+      layerGroups.roads.add(mesh);
+      return mesh;
+    };
+    addRoadDetailMesh(
+      roadPaint.white, paintIndices.white,
+      new THREE.MeshBasicMaterial({ color: 0xd5d4c5, opacity: 0.84, side: THREE.DoubleSide }),
+      'faded-white lane paint', 650, 1850,
+    );
+    addRoadDetailMesh(
+      roadPaint.yellow, paintIndices.yellow,
+      new THREE.MeshBasicMaterial({ color: 0xc7ae61, opacity: 0.88, side: THREE.DoubleSide }),
+      'faded-yellow centre lines', 650, 1850,
+    );
+    addRoadDetailMesh(
+      curbVertices, curbIndices,
+      new THREE.MeshStandardMaterial({ color: 0x777b75, roughness: 0.94, side: THREE.DoubleSide }),
+      'mapped-width curb edges', 850, 2300,
+    );
   }
 
   function makeRailways() {
-    const railPositions = [];
-    const sleeperPositions = [];
-    const gaugeHalfWidth = 0.62;
-    const sleeperHalfWidth = 1.08;
-    const sleeperSpacing = 4.8;
-    for (const record of data.railways || []) {
-      const [, points, attributes = {}] = record;
+    const ballastGroup = new THREE.Group();
+    const sleepersGroup = new THREE.Group();
+    const railsGroup = new THREE.Group();
+    const overviewRailsGroup = new THREE.Group();
+    const catenaryGroup = new THREE.Group();
+    const overheadWiresGroup = new THREE.Group();
+    ballastGroup.userData.maxDistance = 950;
+    sleepersGroup.userData.maxDistance = 1550;
+    railsGroup.userData.maxDistance = 1700;
+    overviewRailsGroup.userData.minDistance = 1700;
+    overheadWiresGroup.userData.maxDistance = 2400;
+    catenaryGroup.userData.maxDistance = 3600;
+    layerGroups.railways.add(ballastGroup, sleepersGroup, railsGroup, overviewRailsGroup, catenaryGroup, overheadWiresGroup);
+
+    const ballastCanvas = document.createElement('canvas');
+    ballastCanvas.width = ballastCanvas.height = 192;
+    const ballastContext = ballastCanvas.getContext('2d');
+    const ballastPalette = ['#77766f', '#8a8579', '#625f59', '#9a9284', '#6e716c', '#817b70'];
+    ballastContext.fillStyle = '#77746b';
+    ballastContext.fillRect(0, 0, 192, 192);
+    let ballastSeed = 29;
+    const ballastRandom = () => {
+      ballastSeed = (ballastSeed * 1664525 + 1013904223) >>> 0;
+      return ballastSeed / 4294967296;
+    };
+    for (let pebble = 0; pebble < 3200; pebble += 1) {
+      const x = ballastRandom() * 192, y = ballastRandom() * 192;
+      const rx = 0.5 + ballastRandom() * 2.3, ry = 0.5 + ballastRandom() * 1.7;
+      ballastContext.fillStyle = ballastPalette[Math.floor(ballastRandom() * ballastPalette.length)];
+      ballastContext.beginPath();
+      ballastContext.ellipse(x, y, rx, ry, ballastRandom() * Math.PI, 0, Math.PI * 2);
+      ballastContext.fill();
+    }
+    const ballastTexture = new THREE.CanvasTexture(ballastCanvas);
+    ballastTexture.wrapS = ballastTexture.wrapT = THREE.RepeatWrapping;
+    ballastTexture.colorSpace = THREE.SRGBColorSpace;
+    ballastTexture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    const ballastMaterial = new THREE.MeshStandardMaterial({
+      color: 0xe1ded4, map: ballastTexture, roughness: 1, metalness: 0,
+      side: THREE.DoubleSide,
+    });
+    const sleeperMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.94 });
+    const railMaterial = new THREE.MeshPhongMaterial({
+      color: 0xaeb5b3, specular: 0x737b7b, shininess: 72, side: THREE.DoubleSide,
+    });
+    const mastMaterial = new THREE.MeshStandardMaterial({ color: 0x596260, metalness: 0.34, roughness: 0.74 });
+    const armMaterial = new THREE.MeshStandardMaterial({ color: 0x69716e, metalness: 0.3, roughness: 0.78 });
+    const insulatorMaterial = new THREE.MeshStandardMaterial({ color: 0xb5bbb5, roughness: 0.67 });
+    const wireMaterial = new THREE.LineBasicMaterial({
+      color: 0x444c4b, transparent: true, opacity: 0.84, depthTest: true, depthWrite: false,
+    });
+    const sleeperMatrices = [];
+    const sleeperColors = [];
+    const overviewRailPositions = [];
+    const contactVertices = [];
+    const messengerVertices = [];
+    const dropperVertices = [];
+    const mastPositions = [];
+    const armPositions = [];
+    const upperArmPositions = [];
+    const braceTransforms = [];
+    const insulatorPositions = [];
+    const gaugeHalfWidth = 0.7175;
+    const ballastHalfWidth = 1.72;
+    const sleeperSpacing = 0.68;
+    const catenarySpan = 52;
+    const unitScale = new THREE.Vector3(1, 1, 1);
+    const xAxis = new THREE.Vector3(1, 0, 0);
+    const scratchPosition = new THREE.Vector3();
+    const scratchQuaternion = new THREE.Quaternion();
+    const scratchMatrix = new THREE.Matrix4();
+    const makeMetric = points => {
+      const cumulative = [0];
+      for (let index = 1; index < points.length; index += 1) {
+        cumulative.push(cumulative[index - 1] + Math.hypot(
+          points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1],
+        ));
+      }
+      return { points, cumulative, length: cumulative.at(-1) || 0 };
+    };
+    const sampleMetric = (metric, distance) => {
+      const target = clamp(distance, 0, metric.length);
+      let index = 1;
+      while (index < metric.cumulative.length - 1 && metric.cumulative[index] < target) index += 1;
+      const startDistance = metric.cumulative[index - 1];
+      const segmentLength = Math.max(metric.cumulative[index] - startDistance, 0.001);
+      const amount = clamp((target - startDistance) / segmentLength, 0, 1);
+      const start = metric.points[index - 1], end = metric.points[index];
+      return {
+        x: start[0] + (end[0] - start[0]) * amount,
+        z: start[1] + (end[1] - start[1]) * amount,
+        dx: end[0] - start[0], dz: end[1] - start[1],
+      };
+    };
+    const makeTrackGeometry = (samples, strips, textureLength) => {
+      const positions = [], uvs = [], indices = [];
+      for (const strip of strips) {
+        const startIndex = positions.length / 3;
+        for (const sample of samples) {
+          const previous = sample.previous, next = sample.next;
+          const dx = next.x - previous.x, dz = next.z - previous.z;
+          const length = Math.hypot(dx, dz) || 1;
+          const nx = -dz / length, nz = dx / length;
+          for (const side of [-1, 1]) {
+            const offset = strip.offset + side * strip.width / 2;
+            const x = sample.x + nx * offset, z = sample.z + nz * offset;
+            positions.push(x, terrainHeightAt(x, z) + sample.verticalOffset + strip.height, z);
+            uvs.push(sample.distance / textureLength, side > 0 ? 1 : 0);
+          }
+        }
+        for (let index = 1; index < samples.length; index += 1) {
+          const left = startIndex + index * 2, right = left + 1;
+          indices.push(left - 2, left - 1, left, left - 1, right, left);
+        }
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geometry.setIndex(indices);
+      geometry.computeVertexNormals();
+      return geometry;
+    };
+    const addBraceInstances = () => {
+      if (!braceTransforms.length) return;
+      const braces = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.075, 0.075), armMaterial, braceTransforms.length);
+      for (let index = 0; index < braceTransforms.length; index += 1) braces.setMatrixAt(index, braceTransforms[index].matrix);
+      braces.instanceMatrix.needsUpdate = true;
+      braces.castShadow = false;
+      braces.receiveShadow = false;
+      catenaryGroup.add(braces);
+    };
+
+    const railwayRecords = data.railways || [];
+    for (let recordIndex = 0; recordIndex < railwayRecords.length; recordIndex += 1) {
+      const [railwayType, points, attributes = {}] = railwayRecords[recordIndex];
+      if (railwayType !== 'rail' || points.length < 2) continue;
       const explicitOffset = Number(attributes.inferredVerticalOffsetM);
       const layer = clamp(Number.parseInt(attributes.layer || '0', 10) || 0, -5, 5);
       const bridge = attributes.bridge && attributes.bridge !== 'no';
@@ -1144,53 +2041,194 @@ export async function startWebGLScene(canvas, status) {
         ? explicitOffset
         : bridge ? Math.max(4.5, Math.max(layer, 1) * 3)
           : tunnel ? -Math.max(3, Math.abs(Math.min(layer, -1)) * 3) : layer * 0.35;
+      const metric = makeMetric(points);
+      if (metric.length < 1) continue;
       for (let index = 0; index < points.length - 1; index += 1) {
-        const [x1, z1] = points[index];
-        const [x2, z2] = points[index + 1];
-        const dx = x2 - x1;
-        const dz = z2 - z1;
-        const length = Math.hypot(dx, dz);
-        if (length < 0.05) continue;
-        const nx = -dz / length;
-        const nz = dx / length;
+        const start = points[index], end = points[index + 1];
+        const dx = end[0] - start[0], dz = end[1] - start[1];
+        const segmentLength = Math.hypot(dx, dz);
+        if (segmentLength < 0.05) continue;
+        const nx = -dz / segmentLength, nz = dx / segmentLength;
         for (const offset of [-gaugeHalfWidth, gaugeHalfWidth]) {
-          const railX1 = x1 + nx * offset;
-          const railZ1 = z1 + nz * offset;
-          const railX2 = x2 + nx * offset;
-          const railZ2 = z2 + nz * offset;
-          railPositions.push(
-            railX1, terrainHeightAt(railX1, railZ1) + verticalOffset + 0.20, railZ1,
-            railX2, terrainHeightAt(railX2, railZ2) + verticalOffset + 0.20, railZ2,
-          );
-        }
-        const sleeperCount = Math.floor(length / sleeperSpacing);
-        for (let sleeper = 0; sleeper <= sleeperCount; sleeper += 1) {
-          const t = sleeperCount ? sleeper / sleeperCount : 0.5;
-          const x = x1 + dx * t;
-          const z = z1 + dz * t;
-          const leftX = x - nx * sleeperHalfWidth;
-          const leftZ = z - nz * sleeperHalfWidth;
-          const rightX = x + nx * sleeperHalfWidth;
-          const rightZ = z + nz * sleeperHalfWidth;
-          sleeperPositions.push(
-            leftX, terrainHeightAt(leftX, leftZ) + verticalOffset + 0.15, leftZ,
-            rightX, terrainHeightAt(rightX, rightZ) + verticalOffset + 0.15, rightZ,
+          const x1 = start[0] + nx * offset, z1 = start[1] + nz * offset;
+          const x2 = end[0] + nx * offset, z2 = end[1] + nz * offset;
+          overviewRailPositions.push(
+            x1, terrainHeightAt(x1, z1) + verticalOffset + 0.26, z1,
+            x2, terrainHeightAt(x2, z2) + verticalOffset + 0.26, z2,
           );
         }
       }
+      const samples = [];
+      const sampleSpacing = 2.5;
+      const sampleCount = Math.max(1, Math.ceil(metric.length / sampleSpacing));
+      for (let index = 0; index <= sampleCount; index += 1) {
+        const distance = metric.length * index / sampleCount;
+        const point = sampleMetric(metric, distance);
+        const previous = sampleMetric(metric, Math.max(0, distance - 0.5));
+        const next = sampleMetric(metric, Math.min(metric.length, distance + 0.5));
+        samples.push({ ...point, distance, previous, next, verticalOffset });
+      }
+
+      const ballast = new THREE.Mesh(
+        makeTrackGeometry(samples, [{ offset: 0, width: ballastHalfWidth * 2, height: 0.025 }], 3.2),
+        ballastMaterial,
+      );
+      ballast.renderOrder = -1;
+      ballastGroup.add(ballast);
+      const railGeometry = makeTrackGeometry(samples, [
+        { offset: -gaugeHalfWidth, width: 0.115, height: 0.255 },
+        { offset: gaugeHalfWidth, width: 0.115, height: 0.255 },
+      ], 1);
+      const rails = new THREE.Mesh(railGeometry, railMaterial);
+      rails.renderOrder = 1;
+      railsGroup.add(rails);
+
+      for (let distance = sleeperSpacing * 0.5; distance < metric.length; distance += sleeperSpacing) {
+        const point = sampleMetric(metric, distance);
+        const previous = sampleMetric(metric, Math.max(0, distance - 0.35));
+        const next = sampleMetric(metric, Math.min(metric.length, distance + 0.35));
+        const dx = next.x - previous.x, dz = next.z - previous.z;
+        const tangentLength = Math.hypot(dx, dz) || 1;
+        const nx = -dz / tangentLength, nz = dx / tangentLength;
+        const edgeLeft = [point.x - nx * 1.27, point.z - nz * 1.27];
+        const edgeRight = [point.x + nx * 1.27, point.z + nz * 1.27];
+        const ground = (terrainHeightAt(...edgeLeft) + terrainHeightAt(...edgeRight)) * 0.5;
+        const quaternion = new THREE.Quaternion().setFromUnitVectors(xAxis, new THREE.Vector3(nx, 0, nz));
+        const matrix = new THREE.Matrix4().compose(
+          new THREE.Vector3(point.x, ground + verticalOffset + 0.115, point.z), quaternion, unitScale,
+        );
+        sleeperMatrices.push(matrix);
+        const grain = Math.sin(point.x * 12.9898 + point.z * 78.233 + recordIndex * 6.31) * 43758.5453;
+        const shade = grain - Math.floor(grain);
+        const palette = shade < 0.53 ? 0x625e55 : shade < 0.84 ? 0x777166 : 0x555b59;
+        sleeperColors.push(new THREE.Color(palette));
+      }
+
+      // South African Metrorail uses overhead electric traction. A regular
+      // cantilever, contact wire, messenger wire and short droppers give the
+      // corridor a readable catenary silhouette without adding fake signals.
+      const electrified = !tunnel && attributes.electrified !== 'no' && attributes.electrified !== false;
+      if (!electrified) continue;
+      const side = recordIndex % 2 ? -1 : 1;
+      for (let distance = catenarySpan * 0.5; distance < metric.length - 7; distance += catenarySpan) {
+        const point = sampleMetric(metric, distance);
+        const previous = sampleMetric(metric, Math.max(0, distance - 1));
+        const next = sampleMetric(metric, Math.min(metric.length, distance + 1));
+        const dx = next.x - previous.x, dz = next.z - previous.z;
+        const tangentLength = Math.hypot(dx, dz) || 1;
+        const nx = -dz / tangentLength, nz = dx / tangentLength;
+        const baseX = point.x + nx * side * 3.9;
+        const baseZ = point.z + nz * side * 3.9;
+        const baseY = terrainHeightAt(baseX, baseZ) + verticalOffset;
+        mastPositions.push({ x: baseX, y: baseY + 3.35, z: baseZ });
+        const armX = point.x + nx * side * 1.95;
+        const armZ = point.z + nz * side * 1.95;
+        const armAngle = Math.atan2(nz * side, -nx * side);
+        armPositions.push({ x: armX, y: baseY + 5.75, z: armZ, angle: armAngle });
+        upperArmPositions.push({ x: armX, y: baseY + 6.48, z: armZ, angle: armAngle });
+        const braceStart = [baseX, baseY + 4.55, baseZ];
+        const braceEnd = [point.x + nx * side * 0.2, baseY + 5.72, point.z + nz * side * 0.2];
+        const braceDirection = new THREE.Vector3(
+          braceEnd[0] - braceStart[0], braceEnd[1] - braceStart[1], braceEnd[2] - braceStart[2],
+        );
+        const braceLength = braceDirection.length();
+        scratchQuaternion.setFromUnitVectors(xAxis, braceDirection.normalize());
+        scratchMatrix.compose(
+          new THREE.Vector3((braceStart[0] + braceEnd[0]) * 0.5, (braceStart[1] + braceEnd[1]) * 0.5, (braceStart[2] + braceEnd[2]) * 0.5),
+          scratchQuaternion,
+          new THREE.Vector3(braceLength, 1, 1),
+        );
+        braceTransforms.push({ matrix: scratchMatrix.clone() });
+        insulatorPositions.push({ x: point.x + nx * side * 0.18, y: baseY + 5.51, z: point.z + nz * side * 0.18 });
+        insulatorPositions.push({ x: point.x + nx * side * 0.18, y: baseY + 6.32, z: point.z + nz * side * 0.18 });
+      }
+
+      const wireStep = 4.5;
+      let previousContact = null, previousMessenger = null;
+      for (let distance = 0; distance <= metric.length + wireStep * 0.25; distance += wireStep) {
+        const along = Math.min(distance, metric.length);
+        const point = sampleMetric(metric, along);
+        const phase = ((along + catenarySpan * 0.5) % catenarySpan) / catenarySpan;
+        const sag = 0.48 * phase * (1 - phase);
+        const ground = terrainHeightAt(point.x, point.z) + verticalOffset;
+        const contact = [point.x, ground + 5.4 + sag, point.z];
+        const messenger = [point.x, ground + 6.17 + sag * 0.55, point.z];
+        if (previousContact) {
+          contactVertices.push(...previousContact, ...contact);
+          messengerVertices.push(...previousMessenger, ...messenger);
+        }
+        if (Math.abs((along - 4) % 9) < wireStep * 0.5) {
+          dropperVertices.push(contact[0], contact[1], contact[2], messenger[0], messenger[1], messenger[2]);
+        }
+        previousContact = contact;
+        previousMessenger = messenger;
+        if (along >= metric.length) break;
+      }
     }
-    const addSegments = (positions, color, renderOrder) => {
+
+    if (sleeperMatrices.length) {
+      const sleepers = new THREE.InstancedMesh(new THREE.BoxGeometry(2.55, 0.19, 0.27), sleeperMaterial, sleeperMatrices.length);
+      for (let index = 0; index < sleeperMatrices.length; index += 1) {
+        sleepers.setMatrixAt(index, sleeperMatrices[index]);
+        sleepers.setColorAt(index, sleeperColors[index]);
+      }
+      sleepers.instanceMatrix.needsUpdate = true;
+      if (sleepers.instanceColor) sleepers.instanceColor.needsUpdate = true;
+      sleepers.castShadow = false;
+      sleepers.receiveShadow = false;
+      sleepers.renderOrder = 0;
+      sleepersGroup.add(sleepers);
+    }
+    if (overviewRailPositions.length) {
+      const overviewGeometry = new THREE.BufferGeometry();
+      overviewGeometry.setAttribute('position', new THREE.Float32BufferAttribute(overviewRailPositions, 3));
+      const overviewRails = new THREE.LineSegments(overviewGeometry, new THREE.LineBasicMaterial({ color: COLORS.rail }));
+      overviewRails.renderOrder = 1;
+      overviewRailsGroup.add(overviewRails);
+    }
+
+    const setInstances = (geometry, material, positions, target, makeQuaternion = null) => {
       if (!positions.length) return;
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      const lines = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color }));
-      lines.renderOrder = renderOrder;
-      layerGroups.railways.add(lines);
+      const mesh = new THREE.InstancedMesh(geometry, material, positions.length);
+      for (let index = 0; index < positions.length; index += 1) {
+        const item = positions[index];
+        scratchPosition.set(item.x, item.y, item.z);
+        if (makeQuaternion) makeQuaternion(item, scratchQuaternion);
+        else scratchQuaternion.identity();
+        scratchMatrix.compose(scratchPosition, scratchQuaternion, unitScale);
+        mesh.setMatrixAt(index, scratchMatrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      target.add(mesh);
     };
-    // Tracks sit below the road ribbons (+0.32 m), so roads correctly cover
-    // them at level crossings and overpasses.
-    addSegments(sleeperPositions, COLORS.sleeper, 0);
-    addSegments(railPositions, COLORS.rail, 1);
+    const rotationForAngle = (item, quaternion) => quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), item.angle);
+    setInstances(new THREE.CylinderGeometry(0.12, 0.17, 6.8, 8), mastMaterial, mastPositions, catenaryGroup);
+    setInstances(new THREE.BoxGeometry(4.2, 0.12, 0.13), armMaterial, armPositions, catenaryGroup, rotationForAngle);
+    setInstances(new THREE.BoxGeometry(4.2, 0.1, 0.12), armMaterial, upperArmPositions, catenaryGroup, rotationForAngle);
+    addBraceInstances();
+    if (insulatorPositions.length) {
+      const insulators = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.07, 0.09, 0.3, 6), insulatorMaterial, insulatorPositions.length);
+      for (let index = 0; index < insulatorPositions.length; index += 1) {
+        const item = insulatorPositions[index];
+        scratchMatrix.compose(new THREE.Vector3(item.x, item.y, item.z), new THREE.Quaternion(), unitScale);
+        insulators.setMatrixAt(index, scratchMatrix);
+      }
+      insulators.instanceMatrix.needsUpdate = true;
+      catenaryGroup.add(insulators);
+    }
+    const addWireSegments = (vertices, material, target, renderOrder) => {
+      if (!vertices.length) return;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+      const line = new THREE.LineSegments(geometry, material);
+      line.renderOrder = renderOrder;
+      target.add(line);
+    };
+    addWireSegments(contactVertices, wireMaterial, overheadWiresGroup, 3);
+    addWireSegments(messengerVertices, wireMaterial, overheadWiresGroup, 3);
+    addWireSegments(dropperVertices, wireMaterial, overheadWiresGroup, 3);
     return (data.railways || []).length;
   }
 
@@ -1198,26 +2236,90 @@ export async function startWebGLScene(canvas, status) {
     const canopies = canopyAsset.canopies || [];
     const positions = [];
     const uvs = [];
+    const shades = [];
+    const indices = [];
+    const vertexLookup = new Map();
     const hashHeight = (x, z, seed) => {
       const value = Math.sin(x * 12.9898 + z * 78.233 + seed * 0.000001) * 43758.5453;
       return value - Math.floor(value);
     };
-    const pushVertex = (x, y, z) => {
+    const addVertex = (x, y, z, shade) => {
+      const key = `${x.toFixed(3)}:${y.toFixed(3)}:${z.toFixed(3)}:${shade.toFixed(3)}`;
+      if (vertexLookup.has(key)) return vertexLookup.get(key);
+      const index = positions.length / 3;
+      vertexLookup.set(key, index);
       positions.push(x, y, z);
-      uvs.push(x / 18, z / 18);
+      uvs.push(x / 10, z / 10);
+      shades.push(shade, shade, shade);
+      return index;
+    };
+    const addTriangle = (a, b, c, shade) => {
+      indices.push(
+        addVertex(a.x, a.y, a.z, shade),
+        addVertex(b.x, b.y, b.z, shade),
+        addVertex(c.x, c.y, c.z, shade),
+      );
+    };
+    const smoothRing = (ring, iterations) => {
+      let points = ring;
+      for (let iteration = 0; iteration < iterations; iteration += 1) {
+        const smoothed = [];
+        for (let index = 0; index < points.length; index += 1) {
+          const current = points[index];
+          const next = points[(index + 1) % points.length];
+          smoothed.push(
+            new THREE.Vector2(current.x * 0.75 + next.x * 0.25, current.y * 0.75 + next.y * 0.25),
+            new THREE.Vector2(current.x * 0.25 + next.x * 0.75, current.y * 0.25 + next.y * 0.75),
+          );
+        }
+        points = smoothed;
+      }
+      return points;
     };
     for (const [, , crownBase, crownTop, seed, sourceRings] of canopies) {
-      const rings = sourceRings.map(ring => ring.map(([x, z]) => new THREE.Vector2(x, z)));
+      const shade = 0.86 + hashHeight(0, 0, seed) * 0.28;
+      const rings = sourceRings.map(sourceRing => {
+        const ring = sourceRing.map(([x, z]) => new THREE.Vector2(x, z));
+        return smoothRing(ring, ring.length > 128 ? 1 : 2);
+      });
       const contour = rings[0] || [];
       const holes = rings.slice(1);
       if (contour.length < 3) continue;
       const vertices = contour.concat(...holes);
-      const topY = point => crownTop - (0.25 + hashHeight(point.x, point.y, seed) * 0.75);
+      const canopyHeight = Math.max(0.6, crownTop - crownBase);
+      let centerX = 0;
+      let centerZ = 0;
+      for (const point of contour) {
+        centerX += point.x;
+        centerZ += point.y;
+      }
+      centerX /= contour.length;
+      centerZ /= contour.length;
+      const canopyRadius = Math.max(0.7, ...contour.map(point => Math.hypot(point.x - centerX, point.y - centerZ)));
+      const topY = point => {
+        const edgeDistance = Math.max(0, canopyRadius - Math.hypot(point.x - centerX, point.y - centerZ));
+        const ratio = clamp(edgeDistance / (canopyRadius * 0.84), 0, 1);
+        const dome = ratio * ratio * (3 - 2 * ratio);
+        const leafClump = (hashHeight(point.x, point.y, seed + 23) - 0.5) * 0.12;
+        return crownBase + canopyHeight * (0.52 + dome * 0.48 + leafClump);
+      };
       for (const face of THREE.ShapeUtils.triangulateShape(contour, holes)) {
-        for (const index of face) {
-          const point = vertices[index];
-          pushVertex(point.x, topY(point), point.y);
-        }
+        const [sourceA, sourceB, sourceC] = face.map(index => vertices[index]);
+        const toSurfacePoint = point => ({ x: point.x, y: topY(point), z: point.y, groundZ: point.y });
+        const a = toSurfacePoint(sourceA);
+        const b = toSurfacePoint(sourceB);
+        const c = toSurfacePoint(sourceC);
+        const midpoint = (first, second) => {
+          const point = { x: (first.x + second.x) * 0.5, y: (first.groundZ + second.groundZ) * 0.5 };
+          return toSurfacePoint(point);
+        };
+        const ab = midpoint(a, b);
+        const bc = midpoint(b, c);
+        const ca = midpoint(c, a);
+        addTriangle(a, ab, ca, shade);
+        addTriangle(ab, b, bc, shade);
+        addTriangle(ca, bc, c, shade);
+        addTriangle(ab, bc, ca, shade);
       }
       for (const ring of rings) {
         for (let index = 0; index < ring.length; index += 1) {
@@ -1225,49 +2327,109 @@ export async function startWebGLScene(canvas, status) {
           const a = ring[index], b = ring[next];
           const lowerA = crownBase + hashHeight(a.x, a.y, seed + 11) * 0.45;
           const lowerB = crownBase + hashHeight(b.x, b.y, seed + 11) * 0.45;
-          pushVertex(a.x, topY(a), a.y);
-          pushVertex(b.x, topY(b), b.y);
-          pushVertex(b.x, lowerB, b.y);
-          pushVertex(a.x, topY(a), a.y);
-          pushVertex(b.x, lowerB, b.y);
-          pushVertex(a.x, lowerA, a.y);
+          const topA = { x: a.x, y: topY(a), z: a.y };
+          const topB = { x: b.x, y: topY(b), z: b.y };
+          const bottomA = { x: a.x, y: lowerA, z: a.y };
+          const bottomB = { x: b.x, y: lowerB, z: b.y };
+          addTriangle(topA, topB, bottomB, shade);
+          addTriangle(topA, bottomB, bottomA, shade);
         }
       }
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3));
+    geometry.setIndex(indices);
     geometry.computeVertexNormals();
-    const patternCanvas = document.createElement('canvas');
-    patternCanvas.width = 64;
-    patternCanvas.height = 64;
-    const patternContext = patternCanvas.getContext('2d');
-    const image = patternContext.createImageData(64, 64);
-    for (let index = 0; index < 64 * 64; index += 1) {
-      const x = index % 64, y = Math.floor(index / 64);
-      const noise = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-      const alpha = noise - Math.floor(noise) > 0.22 ? 255 : 0;
-      image.data[index * 4] = image.data[index * 4 + 1] = image.data[index * 4 + 2] = alpha;
-      image.data[index * 4 + 3] = 255;
+    const textureSize = 512;
+    const foliageCanvas = document.createElement('canvas');
+    foliageCanvas.width = foliageCanvas.height = textureSize;
+    const foliageContext = foliageCanvas.getContext('2d');
+    const palette = ['#285a34', '#326d39', '#3d7b3f', '#4b8845', '#5c934a', '#719f52'];
+    let randomState = 0x5ca5e;
+    const random = () => {
+      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
+      return randomState / 4294967296;
+    };
+    const drawWrapped = (x, y, margin, draw) => {
+      const offsetsX = x < margin ? [0, textureSize] : x > textureSize - margin ? [0, -textureSize] : [0];
+      const offsetsY = y < margin ? [0, textureSize] : y > textureSize - margin ? [0, -textureSize] : [0];
+      for (const offsetX of offsetsX) for (const offsetY of offsetsY) draw(x + offsetX, y + offsetY);
+    };
+    foliageContext.fillStyle = '#2c6136';
+    foliageContext.fillRect(0, 0, textureSize, textureSize);
+    for (let index = 0; index < 115; index += 1) {
+      const x = random() * textureSize;
+      const y = random() * textureSize;
+      const radius = 14 + random() * 44;
+      const color = palette[Math.floor(random() * palette.length)];
+      drawWrapped(x, y, radius, (wrappedX, wrappedY) => {
+        const gradient = foliageContext.createRadialGradient(wrappedX, wrappedY, 0, wrappedX, wrappedY, radius);
+        gradient.addColorStop(0, `${color}b8`);
+        gradient.addColorStop(1, `${color}00`);
+        foliageContext.fillStyle = gradient;
+        foliageContext.beginPath();
+        foliageContext.arc(wrappedX, wrappedY, radius, 0, Math.PI * 2);
+        foliageContext.fill();
+      });
     }
-    patternContext.putImageData(image, 0, 0);
-    const alphaMap = new THREE.CanvasTexture(patternCanvas);
-    alphaMap.wrapS = alphaMap.wrapT = THREE.RepeatWrapping;
-    const crownMaterial = new THREE.MeshLambertMaterial({
-      color: 0x4c8a5d,
-      alphaMap,
-      alphaTest: 0.35,
+    for (let index = 0; index < 1900; index += 1) {
+      const x = random() * textureSize;
+      const y = random() * textureSize;
+      const length = 4 + random() * 10;
+      const width = 1.2 + random() * 2.1;
+      const rotation = random() * Math.PI;
+      const color = palette[Math.floor(random() * palette.length)];
+      drawWrapped(x, y, length, (wrappedX, wrappedY) => {
+        foliageContext.save();
+        foliageContext.translate(wrappedX, wrappedY);
+        foliageContext.rotate(rotation);
+        foliageContext.fillStyle = color;
+        foliageContext.beginPath();
+        foliageContext.ellipse(0, 0, length * 0.5, width * 0.5, 0, 0, Math.PI * 2);
+        foliageContext.fill();
+        foliageContext.strokeStyle = 'rgba(177, 198, 112, 0.42)';
+        foliageContext.lineWidth = 0.55;
+        foliageContext.beginPath();
+        foliageContext.moveTo(-length * 0.34, 0);
+        foliageContext.lineTo(length * 0.34, 0);
+        foliageContext.stroke();
+        foliageContext.restore();
+      });
+    }
+    const foliagePixels = foliageContext.getImageData(0, 0, textureSize, textureSize);
+    const bumpCanvas = document.createElement('canvas');
+    bumpCanvas.width = bumpCanvas.height = textureSize;
+    const bumpContext = bumpCanvas.getContext('2d');
+    const bumpPixels = bumpContext.createImageData(textureSize, textureSize);
+    for (let index = 0; index < foliagePixels.data.length; index += 4) {
+      const luminance = foliagePixels.data[index] * 0.25 + foliagePixels.data[index + 1] * 0.65 + foliagePixels.data[index + 2] * 0.10;
+      const height = Math.min(255, Math.max(0, luminance * 0.78 + random() * 38));
+      bumpPixels.data[index] = bumpPixels.data[index + 1] = bumpPixels.data[index + 2] = height;
+      bumpPixels.data[index + 3] = 255;
+    }
+    bumpContext.putImageData(bumpPixels, 0, 0);
+    const foliageMap = new THREE.CanvasTexture(foliageCanvas);
+    foliageMap.wrapS = foliageMap.wrapT = THREE.RepeatWrapping;
+    foliageMap.colorSpace = THREE.SRGBColorSpace;
+    foliageMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    const foliageBump = new THREE.CanvasTexture(bumpCanvas);
+    foliageBump.wrapS = foliageBump.wrapT = THREE.RepeatWrapping;
+    foliageBump.colorSpace = THREE.NoColorSpace;
+    foliageBump.anisotropy = foliageMap.anisotropy;
+    const crownMaterial = new THREE.MeshStandardMaterial({
+      color: 0xf4fff0,
+      map: foliageMap,
+      bumpMap: foliageBump,
+      bumpScale: 0.11,
+      roughness: 0.98,
+      vertexColors: true,
       side: THREE.DoubleSide,
     });
     const crowns = new THREE.Mesh(geometry, crownMaterial);
     crowns.castShadow = true;
     crowns.receiveShadow = true;
-    crowns.customDepthMaterial = new THREE.MeshDepthMaterial({
-      depthPacking: THREE.RGBADepthPacking,
-      alphaMap,
-      alphaTest: 0.35,
-      side: THREE.DoubleSide,
-    });
 
     const trunkGeometry = new THREE.CylinderGeometry(0.22, 0.3, 1, 5);
     const trunks = new THREE.InstancedMesh(trunkGeometry, new THREE.MeshLambertMaterial({ color: 0x6b4d35 }), data.trees.length);
@@ -1283,6 +2445,7 @@ export async function startWebGLScene(canvas, status) {
     trunks.instanceMatrix.needsUpdate = true;
     trunks.castShadow = true;
     layerGroups.trees.add(trunks, crowns);
+
     return canopies.length;
   }
 
@@ -1297,9 +2460,10 @@ export async function startWebGLScene(canvas, status) {
       mesh.castShadow = !['parkingSpace', 'pedestrianCrossing'].includes(semanticClass);
       mesh.receiveShadow = true;
       mesh.userData.semanticClass = semanticClass;
-      mesh.userData.maxDistance = ['parkingSpace', 'pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)
+      mesh.userData.maxDistance = ['parkingSpace', 'pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands', 'publicLightPool'].includes(semanticClass)
         ? 720
-        : semanticClass.startsWith('publicLight') ? 1000
+        : semanticClass === 'publicLightGlow' ? 2200
+          : semanticClass.startsWith('publicLight') ? 2400
           : ['fountain', 'bench', 'wasteBasket', 'bicycleParking', 'streetClock', 'bollard', 'busStop'].some(value => semanticClass.startsWith(value)) ? 850 : null;
       if (semanticClass === 'parkingSpace') mesh.renderOrder = 6;
       if (['pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)) mesh.renderOrder = 8;
@@ -1320,7 +2484,7 @@ export async function startWebGLScene(canvas, status) {
     // support rather than pole height. These conservative values are inferred
     // from support type and wattage and remain tagged as inferred, not survey.
     const publicLights = (data.cityFurniture || []).filter(item => item.class === 'publicLight' && item.coordinates);
-    const poleMatrices = [], armMatrices = [], headMatrices = [], lampMatrices = [], lampGlowPositions = [];
+    const poleMatrices = [], armMatrices = [], headMatrices = [], lampMatrices = [], lampGlowPositions = [], lampPoolMatrices = [];
     for (const item of publicLights) {
       const [x, z] = item.coordinates;
       const baseY = terrainHeightAt(x, z) + 0.18;
@@ -1361,14 +2525,58 @@ export async function startWebGLScene(canvas, status) {
         const bulbPosition = lampPosition.clone().add(new THREE.Vector3(0, -0.16, 0));
         lampMatrices.push(composeMatrix(bulbPosition, headQuaternion));
         lampGlowPositions.push(bulbPosition);
+
+        // A soft, low-profile road wash follows the direction the fixture
+        // faces. This single instanced pass gives the same readable night cue
+        // as a light map without creating thousands of expensive PointLights.
+        const roadWidth = clamp(Number(item.attributes?.roadWidthM) || 8, 5, 18);
+        const poolCenter = new THREE.Vector3(x, terrainHeightAt(x, z) + 0.52, z)
+          .add(outward.clone().multiplyScalar(Math.max(3.2, roadWidth * 0.35)));
+        const groundOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+        const roadOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), direction);
+        const poolOrientation = roadOrientation.multiply(groundOrientation);
+        lampPoolMatrices.push(composeMatrix(
+          poolCenter,
+          poolOrientation,
+          new THREE.Vector3(clamp(roadWidth * 0.72, 4.5, 11), clamp(roadWidth * 1.05, 8, 17), 1),
+        ));
       }
     }
     const galvanized = new THREE.MeshLambertMaterial({ color: 0x8c9698 });
     makeInstances(new THREE.CylinderGeometry(0.065, 0.14, 1, 8), galvanized, poleMatrices, 'publicLightPole');
     makeInstances(new THREE.CylinderGeometry(0.045, 0.055, 1, 7), galvanized, armMatrices, 'publicLightArm');
     makeInstances(new THREE.SphereGeometry(0.5, 10, 6), new THREE.MeshLambertMaterial({ color: 0x596164 }), headMatrices, 'publicLightFixture');
-    nightLighting.streetBulbMaterial = new THREE.MeshBasicMaterial({ color: 0xd8c9a8 });
+    nightLighting.streetBulbMaterial = new THREE.MeshBasicMaterial({ color: 0x393b37 });
     makeInstances(new THREE.SphereGeometry(0.09, 8, 6), nightLighting.streetBulbMaterial, lampMatrices, 'publicLightLamp');
+
+    if (lampPoolMatrices.length) {
+      const poolCanvas = document.createElement('canvas');
+      poolCanvas.width = poolCanvas.height = 128;
+      const poolContext = poolCanvas.getContext('2d');
+      const poolGradient = poolContext.createRadialGradient(64, 64, 2, 64, 64, 64);
+      poolGradient.addColorStop(0, 'rgba(255, 214, 151, 0.32)');
+      poolGradient.addColorStop(0.34, 'rgba(255, 183, 103, 0.18)');
+      poolGradient.addColorStop(1, 'rgba(255, 157, 74, 0)');
+      poolContext.fillStyle = poolGradient;
+      poolContext.fillRect(0, 0, 128, 128);
+      const poolTexture = new THREE.CanvasTexture(poolCanvas);
+      poolTexture.colorSpace = THREE.SRGBColorSpace;
+      nightLighting.streetPoolMaterial = new THREE.MeshBasicMaterial({
+        map: poolTexture, color: 0xffd69b, transparent: true, opacity: 0,
+        depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+        toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+      });
+      const pools = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), nightLighting.streetPoolMaterial, lampPoolMatrices.length);
+      lampPoolMatrices.forEach((instanceMatrix, index) => pools.setMatrixAt(index, instanceMatrix));
+      pools.instanceMatrix.needsUpdate = true;
+      pools.receiveShadow = false;
+      pools.castShadow = false;
+      pools.renderOrder = 5;
+      pools.userData.semanticClass = 'publicLightPool';
+      pools.userData.maxDistance = 720;
+      group.add(pools);
+      nightLighting.streetPool = pools;
+    }
 
     if (lampGlowPositions.length) {
       const glowCanvas = document.createElement('canvas');
@@ -1381,13 +2589,15 @@ export async function startWebGLScene(canvas, status) {
       glowContext.fillStyle = gradient;
       glowContext.fillRect(0, 0, 64, 64);
       const glowGeometry = new THREE.BufferGeometry().setFromPoints(lampGlowPositions);
+      const glowTexture = new THREE.CanvasTexture(glowCanvas);
+      glowTexture.colorSpace = THREE.SRGBColorSpace;
       const glowMaterial = new THREE.PointsMaterial({
-        map: new THREE.CanvasTexture(glowCanvas), color: 0xffd28a, size: 1.55,
+        map: glowTexture, color: 0xffd28a, size: 2.8,
         transparent: true, opacity: 0, depthWrite: false,
         blending: THREE.AdditiveBlending, sizeAttenuation: true,
       });
       const glow = new THREE.Points(glowGeometry, glowMaterial);
-      glow.userData = { semanticClass: 'publicLightGlow', maxDistance: 1000 };
+      glow.userData = { semanticClass: 'publicLightGlow', maxDistance: 2200 };
       glow.renderOrder = 9;
       group.add(glow);
       nightLighting.streetGlow = glow;
@@ -2048,11 +3258,11 @@ export async function startWebGLScene(canvas, status) {
   const buildingAppearance = document.querySelector('#building-appearance');
   function setBuildingAppearance(mode) {
     const coloured = mode === 'elevation';
-    for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
+    for (const mesh of [buildingMeshes.walls]) {
       const values = coloured ? mesh.geometry.userData.elevationColors : mesh.geometry.userData.appearanceColors;
       if (values) mesh.geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
       mesh.material.vertexColors = Boolean(values);
-      mesh.material.color.setHex(values ? 0xffffff : (mesh === buildingMeshes.walls ? COLORS.wall : COLORS.roof));
+      mesh.material.color.setHex(values ? 0xffffff : COLORS.wall);
       mesh.material.needsUpdate = true;
     }
     requestRender();
@@ -2773,7 +3983,7 @@ export async function startWebGLScene(canvas, status) {
 
   function requestRender() {
     renderRequested = true;
-    if (!animationFrame) animationFrame = requestAnimationFrame(render);
+    if (sceneReadyToRender && !animationFrame) animationFrame = requestAnimationFrame(render);
   }
 
   function updateMapHud() {
@@ -2802,6 +4012,9 @@ export async function startWebGLScene(canvas, status) {
       cameraState.target.z + Math.sin(cameraState.azimuth) * horizontal,
     );
     camera.lookAt(cameraState.target);
+    const atmosphereScale = Math.max(1, cameraState.distance / 1600);
+    scene.fog.near = 1900 * atmosphereScale;
+    scene.fog.far = 4600 * atmosphereScale;
     updateMapHud();
     // Fine street markings and furniture disappear at district scale. Apart
     // from reducing clutter this avoids spending GPU time on details smaller
@@ -2809,6 +4022,24 @@ export async function startWebGLScene(canvas, status) {
     for (const object of layerGroups.cityFurniture.children) {
       const maxDistance = Number(object.userData?.maxDistance);
       if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance;
+    }
+    for (const object of layerGroups.railways.children) {
+      const minDistance = Number(object.userData?.minDistance) || 0;
+      const maxDistance = Number(object.userData?.maxDistance) || 0;
+      if (minDistance > 0 || maxDistance > 0) {
+        object.visible = (minDistance <= 0 || cameraState.distance >= minDistance)
+          && (maxDistance <= 0 || cameraState.distance <= maxDistance);
+      }
+    }
+    for (const group of [layerGroups.roads, layerGroups.paths]) {
+      for (const object of group.children) {
+        const fade = object.userData?.detailFade;
+        if (!fade || !object.material) continue;
+        const amount = clamp((cameraState.distance - fade.nearDistance) / (fade.farDistance - fade.nearDistance), 0, 1);
+        const visibility = 1 - amount;
+        object.visible = visibility > 0.005;
+        object.material.opacity = fade.opacity * visibility;
+      }
     }
     requestRender();
   }
@@ -2823,6 +4054,17 @@ export async function startWebGLScene(canvas, status) {
     camera.aspect = width / Math.max(height, 1);
     camera.updateProjectionMatrix();
     updateMapHud();
+  }
+
+  function resizePostProcessing() {
+    renderer.getDrawingBufferSize(postSize);
+    const width = Math.max(1, Math.round(postSize.x));
+    const height = Math.max(1, Math.round(postSize.y));
+    if (postTarget.width !== width || postTarget.height !== height) postTarget.setSize(width, height);
+    postMaterial.uniforms.resolution.value.set(width, height);
+    postMaterial.uniforms.inverseProjection.value.copy(camera.projectionMatrixInverse);
+    postMaterial.uniforms.focalPixels.value = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)));
+    postMaterial.uniforms.aoStrength.value = 0.22 + (1 - clamp(cameraState.distance / 6000, 0, 1)) * 0.20;
   }
 
   function fitScene() {
@@ -2880,8 +4122,36 @@ export async function startWebGLScene(canvas, status) {
     };
   }
 
+  function updateStreetLighting(sun) {
+    // Public lights switch on through civil twilight and reach full output
+    // after sunset. Solar altitude keeps this tied to both the chosen date
+    // and the time slider instead of using a fixed clock threshold.
+    const lowerTwilight = THREE.MathUtils.degToRad(-7);
+    const upperTwilight = THREE.MathUtils.degToRad(5);
+    const progress = clamp((sun.altitude - lowerTwilight) / (upperTwilight - lowerTwilight), 0, 1);
+    const eased = progress * progress * (3 - 2 * progress);
+    const nightLevel = 1 - eased;
+    if (nightLighting.streetBulbMaterial) {
+      const dayBulb = new THREE.Color(0x393b37);
+      const litBulb = new THREE.Color(0xffc56d);
+      nightLighting.streetBulbMaterial.color.copy(dayBulb).lerp(litBulb, nightLevel);
+    }
+    if (nightLighting.streetGlow) nightLighting.streetGlow.material.opacity = nightLevel * 0.88;
+    if (nightLighting.streetPoolMaterial) nightLighting.streetPoolMaterial.opacity = nightLevel * 0.78;
+    if (nightLighting.festoonBulbMaterial) {
+      const dayBulb = new THREE.Color(0x4a453b);
+      const litBulb = new THREE.Color(0xffce78);
+      nightLighting.festoonBulbMaterial.color.copy(dayBulb).lerp(litBulb, nightLevel);
+    }
+    if (nightLighting.festoonGlow) nightLighting.festoonGlow.material.opacity = nightLevel * 0.78;
+    for (const light of nightLighting.festoonPointLights) light.intensity = nightLevel * 1.35;
+    requestRender();
+  }
+
   function updateSunStatus(message = null) {
     const sun = sunPosition();
+    updateStreetLighting(sun);
+    updateWeatherSky(skyWeather, sun);
     const hours = String(Math.floor(shadowState.minutes / 60)).padStart(2, '0');
     const minutes = String(shadowState.minutes % 60).padStart(2, '0');
     if (sunTimeValue) sunTimeValue.textContent = `${hours}:${minutes}`;
@@ -2911,9 +4181,17 @@ export async function startWebGLScene(canvas, status) {
         sunPositionGlow.setAttribute('cy', y.toFixed(1));
       }
     }
-    if (sunPositionCaption) sunPositionCaption.textContent = altitudeDegrees > 0
-      ? `${Math.round(altitudeDegrees)}° high · ${sun.vector.x < -0.15 ? 'east' : sun.vector.x > 0.15 ? 'west' : 'north'} sky`
-      : 'Below the horizon';
+    if (sunPositionCaption) {
+      if (altitudeDegrees > 0) {
+        sunPositionCaption.textContent = `${Math.round(altitudeDegrees)}° high · ${sun.vector.x < -0.15 ? 'east' : sun.vector.x > 0.15 ? 'west' : 'north'} sky`;
+      } else {
+        const lunarDate = new Date(`${shadowState.date}T12:00:00+02:00`);
+        const ageDays = (lunarDate.getTime() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
+        const phase = ((ageDays / 29.530588853) % 1 + 1) % 1;
+        const illumination = Math.round((0.5 - 0.5 * Math.cos(phase * Math.PI * 2)) * 100);
+        sunPositionCaption.textContent = `Moon · ${illumination}% illuminated`;
+      }
+    }
   }
 
   function fitSunShadowCamera(target) {
@@ -2972,17 +4250,18 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function setSunMaterials(enabled) {
-    // Hiding the light removes its last depth texture from normal/heat/wind
-    // modes. While sunlight mode is active, camera movement can safely reuse it.
-    sunLight.visible = enabled && shadowState.generated;
-    shadowCatcher.visible = enabled && shadowState.generated;
-    ambient.intensity = enabled ? 0.5 : 1.65;
+    // Keep the sun-hours city neutral white too, but reserve the direct light
+    // and shadow map for the instantaneous shadow study.
+    const directShadowStudy = enabled && shadowState.mode === 'shadows';
+    sunLight.visible = directShadowStudy && shadowState.generated;
+    shadowCatcher.visible = directShadowStudy && shadowState.generated;
+    ambient.intensity = directShadowStudy ? 0.5 : 1.65;
     terrainMesh.material.color.setHex(enabled ? terrainMesh.userData.sunColor : terrainMesh.userData.normalColor);
     // The single, non-indexed façade mesh is a receiver and caster for the
     // entire CBD. Receiving its own low-resolution city-wide shadow map creates
     // repeated self-shadow acne across otherwise flat walls. Keep wall faces
     // lit by the sun direction and keep casting shadows onto terrain/roofs.
-    if (buildingMeshes.walls) buildingMeshes.walls.receiveShadow = !enabled;
+    if (buildingMeshes.walls) buildingMeshes.walls.receiveShadow = !directShadowStudy;
     for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
       mesh.material = enabled ? mesh.userData.sunMaterial : mesh.userData.normalMaterial;
     }
@@ -4406,6 +5685,7 @@ export async function startWebGLScene(canvas, status) {
     if (mode === 'hours' && sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
     if (mode === 'shadows' && sunDate) sunDate.value = shadowState.date;
     shadowState.mode = mode;
+    updateWeatherSky(skyWeather, sunPosition());
     const cumulative = mode === 'hours';
     for (const button of sunModeButtons) {
       const active = button.dataset.sunMode === mode;
@@ -4435,7 +5715,7 @@ export async function startWebGLScene(canvas, status) {
     heatGroup.visible = false;
     setBuildingAnalysisSkin(false);
     shadowState.generated = false;
-    setSunMaterials(false);
+    setSunMaterials(shadowState.enabled);
     sunStatus.textContent = cumulative
       ? 'Move the analysis area if needed, then calculate cumulative direct sunlight.'
       : 'Showing direct shadows for the selected Cape Town date and time.';
@@ -10680,6 +11960,7 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-current-weather', event => {
     const weather = event.detail || {};
+    updateWeatherSky(weather);
     const valid = new Date(weather.valid_at);
     if (!Number.isNaN(valid.getTime())) {
       shadowState.date = valid.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
@@ -10719,12 +12000,36 @@ export async function startWebGLScene(canvas, status) {
     windStatus.textContent = `Current 10 m forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
     requestRender();
   });
+  addEventListener('climate-weather-sky', event => {
+    const weather = event.detail || {};
+    if (!skyWeather && weather.valid_at) {
+      const valid = new Date(weather.valid_at);
+      if (!Number.isNaN(valid.getTime())) {
+        shadowState.date = valid.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+        const parts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(valid);
+        const hour = Number(parts.find(part => part.type === 'hour')?.value || 12);
+        const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+        shadowState.minutes = Math.round((hour * 60 + minute) / 10) * 10;
+        if (sunDate) sunDate.value = shadowState.date;
+        if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
+        if (sunTime) sunTime.value = String(shadowState.minutes);
+      }
+    }
+    updateWeatherSky(weather, sunPosition());
+    updateSunStatus();
+    requestRender();
+  });
 
   function render(now = performance.now()) {
     animationFrame = 0;
     if (document.hidden) return;
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     resize();
+    resizePostProcessing();
+    skySphere.visible = shadowState.enabled && shadowState.mode === 'shadows';
+    skySphere.position.copy(camera.position);
     updateWindParticles(now);
     updatePollutionVisuals(now);
     updateTrafficCars(now);
@@ -10746,7 +12051,12 @@ export async function startWebGLScene(canvas, status) {
         }
       }
     }
+    renderer.setRenderTarget(postTarget);
+    renderer.clear();
     renderer.render(scene, camera);
+    renderer.setRenderTarget(null);
+    renderer.clear();
+    renderer.render(postScene, postCamera);
     renderRequested = false;
     if ((!reducedMotion || pollutionState.playing) && ((windState.enabled && windState.field && windPoints?.visible)
       || (windState.enabled && pollutionState.playing)
@@ -10822,6 +12132,7 @@ export async function startWebGLScene(canvas, status) {
     return transportLoading;
   }
   if (document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport') await ensureTransportLayer();
+  sceneReadyToRender = true;
   requestRender();
 
   window.__trafficDebug = {

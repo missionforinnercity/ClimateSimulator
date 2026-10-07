@@ -158,12 +158,11 @@ export async function createTransportLayer({
   if (!response.ok) throw new Error(`Transport asset HTTP ${response.status}`);
   const data = await response.json();
   const group = new THREE.Group();
-  const trackGroup = new THREE.Group();
   const routeGroup = new THREE.Group();
   const stopGroup = new THREE.Group();
   const vehicleGroup = new THREE.Group();
   const eventGroup = new THREE.Group();
-  group.add(trackGroup, routeGroup, stopGroup, eventGroup, vehicleGroup);
+  group.add(routeGroup, stopGroup, eventGroup, vehicleGroup);
   scene.add(group);
   group.visible = false;
 
@@ -385,14 +384,47 @@ export async function createTransportLayer({
       }
     }
     if (points.length) draped.push(points.at(-1));
+    // The terrain mask has isolated holes inside the modelled footprint. A
+    // track should bridge those short gaps, but it must stop where the city
+    // surface genuinely ends. Keep track of clipped ends so those edges can
+    // taper away instead of terminating as blunt rectangles.
     const runs = [];
-    let run = [];
-    for (const point of draped) {
-      if (terrainValidAt(...point)) run.push(point);
-      else if (run.length) { if (run.length > 1) runs.push(run); run = []; }
+    let runStart = -1, lastValid = -1, gapStart = -1;
+    const maxBridgedSamples = 3; // at most 12 m at the 4 m sample spacing
+    const finishRun = clippedEnd => {
+      if (runStart >= 0 && lastValid - runStart > 0) {
+        runs.push({ points: draped.slice(runStart, lastValid + 1), clippedStart: runStart > 0, clippedEnd });
+      }
+      runStart = -1;
+      lastValid = -1;
+      gapStart = -1;
+    };
+    for (let index = 0; index < draped.length; index += 1) {
+      if (terrainValidAt(...draped[index])) {
+        if (runStart < 0) runStart = index;
+        else if (gapStart >= 0 && index - gapStart > maxBridgedSamples) {
+          finishRun(true);
+          runStart = index;
+        }
+        lastValid = index;
+        gapStart = -1;
+      } else if (runStart >= 0 && gapStart < 0) gapStart = index;
     }
-    if (run.length > 1) runs.push(run);
-    for (const visible of runs) {
+    if (runStart >= 0) finishRun(lastValid < draped.length - 1);
+    for (const run of runs) {
+      const visible = run.points;
+      const cumulative = [0];
+      for (let index = 1; index < visible.length; index += 1) {
+        cumulative.push(cumulative[index - 1] + Math.hypot(
+          visible[index][0] - visible[index - 1][0], visible[index][1] - visible[index - 1][1],
+        ));
+      }
+      const runLength = cumulative.at(-1) || 0;
+      const taperLength = Math.min(20, runLength * 0.42);
+      const smoothstep = value => {
+        const t = clamp(value, 0, 1);
+        return t * t * (3 - 2 * t);
+      };
       const vertices = [], indices = [];
       for (let index = 0; index < visible.length; index += 1) {
         const [x, z] = visible[index];
@@ -400,9 +432,12 @@ export async function createTransportLayer({
         const dx = next[0] - previous[0], dz = next[1] - previous[1];
         const length = Math.hypot(dx, dz) || 1;
         const normalX = -dz / length, normalZ = dx / length;
+        const distanceToStart = run.clippedStart ? smoothstep(cumulative[index] / taperLength) : 1;
+        const distanceToEnd = run.clippedEnd ? smoothstep((runLength - cumulative[index]) / taperLength) : 1;
+        const halfWidth = width * Math.min(distanceToStart, distanceToEnd) / 2;
         vertices.push(
-          x + normalX * (lateralOffset + width / 2), terrainHeightAt(x + normalX * (lateralOffset + width / 2), z + normalZ * (lateralOffset + width / 2)) + elevation, z + normalZ * (lateralOffset + width / 2),
-          x + normalX * (lateralOffset - width / 2), terrainHeightAt(x + normalX * (lateralOffset - width / 2), z + normalZ * (lateralOffset - width / 2)) + elevation, z + normalZ * (lateralOffset - width / 2),
+          x + normalX * (lateralOffset + halfWidth), terrainHeightAt(x + normalX * (lateralOffset + halfWidth), z + normalZ * (lateralOffset + halfWidth)) + elevation, z + normalZ * (lateralOffset + halfWidth),
+          x + normalX * (lateralOffset - halfWidth), terrainHeightAt(x + normalX * (lateralOffset - halfWidth), z + normalZ * (lateralOffset - halfWidth)) + elevation, z + normalZ * (lateralOffset - halfWidth),
         );
         if (index) {
           const left = index * 2, right = left + 1, previousLeft = left - 2, previousRight = left - 1;
@@ -419,7 +454,7 @@ export async function createTransportLayer({
         // Buildings still occlude routes, while coplanar roads cannot erase them.
         polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
       }));
-      mesh.renderOrder = target === trackGroup ? 18 : 20;
+      mesh.renderOrder = 20;
       target.add(mesh);
     }
   }
@@ -455,13 +490,51 @@ export async function createTransportLayer({
   const markerMaterial = (color, emissive) => new THREE.MeshPhongMaterial({
     color, emissive, depthTest: false, depthWrite: false,
   });
-  const stopMarkerGeometry = new THREE.CylinderGeometry(7, 7, 1.6, 16);
   const stationMarkerGeometry = new THREE.CylinderGeometry(14, 14, 2.0, 24);
-  const stopPostGeometry = new THREE.CylinderGeometry(1.1, 1.1, 16, 8);
+  const stopPostGeometry = new THREE.CylinderGeometry(0.45, 0.62, 5.4, 8);
   const stationPostGeometry = new THREE.CylinderGeometry(1.8, 1.8, 22, 8);
+  const makeBusSignMaterial = color => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const context = canvas.getContext('2d');
+    context.fillStyle = color;
+    context.beginPath();
+    context.roundRect(9, 9, 110, 110, 24);
+    context.fill();
+    context.strokeStyle = '#f8fbfc';
+    context.lineWidth = 7;
+    context.stroke();
+    // A compact front-on bus pictogram stays legible at map scale.
+    context.fillStyle = '#ffffff';
+    context.beginPath();
+    context.roundRect(36, 25, 56, 63, 11);
+    context.fill();
+    context.fillStyle = color;
+    context.beginPath();
+    context.roundRect(43, 33, 42, 21, 5);
+    context.fill();
+    context.fillStyle = '#ffffff';
+    context.fillRect(43, 60, 42, 7);
+    context.fillRect(45, 73, 8, 7);
+    context.fillRect(75, 73, 8, 7);
+    context.fillStyle = color;
+    context.beginPath();
+    context.arc(48, 88, 5, 0, Math.PI * 2);
+    context.arc(76, 88, 5, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = '#ffffff';
+    context.font = 'bold 17px sans-serif';
+    context.textAlign = 'center';
+    context.fillText('BUS', 64, 108);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+    return new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+  };
   const stopMaterials = {
-    stop: markerMaterial(0xf2f2ee, 0x3a3a3a),
-    served: markerMaterial(0x63d7a2, 0x14503a),
+    stop: makeBusSignMaterial('#1686a6'),
+    served: makeBusSignMaterial('#19996b'),
     station: markerMaterial(0xf2f2ee, 0x1b4d5c),
     stationServed: markerMaterial(0x7fd8ec, 0x11485c),
     post: markerMaterial(0x8d9296, 0x1a1a1a),
@@ -471,11 +544,23 @@ export async function createTransportLayer({
     if (!terrainValidAt(...point)) return;
     const station = kind === 'station';
     const height = terrainHeightAt(...point);
-    const postHeight = station ? 22 : 16;
-    const marker = new THREE.Mesh(station ? stationMarkerGeometry : stopMarkerGeometry, material);
-    marker.position.set(point[0], height + postHeight, point[1]);
-    const post = new THREE.Mesh(station ? stationPostGeometry : stopPostGeometry, stopMaterials.post);
-    post.position.set(point[0], height + postHeight / 2, point[1]);
+    if (!station) {
+      const pole = new THREE.Mesh(stopPostGeometry, stopMaterials.post);
+      pole.position.set(point[0], height + 2.7, point[1]);
+      const sign = new THREE.Sprite(material);
+      sign.position.set(point[0], height + 6.9, point[1]);
+      sign.scale.set(6.8, 6.8, 1);
+      for (const mesh of [pole, sign]) {
+        mesh.renderOrder = 26;
+        mesh.userData.pick = pick;
+        stopGroup.add(mesh);
+      }
+      return;
+    }
+    const marker = new THREE.Mesh(stationMarkerGeometry, material);
+    marker.position.set(point[0], height + 22, point[1]);
+    const post = new THREE.Mesh(stationPostGeometry, stopMaterials.post);
+    post.position.set(point[0], height + 11, point[1]);
     for (const mesh of [marker, post]) {
       mesh.renderOrder = 26;
       mesh.userData.pick = pick;
@@ -484,18 +569,12 @@ export async function createTransportLayer({
   }
 
   function rebuildMap() {
-    trackGroup.clear();
     routeGroup.clear();
     stopGroup.clear();
     const routes = selectedRoutes();
     if (elements['transport-routes-toggle'].checked) {
-      // Physical track first, so the station throat reads as track rather than
-      // as any one service being painted across the whole yard.
-      if (state.mode !== 'bus') {
-        const infrastructureColor = state.mode === 'train' ? 0x76556d : 0x6f7377;
-        const infrastructureOpacity = state.mode === 'train' ? 0.28 : 0.42;
-        for (const track of data.railTracks || []) addRibbon(track, infrastructureColor, 2.0, infrastructureOpacity, 0.7, trackGroup);
-      }
+      // The city rail layer now carries the actual rails, sleepers and
+      // ballast. Avoid covering those details with a broad, floating ribbon.
       if (state.mode !== 'train') routes.forEach(route => {
         const featured = !state.eventRouteIds.size || state.eventRouteIds.has(route.id);
         route.lines.forEach(line => addRibbon(line, route._color, featured ? 5.0 : 2.0, featured ? 0.95 : 0.24));
@@ -525,9 +604,9 @@ export async function createTransportLayer({
             // Parallel horizontal offset plus a small elevation stagger keeps
             // each service colour on its own pixels instead of z-fighting
             // where several corridors share one mapped track.
-            const offset = shared ? (seen - (shareCount - 1) / 2) * 2.4 : 0;
-            const elevation = 1.02 + (shared ? seen * 0.018 : 0);
-            const width = state.mode === 'train' ? (shared ? 1.8 : 3.2) : (featured ? 5.0 : 2.6);
+            const offset = shared ? (seen - (shareCount - 1) / 2) * 1.2 : 0;
+            const elevation = 0.38 + (shared ? seen * 0.012 : 0);
+            const width = state.mode === 'train' ? (shared ? 0.42 : 0.72) : (featured ? 0.86 : 0.52);
             addRibbon(line, rail.color, width, featured ? 0.94 : 0.24, elevation, routeGroup, offset);
           }
         });

@@ -382,7 +382,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=128');
+    const module = await import('./webglRenderer.js?v=157');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -391,7 +391,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=88');
+      const module = await import('./sceneRenderer.js?v=98');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
@@ -470,7 +470,11 @@ function setupCurrentConditions() {
         const detail = await response.json().catch(() => ({}));
         throw new Error(detail.detail || `HTTP ${response.status}`);
       }
-      renderWeather(await response.json());
+      const payload = await response.json();
+      renderWeather(payload);
+      // Keep the scene sky in sync with the live conditions as soon as they
+      // load, including on the initial automatic fetch.
+      dispatchEvent(new CustomEvent('climate-weather-sky', { detail: payload }));
       return latest;
     } catch (error) {
       statusElement.textContent = `Current conditions unavailable (${error.message})`;

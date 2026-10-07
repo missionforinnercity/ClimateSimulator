@@ -50,6 +50,10 @@ Developer handoff: [architecture](docs/ARCHITECTURE.md),
 
 ## Build the scene
 
+Trees keep their LiDAR-mapped canopy outlines at every zoom level. A repeating
+ash-leaf texture and subtle surface relief add detail while preserving the same
+full foliage shape as the camera moves closer.
+
 ```bash
 python scripts/build_hybrid_dem.py
 python scripts/build_hybrid_buildings.py
@@ -119,9 +123,10 @@ The semantic model gives each object a stable `identifier` and version-specific
 `featureId`, named geometry, source records, lifecycle fields, geometry quality,
 and an LoD. It separates buildings from their roof surfaces and represents
 roads, pedestrian routes, railways, terrain, plant cover, and individual tree
-instances as typed objects. Empty WaterBody and CityFurniture modules document
-known coverage gaps. The JSON is intentionally described as a CityGML-aligned
-application encoding rather than a conformant CityGML GML/XML exchange file.
+instances as typed objects. WaterBody and CityFurniture objects record the
+available mapped coverage, including point-only municipal street assets. The
+JSON is intentionally described as a CityGML-aligned application encoding
+rather than a conformant CityGML GML/XML exchange file.
 
 When `data/street_data` is present, the build clips its City of Cape Town road
 centrelines, public lights, monuments, public toilets, pedestrian crossings,
@@ -129,8 +134,9 @@ on-street parking, survey marks, and festoon lighting to the actual terrain
 footprint. Municipal road keys and attributes become the authoritative semantic
 carriageway records; OSM footways and pedestrian paths are retained as a
 complementary source because they are not represented in the municipal road
-product. Point-only street assets render as lightweight instanced context and
-remain explicitly LoD0 until surveyed dimensions or 3D templates are available.
+product. Municipal public-light records are exported to a compact lighting
+sidecar for the interactive renderer; other point-only assets remain LoD0 until
+surveyed dimensions or 3D templates are available.
 The street-data building-footprint file is byte-for-byte identical to the
 existing raw footprint source, so it is intentionally referenced once rather
 than duplicating all buildings in the city model.

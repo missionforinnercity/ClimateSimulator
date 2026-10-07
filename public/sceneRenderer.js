@@ -4,18 +4,20 @@ import { orbitFromDrag, panFromDrag } from './cameraControls.js';
 
 const COLORS = {
   background: '#1b2125',
-  terrain: '#424a4d',
+  terrain: '#50574f',
   terrainEdge: '#111619',
-  grass: '#50745a',
+  grass: '#5f864f',
   wall: '#565e63',
   wallDark: '#42494e',
   roof: '#969da0',
   roofEdge: '#3d4447',
   trunk: '#60452f',
   canopy: '#2d653f',
-  road: '#444746',
-  roadMajor: '#b8a04a',
-  roadSecondary: '#58656a',
+  road: '#706b62',
+  roadMajor: '#7c786e',
+  roadSecondary: '#74736b',
+  pedestrian: '#b78370',
+  path: '#9d907e',
 };
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
@@ -230,6 +232,7 @@ export async function startScene(canvas, status) {
   let cameraTouchGesture = null;
   let lastCameraTouchTap = 0;
   let dirty = true;
+  let skyWeather = null;
   let frame = 0;
   let interactionUntil = 0;
   let settleTimer = 0;
@@ -1406,11 +1409,21 @@ export async function startScene(canvas, status) {
         }
       }
     }
-    if (sunPositionCaption) sunPositionCaption.textContent = altitudeDegrees > 0
-      ? `${Math.round(altitudeDegrees)}° high · ${sun.azimuth > Math.PI ? 'west' : 'east'} sky` : 'Below the horizon';
+    if (sunPositionCaption) {
+      if (altitudeDegrees > 0) {
+        sunPositionCaption.textContent = `${Math.round(altitudeDegrees)}° high · ${sun.azimuth > Math.PI ? 'west' : 'east'} sky`;
+      } else {
+        const lunarDate = new Date(`${shadowState.date}T12:00:00+02:00`);
+        const ageDays = (lunarDate.getTime() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
+        const phase = ((ageDays / 29.530588853) % 1 + 1) % 1;
+        const illumination = Math.round((0.5 - 0.5 * Math.cos(phase * Math.PI * 2)) * 100);
+        sunPositionCaption.textContent = `Moon · ${illumination}% illuminated`;
+      }
+    }
     sunStatus.textContent = sun.altitude <= 0
       ? 'Sun is below the horizon at this time.'
       : `Sun altitude ${Math.round(sun.altitude * 180 / Math.PI)}° · click Generate shadows when ready.`;
+    requestRender();
   }
 
   function shadowGroundPoint(x, y, z, sun) {
@@ -1988,8 +2001,9 @@ export async function startScene(canvas, status) {
     const secondary = ['secondary', 'secondary_link', 'tertiary'];
     const paths = ['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator', 'pedestrian'];
     const path = paths.includes(highway);
+    const pedestrian = highway === 'pedestrian';
     return {
-      color: path ? '#858f90' : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road,
+      color: pedestrian ? COLORS.pedestrian : path ? COLORS.path : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road,
       path,
       priority: path ? 0 : major.includes(highway) ? 3 : secondary.includes(highway) ? 2 : 1,
     };
@@ -2005,7 +2019,13 @@ export async function startScene(canvas, status) {
       if (!isInView(road.x, terrainHeightAt(road.x, road.z) + 0.22, road.z, road.radius + road.width, project, focal)) continue;
       const points = road.points.map(([x, z]) => project([x, roadTerrainHeightAt(x, z) + 0.22, z]));
       if (points.length < 2 || points.some(point => !point)) continue;
-      visibleRoads.push({ points, width: clamp(road.width * focal / camera.distance, 0.7, 12), ...style });
+      visibleRoads.push({
+        points,
+        width: clamp(road.width * focal / camera.distance, 0.7, 12),
+        mappedWidth: road.width,
+        attributes: road.attributes || {},
+        ...style,
+      });
     }
     context.lineJoin = 'round';
     context.lineCap = 'round';
@@ -2030,6 +2050,61 @@ export async function startScene(canvas, status) {
         strokeRoad(road, road.width, asphaltPattern);
       }
     }
+    const detailOpacity = 1 - clamp((camera.distance - 650) / 1500, 0, 1);
+    if (detailOpacity > 0.01) {
+      context.save();
+      context.globalAlpha = detailOpacity;
+      for (const road of visibleRoads) {
+        if (road.path) continue;
+        const attributes = road.attributes || {};
+        const taggedLanes = Number.parseInt(attributes.lanes, 10);
+        const laneCount = clamp(Number.isFinite(taggedLanes) && taggedLanes > 0
+          ? taggedLanes : road.mappedWidth >= 8 ? 2 : 1, 1, 6);
+        const oneway = ['yes', '1', 'true', '-1'].includes(String(attributes.oneway || '').toLowerCase());
+        const pixelsPerMetre = road.width / Math.max(road.mappedWidth, 1);
+        const lineWidth = clamp(road.width * 0.06, 0.7, 1.5);
+        const offsetPath = offsetMetres => {
+          const offset = offsetMetres * pixelsPerMetre;
+          return road.points.map((point, index, points) => {
+            const previous = points[Math.max(0, index - 1)];
+            const next = points[Math.min(points.length - 1, index + 1)];
+            const dx = next[0] - previous[0], dy = next[1] - previous[1];
+            const length = Math.hypot(dx, dy) || 1;
+            return [point[0] - dy / length * offset, point[1] + dx / length * offset];
+          });
+        };
+        const strokeMarking = (offsetMetres, color) => {
+          const shifted = offsetPath(offsetMetres);
+          context.beginPath();
+          context.moveTo(shifted[0][0], shifted[0][1]);
+          for (let index = 1; index < shifted.length; index += 1) context.lineTo(shifted[index][0], shifted[index][1]);
+          context.lineWidth = lineWidth;
+          context.strokeStyle = color;
+          context.setLineDash([Math.max(2.2, road.width * 0.32), Math.max(2.8, road.width * 0.48)]);
+          context.stroke();
+          context.setLineDash([]);
+        };
+        for (const side of [-1, 1]) {
+          const curb = offsetPath(side * Math.max(0, road.mappedWidth * 0.5 - 0.1));
+          context.beginPath();
+          context.moveTo(curb[0][0], curb[0][1]);
+          for (let index = 1; index < curb.length; index += 1) context.lineTo(curb[index][0], curb[index][1]);
+          context.lineWidth = clamp(road.width * 0.045, 0.6, 1.1);
+          context.strokeStyle = '#777b75';
+          context.setLineDash([]);
+          context.stroke();
+        }
+        if (laneCount > 1 && !oneway) strokeMarking(0, '#b8aa7d');
+        if (laneCount > 2) {
+          for (let divider = 1; divider < laneCount; divider += 1) {
+            const offset = -road.mappedWidth * 0.5 + road.mappedWidth * divider / laneCount;
+            if (!oneway && Math.abs(offset) < 0.35) continue;
+            strokeMarking(offset, '#c9cbc1');
+          }
+        }
+      }
+      context.restore();
+    }
   }
 
   function drawRailways(project, focal, simplified) {
@@ -2053,8 +2128,68 @@ export async function startScene(canvas, status) {
   function renderStatic() {
     context = sceneContext;
     try {
-      context.fillStyle = COLORS.background;
+      const cloudCover = clamp(Number(skyWeather?.cloud_cover_pct) || 0, 0, 100) / 100;
+      const sun = sunPosition();
+      const twilight = Math.exp(-Math.abs(sun.altitude) / 0.2);
+      const night = sun.altitude < -0.12;
+      const rainy = Number(skyWeather?.precipitation_mm) > 0.1 || Number(skyWeather?.weather_code) >= 51;
+      const sky = context.createLinearGradient(0, 0, 0, canvas.height);
+      sky.addColorStop(0, night ? '#101a30' : rainy ? '#53616b' : `hsl(${204 - cloudCover * 8} 48% ${68 - cloudCover * 28}%)`);
+      sky.addColorStop(0.58, !rainy && twilight > 0.08 ? '#cf795f' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
+      sky.addColorStop(0.76, !rainy && twilight > 0.08 ? '#f0a16a' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
+      sky.addColorStop(1, COLORS.background);
+      context.fillStyle = sky;
       context.fillRect(0, 0, canvas.width, canvas.height);
+      if (sun.altitude > -0.018) {
+        const x = clamp(canvas.width * (0.5 - Math.sin(sun.azimuth) * 0.34), 24, canvas.width - 24);
+        const y = clamp(canvas.height * (0.48 - Math.sin(sun.altitude) * 0.38), 24, canvas.height * 0.48);
+        context.save();
+        context.globalAlpha = Math.max(0.18, 1 - cloudCover * 0.72);
+        const glow = context.createRadialGradient(x, y, 3, x, y, 34);
+        glow.addColorStop(0, 'rgba(255,229,158,.9)');
+        glow.addColorStop(1, 'rgba(255,198,93,0)');
+        context.fillStyle = glow;
+        context.beginPath(); context.arc(x, y, 34, 0, Math.PI * 2); context.fill();
+        context.fillStyle = '#fff0b7';
+        context.beginPath(); context.arc(x, y, 8, 0, Math.PI * 2); context.fill();
+        context.font = '12px sans-serif';
+        context.textAlign = 'center';
+        const timeLabel = `${String(Math.floor(shadowState.minutes / 60)).padStart(2, '0')}:${String(shadowState.minutes % 60).padStart(2, '0')} SAST`;
+        const labelWidth = context.measureText(timeLabel).width + 14;
+        const labelX = clamp(x - labelWidth / 2, 4, canvas.width - labelWidth - 4);
+        const labelY = Math.min(y + 22, canvas.height * 0.48);
+        context.fillStyle = 'rgba(16,25,31,.72)';
+        context.beginPath(); context.roundRect(labelX, labelY, labelWidth, 20, 8); context.fill();
+        context.fillStyle = '#fff5d4';
+        context.textBaseline = 'middle';
+        context.fillText(timeLabel, labelX + labelWidth / 2, labelY + 10);
+        context.restore();
+      }
+      const lunarDate = new Date(`${shadowState.date}T12:00:00+02:00`);
+      const lunarAge = (lunarDate.getTime() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
+      const moonPhase = ((lunarAge / 29.530588853) % 1 + 1) % 1;
+      const moonIllumination = 0.5 - 0.5 * Math.cos(moonPhase * Math.PI * 2);
+      if (sun.altitude < 0.12 && moonIllumination > 0.045) {
+        const moonAngle = moonPhase * Math.PI * 2 + shadowState.minutes / 1440 * Math.PI * 2;
+        const x = canvas.width * (0.68 + Math.sin(moonAngle) * 0.055);
+        const y = canvas.height * (0.19 + Math.cos(moonAngle) * 0.025);
+        const radius = Math.max(10, Math.min(canvas.width, canvas.height) * 0.018);
+        context.save();
+        context.globalAlpha = (1 - cloudCover * 0.7) * 0.92;
+        context.fillStyle = '#f2e9c9';
+        context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
+        const shadowOffset = (moonPhase < 0.5 ? 1 : -1) * (1 - moonIllumination) * radius * 1.8;
+        context.fillStyle = '#26344d';
+        context.beginPath(); context.arc(x + shadowOffset, y, radius, 0, Math.PI * 2); context.fill();
+        const timeLabel = `${String(Math.floor(shadowState.minutes / 60)).padStart(2, '0')}:${String(shadowState.minutes % 60).padStart(2, '0')} SAST`;
+        context.font = '12px sans-serif'; context.textAlign = 'center';
+        const labelWidth = context.measureText(timeLabel).width + 14;
+        context.fillStyle = 'rgba(16,25,31,.72)';
+        context.beginPath(); context.roundRect(x - labelWidth / 2, y + radius + 5, labelWidth, 20, 8); context.fill();
+        context.fillStyle = '#fff5d4'; context.textBaseline = 'middle';
+        context.fillText(timeLabel, x, y + radius + 15);
+        context.restore();
+      }
       const { forward, project, projectPolygon, focal } = cameraProjection();
       const simplified = Boolean(drag) || performance.now() < interactionUntil;
       if (visibility.terrain) {
@@ -2690,8 +2825,31 @@ export async function startScene(canvas, status) {
     canvas.style.cursor = streetViewState.placing ? 'crosshair' : 'grab';
     requestRender();
   });
+  addEventListener('climate-weather-sky', event => {
+    const weather = event.detail || null;
+    if (!skyWeather && weather?.valid_at) {
+      const valid = new Date(weather.valid_at);
+      if (!Number.isNaN(valid.getTime())) {
+        shadowState.date = valid.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
+        const parts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(valid);
+        const hour = Number(parts.find(part => part.type === 'hour')?.value || 12);
+        const minute = Number(parts.find(part => part.type === 'minute')?.value || 0);
+        shadowState.minutes = Math.round((hour * 60 + minute) / 10) * 10;
+        if (sunDate) sunDate.value = shadowState.date;
+        if (sunAnalysisDate) sunAnalysisDate.value = shadowState.date;
+        if (sunTime) sunTime.value = String(shadowState.minutes);
+        updateSunStatus();
+      }
+    }
+    skyWeather = weather;
+    requestRender();
+  });
   addEventListener('climate-current-weather', event => {
     const weather = event.detail || {};
+    skyWeather = weather;
+    requestRender();
     const valid = new Date(weather.valid_at);
     if (!Number.isNaN(valid.getTime())) {
       shadowState.date = valid.toLocaleDateString('en-CA', { timeZone: 'Africa/Johannesburg' });
