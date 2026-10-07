@@ -1,4 +1,5 @@
 import { validateScenario } from './scenarioState.js';
+import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION } from './cameraControls.js';
 
 // Adapter keeps saved views independent of Three.js / Canvas camera classes.
 export function attachSceneExperience({ canvas, readCamera, writeCamera, requestRender, fitScene, useLocation }) {
@@ -23,10 +24,10 @@ export function attachSceneExperience({ canvas, readCamera, writeCamera, request
       if (event.key === 'ArrowRight') camera.azimuth += .08;
       // Match the direct mouse/touch orbit convention: left/up decrease the
       // corresponding screen axis and right/down increase it.
-      if (event.key === 'ArrowUp') camera.elevation = Math.max(.16, camera.elevation - .06);
+      if (event.key === 'ArrowUp') camera.elevation = Math.max(CAMERA_MIN_ELEVATION, camera.elevation - .06);
       if (event.key === 'ArrowDown') camera.elevation = Math.min(1.35, camera.elevation + .06);
-      if (['+', '='].includes(event.key)) camera.distance = Math.max(100, camera.distance * .9);
-      if (event.key === '-') camera.distance = Math.min(8000, camera.distance / .9);
+      if (['+', '='].includes(event.key)) camera.distance = Math.max(CAMERA_MIN_DISTANCE, camera.distance * .9);
+      if (event.key === '-') camera.distance = Math.min(CAMERA_MAX_DISTANCE, camera.distance / .9);
       writeCamera(camera);
     }
     requestRender(); publish();

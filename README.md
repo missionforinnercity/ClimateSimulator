@@ -50,9 +50,9 @@ Developer handoff: [architecture](docs/ARCHITECTURE.md),
 
 ## Build the scene
 
-Trees keep their LiDAR-mapped canopy outlines at every zoom level. A repeating
-ash-leaf texture and subtle surface relief add detail while preserving the same
-full foliage shape as the camera moves closer.
+Trees keep their LiDAR-mapped canopy outlines at every zoom level, with clean
+rounded crowns, restrained green variation, and instanced trunks that read
+clearly at both city and street scales.
 
 ```bash
 python scripts/build_hybrid_dem.py
@@ -508,13 +508,12 @@ wakes and vortices still require CFD-derived `u/v` fields.
 
 ## Terrain-aware regional wind
 
-The CBD LiDAR mesh is intentionally detailed and local, but Table Mountain and
-its surrounding peaks sit several km away and physically shape how wind
-(especially the SE "Cape Doctor") arrives at the CBD. The viewer only ever
-renders the CBD itself — no regional mountain backdrop — but the wind
-simulation still accounts for how the mountain shapes airflow before it
-reaches the city. Build the terrain-resolved wind fields from the supplied
-SRTM tiles with:
+The city renderer displays measured CBD terrain with neutral gray mapped
+buildings against a dark background. Bus and rail models follow schedule-derived
+routes and do not represent live vehicle positions. Regional wind fields still
+account for terrain shaping airflow
+(especially the SE "Cape Doctor") before it reaches the CBD. Build those
+terrain-resolved fields from the supplied SRTM tiles with:
 
 ```bash
 python scripts/export_regional_wind_fields.py \

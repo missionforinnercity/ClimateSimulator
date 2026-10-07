@@ -134,7 +134,7 @@
           <section class="tool-section">
             <div class="controls tool-layer-grid">
               <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
-              <label><input type="checkbox" data-layer="water" checked> Water</label>
+              <label><input type="checkbox" data-layer="water" title="OpenStreetMap water bodies" checked> Water</label>
               <label><input type="checkbox" data-layer="grass" checked> Grass</label>
               <label><input type="checkbox" data-layer="railways" checked> Railways</label>
               <label><input type="checkbox" data-layer="paths" checked> Paths</label>
@@ -712,7 +712,7 @@
           <div class="transport-playback">
             <button id="transport-play" type="button" aria-pressed="true"><span aria-hidden="true">Ⅱ</span> Pause</button>
             <button id="transport-now" class="secondary" type="button">Now</button>
-            <select id="transport-speed" aria-label="Playback speed"><option value="0.25" selected>¼×</option><option value="1">1×</option><option value="5">5×</option></select>
+            <select id="transport-speed" aria-label="Playback speed (1× is real time)" title="1× plays service schedules at real time"><option value="0.25">¼×</option><option value="1" selected>1×</option><option value="5">5×</option></select>
             <button id="transport-fit" class="secondary" type="button">Frame</button>
           </div>
           <div class="transport-map-controls">
@@ -966,6 +966,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-40"></script>
+    <script type="module" src="/app.js?v=experience-50"></script>
 </body>
 </html>

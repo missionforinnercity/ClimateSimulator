@@ -68,91 +68,198 @@ function nearestFraction(metric, point) {
   return best;
 }
 
-function roundedBox(THREE, width, height, length, color, position) {
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(length, height, width, 2, 1, 1),
-    new THREE.MeshPhongMaterial({ color, shininess: 55 }),
-  );
-  mesh.position.set(...position);
-  return mesh;
+const vehicleModelCache = new WeakMap();
+
+function roundedBoxGeometry(THREE, width, height, depth, radius = 0.08) {
+  const geometry = new THREE.BoxGeometry(width, height, depth, 4, 2, 2);
+  const positions = geometry.getAttribute('position');
+  const innerX = width * 0.5 - radius;
+  const innerY = height * 0.5 - radius;
+  const innerZ = depth * 0.5 - radius;
+  for (let index = 0; index < positions.count; index += 1) {
+    const x = positions.getX(index), y = positions.getY(index), z = positions.getZ(index);
+    const cx = clamp(x, -innerX, innerX), cy = clamp(y, -innerY, innerY), cz = clamp(z, -innerZ, innerZ);
+    const dx = x - cx, dy = y - cy, dz = z - cz;
+    const distance = Math.hypot(dx, dy, dz);
+    if (distance > 0) positions.setXYZ(index, cx + dx * radius / distance, cy + dy * radius / distance, cz + dz * radius / distance);
+  }
+  positions.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
-function addVehicleBeacon(THREE, vehicle, color, height, radius) {
-  const beacon = new THREE.Group();
-  const material = new THREE.MeshBasicMaterial({
-    color, transparent: true, opacity: 0.92, depthTest: false, depthWrite: false,
-  });
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.55, 8, 24), material);
-  ring.rotation.x = Math.PI / 2;
-  const core = new THREE.Mesh(new THREE.SphereGeometry(2.0, 10, 7), material);
-  core.position.y = 1.6;
-  const pointer = new THREE.Mesh(new THREE.ConeGeometry(2.7, 6.5, 10), material);
-  pointer.rotation.z = Math.PI;
-  pointer.position.y = -4;
-  beacon.add(ring, core, pointer);
-  beacon.position.y = height;
-  for (const mesh of [ring, core, pointer]) mesh.renderOrder = 32;
-  vehicle.add(beacon);
-  vehicle.userData.beacon = beacon;
-  vehicle.userData.beaconMaterial = material;
+function mergeVehicleParts(THREE, parts) {
+  const vertices = [], normals = [], colours = [];
+  for (const part of parts) {
+    const geometry = part.geometry.index ? part.geometry.toNonIndexed() : part.geometry.clone();
+    geometry.applyMatrix4(part.matrix);
+    const positions = geometry.getAttribute('position');
+    const vertexNormals = geometry.getAttribute('normal');
+    const color = new THREE.Color(part.color);
+    for (let index = 0; index < positions.count; index += 1) {
+      vertices.push(positions.getX(index), positions.getY(index), positions.getZ(index));
+      normals.push(vertexNormals.getX(index), vertexNormals.getY(index), vertexNormals.getZ(index));
+      colours.push(color.r, color.g, color.b);
+    }
+    geometry.dispose();
+  }
+  const merged = new THREE.BufferGeometry();
+  merged.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  merged.setAttribute('color', new THREE.Float32BufferAttribute(colours, 3));
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+function createVehicleModel(THREE, kind) {
+  let cache = vehicleModelCache.get(THREE);
+  if (!cache) {
+    cache = new Map();
+    vehicleModelCache.set(THREE, cache);
+  }
+  if (cache.has(kind)) return cache.get(kind);
+
+  const parts = [];
+  const accentParts = [];
+  const addBox = (size, position, color, radius = 0.035) => {
+    const geometry = roundedBoxGeometry(THREE, ...size, radius);
+    const matrix = new THREE.Matrix4().makeTranslation(...position);
+    parts.push({ geometry, matrix, color });
+  };
+  const addAccentBox = (size, position, color, radius = 0.045) => {
+    const geometry = roundedBoxGeometry(THREE, ...size, radius);
+    const matrix = new THREE.Matrix4().makeTranslation(...position);
+    accentParts.push({ geometry, matrix, color });
+  };
+  const addCylinder = (radius, depth, position, color, segments = 14) => {
+    const geometry = new THREE.CylinderGeometry(radius, radius, depth, segments, 1);
+    geometry.rotateX(Math.PI / 2);
+    const matrix = new THREE.Matrix4().makeTranslation(...position);
+    parts.push({ geometry, matrix, color });
+  };
+
+  if (kind === 'bus') {
+    // A compact Cape Town MyCiTi inspired low-floor bus, with a white roof,
+    // blue lower body, red belt and properly separated glazing.
+    addBox([10.8, 0.54, 2.52], [0, 0.58, 0], 0x30383a, 0.08);
+    addBox([10.72, 1.08, 2.58], [0, 1.34, 0], 0x087da9, 0.14);
+    addBox([10.58, 1.08, 2.52], [-0.03, 2.42, 0], 0xf1eee3, 0.16);
+    addBox([9.4, 0.18, 2.34], [-0.08, 3.05, 0], 0xd7e0de, 0.08);
+    // Fleet-blue roof panel makes the bus read clearly from the miniature
+    // city view while retaining its white upper body and red belt.
+    addAccentBox([9.5, 0.24, 2.65], [-0.42, 3.31, 0], 0x078fc4);
+    for (const side of [-1, 1]) {
+      const z = side * 1.305;
+      addBox([8.62, 0.84, 0.055], [-0.05, 2.45, z], 0x203b46, 0.025);
+      addBox([10.65, 0.15, 0.07], [0, 0.9, side * 1.31], 0xe04b47, 0.025);
+      for (let pillar = 0; pillar <= 7; pillar += 1) {
+        addBox([0.085, 0.93, 0.075], [-4.05 + pillar * 1.14, 2.46, side * 1.34], 0xc3d1cf, 0.02);
+      }
+      addBox([0.92, 1.36, 0.075], [2.95, 1.98, side * 1.34], 0x315763, 0.035);
+      addBox([0.10, 1.52, 0.085], [2.47, 1.98, side * 1.35], 0xc3d1cf, 0.02);
+      addBox([0.10, 1.52, 0.085], [3.43, 1.98, side * 1.35], 0xc3d1cf, 0.02);
+    }
+    addBox([0.065, 0.94, 1.65], [5.43, 2.48, 0], 0x1c343e, 0.035);
+    addBox([0.075, 0.24, 1.20], [5.45, 3.05, 0], 0x203b46, 0.02);
+    addBox([0.22, 0.30, 2.30], [5.43, 0.55, 0], 0x4b5353, 0.035);
+    addBox([0.22, 0.30, 2.30], [-5.43, 0.55, 0], 0x4b5353, 0.035);
+    for (const side of [-1, 1]) {
+      for (const x of [-3.25, 3.35]) {
+        addCylinder(0.43, 0.25, [x, 0.44, side * 1.25], 0x202426);
+        addCylinder(0.20, 0.27, [x, 0.44, side * 1.34], 0xaab3b3, 12);
+      }
+    }
+    for (const z of [-0.84, 0.84]) {
+      addBox([0.10, 0.17, 0.28], [5.49, 1.05, z], 0xffe7ac, 0.035);
+      addBox([0.08, 0.17, 0.24], [-5.49, 1.02, z], 0xe34d47, 0.03);
+    }
+  } else {
+    // Three clean commuter carriages with visible bogies, framed windows,
+    // cyan beltwork and cab glazing at both ends.
+    for (let carriage = 0; carriage < 3; carriage += 1) {
+      const offset = (carriage - 1) * 12.25;
+      addBox([11.95, 2.64, 2.82], [offset, 1.92, 0], 0xe6e9e6, 0.20);
+      addBox([11.72, 0.42, 2.91], [offset, 0.94, 0], 0x078fb6, 0.07);
+      addBox([11.50, 0.16, 2.45], [offset, 3.34, 0], 0xc6cfcd, 0.07);
+      // The cool enamel roof panel gives each carriage a clear top-down
+      // silhouette and separates it from the neutral mapped roofs.
+      addAccentBox([10.4, 0.22, 2.7], [offset, 3.57, 0], 0x08c5dc);
+      for (const side of [-1, 1]) {
+        for (let window = 0; window < 5; window += 1) {
+          const x = offset - 4.45 + window * 2.22;
+          addBox([1.46, 0.92, 0.065], [x, 2.36, side * 1.445], 0x203943, 0.055);
+          addBox([0.075, 1.02, 0.08], [x - 0.78, 2.35, side * 1.45], 0xc9d3d1, 0.02);
+        }
+        for (const x of [offset - 2.9, offset + 2.9]) {
+          addBox([0.76, 1.84, 0.07], [x, 1.98, side * 1.45], 0x355967, 0.05);
+          addBox([0.08, 1.95, 0.085], [x - 0.42, 1.98, side * 1.46], 0xc9d3d1, 0.02);
+          addBox([0.08, 1.95, 0.085], [x + 0.42, 1.98, side * 1.46], 0xc9d3d1, 0.02);
+        }
+      }
+      for (const x of [offset - 3.75, offset + 3.75]) {
+        addBox([1.35, 0.25, 2.52], [x, 0.60, 0], 0x353c3e, 0.035);
+        for (const side of [-1, 1]) addCylinder(0.43, 0.24, [x, 0.43, side * 1.23], 0x202426);
+      }
+    }
+    for (const end of [-1, 1]) {
+      addBox([0.10, 1.08, 1.72], [end * 18.43, 2.43, 0], 0x1c343e, 0.06);
+      addBox([0.12, 0.18, 0.28], [end * 18.50, 1.38, -0.78], 0xffe3a2, 0.035);
+      addBox([0.12, 0.18, 0.28], [end * 18.50, 1.38, 0.78], 0xffe3a2, 0.035);
+      addBox([0.12, 0.18, 0.26], [end * 18.50, 0.88, -0.78], 0xe34d47, 0.03);
+      addBox([0.12, 0.18, 0.26], [end * 18.50, 0.88, 0.78], 0xe34d47, 0.03);
+    }
+  }
+
+  const model = {
+    geometry: mergeVehicleParts(THREE, parts),
+    material: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.06 }),
+    accentGeometry: mergeVehicleParts(THREE, accentParts),
+    accentMaterial: new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false }),
+  };
+  cache.set(kind, model);
+  return model;
 }
 
 function makeBus(THREE) {
+  const model = createVehicleModel(THREE, 'bus');
   const vehicle = new THREE.Group();
-  vehicle.add(roundedBox(THREE, 2.45, 2.45, 9.6, 0x0869a7, [0, 1.65, 0]));
-  vehicle.add(roundedBox(THREE, 2.49, 0.85, 8.5, 0xc8d1d5, [-0.15, 1.25, 0]));
-  vehicle.add(roundedBox(THREE, 2.5, 0.78, 8.35, 0x17252f, [-0.12, 2.28, 0]));
-  vehicle.add(roundedBox(THREE, 2.52, 0.18, 7.2, 0xe5333f, [-0.45, 1.04, 0]));
-  vehicle.add(roundedBox(THREE, 2.25, 1.25, 0.16, 0x15242d, [4.86, 2.18, 0]));
-  const wheelGeometry = new THREE.CylinderGeometry(0.55, 0.55, 0.32, 14);
-  wheelGeometry.rotateX(Math.PI / 2);
-  const wheelMaterial = new THREE.MeshLambertMaterial({ color: 0x151719 });
-  for (const x of [-3.1, 3.05]) for (const z of [-1.22, 1.22]) {
-    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
-    wheel.position.set(x, 0.63, z);
-    vehicle.add(wheel);
-  }
-  const lightMaterial = new THREE.MeshBasicMaterial({ color: 0xffefb0 });
-  for (const z of [-0.75, 0.75]) {
-    const light = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 5), lightMaterial);
-    light.position.set(4.98, 1.34, z);
-    vehicle.add(light);
-  }
-  vehicle.scale.setScalar(1.25);
-  addVehicleBeacon(THREE, vehicle, 0xff73c7, 9.5, 8.5);
+  const body = new THREE.Mesh(model.geometry, model.material);
+  // Extend the bus along its travel axis for a legible articulated-city
+  // silhouette while preserving its realistic road width.
+  vehicle.scale.set(2.15, 1.35, 1.7);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  vehicle.add(body);
+  const roofAccent = new THREE.Mesh(model.accentGeometry, model.accentMaterial);
+  roofAccent.castShadow = false;
+  roofAccent.receiveShadow = false;
+  vehicle.add(roofAccent);
   vehicle.userData.kind = 'bus';
   return vehicle;
 }
 
 function makeTrain(THREE) {
+  const model = createVehicleModel(THREE, 'train');
   const vehicle = new THREE.Group();
-  const carriageMaterial = new THREE.MeshPhongMaterial({ color: 0xe4eaec, shininess: 85 });
-  const windowMaterial = new THREE.MeshPhongMaterial({ color: 0x172935, shininess: 100 });
-  for (let carriage = 0; carriage < 3; carriage += 1) {
-    const offset = (carriage - 1) * 12.4;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(11.7, 3.2, 2.9), carriageMaterial);
-    body.position.set(offset, 2.05, 0);
-    vehicle.add(body);
-    const windows = new THREE.Mesh(new THREE.BoxGeometry(9.8, 1.15, 2.96), windowMaterial);
-    windows.position.set(offset, 2.55, 0);
-    vehicle.add(windows);
-    const blue = new THREE.Mesh(new THREE.BoxGeometry(11.75, 0.55, 3.0), new THREE.MeshPhongMaterial({ color: 0x00a9df }));
-    blue.position.set(offset, 0.9, 0);
-    vehicle.add(blue);
-  }
-  const nose = new THREE.Mesh(new THREE.CylinderGeometry(1.42, 1.42, 1.2, 12, 1, false, 0, Math.PI), carriageMaterial);
-  nose.rotation.z = Math.PI / 2;
-  nose.rotation.y = Math.PI / 2;
-  nose.position.set(18.1, 2.05, 0);
-  vehicle.add(nose);
-  addVehicleBeacon(THREE, vehicle, 0xffce62, 11, 11.5);
+  const body = new THREE.Mesh(model.geometry, model.material);
+    // Three carriage meshes represent a full-size commuter consist in the
+    // miniature scene, so scale them to the mapped track width and readable
+    // city-view size.
+  vehicle.scale.set(2.05, 1.35, 1.7);
+  body.castShadow = true;
+  body.receiveShadow = true;
+  vehicle.add(body);
+  const roofAccent = new THREE.Mesh(model.accentGeometry, model.accentMaterial);
+  roofAccent.castShadow = false;
+  roofAccent.receiveShadow = false;
+  vehicle.add(roofAccent);
   vehicle.userData.kind = 'train';
   return vehicle;
 }
 
 export async function createTransportLayer({
   THREE, scene, terrainHeightAt, terrainValidAt, requestRender, frameBounds,
-  requestGroundPick, addScenePickHandler,
+  requestGroundPick, addScenePickHandler, layerVisible = () => true,
 }) {
   const response = await fetch('/assets/transport.json', { cache: 'no-store' });
   if (!response.ok) throw new Error(`Transport asset HTTP ${response.status}`);
@@ -464,6 +571,7 @@ export async function createTransportLayer({
     enabled: elements['transport-toggle'].checked, playing: true,
     minute: clamp(now.getHours() * 60 + now.getMinutes(), 0, 1439), serviceDate: now,
     lastFrame: performance.now(), mode: 'both', picking: false,
+    ambientDisplay: false, panelActive: false, movingVehicles: 0,
     eventRouteIds: new Set(), eventRailIds: new Set(),
     servedStopIds: new Set(), venue: null, analysis: null,
     busPool: [], trainPool: [],
@@ -572,7 +680,7 @@ export async function createTransportLayer({
     routeGroup.clear();
     stopGroup.clear();
     const routes = selectedRoutes();
-    if (elements['transport-routes-toggle'].checked) {
+    if (state.panelActive && elements['transport-routes-toggle'].checked) {
       // The city rail layer now carries the actual rails, sleepers and
       // ballast. Avoid covering those details with a broad, floating ribbon.
       if (state.mode !== 'train') routes.forEach(route => {
@@ -612,7 +720,7 @@ export async function createTransportLayer({
         });
       }
     }
-    if (elements['transport-stops-toggle'].checked) {
+    if (state.panelActive && elements['transport-stops-toggle'].checked) {
       if (state.mode !== 'train') {
         const visibleIds = new Set(routes.flatMap(route => route.stopIds));
         for (const stop of data.stops) {
@@ -683,16 +791,23 @@ export async function createTransportLayer({
   function updateVehicles() {
     const used = { bus: 0, train: 0 };
     let visible = 0;
+    let moving = 0;
+    const ambientOnly = state.ambientDisplay && !state.panelActive;
+    const vehicleLimit = ambientOnly ? { bus: 4, train: 2 } : { bus: Infinity, train: Infinity };
     // Several sets can dwell at the same platform end at once (see
     // PLATFORM_DWELL_MINUTES). Without a per-berth offset they would render
     // as one flickering mesh; this counts repeats of the same
     // service+direction+terminus this frame and fans them out sideways,
     // like trains standing on adjacent platform roads.
     const platformOccupancy = new Map();
+    const roadsVisible = layerVisible('roads');
+    const railwaysVisible = layerVisible('railways');
     for (const { service, kind, reverse, serviceTimes, movementMetric, movementDuration } of state.services || []) {
+      if ((kind === 'bus' && !roadsVisible) || (kind === 'train' && !railwaysVisible)) continue;
       const metric = movementMetric || service._metric;
       if (!metric) continue;
       for (let raw of activeProgress(service, state.minute, reverse, serviceTimes, kind, movementDuration || service._duration)) {
+        if (used[kind] >= vehicleLimit[kind]) break;
         let amount = reverse ? 1 - raw : raw;
         if (kind === 'bus' && service._stopFractions.length) {
           const nearest = service._stopFractions.reduce(
@@ -719,18 +834,15 @@ export async function createTransportLayer({
         visible += 1;
         vehicle.visible = true;
         vehicle.userData.service = service;
-        vehicle.userData.beaconMaterial?.color.set(service._color || service.color || (kind === 'bus' ? 0xff73c7 : 0xffce62));
         const length = Math.hypot(point.dx, point.dz) || 1;
         const normalX = -point.dz / length, normalZ = point.dx / length;
         const px = point.x + normalX * berthOffset, pz = point.z + normalZ * berthOffset;
         vehicle.position.set(px, terrainHeightAt(px, pz) + 0.32, pz);
         vehicle.rotation.y = -Math.atan2(point.dz, point.dx) + (reverse ? Math.PI : 0);
-        if (vehicle.userData.beacon) {
-          const pulse = 1 + Math.sin(performance.now() / 320 + used[kind]) * 0.1;
-          vehicle.userData.beacon.scale.setScalar(pulse);
-        }
+        if (raw > 0.001 && raw < 0.999) moving += 1;
       }
     }
+    state.movingVehicles = moving;
     for (const kind of ['bus', 'train']) {
       const pool = poolFor(kind);
       for (let index = used[kind]; index < pool.length; index += 1) pool[index].visible = false;
@@ -794,6 +906,7 @@ export async function createTransportLayer({
 
   function drawVenue() {
     eventGroup.clear();
+    if (!state.panelActive) return;
     if (!state.venue) return requestRender();
     const radius = Number(elements['transport-event-walk'].value);
     const [vx, vz] = state.venue.point;
@@ -1204,7 +1317,7 @@ export async function createTransportLayer({
 
   elements['transport-toggle'].addEventListener('change', () => {
     state.enabled = elements['transport-toggle'].checked;
-    group.visible = state.enabled;
+    syncVisibility();
     if (!state.enabled) hideStopCard();
     state.lastFrame = performance.now();
     requestRender();
@@ -1295,22 +1408,56 @@ export async function createTransportLayer({
 
   populateControls();
   rebuildMap();
+  function syncVisibility() {
+    const showLayer = state.enabled && (state.panelActive || state.ambientDisplay);
+    group.visible = showLayer;
+    routeGroup.visible = state.enabled && state.panelActive;
+    stopGroup.visible = state.enabled && state.panelActive;
+    eventGroup.visible = state.enabled && state.panelActive;
+    vehicleGroup.visible = showLayer;
+  }
   return {
     active: () => state.enabled && group.visible,
     setPanelActive(active) {
-      group.visible = active && state.enabled;
-      if (!group.visible) hideStopCard();
+      state.panelActive = Boolean(active);
+      syncVisibility();
+      if (state.panelActive) {
+        rebuildMap();
+        drawVenue();
+      } else {
+        hideStopCard();
+      }
       requestRender();
+    },
+    setAmbientDisplay(active) {
+      state.ambientDisplay = Boolean(active);
+      syncVisibility();
+      updateVehicles();
+      requestRender();
+    },
+    refreshLayerVisibility() {
+      updateVehicles();
+      requestRender();
+    },
+    needsIdleTick() {
+      return state.enabled && group.visible && state.playing && state.movingVehicles === 0;
+    },
+    animating() {
+      return state.enabled && group.visible && state.playing && state.movingVehicles > 0;
     },
     update(now) {
       if (!state.enabled || !group.visible) return false;
-      const elapsed = Math.min(0.1, Math.max(0, (now - state.lastFrame) / 1000));
+      const elapsed = Math.min(0.5, Math.max(0, (now - state.lastFrame) / 1000));
       state.lastFrame = now;
       if (state.playing) {
-        state.minute = (state.minute + elapsed * Number(elements['transport-speed'].value || 1)) % 1440;
+        // One model minute takes one real second per 1× of playback. The
+        // service geometry and the planning speeds are both expressed in
+        // real metres and minutes, so this keeps the vehicles at their
+        // intended 18 km/h bus and 40 km/h rail speeds at real-time playback.
+        state.minute = (state.minute + elapsed * Number(elements['transport-speed'].value || 1) / 60) % 1440;
         updateVehicles();
       }
-      return state.playing;
+      return state.playing && state.movingVehicles > 0;
     },
   };
 }

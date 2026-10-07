@@ -2117,7 +2117,7 @@ select, input[type="date"], input[type="number"] {
 .legend-building { background: #829398; }
 .legend-road { background: #746e4f; }
 .legend-green { background: #50745a; }
-.legend-water { background: #2f86a6; }
+.legend-water { background: #368f9f; }
 .map-controls {
   position: fixed;
   z-index: 4;

@@ -2,29 +2,30 @@ import { percentileColorPosition, utciAbsolutePalette, utciPalette, temperatureC
 import * as THREE from './vendor/three.module.min.js';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
-import { orbitFromDrag, panFromDrag } from './cameraControls.js';
-import { createTransportLayer } from './transportLayer.js?v=15';
+import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFromDrag, panFromDrag } from './cameraControls.js';
+import { createTransportLayer } from './transportLayer.js?v=30';
 
 const COLORS = {
   background: 0x101719,
-  terrain: 0x50574f,
-  terrainSun: 0xf4f3ee,
-  terrainEdge: 0x353b38,
-  terrainEdgeDeep: 0x1d211f,
-  grass: 0x5f864f,
-  water: 0x2f86a6,
-  wall: 0x657076,
+  fog: 0x101719,
+  terrain: 0xb5bd97,
+  terrainSun: 0xf6ecd7,
+  grass: 0x86b66f,
+  wall: 0xb4b4b4,
   wallSun: 0xffffff,
-  roof: 0xaeb5b8,
+  roof: 0xcacaca,
   roofSun: 0xffffff,
-  road: 0x706b62,
-  roadMajor: 0x7c786e,
-  roadSecondary: 0x74736b,
+  road: 0xb8b1a5,
+  roadMajor: 0xa9b6b5,
+  roadSecondary: 0xb6b2a8,
   // Permanent pedestrian streets should read as context, while the brighter
   // red/orange simulation ribbons remain the attention-grabbing states.
-  pedestrian: 0xb78370,
-  path: 0x9d907e,
+  pedestrian: 0xd0ad87,
+  path: 0xb4a98f,
   rail: 0x929b9c,
+  plinthTop: 0xc5c7c4,
+  plinthSide: 0x747977,
+  plinthAccent: 0x666d6b,
 };
 
 // Surface height and draw priority are separate concerns. The small physical
@@ -44,11 +45,13 @@ export async function startWebGLScene(canvas, status) {
     powerPreference: 'high-performance',
     failIfMajorPerformanceCaveat: true,
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  // A small amount of supersampling keeps roof silhouettes crisp on dense
+  // displays without doubling the post-processing cost on high-DPI screens.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
   renderer.setClearColor(COLORS.background, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.04;
+  renderer.toneMappingExposure = 1.12;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.shadowMap.autoUpdate = false;
@@ -219,7 +222,7 @@ export async function startWebGLScene(canvas, status) {
     skyUniforms.twilight.value = twilight;
     if (scene.fog) scene.fog.color.set(skyActive
       ? (twilight > 0.28 && !rainy ? '#bb8175' : daylight > 0.5 ? (rainy ? '#89979f' : '#becdd2') : '#202b42')
-      : COLORS.background);
+      : COLORS.fog);
     const phaseDate = new Date(`${shadowState.date}T12:00:00+02:00`);
     const newMoonReference = Date.UTC(2000, 0, 6, 18, 14);
     const lunarDays = (phaseDate.getTime() - newMoonReference) / 86400000;
@@ -274,7 +277,7 @@ export async function startWebGLScene(canvas, status) {
   }
   // Soft distance fog gives the model atmospheric depth at city-wide zoom
   // without hiding anything at typical street/building inspection distances.
-  scene.fog = new THREE.Fog(COLORS.background, 1900, 4600);
+  scene.fog = new THREE.Fog(COLORS.fog, 1900, 4600);
   const camera = new THREE.PerspectiveCamera(46, 1, 1, 12000);
   const postTarget = new THREE.WebGLRenderTarget(1, 1, {
     format: THREE.RGBAFormat,
@@ -296,8 +299,8 @@ export async function startWebGLScene(canvas, status) {
       focalPixels: { value: 1 },
       cameraNear: { value: camera.near },
       cameraFar: { value: camera.far },
-      aoRadius: { value: 1.8 },
-      aoStrength: { value: 0.34 },
+      aoRadius: { value: 1.55 },
+      aoStrength: { value: 0.22 },
     },
     vertexShader: `
       varying vec2 vUv;
@@ -380,12 +383,15 @@ export async function startWebGLScene(canvas, status) {
   postScene.add(postQuad);
   const postSize = new THREE.Vector2(1, 1);
   const cameraState = {
-    azimuth: 0.75,
-    elevation: 0.68,
+    azimuth: -0.75,
+    // Start at a higher diorama angle so mapped streets, landmark roofs, and
+    // timetable vehicles remain visible between tall blocks.
+    elevation: 0.60,
     distance: 1600,
     target: new THREE.Vector3(0, 20, 0),
   };
   let animationFrame = 0;
+  let animationTimer = 0;
   let renderRequested = true;
   let sceneReadyToRender = false;
   let transportLayer = null;
@@ -421,13 +427,16 @@ export async function startWebGLScene(canvas, status) {
     festoonPointLights: [],
   };
 
-  const ambient = new THREE.HemisphereLight(0xeaf5ff, 0x273237, 1.25);
+  const ambient = new THREE.HemisphereLight(0xf2f8f5, 0x77725e, 1.7);
   scene.add(ambient);
-  // A broad, shadowless fill gives the default city view readable wall planes
-  // while keeping the dedicated sun study responsible for hard shadow evidence.
-  const cityFill = new THREE.DirectionalLight(0xc5e7ee, 0.72);
+  // Warm, shadowless key and cool sky fill keep small façades legible while the
+  // dedicated sun study remains responsible for analytical cast shadows.
+  const cityFill = new THREE.DirectionalLight(0xffe8c7, 1.08);
   cityFill.position.set(-900, 1250, 700);
   scene.add(cityFill);
+  const skyFill = new THREE.DirectionalLight(0xbfe3ef, 0.48);
+  skyFill.position.set(800, 700, -900);
+  scene.add(skyFill);
   const sunLight = new THREE.DirectionalLight(0xfff3d6, 3.25);
   sunLight.castShadow = true;
   sunLight.visible = false;
@@ -552,11 +561,6 @@ export async function startWebGLScene(canvas, status) {
     };
   }).filter(Boolean);
 
-  const boundsOverlap = (a, b) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
-  function waterMasksOverlapping(bounds, masks = waterMasks) {
-    return masks.filter(mask => boundsOverlap(bounds, mask.bounds));
-  }
-
   function pointInMappedWater(x, z, masks = waterMasks) {
     for (const mask of masks) {
       const [minX, minZ, maxX, maxZ] = mask.bounds;
@@ -564,57 +568,6 @@ export async function startWebGLScene(canvas, status) {
       if (pointInRing(x, z, mask.outer) && !mask.holes.some(hole => pointInRing(x, z, hole))) return true;
     }
     return false;
-  }
-
-  function pointInTriangle2d(point, triangle) {
-    const cross = (a, b, p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
-    const signs = [
-      cross(triangle[0], triangle[1], point),
-      cross(triangle[1], triangle[2], point),
-      cross(triangle[2], triangle[0], point),
-    ];
-    return !(signs.some(value => value < -1e-7) && signs.some(value => value > 1e-7));
-  }
-
-  function segmentsIntersect2d(a, b, c, d) {
-    if (Math.max(a[0], b[0]) < Math.min(c[0], d[0]) - 1e-8
-      || Math.max(c[0], d[0]) < Math.min(a[0], b[0]) - 1e-8
-      || Math.max(a[1], b[1]) < Math.min(c[1], d[1]) - 1e-8
-      || Math.max(c[1], d[1]) < Math.min(a[1], b[1]) - 1e-8) return false;
-    const cross = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
-    const abC = cross(a, b, c), abD = cross(a, b, d);
-    const cdA = cross(c, d, a), cdB = cross(c, d, b);
-    return abC * abD <= 1e-10 && cdA * cdB <= 1e-10;
-  }
-
-  function waterCoverageOfTriangle(triangle, masks) {
-    if (!masks.length) return 'dry';
-    const center = [
-      (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3,
-      (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3,
-    ];
-    const samples = [...triangle.map(([x, , z]) => [x, z]), center];
-    if (masks.some(mask => !mask.holes.length && samples.every(([x, z]) => pointInRing(x, z, mask.outer)))) return 'wet';
-    if (samples.some(([x, z]) => pointInMappedWater(x, z, masks))) return 'edge';
-
-    const triangleBounds = [
-      Math.min(...triangle.map(([x]) => x)), Math.min(...triangle.map(([, , z]) => z)),
-      Math.max(...triangle.map(([x]) => x)), Math.max(...triangle.map(([, , z]) => z)),
-    ];
-    const triangleEdges = [[samples[0], samples[1]], [samples[1], samples[2]], [samples[2], samples[0]]];
-    for (const mask of masks) {
-      for (const ring of [mask.outer, ...mask.holes]) {
-        for (let index = 0; index < ring.length; index += 1) {
-          const a = ring[index], b = ring[(index + 1) % ring.length];
-          if (a[0] >= triangleBounds[0] && a[0] <= triangleBounds[2] && a[1] >= triangleBounds[1] && a[1] <= triangleBounds[3]
-            && pointInTriangle2d(a, samples.slice(0, 3))) return 'edge';
-          const segmentBounds = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
-          if (!boundsOverlap(segmentBounds, triangleBounds)) continue;
-          if (triangleEdges.some(([c, d]) => segmentsIntersect2d(a, b, c, d))) return 'edge';
-        }
-      }
-    }
-    return 'dry';
   }
 
   function pointNearMappedWaterBoundary(x, z, tolerance = 2) {
@@ -655,77 +608,67 @@ export async function startWebGLScene(canvas, status) {
     return true;
   }
 
-  // Edges used by exactly one triangle sit on the outer silhouette of the
-  // (possibly footprint-clipped) terrain mesh — both the rectangular grid
-  // border and any interior gaps eroded by pointInLidarFootprint.
-  function boundaryEdgesOf(indices, positions) {
-    const counts = new Map();
-    const pointKey = index => {
-      const offset = index * 3;
-      return `${Math.round(positions[offset] * 100)}:${Math.round(positions[offset + 1] * 100)}:${Math.round(positions[offset + 2] * 100)}`;
-    };
-    const edgeKey = (a, b) => {
-      const first = pointKey(a), second = pointKey(b);
-      return first < second ? `${first}|${second}` : `${second}|${first}`;
-    };
-    for (let i = 0; i < indices.length; i += 3) {
-      const a = indices[i], b = indices[i + 1], c = indices[i + 2];
-      for (const [p, q] of [[a, b], [b, c], [c, a]]) {
-        const key = edgeKey(p, q);
-        counts.set(key, (counts.get(key) || 0) + 1);
+  function makeDioramaBase(minimumY) {
+    const sourceRing = terrain.footprint?.[0]?.[0];
+    if (!sourceRing || sourceRing.length < 8) return [];
+    const sampleStep = Math.max(1, Math.ceil(sourceRing.length / 128));
+    let ring = sourceRing.filter((_, index) => index % sampleStep === 0)
+      .map(([x, z]) => new THREE.Vector2(x, z));
+    // Smooth the rasterized LiDAR boundary while keeping the physical cut
+    // line inside its own measured footprint.
+    for (let pass = 0; pass < 2; pass += 1) {
+      const smoothed = [];
+      for (let index = 0; index < ring.length; index += 1) {
+        const current = ring[index], next = ring[(index + 1) % ring.length];
+        smoothed.push(
+          new THREE.Vector2(current.x * 0.75 + next.x * 0.25, current.y * 0.75 + next.y * 0.25),
+          new THREE.Vector2(current.x * 0.25 + next.x * 0.75, current.y * 0.25 + next.y * 0.75),
+        );
       }
+      ring = smoothed;
     }
-    const edges = [];
-    for (let i = 0; i < indices.length; i += 3) {
-      const a = indices[i], b = indices[i + 1], c = indices[i + 2];
-      for (const [p, q] of [[a, b], [b, c], [c, a]]) {
-        if (counts.get(edgeKey(p, q)) === 1) edges.push([p, q]);
-      }
-    }
-    return edges;
-  }
-
-  // Drops a wall from every boundary edge down to a shared floor plane so the
-  // terrain reads as a solid slab cut out of the land rather than a zero
-  // thickness sheet floating over the background.
-  function makeTerrainSkirt(positions, indices) {
-    // The water surface fills terrain cuts along mapped shorelines. A deep
-    // terrain skirt there would rise through the water and create dark seams.
-    const edges = boundaryEdgesOf(indices, positions).filter(([a, b]) => {
-      const midpointX = (positions[a * 3] + positions[b * 3]) * 0.5;
-      const midpointZ = (positions[a * 3 + 2] + positions[b * 3 + 2]) * 0.5;
-      return !pointNearMappedWaterBoundary(midpointX, midpointZ, 2.5);
+    let centroidX = 0, centroidZ = 0;
+    for (const point of ring) { centroidX += point.x; centroidZ += point.y; }
+    centroidX /= ring.length;
+    centroidZ /= ring.length;
+    const makeLayer = ({ margin, bottomY, depth, face, side, bevel = false, name }) => {
+      const outline = ring.map(point => {
+        const dx = point.x - centroidX, dz = point.y - centroidZ;
+        const length = Math.hypot(dx, dz) || 1;
+        return [point.x + dx / length * margin, point.y + dz / length * margin];
+      });
+      const shape = new THREE.Shape();
+      shape.moveTo(outline[0][0], -outline[0][1]);
+      for (const [x, z] of outline.slice(1)) shape.lineTo(x, -z);
+      shape.closePath();
+      const geometry = new THREE.ExtrudeGeometry(shape, {
+        depth, steps: 1, bevelEnabled: bevel,
+        bevelSegments: bevel ? 2 : 0,
+        bevelSize: bevel ? 0.65 : 0,
+        bevelThickness: bevel ? 0.55 : 0,
+        curveSegments: 2,
+      });
+      geometry.rotateX(-Math.PI / 2);
+      const materials = [
+        new THREE.MeshStandardMaterial({ color: face, roughness: 0.84, side: THREE.DoubleSide }),
+        new THREE.MeshStandardMaterial({ color: side, roughness: 0.76, side: THREE.DoubleSide }),
+      ];
+      const mesh = new THREE.Mesh(geometry, materials);
+      mesh.position.y = bottomY;
+      mesh.name = name;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      return mesh;
+    };
+    const rim = makeLayer({
+      margin: 18, bottomY: minimumY - 52, depth: 7,
+      face: COLORS.plinthAccent, side: COLORS.plinthSide, name: 'concrete-edge-course',
     });
-    if (!edges.length) return null;
-    let minHeight = Infinity;
-    for (let i = 1; i < positions.length; i += 3) minHeight = Math.min(minHeight, positions[i]);
-    const floorY = minHeight - 40;
-    const topColor = new THREE.Color(COLORS.terrainEdge);
-    const deepColor = new THREE.Color(COLORS.terrainEdgeDeep);
-    const skirtPositions = [];
-    const skirtColors = [];
-    const pushVertex = (x, y, z, colour) => {
-      skirtPositions.push(x, y, z);
-      skirtColors.push(colour.r, colour.g, colour.b);
-    };
-    for (const [a, b] of edges) {
-      const ax = positions[a * 3], ay = positions[a * 3 + 1], az = positions[a * 3 + 2];
-      const bx = positions[b * 3], by = positions[b * 3 + 1], bz = positions[b * 3 + 2];
-      pushVertex(ax, ay, az, topColor);
-      pushVertex(bx, by, bz, topColor);
-      pushVertex(bx, floorY, bz, deepColor);
-      pushVertex(ax, ay, az, topColor);
-      pushVertex(bx, floorY, bz, deepColor);
-      pushVertex(ax, floorY, az, deepColor);
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(skirtPositions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(skirtColors, 3));
-    geometry.computeVertexNormals();
-    const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.name = 'terrain-skirt';
-    return mesh;
+    const slab = makeLayer({
+      margin: 14, bottomY: minimumY - 45, depth: 44,
+      face: COLORS.plinthTop, side: COLORS.plinthSide, bevel: true, name: 'diorama-plinth',
+    });
+    return [rim, slab];
   }
 
   function makeTerrain() {
@@ -738,44 +681,6 @@ export async function startWebGLScene(canvas, status) {
         positions.push(x, terrain.heights[row * terrain.columns + column], z);
       }
     }
-    const pushClippedTriangle = (triangle, depth = 0, candidateWater = [], clipFootprint = false) => {
-      const [a, b, c] = triangle;
-      const center = [(a[0] + b[0] + c[0]) / 3, (a[2] + b[2] + c[2]) / 3];
-      const triangleBounds = [
-        Math.min(a[0], b[0], c[0]), Math.min(a[2], b[2], c[2]),
-        Math.max(a[0], b[0], c[0]), Math.max(a[2], b[2], c[2]),
-      ];
-      const localWater = waterMasksOverlapping(triangleBounds, candidateWater);
-      const edgeLength = Math.max(
-        Math.hypot(a[0] - b[0], a[2] - b[2]),
-        Math.hypot(b[0] - c[0], b[2] - c[2]),
-        Math.hypot(c[0] - a[0], c[2] - a[2]),
-      );
-      const waterCoverage = waterCoverageOfTriangle(triangle, localWater);
-      if (waterCoverage === 'wet') return;
-      const append = () => {
-        if (clipFootprint && !terrainValidAt(center[0], center[1])) return;
-        const first = positions.length / 3;
-        for (const [x, y, z] of triangle) positions.push(x, y, z);
-        indices.push(first, first + 1, first + 2);
-      };
-      if (waterCoverage === 'dry') {
-        append();
-        return;
-      }
-      if (edgeLength <= (localWater.length ? 0.65 : 2.5) || depth >= 6) {
-        if (clipFootprint && !terrainValidAt(center[0], center[1])) return;
-        if (pointInMappedWater(center[0], center[1], localWater)) return;
-        append();
-        return;
-      }
-      const midpoint = (p, q) => [(p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5, (p[2] + q[2]) * 0.5];
-      const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
-      pushClippedTriangle([a, ab, ca], depth + 1, localWater, clipFootprint);
-      pushClippedTriangle([ab, b, bc], depth + 1, localWater, clipFootprint);
-      pushClippedTriangle([ca, bc, c], depth + 1, localWater, clipFootprint);
-      pushClippedTriangle([ab, bc, ca], depth + 1, localWater, clipFootprint);
-    };
     for (let row = 0; row < terrain.rows - 1; row += 1) {
       for (let column = 0; column < terrain.columns - 1; column += 1) {
         const a = row * terrain.columns + column;
@@ -794,21 +699,17 @@ export async function startWebGLScene(canvas, status) {
           [[[x1, terrain.heights[b], z0], [x0, terrain.heights[c], z1], [x1, terrain.heights[d], z1]], [b, c, d]],
         ];
         for (const [triangle, baseIndices] of triangles) {
-          const triangleBounds = [
-            Math.min(...triangle.map(([x]) => x)), Math.min(...triangle.map(([, , z]) => z)),
-            Math.max(...triangle.map(([x]) => x)), Math.max(...triangle.map(([, , z]) => z)),
-          ];
-          const candidateWater = waterMasksOverlapping(triangleBounds);
           const flags = triangle.map(([x, , z]) => terrainValidAt(x, z));
           const centerX = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
           const centerZ = (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3;
-          flags.push(terrainValidAt(centerX, centerZ));
-          if (candidateWater.length) {
-            if (flags.some(Boolean)) pushClippedTriangle(triangle, 0, candidateWater, !flags.every(Boolean));
-            continue;
-          }
+          const centerValid = terrainValidAt(centerX, centerZ);
+          flags.push(centerValid);
           if (flags.every(Boolean)) indices.push(...baseIndices);
-          else if (flags.some(Boolean)) pushClippedTriangle(triangle, 0, [], true);
+          else if (flags.some(Boolean) && centerValid) {
+            const first = positions.length / 3;
+            for (const [x, y, z] of triangle) positions.push(x, y, z);
+            indices.push(first, first + 1, first + 2);
+          }
         }
       }
     }
@@ -841,9 +742,10 @@ export async function startWebGLScene(canvas, status) {
     shadowCatcher.visible = false;
     shadowCatcher.name = 'ground-shadow-catcher';
     shadowCatcher.renderOrder = 4;
-    const skirt = makeTerrainSkirt(positions, indices);
+    let minimumY = Infinity;
+    for (let index = 1; index < positions.length; index += 3) minimumY = Math.min(minimumY, positions[index]);
+    layerGroups.terrain.add(...makeDioramaBase(minimumY));
     layerGroups.terrain.add(mesh, shadowCatcher);
-    if (skirt) layerGroups.terrain.add(skirt);
     return { mesh, shadowCatcher };
   }
 
@@ -857,6 +759,119 @@ export async function startWebGLScene(canvas, status) {
 
   function triangulateRing(ring) {
     return triangulateRings(ring).faces;
+  }
+
+  function makeWaterTexture(algaeStrength, seed) {
+    const size = 256;
+    const pixels = new Uint8Array(size * size * 4);
+    const hash = (x, y) => {
+      const value = Math.sin((x + seed * 13.1) * 127.1 + (y - seed * 3.7) * 311.7) * 43758.5453;
+      return value - Math.floor(value);
+    };
+    const noise = (u, v, cells) => {
+      const x = u * cells, y = v * cells;
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const fx = x - x0, fy = y - y0;
+      const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const wrap = value => (value % cells + cells) % cells;
+      const top = hash(wrap(x0), wrap(y0)) * (1 - sx) + hash(wrap(x0 + 1), wrap(y0)) * sx;
+      const bottom = hash(wrap(x0), wrap(y0 + 1)) * (1 - sx) + hash(wrap(x0 + 1), wrap(y0 + 1)) * sx;
+      return top * (1 - sy) + bottom * sy;
+    };
+    const smoothstep = (edge0, edge1, value) => {
+      const amount = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+      return amount * amount * (3 - 2 * amount);
+    };
+    const deep = [17, 83, 111];
+    const shallow = [48, 143, 157];
+    const algae = [82, 119, 57];
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const u = x / size, v = y / size;
+        const broad = noise(u, v, 4);
+        const medium = noise(u, v, 12);
+        const fine = noise(u, v, 40);
+        const waterTone = clamp(broad * 0.62 + medium * 0.30 + fine * 0.08, 0, 1);
+        const algaePatch = smoothstep(0.50, 0.76, broad * 0.78 + medium * 0.22) * algaeStrength;
+        const ripple = Math.pow(Math.max(0, Math.sin((u * 7.0 + v * 4.2 + broad * 0.16) * Math.PI * 2) - 0.94), 1.7) * 88;
+        const grain = (fine - 0.5) * 9;
+        const offset = (y * size + x) * 4;
+        for (let channel = 0; channel < 3; channel += 1) {
+          const water = deep[channel] + (shallow[channel] - deep[channel]) * waterTone;
+          const toned = water + (algae[channel] - water) * algaePatch + ripple + grain;
+          pixels[offset + channel] = Math.round(clamp(toned, 0, 255));
+        }
+        pixels[offset + 3] = 255;
+      }
+    }
+    const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
+  function makeWater() {
+    const batches = new Map([
+      ['lake', { positions: [], uvs: [], indices: [] }],
+      ['pond', { positions: [], uvs: [], indices: [] }],
+      ['canal', { positions: [], uvs: [], indices: [] }],
+    ]);
+    for (const water of data.water || []) {
+      const [outer, ...holes] = water.rings || [];
+      if (!outer?.length || outer.length < 3) continue;
+      const { vertices, faces } = triangulateRings(outer, holes);
+      if (!faces.length) continue;
+      const heights = outer.map(([x, z]) => terrainSurfaceHeightAt(x, z)).sort((a, b) => a - b);
+      const waterLevel = heights[Math.floor(heights.length * 0.5)] + 0.55;
+      const attributes = water.attributes || {};
+      const kind = attributes.class === 'canal' ? 'canal' : attributes.class === 'pond' ? 'pond' : 'lake';
+      const batch = batches.get(kind);
+      const firstVertex = batch.positions.length / 3;
+      for (const [x, z] of vertices) {
+        batch.positions.push(x, waterLevel, z);
+        batch.uvs.push(x / 45, z / 45);
+      }
+      for (const face of faces) batch.indices.push(...face.map(index => firstVertex + index));
+    }
+
+    const settings = {
+      lake: { algae: 0.27, seed: 3, roughness: 0.28, clearcoat: 0.34 },
+      pond: { algae: 0.58, seed: 7, roughness: 0.34, clearcoat: 0.22 },
+      canal: { algae: 0.08, seed: 13, roughness: 0.22, clearcoat: 0.46 },
+    };
+    for (const [kind, batch] of batches) {
+      if (!batch.indices.length) continue;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(batch.positions, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(batch.uvs, 2));
+      geometry.setIndex(batch.indices);
+      geometry.computeVertexNormals();
+      const config = settings[kind];
+      const material = new THREE.MeshPhysicalMaterial({
+        map: makeWaterTexture(config.algae, config.seed),
+        color: kind === 'pond' ? 0xe8f4d9 : kind === 'canal' ? 0xd7f2f1 : 0xe0f4f4,
+        roughness: config.roughness,
+        metalness: 0.035,
+        clearcoat: config.clearcoat,
+        clearcoatRoughness: 0.24,
+        bumpMap: makeWaterTexture(config.algae * 0.42, config.seed + 21),
+        bumpScale: 0.11,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `osm-water-${kind}`;
+      mesh.renderOrder = 2;
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      layerGroups.water.add(mesh);
+    }
+    return data.water?.length || 0;
   }
 
   function osmColour(value, fallback) {
@@ -910,23 +925,20 @@ export async function startWebGLScene(canvas, status) {
     return new THREE.Color(`rgb(${red},${green},${blue})`);
   }
 
-  function subtleHeightColour(baseHex, height, strength) {
-    const heightCue = clamp((Number(height) - 5) / 120, 0, 1);
-    return new THREE.Color(baseHex).lerp(new THREE.Color(0x9acbd1), heightCue * strength);
-  }
-
   function makeBuildings() {
     const wallPositions = [];
     const wallTriangles = [];
     const roofPositions = [];
     const wallColors = [];
     const wallElevationColors = [];
-    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0, , , holes = [], attributes = {}], buildingIndex) => {
+    data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0, , , holes = []], buildingIndex) => {
       const baseY = ground + Math.max(0, Number(minHeight) || 0);
       const simpleWallHeight = roofSurfaceBuffer ? wallHeight : height;
       const roofY = ground + simpleWallHeight;
       const colour = elevationColour(height);
-      const facadeColour = subtleHeightColour(COLORS.wall, height, 0.22);
+      // Keep mapped buildings neutral; analysis colours remain available only
+      // through the existing elevation view.
+      const facadeColour = new THREE.Color(COLORS.wall);
       for (const [ringIndex, wallRing] of [ring, ...holes].entries()) {
         for (let index = 0; index < wallRing.length; index += 1) {
           const next = (index + 1) % wallRing.length;
@@ -973,10 +985,7 @@ export async function startWebGLScene(canvas, status) {
     roofGeometry.setAttribute('position', new THREE.Float32BufferAttribute(roofPositions, 3));
     roofGeometry.computeVertexNormals();
     const wallMaterial = new THREE.MeshLambertMaterial({ color: COLORS.wall, vertexColors: true, side: THREE.DoubleSide });
-    const roofMaterial = new THREE.MeshLambertMaterial({
-      color: COLORS.roof,
-      side: THREE.DoubleSide,
-    });
+    const roofMaterial = new THREE.MeshLambertMaterial({ color: COLORS.roof, side: THREE.DoubleSide });
     const walls = new THREE.Mesh(wallGeometry, wallMaterial);
     const roofs = new THREE.Mesh(roofGeometry, roofMaterial);
     for (const mesh of [walls, roofs]) {
@@ -1041,10 +1050,7 @@ export async function startWebGLScene(canvas, status) {
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
-    const material = new THREE.MeshLambertMaterial({
-      color: COLORS.roof,
-      side: THREE.DoubleSide,
-    });
+    const material = new THREE.MeshLambertMaterial({ color: COLORS.roof, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -1094,41 +1100,7 @@ export async function startWebGLScene(canvas, status) {
     return terrainHeightAt(x, z) + 4;
   }
 
-  function makeWaterAndOsmDetails() {
-    const waterPositions = [];
-    for (const water of data.water || []) {
-      const [outer, ...holes] = water.rings || [];
-      if (!outer?.length) continue;
-      // Water is level. Use the median shoreline height to avoid a low plane
-      // that lets the coarse terrain poke through it. makeTerrain cuts the
-      // mapped water footprint from the land mesh, leaving a clean shore edge.
-      const shoreline = outer.map(([x, z]) => terrainSurfaceHeightAt(x, z)).sort((a, b) => a - b);
-      const waterLevel = shoreline[Math.floor((shoreline.length - 1) * 0.5)] + 0.08;
-      const triangulated = triangulateRings(outer, holes);
-      for (const face of triangulated.faces) {
-        for (const index of face) {
-          const [x, z] = triangulated.vertices[index];
-          waterPositions.push(x, waterLevel, z);
-        }
-      }
-    }
-    if (waterPositions.length) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(waterPositions, 3));
-      geometry.computeVertexNormals();
-      // Keep mapped water legible under every sun/ambient-light state. This is
-      // an unlit surface treatment, not a heat-map overlay; buildings and
-      // terrain still occlude it normally through the depth buffer.
-      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-        color: COLORS.water,
-        transparent: true, opacity: 0.94, side: THREE.DoubleSide, depthWrite: true,
-        polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-      }));
-      mesh.receiveShadow = true;
-      mesh.renderOrder = 4;
-      layerGroups.water.add(mesh);
-    }
-
+  function makeOsmDetails() {
     const solarPositions = [];
     const solarFramePositions = [];
     const pushSolarVertex = (x, z) => {
@@ -1517,7 +1489,7 @@ export async function startWebGLScene(canvas, status) {
     // Higher-priority carriageways sit a few centimetres above lower classes
     // at overlaps. Footways remain contextual and below carriageways so they
     // cannot slice a visible road into disconnected pieces at junctions.
-    const buildRibbon = (roads, styleIndex, priority, gradeSeparated, outer = false) => {
+    const buildRibbon = (roads, styleIndex, priority, gradeSeparated) => {
       const vertices = [];
       const uvs = [];
       const indices = [];
@@ -1542,9 +1514,9 @@ export async function startWebGLScene(canvas, status) {
         }
       };
       for (const road of roads) {
-        const halfWidth = road.width * 0.5 + (outer ? ([3, 4].includes(styleIndex) ? 0.12 : 0.20) : 0);
+        const halfWidth = road.width * 0.5;
         const elevationOffset = (road.surfaceOffset ?? ROAD_CLASS_OFFSETS[styleIndex] ?? 0.26)
-          + (road.verticalOffset || 0) + (outer ? -0.02 : 0);
+          + (road.verticalOffset || 0);
         const cleanPoints = road.points.filter(([x, z], index, points) => (
           Number.isFinite(x) && Number.isFinite(z)
           && (!index || Math.hypot(x - points[index - 1][0], z - points[index - 1][1]) > 0.05)
@@ -1598,8 +1570,8 @@ export async function startWebGLScene(canvas, status) {
       geometry.setIndex(indices);
       geometry.computeVertexNormals();
       const material = new THREE.MeshStandardMaterial({
-        color: outer ? 0x45443f : colors[styleIndex],
-        map: !outer && styleIndex <= 2 ? asphaltTexture : null,
+        color: colors[styleIndex],
+        map: styleIndex <= 2 ? asphaltTexture : null,
         roughness: 0.94,
         metalness: 0,
         transparent: false,
@@ -1610,13 +1582,13 @@ export async function startWebGLScene(canvas, status) {
         depthWrite: gradeSeparated,
         side: THREE.DoubleSide,
         polygonOffset: true,
-        polygonOffsetFactor: outer ? -1 : -3,
-        polygonOffsetUnits: outer ? -1 : -3,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -3,
       });
       const mesh = new THREE.Mesh(geometry, material);
       // Stay below mapped parking/crossing paint (orders 6 and 8) while still
       // preserving fine-grained ordering among the four network tiers.
-      mesh.renderOrder = 2 + priority * 0.2 + (outer ? 0 : 0.1);
+      mesh.renderOrder = 2.1 + priority * 0.2;
       mesh.receiveShadow = true;
       return mesh;
     };
@@ -1628,8 +1600,7 @@ export async function startWebGLScene(canvas, status) {
         for (const gradeSeparated of [false, true]) {
           const grade = tier.filter(road => (Math.abs(road.verticalOffset || 0) > 1) === gradeSeparated);
           if (!grade.length) continue;
-          target.add(buildRibbon(grade, index, priority, gradeSeparated, true));
-          target.add(buildRibbon(grade, index, priority, gradeSeparated, false));
+          target.add(buildRibbon(grade, index, priority, gradeSeparated));
         }
       }
     });
@@ -1744,8 +1715,8 @@ export async function startWebGLScene(canvas, status) {
 
     // OSM has no explicit crossing or stop-line features in this city extract,
     // but connected road vertices are available. Use those shared nodes to let
-    // lane dashes and curb edges breathe at real junctions without inventing
-    // zebra crossings or traffic-control markings.
+    // lane dashes breathe at real junctions without inventing zebra crossings
+    // or traffic-control markings.
     const roadVertices = new Map();
     const roadVertexKey = (x, z) => `${Math.round(x / 2)}:${Math.round(z / 2)}`;
     for (const road of positionsByStyle.flat()) {
@@ -1771,8 +1742,6 @@ export async function startWebGLScene(canvas, status) {
     }
 
     const roadPaint = { white: [], yellow: [] };
-    const curbVertices = [];
-    const curbIndices = [];
     const paintIndices = { white: [], yellow: [] };
     const appendRoadQuad = (targetVertices, targetIndices, road, start, end, width, extraHeight) => {
       const dx = end[0] - start[0];
@@ -1828,7 +1797,7 @@ export async function startWebGLScene(canvas, status) {
     };
     for (const road of positionsByStyle.flat()) {
       // Offset sidewalk records share the road layer list but intentionally
-      // have no carriageway style fields. They must not enter lane/curb paint
+      // have no carriageway style fields. They must not enter lane-marking
       // generation, which expects a mapped vehicle-road surface offset.
       if (!Number.isFinite(road.baseStyle) || !Number.isFinite(road.styleIndex)
         || road.baseStyle > 2 || road.styleIndex > 2 || !road.points?.length) continue;
@@ -1846,20 +1815,7 @@ export async function startWebGLScene(canvas, status) {
         appendDashedRoadLine(road, points, lateralOffset, 'white', 2.8, 5.2);
       }
 
-      const curbOffset = Math.max(0, road.width * 0.5 - 0.09);
-      for (const side of [-1, 1]) {
-        const curbLine = offsetPolyline(points, curbOffset * side);
-        let distance = 0;
-        for (let index = 0; index < curbLine.length - 1; index += 1) {
-          const segmentLength = Math.hypot(curbLine[index + 1][0] - curbLine[index][0], curbLine[index + 1][1] - curbLine[index][1]);
-          const clearance = Math.max(4.5, road.width * 0.5 + 1.5);
-          const besideJunction = road.junctionDistances?.some(cut => (
-            Math.abs(cut - distance) < clearance || Math.abs(cut - (distance + segmentLength)) < clearance
-          ));
-          if (!besideJunction) appendRoadQuad(curbVertices, curbIndices, road, curbLine[index], curbLine[index + 1], 0.14, 0.085);
-          distance += segmentLength;
-        }
-      }
+
     }
     const addRoadDetailMesh = (vertices, indices, material, name, nearDistance, farDistance) => {
       if (!indices.length) return null;
@@ -1888,11 +1844,6 @@ export async function startWebGLScene(canvas, status) {
       roadPaint.yellow, paintIndices.yellow,
       new THREE.MeshBasicMaterial({ color: 0xc7ae61, opacity: 0.88, side: THREE.DoubleSide }),
       'faded-yellow centre lines', 650, 1850,
-    );
-    addRoadDetailMesh(
-      curbVertices, curbIndices,
-      new THREE.MeshStandardMaterial({ color: 0x777b75, roughness: 0.94, side: THREE.DoubleSide }),
-      'mapped-width curb edges', 850, 2300,
     );
   }
 
@@ -2342,88 +2293,8 @@ export async function startWebGLScene(canvas, status) {
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(shades, 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
-    const textureSize = 512;
-    const foliageCanvas = document.createElement('canvas');
-    foliageCanvas.width = foliageCanvas.height = textureSize;
-    const foliageContext = foliageCanvas.getContext('2d');
-    const palette = ['#285a34', '#326d39', '#3d7b3f', '#4b8845', '#5c934a', '#719f52'];
-    let randomState = 0x5ca5e;
-    const random = () => {
-      randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0;
-      return randomState / 4294967296;
-    };
-    const drawWrapped = (x, y, margin, draw) => {
-      const offsetsX = x < margin ? [0, textureSize] : x > textureSize - margin ? [0, -textureSize] : [0];
-      const offsetsY = y < margin ? [0, textureSize] : y > textureSize - margin ? [0, -textureSize] : [0];
-      for (const offsetX of offsetsX) for (const offsetY of offsetsY) draw(x + offsetX, y + offsetY);
-    };
-    foliageContext.fillStyle = '#2c6136';
-    foliageContext.fillRect(0, 0, textureSize, textureSize);
-    for (let index = 0; index < 115; index += 1) {
-      const x = random() * textureSize;
-      const y = random() * textureSize;
-      const radius = 14 + random() * 44;
-      const color = palette[Math.floor(random() * palette.length)];
-      drawWrapped(x, y, radius, (wrappedX, wrappedY) => {
-        const gradient = foliageContext.createRadialGradient(wrappedX, wrappedY, 0, wrappedX, wrappedY, radius);
-        gradient.addColorStop(0, `${color}b8`);
-        gradient.addColorStop(1, `${color}00`);
-        foliageContext.fillStyle = gradient;
-        foliageContext.beginPath();
-        foliageContext.arc(wrappedX, wrappedY, radius, 0, Math.PI * 2);
-        foliageContext.fill();
-      });
-    }
-    for (let index = 0; index < 1900; index += 1) {
-      const x = random() * textureSize;
-      const y = random() * textureSize;
-      const length = 4 + random() * 10;
-      const width = 1.2 + random() * 2.1;
-      const rotation = random() * Math.PI;
-      const color = palette[Math.floor(random() * palette.length)];
-      drawWrapped(x, y, length, (wrappedX, wrappedY) => {
-        foliageContext.save();
-        foliageContext.translate(wrappedX, wrappedY);
-        foliageContext.rotate(rotation);
-        foliageContext.fillStyle = color;
-        foliageContext.beginPath();
-        foliageContext.ellipse(0, 0, length * 0.5, width * 0.5, 0, 0, Math.PI * 2);
-        foliageContext.fill();
-        foliageContext.strokeStyle = 'rgba(177, 198, 112, 0.42)';
-        foliageContext.lineWidth = 0.55;
-        foliageContext.beginPath();
-        foliageContext.moveTo(-length * 0.34, 0);
-        foliageContext.lineTo(length * 0.34, 0);
-        foliageContext.stroke();
-        foliageContext.restore();
-      });
-    }
-    const foliagePixels = foliageContext.getImageData(0, 0, textureSize, textureSize);
-    const bumpCanvas = document.createElement('canvas');
-    bumpCanvas.width = bumpCanvas.height = textureSize;
-    const bumpContext = bumpCanvas.getContext('2d');
-    const bumpPixels = bumpContext.createImageData(textureSize, textureSize);
-    for (let index = 0; index < foliagePixels.data.length; index += 4) {
-      const luminance = foliagePixels.data[index] * 0.25 + foliagePixels.data[index + 1] * 0.65 + foliagePixels.data[index + 2] * 0.10;
-      const height = Math.min(255, Math.max(0, luminance * 0.78 + random() * 38));
-      bumpPixels.data[index] = bumpPixels.data[index + 1] = bumpPixels.data[index + 2] = height;
-      bumpPixels.data[index + 3] = 255;
-    }
-    bumpContext.putImageData(bumpPixels, 0, 0);
-    const foliageMap = new THREE.CanvasTexture(foliageCanvas);
-    foliageMap.wrapS = foliageMap.wrapT = THREE.RepeatWrapping;
-    foliageMap.colorSpace = THREE.SRGBColorSpace;
-    foliageMap.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-    const foliageBump = new THREE.CanvasTexture(bumpCanvas);
-    foliageBump.wrapS = foliageBump.wrapT = THREE.RepeatWrapping;
-    foliageBump.colorSpace = THREE.NoColorSpace;
-    foliageBump.anisotropy = foliageMap.anisotropy;
-    const crownMaterial = new THREE.MeshStandardMaterial({
-      color: 0xf4fff0,
-      map: foliageMap,
-      bumpMap: foliageBump,
-      bumpScale: 0.11,
-      roughness: 0.98,
+    const crownMaterial = new THREE.MeshLambertMaterial({
+      color: 0x7da55d,
       vertexColors: true,
       side: THREE.DoubleSide,
     });
@@ -3002,19 +2873,15 @@ export async function startWebGLScene(canvas, status) {
     makeInstances(new THREE.TorusGeometry(0.56, 0.055, 6, 12), furnitureMaterial, bicycleRackMatrices, 'bicycleParkingRack');
 
     const fountains = osmFurniture.filter(item => item.class === 'fountain' && item.coordinates);
-    const fountainBases = [], fountainBowls = [], fountainWater = [], fountainJets = [];
+    const fountainBases = [], fountainBowls = [];
     for (const item of fountains) {
       const [x, z] = item.coordinates;
       const y = terrainHeightAt(x, z) + 0.18;
       fountainBases.push(composeMatrix(new THREE.Vector3(x, y + 0.24, z)));
       fountainBowls.push(composeMatrix(new THREE.Vector3(x, y + 0.5, z)));
-      fountainWater.push(composeMatrix(new THREE.Vector3(x, y + 0.62, z)));
-      fountainJets.push(composeMatrix(new THREE.Vector3(x, y + 1.02, z)));
     }
     makeInstances(new THREE.CylinderGeometry(1.8, 2.05, 0.48, 24), new THREE.MeshLambertMaterial({ color: 0x8b918d }), fountainBases, 'fountainBase');
     makeInstances(new THREE.CylinderGeometry(1.55, 1.7, 0.24, 24, 1, true), new THREE.MeshLambertMaterial({ color: 0xa1a6a0, side: THREE.DoubleSide }), fountainBowls, 'fountainBowl');
-    makeInstances(new THREE.CylinderGeometry(1.52, 1.52, 0.025, 24), new THREE.MeshLambertMaterial({ color: 0x4d9db3, transparent: true, opacity: 0.72 }), fountainWater, 'fountainWater');
-    makeInstances(new THREE.CylinderGeometry(0.025, 0.045, 0.8, 6), new THREE.MeshBasicMaterial({ color: 0xa9e5f3, transparent: true, opacity: 0.8 }), fountainJets, 'fountainJet');
 
     const busStops = osmFurniture.filter(item => item.class === 'busStop' && item.coordinates);
     const busStopPoles = [], busStopSigns = [];
@@ -3253,6 +3120,7 @@ export async function startWebGLScene(canvas, status) {
 
   status.textContent = 'Building GPU scene…';
   const { mesh: terrainMesh, shadowCatcher } = makeTerrain();
+  makeWater();
   const buildingMeshes = makeBuildings();
   buildingMeshes.surface = makeDetailedRoofSurface();
   const buildingAppearance = document.querySelector('#building-appearance');
@@ -3285,7 +3153,7 @@ export async function startWebGLScene(canvas, status) {
     requestRender();
   }
   makeGrass();
-  makeWaterAndOsmDetails();
+  makeOsmDetails();
   const railwayCount = makeRailways();
   makeRoads();
   const canopyCount = makeCanopies();
@@ -3752,6 +3620,10 @@ export async function startWebGLScene(canvas, status) {
     Object.entries(layerGroups).map(([name, group]) => [name, group.visible]),
   );
 
+  function refreshTransportVehicleLayers() {
+    transportLayer?.refreshLayerVisibility?.();
+  }
+
   function syncTrafficSceneVisibility() {
     trafficGroup.visible = trafficState.sceneActive && trafficState.enabled;
     trafficStatusGroup.visible = trafficState.sceneActive && Boolean(trafficRestrictionsToggle?.checked);
@@ -3760,19 +3632,20 @@ export async function startWebGLScene(canvas, status) {
 
   function restoreNormalVisibility() {
     for (const [name, group] of Object.entries(layerGroups)) group.visible = savedVisibility[name];
+    refreshTransportVehicleLayers();
   }
 
   const sectionLayerProfiles = {
     analysis: {
-      terrain: true, water: true, grass: false, railways: false,
+      terrain: true, grass: false, railways: false,
       paths: false, roads: false, cityFurniture: false, buildings: true, trees: true,
     },
     traffic: {
-      terrain: true, water: true, grass: false, railways: false,
+      terrain: true, grass: false, railways: false,
       paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
     },
     transport: {
-      terrain: true, water: true, grass: false, railways: true,
+      terrain: true, grass: false, railways: true,
       paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
     },
   };
@@ -3786,6 +3659,7 @@ export async function startWebGLScene(canvas, status) {
       layerGroups[layerName].visible = visible;
     }
     syncLayerControls();
+    refreshTransportVehicleLayers();
   }
 
   // Road and footpath meshes are drawn above the terrain and otherwise cover
@@ -3806,6 +3680,7 @@ export async function startWebGLScene(canvas, status) {
       input.title = 'Hidden while the generated wind surface is visible';
     });
     syncLayerControls();
+    refreshTransportVehicleLayers();
   }
 
   function restoreStreetLayersAfterWind() {
@@ -3818,6 +3693,7 @@ export async function startWebGLScene(canvas, status) {
       input.removeAttribute('title');
     });
     syncLayerControls();
+    refreshTransportVehicleLayers();
   }
 
   function windCellKey(column, row) {
@@ -3983,6 +3859,10 @@ export async function startWebGLScene(canvas, status) {
 
   function requestRender() {
     renderRequested = true;
+    if (animationTimer) {
+      clearTimeout(animationTimer);
+      animationTimer = 0;
+    }
     if (sceneReadyToRender && !animationFrame) animationFrame = requestAnimationFrame(render);
   }
 
@@ -4005,13 +3885,43 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function updateCamera() {
+    cameraState.distance = clamp(cameraState.distance, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
+    cameraState.elevation = clamp(cameraState.elevation, CAMERA_MIN_ELEVATION, 1.35);
     const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
+    let targetY = cameraState.target.y;
+    const targetIsOnMap = terrainValidAt(cameraState.target.x, cameraState.target.z);
+    const targetGround = targetIsOnMap
+      ? terrainSurfaceHeightAt(cameraState.target.x, cameraState.target.z)
+      : shadowMinimumY;
+    const nominalEyeY = targetY + Math.sin(cameraState.elevation) * cameraState.distance;
+    const cameraClearance = 24;
+    // A focus point below the slab is useful for the distant diorama framing,
+    // but at close range it can pull the camera under the ground. Bring the
+    // focus onto the mapped surface once the eye would otherwise cross it.
+    if (targetIsOnMap && nominalEyeY < targetGround + cameraClearance) {
+      targetY = targetGround + 10;
+    }
     camera.position.set(
       cameraState.target.x + Math.cos(cameraState.azimuth) * horizontal,
-      cameraState.target.y + Math.sin(cameraState.elevation) * cameraState.distance,
+      targetY + Math.sin(cameraState.elevation) * cameraState.distance,
       cameraState.target.z + Math.sin(cameraState.azimuth) * horizontal,
     );
-    camera.lookAt(cameraState.target);
+    const eyeIsOnMap = terrainValidAt(camera.position.x, camera.position.z);
+    const eyeGround = eyeIsOnMap
+      ? terrainSurfaceHeightAt(camera.position.x, camera.position.z)
+      : shadowMinimumY;
+    const eyeRoof = rooftopHeightAt(camera.position.x, camera.position.z);
+    const minimumEyeY = Math.max(
+      shadowMinimumY + cameraClearance,
+      eyeGround + cameraClearance,
+      eyeRoof + cameraClearance,
+    );
+    if (camera.position.y < minimumEyeY) {
+      const lift = minimumEyeY - camera.position.y;
+      camera.position.y += lift;
+      targetY += lift;
+    }
+    camera.lookAt(cameraState.target.x, targetY, cameraState.target.z);
     const atmosphereScale = Math.max(1, cameraState.distance / 1600);
     scene.fog.near = 1900 * atmosphereScale;
     scene.fog.far = 4600 * atmosphereScale;
@@ -4064,25 +3974,25 @@ export async function startWebGLScene(canvas, status) {
     postMaterial.uniforms.resolution.value.set(width, height);
     postMaterial.uniforms.inverseProjection.value.copy(camera.projectionMatrixInverse);
     postMaterial.uniforms.focalPixels.value = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5)));
-    postMaterial.uniforms.aoStrength.value = 0.22 + (1 - clamp(cameraState.distance / 6000, 0, 1)) * 0.20;
+    postMaterial.uniforms.aoStrength.value = 0.14 + (1 - clamp(cameraState.distance / 6000, 0, 1)) * 0.10;
   }
 
   function fitScene() {
     const mapOffset = terrainWidth * 0.15;
     // Shift the world opposite the panel, so the complete city remains in the
     // unobscured canvas area when the controls occupy the right edge.
-    cameraState.target.set(Math.sin(cameraState.azimuth) * mapOffset, 20, -Math.cos(cameraState.azimuth) * mapOffset);
-    cameraState.distance = Math.max(500, Math.min(2800, Math.hypot(terrainWidth, terrainDepth) * 0.76));
-    cameraState.elevation = 0.68;
+    cameraState.target.set(Math.sin(cameraState.azimuth) * mapOffset, -180, -Math.cos(cameraState.azimuth) * mapOffset);
+    cameraState.distance = Math.max(CAMERA_MIN_DISTANCE, Math.min(2800, Math.hypot(terrainWidth, terrainDepth) * 0.76));
+    cameraState.elevation = 0.60;
     updateCamera();
   }
 
   document.querySelector('#map-zoom-in')?.addEventListener('click', () => {
-    cameraState.distance = clamp(cameraState.distance * 0.82, 80, 7000);
+    cameraState.distance = clamp(cameraState.distance * 0.82, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     updateCamera();
   });
   document.querySelector('#map-zoom-out')?.addEventListener('click', () => {
-    cameraState.distance = clamp(cameraState.distance / 0.82, 80, 7000);
+    cameraState.distance = clamp(cameraState.distance / 0.82, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     updateCamera();
   });
   document.querySelector('#map-fit')?.addEventListener('click', fitScene);
@@ -4097,7 +4007,7 @@ export async function startWebGLScene(canvas, status) {
     const centerZ = (minZ + maxZ) / 2;
     const span = Math.max(Math.hypot(maxX - minX, maxZ - minZ), 240);
     cameraState.target.set(centerX, terrainHeightAt(centerX, centerZ) + 15, centerZ);
-    cameraState.distance = clamp(span * 0.9, 360, 2400);
+    cameraState.distance = clamp(span * 0.9, CAMERA_MIN_DISTANCE, 2400);
     cameraState.elevation = elevation;
     updateCamera();
   }
@@ -4255,7 +4165,7 @@ export async function startWebGLScene(canvas, status) {
     const directShadowStudy = enabled && shadowState.mode === 'shadows';
     sunLight.visible = directShadowStudy && shadowState.generated;
     shadowCatcher.visible = directShadowStudy && shadowState.generated;
-    ambient.intensity = directShadowStudy ? 0.5 : 1.65;
+    ambient.intensity = directShadowStudy ? 0.5 : 1.72;
     terrainMesh.material.color.setHex(enabled ? terrainMesh.userData.sunColor : terrainMesh.userData.normalColor);
     // The single, non-indexed façade mesh is a receiver and caster for the
     // entire CBD. Receiving its own low-resolution city-wide shadow map creates
@@ -4362,6 +4272,7 @@ export async function startWebGLScene(canvas, status) {
       windState.enabled = Boolean(windToggle?.checked);
       windGroup.visible = windState.enabled;
     }
+    refreshTransportVehicleLayers();
     setSunMaterials(enabled);
     updateSunBox();
     syncLayerControls();
@@ -5785,6 +5696,7 @@ export async function startWebGLScene(canvas, status) {
       syncTrafficSceneVisibility();
     }
     syncLayerControls();
+    refreshTransportVehicleLayers();
     requestRender();
   }
 
@@ -10581,7 +10493,7 @@ export async function startWebGLScene(canvas, status) {
         const centerX = (points[0].x + points[1].x) * 0.5;
         const centerY = (points[0].y + points[1].y) * 0.5;
         const spacing = Math.max(1, Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y));
-        cameraState.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, 80, 7000);
+        cameraState.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
         const dx = centerX - cameraTouchGesture.centerX;
         const dy = centerY - cameraTouchGesture.centerY;
         const pan = panFromDrag(cameraTouchGesture.distance, dx, dy);
@@ -10790,7 +10702,7 @@ export async function startWebGLScene(canvas, status) {
   });
   canvas.addEventListener('wheel', event => {
     event.preventDefault();
-    cameraState.distance = clamp(cameraState.distance * Math.exp(event.deltaY * 0.0008), 80, 7000);
+    cameraState.distance = clamp(cameraState.distance * Math.exp(event.deltaY * 0.0008), CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     updateCamera();
   }, { passive: false });
   canvas.addEventListener('dblclick', event => {
@@ -10809,6 +10721,7 @@ export async function startWebGLScene(canvas, status) {
         savedVisibility[event.target.dataset.layer] = group.visible;
       }
     }
+    refreshTransportVehicleLayers();
     requestRender();
   }));
 
@@ -11269,6 +11182,7 @@ export async function startWebGLScene(canvas, status) {
       layerGroups.roads.visible = true;
       layerGroups.paths.visible = true;
       syncLayerControls();
+      refreshTransportVehicleLayers();
       windState.enabled = true;
       if (windToggle) windToggle.checked = true;
       windGroup.visible = true;
@@ -11280,6 +11194,7 @@ export async function startWebGLScene(canvas, status) {
       layerGroups.paths.visible = pollutionState.streetVisibilityBeforePollution.paths;
       pollutionState.streetVisibilityBeforePollution = null;
       syncLayerControls();
+      refreshTransportVehicleLayers();
     }
     const legacyLegend = document.querySelector('.wind-legend-scale');
     const legacyInspect = document.querySelector('.wind-map-tools');
@@ -11827,6 +11742,7 @@ export async function startWebGLScene(canvas, status) {
       layerGroups.roads.visible = true;
       layerGroups.paths.visible = true;
       syncLayerControls();
+      refreshTransportVehicleLayers();
     }
     requestRender();
   });
@@ -12058,16 +11974,31 @@ export async function startWebGLScene(canvas, status) {
     renderer.clear();
     renderer.render(postScene, postCamera);
     renderRequested = false;
-    if ((!reducedMotion || pollutionState.playing) && ((windState.enabled && windState.field && windPoints?.visible)
+    const otherAnimatedLayerActive = (windState.enabled && windState.field && windPoints?.visible)
       || (windState.enabled && pollutionState.playing)
       || (trafficGroup.visible && trafficState.tracks.length)
-      || (trafficStatusGroup.visible && scenarioStatusGroup.children.length)
-      || transportAnimating)) {
-      animationFrame = requestAnimationFrame(render);
+      || (trafficStatusGroup.visible && scenarioStatusGroup.children.length);
+    const animatedLayerActive = (!reducedMotion || pollutionState.playing)
+      && (otherAnimatedLayerActive || transportAnimating);
+    if (animatedLayerActive) {
+      if (transportAnimating && !otherAnimatedLayerActive && !reducedMotion) {
+        animationTimer = window.setTimeout(() => {
+          animationTimer = 0;
+          if (sceneReadyToRender && !document.hidden && !animationFrame) animationFrame = requestAnimationFrame(render);
+        }, 1000 / 18);
+      } else {
+        animationFrame = requestAnimationFrame(render);
+      }
+    } else if (!reducedMotion && transportLayer?.needsIdleTick()) {
+      animationTimer = window.setTimeout(() => {
+        animationTimer = 0;
+        if (sceneReadyToRender && !document.hidden && !animationFrame) animationFrame = requestAnimationFrame(render);
+      }, 500);
     }
   }
 
   addEventListener('resize', requestRender);
+  addEventListener('visibilitychange', () => { if (!document.hidden) requestRender(); });
   addEventListener('climate-retry-analysis', event => {
     const tool = event.detail?.tool;
     if (tool === 'heat') void loadHeat();
@@ -12082,7 +12013,7 @@ export async function startWebGLScene(canvas, status) {
   windGroup.visible = windState.enabled;
   syncTrafficSceneVisibility();
   const roofTriangles = roofSurfaceBuffer ? manifest.layers?.roof_surface?.triangles : 0;
-  status.textContent = `${data.buildings.length} buildings · ${(data.water || []).length} water bodies · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
+  status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
   updateSunStatus();
   if (document.querySelector('[data-menu-target="sun"]')?.classList.contains('active')) showCurrentSun();
   loadHeat();
@@ -12120,6 +12051,7 @@ export async function startWebGLScene(canvas, status) {
     transportLoading = createTransportLayer({
       THREE, scene, terrainHeightAt, terrainValidAt, requestRender, frameBounds,
       requestGroundPick, addScenePickHandler,
+      layerVisible: name => Boolean(layerGroups[name]?.visible),
     }).then(layer => {
       transportLayer = layer;
       layer.setPanelActive(document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport');
@@ -12134,6 +12066,7 @@ export async function startWebGLScene(canvas, status) {
   if (document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport') await ensureTransportLayer();
   sceneReadyToRender = true;
   requestRender();
+  void ensureTransportLayer().then(layer => layer?.setAmbientDisplay(true));
 
   window.__trafficDebug = {
     trafficState, frameBounds, canvas, terrainHeightAt,
