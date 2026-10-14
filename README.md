@@ -44,6 +44,7 @@ documents linked below and in each feature section.
 
 Developer handoff: [architecture](docs/ARCHITECTURE.md),
 [QA checklist](docs/QA_CHECKLIST.md),
+[VM update guide](docs/VM_UPDATE_GUIDE.md),
 [walking routes](docs/WALKING_ROUTES.md),
 [thermal deployment](docs/THERMAL_DEPLOYMENT.md), and
 [proposed feature roadmap](docs/FEATURE_ROADMAP.md).

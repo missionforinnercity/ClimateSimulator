@@ -191,7 +191,7 @@ function setupHeatViewSelector() {
   const options = {
     current: ['utci_c', 'tmrt_c'],
     history: ['utci_c', 'tmrt_c'],
-    screening: ['pedestrian_priority_score', 'pedestrian_heat_exposure_c', 'shade_deficit_score', 'heat_model_lst_c', 'rooftop_temperature_c'],
+    screening: ['heat_model_lst_c', 'pedestrian_priority_score', 'pedestrian_heat_exposure_c', 'shade_deficit_score', 'rooftop_temperature_c'],
   };
   const labels = Object.fromEntries([...metric.options].map(option => [option.value, option.textContent.trim()]));
   let activeGroup = metric.value.startsWith('utci') || metric.value === 'tmrt_c' ? 'current' : 'screening';
@@ -236,17 +236,7 @@ function setupHeatViewSelector() {
     selectMetric(allowed[next]);
     refresh();
   };
-  wheel.addEventListener('click', () => {
-    const allowed = options[activeGroup];
-    if (allowed.length < 2) return;
-    const current = allowed.indexOf(metric.value);
-    let next = Math.floor(Math.random() * allowed.length);
-    if (next === current) next = (next + 1) % allowed.length;
-    wheel.classList.remove('is-spinning');
-    requestAnimationFrame(() => wheel.classList.add('is-spinning'));
-    selectMetric(allowed[next]);
-    refresh();
-  });
+  wheel.addEventListener('click', () => spin(1));
   document.querySelector('#heat-spin-previous')?.addEventListener('click', () => spin(-1));
   document.querySelector('#heat-spin-next')?.addEventListener('click', () => spin(1));
   metric.addEventListener('change', () => {
@@ -382,7 +372,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=211');
+    const module = await import('./webglRenderer.js?v=219');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -391,7 +381,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=98');
+      const module = await import('./sceneRenderer.js?v=101');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
@@ -558,6 +548,13 @@ function windReportNumber(value, digits = 1, unit = '') {
     : '—';
 }
 
+function windReportSpeed(value, digits = 2) {
+  const speed = Number(value);
+  return Number.isFinite(speed)
+    ? `${windReportNumber(speed, digits, ' m/s')} · ${windReportNumber(speed * 3.6, 1, ' km/h')}`
+    : '—';
+}
+
 function windReportQuantile(values, probability) {
   const sorted = values.filter(Number.isFinite).slice().sort((a, b) => a - b);
   if (!sorted.length) return NaN;
@@ -633,7 +630,7 @@ function windReportFieldMap(field) {
       <text x="18" y="${height - 17}" fill="#fff" font-size="11" font-family="system-ui">N ↑ · viewer-local x east / z south</text>
     </svg>
     <div class="wind-report-map-meta">
-      <span>${comfortMode ? 'Long sitting → uncomfortable' : `${windReportNumber(minimum, 1, ' m/s')} <i class="wind-report-gradient"></i> ${windReportNumber(maximum, 1, ' m/s')}`}</span>
+      <span>${comfortMode ? 'Long sitting → uncomfortable' : `${windReportSpeed(minimum, 1)} <i class="wind-report-gradient"></i> ${windReportSpeed(maximum, 1)}`}</span>
       <span>Cell colours show ${comfortMode ? 'wind-rose-weighted comfort class' : 'modelled mean speed'}</span>
     </div>
   </div>`;
@@ -641,6 +638,12 @@ function windReportFieldMap(field) {
 
 function setupWindResults() {
   const results = document.querySelector('#wind-results');
+  const explorer = document.querySelector('#wind-explorer');
+  const explorerCount = document.querySelector('#wind-explorer-count');
+  const explorerNote = document.querySelector('#wind-explorer-note');
+  const focusStatus = document.querySelector('#wind-focus-status');
+  const hotAreas = document.querySelector('#wind-hot-areas');
+  const hotStreets = document.querySelector('#wind-hot-streets');
   const reportButton = document.querySelector('#wind-report');
   const reportDialog = document.querySelector('#wind-report-dialog');
   const reportDocument = document.querySelector('#wind-report-document');
@@ -709,7 +712,7 @@ function setupWindResults() {
       }
       const meanDelta = pairedCount ? deltaSum / pairedCount : secondMean - firstMean;
       const diffPp = pairedCount ? `${(increased * 100 / pairedCount).toFixed(1)}% faster · ${(decreased * 100 / pairedCount).toFixed(1)}% slower` : 'No shared grid';
-      compareResult.innerHTML = `${cells}<div class="wind-direction-compare-stats"><span>Baseline mean<strong>${firstMean.toFixed(2)} m/s</strong></span><span>Current mean<strong>${secondMean.toFixed(2)} m/s</strong></span><span>Mean change<strong>${meanDelta > 0 ? '+' : ''}${meanDelta.toFixed(2)} m/s</strong></span></div><p>${diffPp} across paired pedestrian cells. Directional steady-state comparison; this is not a comfort classification.</p>`;
+      compareResult.innerHTML = `${cells}<div class="wind-direction-compare-stats"><span>Baseline mean<strong>${windReportSpeed(firstMean)}</strong></span><span>Current mean<strong>${windReportSpeed(secondMean)}</strong></span><span>Mean change<strong>${meanDelta > 0 ? '+' : ''}${windReportNumber(meanDelta, 2, ' m/s')} · ${windReportNumber(meanDelta * 3.6, 1, ' km/h')}</strong></span></div><p>${diffPp} across paired pedestrian cells. Directional steady-state comparison; this is not a comfort classification.</p>`;
       compareResult.hidden = false;
       compareStatus.textContent = `${baseline.label} compared with ${describeField(latestField)}.`;
       return;
@@ -822,11 +825,67 @@ function setupWindResults() {
 
   const invalidate = () => {
     results.hidden = true;
+    if (explorer) explorer.hidden = true;
+    if (focusStatus) focusStatus.textContent = 'Click a ranked result to highlight it on the map.';
+    dispatchEvent(new CustomEvent('climate-wind-focus-clear'));
     latestField = null;
     if (reportButton) reportButton.disabled = true;
     if (saveBaseline) saveBaseline.disabled = true;
     renderComparison();
   };
+  const renderWindRankings = field => {
+    if (!explorer || !hotAreas || !hotStreets) return;
+    const rankings = field.wind_rankings || { areas: [], streets: [] };
+    const directional = field.analysis_mode === 'direction';
+    explorer.hidden = false;
+    explorerCount.textContent = directional
+      ? `${Math.round(field.direction_deg)}° direction`
+      : `${field.direction_count || '—'} sectors · partial`;
+    explorerNote.textContent = directional
+      ? `Street averages sample the ${Math.round(field.direction_deg)}° OpenFOAM pedestrian field at ${field.height_m.toFixed(1)} m.`
+      : `Wind-rose-weighted mean speed among solved directions at ${field.height_m.toFixed(1)} m · ${(Number(field.coverage_fraction || 0) * 100).toFixed(1)}% of seasonal wind hours covered.`;
+    const renderList = (target, items, emptyMessage) => {
+      target.replaceChildren();
+      if (!items.length) {
+        const item = document.createElement('li');
+        item.textContent = emptyMessage;
+        target.append(item);
+        return;
+      }
+      items.forEach((entry, index) => {
+        const item = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('aria-label', `Focus map on ${entry.name}, ${entry.value.toFixed(2)} metres per second`);
+        const rank = document.createElement('small'); rank.textContent = String(index + 1).padStart(2, '0');
+        const name = document.createElement('span'); name.textContent = entry.name;
+        const value = document.createElement('b'); value.textContent = `${entry.value.toFixed(2)} m/s · ${(entry.value * 3.6).toFixed(1)} km/h`;
+        button.append(rank, name, value);
+        button.addEventListener('click', () => {
+          if (focusStatus) focusStatus.textContent = `Highlighted ${entry.name} · ${entry.value.toFixed(2)} m/s (${(entry.value * 3.6).toFixed(1)} km/h).`;
+          dispatchEvent(new CustomEvent('climate-wind-focus', {
+            detail: { x: entry.x, z: entry.z, name: entry.name, speed: entry.value, focusCamera: true },
+          }));
+        });
+        item.append(button);
+        target.append(item);
+      });
+    };
+    renderList(hotAreas, rankings.areas || [], 'No high-wind spots are available.');
+    renderList(hotStreets, rankings.streets || [], 'No named streets intersect solved cells.');
+  };
+  document.querySelector('#wind-simulate')?.addEventListener('click', () => {
+    if (!explorer) return;
+    if (focusStatus) focusStatus.textContent = 'Click a ranked result to highlight it on the map.';
+    dispatchEvent(new CustomEvent('climate-wind-focus-clear'));
+    explorer.hidden = false;
+    explorerCount.textContent = 'Loading…';
+    explorerNote.textContent = 'Updating high-wind locations for the selected study…';
+    for (const list of [hotAreas, hotStreets]) {
+      if (!list) continue;
+      const item = document.createElement('li'); item.textContent = 'Updating…'; list.replaceChildren(item);
+    }
+  });
   ['wind-direction', 'wind-season', 'wind-stability', 'wind-size', 'wind-cfd-ground-height', 'wind-cfd-field']
     .forEach(id => {
       document.querySelector(`#${id}`)?.addEventListener('input', invalidate);
@@ -842,13 +901,15 @@ function setupWindResults() {
       return;
     }
     latestField = field;
+    renderWindRankings(field);
     if (reportButton) reportButton.disabled = directionResult;
     if (saveBaseline) saveBaseline.disabled = false;
     if (directionResult) {
       const speeds = field.speed.filter((_, index) => !field.valid || field.valid[index]);
       const mean = speeds.length ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length : NaN;
       const coverage = field.speed.length ? speeds.length / field.speed.length * 100 : 0;
-      results.innerHTML = `<div class="wind-result-highlights"><span><b>${windReportNumber(mean, 2, ' m/s')}</b>mean pedestrian speed · ${field.height_m.toFixed(1)} m</span><span><b>${windReportNumber(windReportQuantile(speeds, .95), 2, ' m/s')}</b>95th spatial percentile</span></div><details class="wind-result-evidence"><summary>Evidence &amp; coverage</summary><div class="wind-result-facts"><span><b>${coverage.toFixed(1)}%</b>${speeds.length.toLocaleString()} of ${field.speed.length.toLocaleString()} sampled cells resolved</span><span><b>${Math.round(field.direction_deg)}° · ${field.season}</b>Steady OpenFOAM direction</span><span><b>${windReportEscape(String(field.validation_status || 'not reported').replaceAll('_', ' '))}</b>Validation status</span><span><b>${field.dx.toFixed(1)} × ${field.dz.toFixed(1)} m</b>Sample spacing</span></div></details>`;
+      const meanKmh = mean * 3.6, percentile95 = windReportQuantile(speeds, .95);
+      results.innerHTML = `<div class="wind-result-highlights"><span><b>${windReportNumber(mean, 2, ' m/s')} · ${windReportNumber(meanKmh, 1, ' km/h')}</b>mean pedestrian speed · ${field.height_m.toFixed(1)} m</span><span><b>${windReportNumber(percentile95, 2, ' m/s')} · ${windReportNumber(percentile95 * 3.6, 1, ' km/h')}</b>95th spatial percentile</span></div><details class="wind-result-evidence"><summary>Evidence &amp; coverage</summary><div class="wind-result-facts"><span><b>${coverage.toFixed(1)}%</b>${speeds.length.toLocaleString()} of ${field.speed.length.toLocaleString()} sampled cells resolved</span><span><b>${Math.round(field.direction_deg)}° · ${field.season}</b>Steady OpenFOAM direction</span><span><b>${windReportEscape(String(field.validation_status || 'not reported').replaceAll('_', ' '))}</b>Validation status</span><span><b>${field.dx.toFixed(1)} × ${field.dz.toFixed(1)} m</b>Sample spacing</span></div></details>`;
       results.hidden = false;
       renderComparison();
       return;
@@ -867,7 +928,8 @@ function setupWindResults() {
     const category = field.comfort_categories.find(item => item.code === dominantCode);
     const probabilities = (field.exceedance.probability || []).filter((_, index) => isValid(index));
     const meanExceedance = probabilities.reduce((sum, value) => sum + value, 0) / Math.max(1, probabilities.length);
-    const speeds = (field.speed || []).filter((_, index) => isValid(index));
+    const speedScale = field.coverage_fraction > 0 ? 1 / field.coverage_fraction : 1;
+    const speeds = (field.speed || []).filter((_, index) => isValid(index)).map(value => value * speedScale);
     const meanSpeed = speeds.reduce((sum, value) => sum + value, 0) / Math.max(1, speeds.length);
     const relative = (field.uncertainty?.relative_fraction || 0) * 100;
     const totalCells = Math.max([...counts.values()].reduce((sum, value) => sum + value, 0), 1);
@@ -898,7 +960,7 @@ function setupWindResults() {
       <div class="wind-result-highlights"><span><b>${sittingStanding.toFixed(1)}%</b>sit or stand</span><span><b>${category?.label || '—'}</b>most common class</span></div>
       <div class="wind-comfort-mini" aria-label="Comfort category distribution">${breakdown}</div>
       <details class="wind-result-evidence"><summary>Evidence, coverage &amp; assumptions</summary><div class="wind-result-facts">
-        <span><b>${meanSpeed.toFixed(1)} m/s</b>Mean speed at ${field.height_m.toFixed(1)} m</span>
+        <span><b>${meanSpeed.toFixed(1)} m/s · ${(meanSpeed * 3.6).toFixed(1)} km/h</b>Mean speed at ${field.height_m.toFixed(1)} m</span>
         <span><b>${(meanExceedance * 100).toFixed(1)}%</b>Mean exceedance above ${field.exceedance.threshold_mps} m/s</span>
         <span><b>${walkingOnly.toFixed(1)}%</b>Walking-only or uncomfortable</span>
         <span><b>${worstExceedance.toFixed(1)}%</b>Worst-cell exceedance</span>
@@ -915,7 +977,8 @@ function setupWindResults() {
   reportButton?.addEventListener('click', () => {
     if (!latestField || !reportDocument || !reportDialog) return;
     const field = latestField;
-    const speeds = (field.speed || []).map(Number);
+    const speedScale = field.analysis_mode === 'comfort' && field.coverage_fraction > 0 ? 1 / field.coverage_fraction : 1;
+    const speeds = (field.speed || []).map(value => Number(value) * speedScale);
     const probabilities = (field.exceedance?.probability || []).map(Number);
     const totalCells = Math.max(field.comfort_category?.length || 0, 1);
     const comfort = field.comfort_categories.map(category => ({
@@ -968,17 +1031,17 @@ function setupWindResults() {
         <div class="report-fact"><span>Result height</span><strong>${windReportNumber(field.height_m, 1, ' m')} pedestrian layer</strong></div>
         <div class="report-fact"><span>Analysis domain</span><strong>${windReportNumber(field.width * field.dx, 0, ' m')} × ${windReportNumber(field.height * field.dz, 0, ' m')}</strong></div>
         <div class="report-fact"><span>Forcing</span><strong>${forcingDescription}</strong></div>
-        <div class="report-fact"><span>Reference wind</span><strong>${windReportNumber(field.reference_speed_mps, 2, ' m/s')} at ${windReportNumber(field.reference_height_m, 1, ' m')}</strong></div>
+        <div class="report-fact"><span>Reference wind</span><strong>${windReportSpeed(field.reference_speed_mps)} at ${windReportNumber(field.reference_height_m, 1, ' m')}</strong></div>
         <div class="report-fact"><span>Height profile</span><strong>Exponent ${windReportNumber(field.height_profile_exponent, 3)}</strong></div>
         <div class="report-fact"><span>Flow model</span><strong>${windReportEscape(String(field.model_kind).replaceAll('_', ' '))}</strong></div>
       </div></section>
       ${sceneImage ? `<section class="report-section"><div class="report-section-heading"><h2>Simulation view</h2><span>Visual context</span></div>${sceneImage}</section>` : ''}
       <section class="report-section"><div class="report-section-heading"><h2>Pedestrian wind field</h2><span>Mean speed at ${windReportNumber(field.height_m, 1, ' m')}</span></div>${windReportFieldMap(field)}</section>
       <section class="report-section"><div class="report-section-heading"><h2>Headline indicators</h2><span>Spatial summary</span></div><div class="report-stat-grid">
-        <div class="report-stat"><span>Spatial mean speed</span><strong>${windReportNumber(meanSpeed, 2, ' m/s')}</strong><small>Across ${speeds.length.toLocaleString('en-ZA')} model cells</small></div>
-        <div class="report-stat"><span>95th spatial speed</span><strong>${windReportNumber(windReportQuantile(speeds, .95), 2, ' m/s')}</strong><small>Upper spatial tail of mean wind</small></div>
-        <div class="report-stat"><span>Maximum cell speed</span><strong>${windReportNumber(Math.max(...speeds), 2, ' m/s')}</strong><small>Modelled grid maximum</small></div>
-        <div class="report-stat"><span>Mean threshold exceedance</span><strong>${windReportNumber(meanExceedance * 100, 1, '%')}</strong><small>Above ${windReportNumber(field.exceedance.threshold_mps, 1, ' m/s')}</small></div>
+        <div class="report-stat"><span>Spatial mean speed</span><strong>${windReportSpeed(meanSpeed)}</strong><small>Across ${speeds.length.toLocaleString('en-ZA')} model cells</small></div>
+        <div class="report-stat"><span>95th spatial speed</span><strong>${windReportSpeed(windReportQuantile(speeds, .95))}</strong><small>Upper spatial tail of mean wind</small></div>
+        <div class="report-stat"><span>Maximum cell speed</span><strong>${windReportSpeed(Math.max(...speeds))}</strong><small>Modelled grid maximum</small></div>
+        <div class="report-stat"><span>Mean threshold exceedance</span><strong>${windReportNumber(meanExceedance * 100, 1, '%')}</strong><small>Above ${windReportSpeed(field.exceedance.threshold_mps, 1)}</small></div>
         <div class="report-stat"><span>Area over 5% exceedance</span><strong>${windReportNumber(exceedanceArea, 1, '%')}</strong><small>Share of analysis cells</small></div>
         <div class="report-stat"><span>Screening uncertainty</span><strong>±${windReportNumber((field.uncertainty?.relative_fraction || 0) * 100, 0, '%')}</strong><small>Epistemic interval</small></div>
       </div></section>
@@ -988,7 +1051,7 @@ function setupWindResults() {
       <section class="report-section report-two-column">
         <div><div class="report-section-heading"><h2>ERA5 forcing evidence</h2><span>${isComfortStudy ? 'All 16 sector profiles' : era5 ? 'Selected sector profile' : 'Not used'}</span></div>${isComfortStudy ? `<div class="report-note">The comfort result combines ${field.direction_count || 16} directional fields. Each field is weighted by its normalized ${windReportEscape(field.season)} ERA5 sector frequency and fitted Weibull exceedance curve.</div>` : era5 ? `<ul class="report-list">
           <li><b>Profile sample</b><span>${windReportNumber(era5.sample_count, 0)} records</span></li><li><b>Mean direction</b><span>${windReportNumber(era5.mean_direction_deg, 1, '°')}</span></li>
-          <li><b>95th wind speed</b><span>${windReportNumber(era5.p95_speed_mps, 2, ' m/s')}</span></li><li><b>95th gust</b><span>${windReportNumber(era5.p95_gust_mps, 2, ' m/s')}</span></li>
+          <li><b>95th wind speed</b><span>${windReportSpeed(era5.p95_speed_mps)}</span></li><li><b>95th gust</b><span>${windReportSpeed(era5.p95_gust_mps)}</span></li>
           <li><b>Weibull shape</b><span>${windReportNumber(era5.weibull_shape, 3)}</span></li><li><b>Sector frequency</b><span>${windReportNumber(era5.frequency_fraction * 100, 1, '%')}</span></li>
         </ul>` : '<div class="report-note">This scenario used a manually supplied mean wind speed.</div>'}</div>
         <div><div class="report-section-heading"><h2>Data quality</h2><span>Provenance and coverage</span></div><ul class="report-list">

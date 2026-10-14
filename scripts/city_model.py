@@ -767,7 +767,11 @@ def build_city_model(
         width, highway, points, *tail = record
         osm_attributes = tail[0] if tail and isinstance(tail[0], dict) else {}
         identifier, feature_id = _identity("transport", None, [highway, points], index)
-        pedestrian = highway == "pedestrian" or highway in {"footway", "path", "cycleway", "steps", "corridor", "elevator"}
+        pedestrian = (
+            highway == "pedestrian"
+            or highway in {"footway", "path", "cycleway", "steps", "corridor", "elevator"}
+            or osm_attributes.get("groundMaterialOverride") == "red_pavers"
+        )
         objects[feature_id] = _feature(
             "TrafficSpace" if pedestrian else "Road",
             identifier,
@@ -776,6 +780,10 @@ def build_city_model(
             attributes={
                 "class": highway, "renderClass": highway, "usage": "pedestrian" if pedestrian else "vehicular",
                 "surface": osm_attributes.get("surface"), "sidewalk": osm_attributes.get("sidewalk"),
+                "renderSurface": osm_attributes.get("renderSurface"),
+                "renderWidthM": osm_attributes.get("renderWidthM"),
+                "groundMaterialOverride": osm_attributes.get("groundMaterialOverride"),
+                "municipalSurfaceSource": osm_attributes.get("municipalSurfaceSource"),
                 "sidewalkLeft": osm_attributes.get("sidewalk:left"), "sidewalkRight": osm_attributes.get("sidewalk:right"),
                 "bridge": osm_attributes.get("bridge"), "tunnel": osm_attributes.get("tunnel"),
                 "layer": osm_attributes.get("layer"), "lanes": osm_attributes.get("lanes"),
@@ -785,6 +793,26 @@ def build_city_model(
             },
             sources=["roads"],
             quality=_quality("OSM centreline with class-derived width", "0", confidence="medium"),
+        )
+
+    for index, surface in enumerate(scene.get("groundSurfaces", [])):
+        identifier, feature_id = _identity("ground-surface", surface.get("osmId"), surface.get("rings"), index)
+        objects[feature_id] = _feature(
+            "GroundSurface",
+            identifier,
+            feature_id,
+            {"lod": "0", "type": "MultiSurface", "rings": surface.get("rings", [])},
+            attributes={
+                "surface": surface.get("material"), "name": surface.get("name"),
+                "osmId": surface.get("osmId"), "source": surface.get("source"),
+                "amenity": surface.get("amenity"), "parking": surface.get("parking"),
+                "access": surface.get("access"),
+            },
+            sources=[surface.get("source") or "osmGroundSurface"],
+            quality=_quality(
+                "OSM surface polygon with image-checked site override" if surface.get("special") else "OSM surface polygon with mapped material",
+                "0", confidence="high" if surface.get("special") else "medium",
+            ),
         )
 
     for index, record in enumerate(scene.get("railways", [])):

@@ -4,20 +4,20 @@ import { orbitFromDrag, panFromDrag } from './cameraControls.js';
 
 const COLORS = {
   background: '#1b2125',
-  terrain: '#50574f',
+  terrain: '#b9ae96',
   terrainEdge: '#111619',
-  grass: '#5f864f',
+  grass: '#8d9168',
   wall: '#565e63',
   wallDark: '#42494e',
   roof: '#969da0',
   roofEdge: '#3d4447',
   trunk: '#60452f',
   canopy: '#2d653f',
-  road: '#706b62',
-  roadMajor: '#7c786e',
-  roadSecondary: '#74736b',
-  pedestrian: '#b78370',
-  path: '#9d907e',
+  road: '#59605d',
+  roadMajor: '#646b67',
+  roadSecondary: '#5f6662',
+  pedestrian: '#a87967',
+  path: '#b5a994',
 };
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
@@ -127,6 +127,75 @@ export async function startScene(canvas, status) {
   }
   asphaltContext.putImageData(asphaltPixels, 0, 0);
   const asphaltPattern = sceneContext.createPattern(asphaltTile, 'repeat');
+  const pavingTile = document.createElement('canvas');
+  pavingTile.width = 32;
+  pavingTile.height = 32;
+  const pavingContext = pavingTile.getContext('2d');
+  pavingContext.strokeStyle = 'rgba(71, 53, 46, 0.18)';
+  pavingContext.lineWidth = 1;
+  for (let row = 0; row <= 4; row += 1) {
+    const y = row * 8;
+    pavingContext.beginPath();
+    pavingContext.moveTo(0, y);
+    pavingContext.lineTo(32, y);
+    pavingContext.stroke();
+    for (let column = row % 2 ? -8 : 0; column <= 32; column += 16) {
+      pavingContext.beginPath();
+      pavingContext.moveTo(column, y);
+      pavingContext.lineTo(column, y + 8);
+      pavingContext.stroke();
+    }
+  }
+  const pavingPattern = sceneContext.createPattern(pavingTile, 'repeat');
+  const plazaTile = document.createElement('canvas');
+  plazaTile.width = 48;
+  plazaTile.height = 48;
+  const plazaContext = plazaTile.getContext('2d');
+  plazaContext.strokeStyle = 'rgba(243, 220, 196, 0.3)';
+  plazaContext.lineWidth = 1;
+  for (const offset of [0, 16, 32, 48]) {
+    plazaContext.beginPath(); plazaContext.moveTo(offset, 0); plazaContext.lineTo(offset, 48); plazaContext.stroke();
+    plazaContext.beginPath(); plazaContext.moveTo(0, offset); plazaContext.lineTo(48, offset); plazaContext.stroke();
+  }
+  const plazaPattern = sceneContext.createPattern(plazaTile, 'repeat');
+  const groundTile = document.createElement('canvas');
+  groundTile.width = 64;
+  groundTile.height = 64;
+  const groundContext = groundTile.getContext('2d');
+  const groundPixels = groundContext.createImageData(64, 64);
+  for (let y = 0; y < 64; y += 1) {
+    for (let x = 0; x < 64; x += 1) {
+      const index = (y * 64 + x) * 4;
+      const noise = Math.sin(x * 27.3 + y * 71.9 + x * y * 0.31) * 43758.5453;
+      const grain = noise - Math.floor(noise);
+      const dryPatch = Math.sin(x * 0.23 + Math.cos(y * 0.14) * 1.8);
+      groundPixels.data[index] = dryPatch > 0.65 ? 145 : 101;
+      groundPixels.data[index + 1] = dryPatch > 0.65 ? 126 : 111;
+      groundPixels.data[index + 2] = dryPatch > 0.65 ? 82 : 84;
+      groundPixels.data[index + 3] = grain > 0.975 ? 34 : 8;
+    }
+  }
+  groundContext.putImageData(groundPixels, 0, 0);
+  const groundPattern = sceneContext.createPattern(groundTile, 'repeat');
+  const grassTile = document.createElement('canvas');
+  grassTile.width = 64;
+  grassTile.height = 64;
+  const grassContext = grassTile.getContext('2d');
+  const grassPixels = grassContext.createImageData(64, 64);
+  for (let y = 0; y < 64; y += 1) {
+    for (let x = 0; x < 64; x += 1) {
+      const index = (y * 64 + x) * 4;
+      const noise = Math.sin(x * 39.1 + y * 13.7 + x * y * 0.23) * 43758.5453;
+      const grain = noise - Math.floor(noise);
+      const dry = grain > 0.985;
+      grassPixels.data[index] = dry ? 167 : 87;
+      grassPixels.data[index + 1] = dry ? 148 : 111;
+      grassPixels.data[index + 2] = dry ? 102 : 75;
+      grassPixels.data[index + 3] = dry ? 26 : 5;
+    }
+  }
+  grassContext.putImageData(grassPixels, 0, 0);
+  const grassPattern = sceneContext.createPattern(grassTile, 'repeat');
 
   const manifest = assertManifest(await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json()));
   const [scene, canopyAsset] = await Promise.all([
@@ -210,7 +279,10 @@ export async function startScene(canvas, status) {
     const maxZ = Math.max(...points.map(point => point[1]));
     const x = (minX + maxX) * 0.5;
     const z = (minZ + maxZ) * 0.5;
-    return { width: value[0], highway: value[1], points, attributes: value[4] || {}, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
+    const attributes = value[4] && typeof value[4] === 'object' ? value[4]
+      : value[3] && typeof value[3] === 'object' ? value[3] : {};
+    const width = Number(attributes.renderWidthM) > 0 ? Number(attributes.renderWidthM) : value[0];
+    return { width, highway: value[1], points, attributes, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
   });
   const railways = (scene.railways || []).map(value => ({
     railway: value[0],
@@ -225,6 +297,18 @@ export async function startScene(canvas, status) {
     const z = (minZ + maxZ) * 0.5;
     return { points, x, z, radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5 };
   });
+  const groundSurfaces = (scene.groundSurfaces || []).map(surface => {
+    const rings = surface.rings || [];
+    const outer = rings[0] || [];
+    if (!outer.length) return null;
+    const xs = outer.map(point => point[0]), zs = outer.map(point => point[1]);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    return {
+      ...surface, rings, x: (minX + maxX) * 0.5, z: (minZ + maxZ) * 0.5,
+      radius: Math.hypot(maxX - minX, maxZ - minZ) * 0.5,
+      minX, maxX, minZ, maxZ,
+    };
+  }).filter(Boolean);
   const water = (scene.water || []).map(item => item.rings || []).filter(rings => rings[0]?.length >= 3);
   const terrain = scene.terrain;
   let drag = null;
@@ -261,6 +345,8 @@ export async function startScene(canvas, status) {
   const windMoveDomain = document.querySelector('#wind-move-domain');
   const windLegendMin = document.querySelector('#wind-legend-min');
   const windLegendMax = document.querySelector('#wind-legend-max');
+  const windLegendMinKmh = document.querySelector('#wind-legend-min-kmh');
+  const windLegendMaxKmh = document.querySelector('#wind-legend-max-kmh');
   let windDrag = null;
   let sunDrag = null;
   const windState = {
@@ -356,7 +442,15 @@ export async function startScene(canvas, status) {
   let streetVisibilityBeforeWind = null;
 
   function syncVisibilityControls() {
+    const activePanel = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
+    const waterDisabled = Boolean(heatState.enabled || windState.enabled || shadowState.enabled
+      || ['heat', 'sun', 'wind', 'walking', 'traffic', 'transport'].includes(activePanel));
+    visibility.water = waterDisabled ? false : Boolean(savedVisibility.water);
     document.querySelectorAll('[data-layer]').forEach(input => {
+      if (input.dataset.layer === 'water') {
+        input.disabled = waterDisabled;
+        input.title = waterDisabled ? 'Water is hidden while an analysis layer is active.' : 'OpenStreetMap water bodies';
+      }
       input.checked = visibility[input.dataset.layer];
     });
   }
@@ -394,7 +488,9 @@ export async function startScene(canvas, status) {
       shadowState.enabled = false;
       if (sunToggle) sunToggle.checked = false;
       document.body.classList.remove('sun-mode');
+      const savedWaterPreference = savedVisibility.water;
       Object.assign(savedVisibility, visibility);
+      savedVisibility.water = savedWaterPreference;
       const rooftopContext = heatMetric?.value === 'rooftop_temperature_c'
         || heatState.data?.metric === 'rooftop_temperature_c';
       // Preserve the solid cut-out terrain beneath the heat overlay.
@@ -411,9 +507,7 @@ export async function startScene(canvas, status) {
       Object.assign(visibility, savedVisibility);
       windState.enabled = windToggle.checked;
     }
-    document.querySelectorAll('[data-layer]').forEach(input => {
-      input.checked = visibility[input.dataset.layer];
-    });
+    syncVisibilityControls();
     requestRender();
   }
 
@@ -427,7 +521,9 @@ export async function startScene(canvas, status) {
         heatToggle.checked = false;
         setHeatMode(false);
       }
+      const savedWaterPreference = savedVisibility.water;
       Object.assign(savedVisibility, visibility);
+      savedVisibility.water = savedWaterPreference;
       // Keep the shadow study focused on the terrain and building footprints;
       // removing the extra overlays makes the shade boundary easier to read.
       visibility.terrain = true;
@@ -441,9 +537,7 @@ export async function startScene(canvas, status) {
       Object.assign(visibility, savedVisibility);
       windState.enabled = windToggle.checked;
     }
-    document.querySelectorAll('[data-layer]').forEach(input => {
-      input.checked = visibility[input.dataset.layer];
-    });
+    syncVisibilityControls();
     updateSunStatus();
     requestRender();
   }
@@ -559,6 +653,8 @@ export async function startScene(canvas, status) {
     const maximum = values.length ? Math.max(...values) : windState.speed;
     windLegendMin.textContent = Number.isFinite(minimum) ? minimum.toFixed(1) : '—';
     windLegendMax.textContent = Number.isFinite(maximum) ? maximum.toFixed(1) : '—';
+    if (windLegendMinKmh) windLegendMinKmh.textContent = Number.isFinite(minimum) ? (minimum * 3.6).toFixed(1) : '—';
+    if (windLegendMaxKmh) windLegendMaxKmh.textContent = Number.isFinite(maximum) ? (maximum * 3.6).toFixed(1) : '—';
   }
 
   function setMoveMode(enabled) {
@@ -1734,7 +1830,9 @@ export async function startScene(canvas, status) {
       }
       roofRings.push(roof);
     }
-    const wallColors = ['#aab1b4', '#bec5c8', '#d2dadd', '#e6ecee'];
+    const wallColors = shadowState.enabled
+      ? ['#b4b4b4', '#c6c6c6', '#dadada', '#eeeeee']
+      : ['#aab1b4', '#bec5c8', '#d2dadd', '#e6ecee'];
     for (let band = 0; band < wallPaths.length; band += 1) {
       context.fillStyle = wallColors[band];
       context.fill(wallPaths[band]);
@@ -1745,7 +1843,7 @@ export async function startScene(canvas, status) {
       for (let i = 1; i < roof.length; i += 1) context.lineTo(roof[i][0], roof[i][1]);
       context.closePath();
     }
-    context.fillStyle = shadowState.enabled ? '#f2f4f3' : COLORS.roof;
+    context.fillStyle = shadowState.enabled ? '#f4f4f4' : COLORS.roof;
     context.fill();
   }
 
@@ -1834,7 +1932,7 @@ export async function startScene(canvas, status) {
                 ? Math.max(0, (normalX * sun.vector[0] + normalZ * sun.vector[2]) / normalLength) * Math.cos(sun.altitude)
                 : 0;
               const litShade = shadowState.enabled ? Math.round(172 + direct * 78) : shade;
-              const key = shadowState.enabled ? `rgb(${litShade}, ${litShade + 5}, ${litShade + 10})` : shade;
+              const key = shadowState.enabled ? `rgb(${litShade}, ${litShade}, ${litShade})` : shade;
               let wallPath = wallPaths.get(key);
               if (!wallPath) {
                 wallPath = new Path2D();
@@ -1850,12 +1948,12 @@ export async function startScene(canvas, status) {
           roofPath.closePath();
         }
         for (const [shade, wallPath] of wallPaths) {
-          context.fillStyle = heatState.enabled ? '#c9cbc7' : (shadowState.enabled ? shade : `rgb(${shade}, ${shade + 5}, ${shade + 10})`);
+          context.fillStyle = heatState.enabled ? '#d5d5d5' : (shadowState.enabled ? shade : `rgb(${shade}, ${shade + 5}, ${shade + 10})`);
           context.fill(wallPath);
         }
         const roofLight = sun && sun.altitude > 0 ? 0.55 + 0.45 * Math.sin(sun.altitude) : 0.55;
         const roofChannel = shadowState.enabled ? Math.round(212 + 35 * Math.sin(sun?.altitude || 0)) : Math.round(150 * roofLight);
-        context.fillStyle = heatState.enabled ? '#f1f1ed' : shadowState.enabled ? `rgb(${roofChannel}, ${roofChannel + 5}, ${roofChannel + 8})` : COLORS.roof;
+        context.fillStyle = heatState.enabled ? '#f5f5f5' : shadowState.enabled ? `rgb(${roofChannel}, ${roofChannel}, ${roofChannel})` : COLORS.roof;
         context.fill(roofPath);
       }
       // Keep tree-to-tree ordering exact inside each depth slice. This avoids
@@ -1874,7 +1972,7 @@ export async function startScene(canvas, status) {
     const radiusY = radius * 0.86;
     if (crown[0] < -radius || crown[0] > canvas.width + radius || crown[1] < -radiusY || crown[1] > canvas.height + radiusY) return;
     if (radius < 2.2) {
-      context.fillStyle = shadowState.enabled ? '#ffffff' : COLORS.canopy;
+      context.fillStyle = shadowState.enabled ? '#718f51' : COLORS.canopy;
       context.fillRect(crown[0] - 1, crown[1] - 1, 2, 2);
       return;
     }
@@ -1887,11 +1985,11 @@ export async function startScene(canvas, status) {
       context.stroke();
     }
     // Two compact, near-circular layers give the 2D fallback a rounded crown.
-    context.fillStyle = shadowState.enabled ? '#dedede' : (heatState.enabled ? '#4fae35' : '#1d4b2e');
+    context.fillStyle = shadowState.enabled ? '#66804b' : (heatState.enabled ? '#4fae35' : '#1d4b2e');
     context.beginPath();
     context.ellipse(crown[0] + radius * 0.08, crown[1] + radiusY * 0.13, radius * 0.92, radiusY * 0.92, 0, 0, Math.PI * 2);
     context.fill();
-    context.fillStyle = shadowState.enabled ? '#ffffff' : (heatState.enabled ? '#86df45' : COLORS.canopy);
+    context.fillStyle = shadowState.enabled ? '#82a25e' : (heatState.enabled ? '#86df45' : COLORS.canopy);
     context.beginPath();
     context.ellipse(crown[0] - radius * 0.08, crown[1] - radiusY * 0.11, radius * 0.88, radiusY * 0.88, 0, 0, Math.PI * 2);
     context.fill();
@@ -1907,8 +2005,8 @@ export async function startScene(canvas, status) {
       const bucket = clamp(Math.floor((depths[index] - minimum) / span * 63), 0, 63);
       buckets[bucket].push(canopy);
     });
-    context.fillStyle = shadowState.enabled ? '#eef2ea' : (heatState.enabled ? '#55a84e' : '#2d653f');
-    context.strokeStyle = shadowState.enabled ? '#cad4c8' : '#183d28';
+    context.fillStyle = shadowState.enabled ? '#789556' : (heatState.enabled ? '#55a84e' : '#2d653f');
+    context.strokeStyle = shadowState.enabled ? '#607849' : '#183d28';
     context.lineWidth = 0.5;
     for (let bucket = buckets.length - 1; bucket >= 0; bucket -= 1) {
       if (!buckets[bucket].length) continue;
@@ -1930,7 +2028,7 @@ export async function startScene(canvas, status) {
     const maxZ = -bottom;
     const point = (column, row, elevation) => [left + (right - left) * column / (terrain.columns - 1), elevation, minZ + (maxZ - minZ) * row / (terrain.rows - 1)];
     const edgePoint = (column, row) => point(column, row, terrain.heights[row * terrain.columns + column]);
-    context.fillStyle = shadowState.enabled ? '#f5f5f0' : COLORS.terrain;
+    context.fillStyle = shadowState.enabled ? '#ffffff' : COLORS.terrain;
     context.beginPath();
     for (let row = 0; row < terrain.rows - 1; row += 1) {
       for (let column = 0; column < terrain.columns - 1; column += 1) {
@@ -1945,12 +2043,19 @@ export async function startScene(canvas, status) {
       }
     }
     context.fill();
+    if (groundPattern && !shadowState.enabled && !heatState.enabled && !windState.enabled) {
+      context.fillStyle = groundPattern;
+      context.fill();
+    }
   }
 
   function drawTerrainSkirt(projectPolygon) {
     if (!terrain.footprint?.length) return;
-    const floorY = Math.min(...terrain.heights.filter(Number.isFinite)) - 40;
-    context.fillStyle = COLORS.terrainEdge;
+    const minimumHeight = terrain.heights.reduce((minimum, height) => (
+      Number.isFinite(height) ? Math.min(minimum, height) : minimum
+    ), Infinity);
+    const floorY = (Number.isFinite(minimumHeight) ? minimumHeight : 0) - 40;
+    context.fillStyle = shadowState.enabled ? '#e8e8e8' : COLORS.terrainEdge;
     context.beginPath();
     for (const polygon of terrain.footprint) {
       for (const ring of polygon) {
@@ -1977,12 +2082,19 @@ export async function startScene(canvas, status) {
     for (const grassArea of grass) {
       if (!isInView(grassArea.x, terrainHeightAt(grassArea.x, grassArea.z) + 0.12, grassArea.z, grassArea.radius, project, focal)) continue;
       if (simplified && grassArea.radius < 18) continue;
-      if (path(projectPolygon(grassArea.points.map(([x, z]) => [x, terrainHeightAt(x, z) + 0.12, z])))) context.fill();
+      if (path(projectPolygon(grassArea.points.map(([x, z]) => [x, terrainHeightAt(x, z) + 0.12, z])))) {
+        context.fill();
+        if (grassPattern) {
+          context.fillStyle = grassPattern;
+          context.fill();
+          context.fillStyle = COLORS.grass;
+        }
+      }
     }
   }
 
   function drawWater(projectPolygon) {
-    context.fillStyle = 'rgba(47, 134, 166, 0.94)';
+    context.fillStyle = shadowState.enabled ? '#ffffff' : 'rgba(47, 134, 166, 0.94)';
     for (const rings of water) {
       const waterPath = new Path2D();
       for (const ring of rings) {
@@ -1996,23 +2108,104 @@ export async function startScene(canvas, status) {
     }
   }
 
-  function roadStyle(highway) {
+  function roadStyle(road) {
+    const highway = road.highway;
     const major = ['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link'];
     const secondary = ['secondary', 'secondary_link', 'tertiary'];
     const paths = ['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator', 'pedestrian'];
-    const path = paths.includes(highway);
-    const pedestrian = highway === 'pedestrian';
+    const redMall = road.attributes?.groundMaterialOverride === 'red_pavers';
+    const path = redMall || paths.includes(highway);
+    const pedestrian = redMall || highway === 'pedestrian';
+    const surface = String(road.attributes?.renderSurface || road.attributes?.surface || '').toLowerCase();
+    const surfaceColor = {
+      stone: '#a39780', paving_stones: '#a39780', sett: '#a39780', cobblestone: '#a39780',
+      concrete: '#a7a398', brick: '#a67866', bricks: '#a67866', gravel: '#80796b',
+    }[surface];
     return {
-      color: pedestrian ? COLORS.pedestrian : path ? COLORS.path : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road,
+      color: redMall ? '#a87360' : surfaceColor || (pedestrian ? COLORS.pedestrian : path ? COLORS.path : major.includes(highway) ? COLORS.roadMajor : secondary.includes(highway) ? COLORS.roadSecondary : COLORS.road),
       path,
       priority: path ? 0 : major.includes(highway) ? 3 : secondary.includes(highway) ? 2 : 1,
     };
   }
 
+  function drawGroundSurfaces(project, projectPolygon, focal, simplified) {
+    if (!visibility.terrain || shadowState.enabled || heatState.enabled || windState.enabled) return;
+    const palette = {
+      grand_parade: '#b9a987', red_pavers: '#a87360', concrete: '#a7a398',
+      asphalt: '#686a65', stone: '#a39780', brick: '#a67866', gravel: '#80796b',
+    };
+    for (const surface of groundSurfaces) {
+      if (!isInView(surface.x, terrainHeightAt(surface.x, surface.z) + 0.42, surface.z, surface.radius, project, focal)) continue;
+      const projectedRings = surface.rings.map(ring => projectPolygon(ring.map(([x, z]) => [x, roadTerrainHeightAt(x, z) + 0.42, z])));
+      if (!projectedRings[0]?.length || projectedRings[0].some(point => !point)) continue;
+      const surfacePath = new Path2D();
+      for (const ring of projectedRings) {
+        if (ring.length < 3) continue;
+        surfacePath.moveTo(ring[0][0], ring[0][1]);
+        for (let index = 1; index < ring.length; index += 1) surfacePath.lineTo(ring[index][0], ring[index][1]);
+        surfacePath.closePath();
+      }
+      context.fillStyle = palette[surface.material] || palette.stone;
+      context.fill(surfacePath, 'evenodd');
+
+      // Add fine joints across ordinary paved spaces and the distinctive
+      // square-set layout from the Parade and Thibault Square references.
+      context.save();
+      context.clip(surfacePath, 'evenodd');
+      context.globalAlpha = surface.material === 'grand_parade' ? 0.37 : surface.material === 'red_pavers' ? 0.42 : 0.28;
+      const pattern = surface.material === 'red_pavers' || surface.material === 'grand_parade'
+        ? plazaPattern : surface.material === 'asphalt' || surface.material === 'concrete' ? asphaltPattern : pavingPattern;
+      if (pattern) {
+        context.fillStyle = pattern;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      if (!simplified && (surface.material === 'grand_parade' || surface.material === 'red_pavers')) {
+        const spacing = surface.material === 'grand_parade' ? 12 : 4.5;
+        const ink = surface.material === 'grand_parade' ? 'rgba(75, 64, 48, .72)' : 'rgba(239, 211, 194, .78)';
+        context.strokeStyle = ink;
+        context.lineWidth = clamp(spacing * focal / camera.distance * 0.11, 0.8, 2.6);
+        const drawVerticalLine = x => {
+          const lowZ = surface.minZ - spacing;
+          const highZ = surface.maxZ + spacing;
+          const points = [];
+          const steps = Math.max(2, Math.ceil((highZ - lowZ) / 5));
+          for (let step = 0; step <= steps; step += 1) {
+            const amount = step / steps;
+            const z = lowZ + (highZ - lowZ) * amount;
+            const projected = project([x, roadTerrainHeightAt(x, z) + 0.46, z]);
+            if (projected) points.push(projected);
+          }
+          if (points.length < 2) return;
+          context.beginPath(); context.moveTo(points[0][0], points[0][1]);
+          for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
+          context.stroke();
+        };
+        for (let x = Math.ceil(surface.minX / spacing) * spacing; x <= surface.maxX; x += spacing) drawVerticalLine(x);
+        for (let z = Math.ceil(surface.minZ / spacing) * spacing; z <= surface.maxZ; z += spacing) {
+          const start = [surface.minX - spacing, z], end = [surface.maxX + spacing, z];
+          const distance = end[0] - start[0];
+          const steps = Math.max(2, Math.ceil(distance / 5));
+          const points = [];
+          for (let step = 0; step <= steps; step += 1) {
+            const x = start[0] + distance * step / steps;
+            const projected = project([x, roadTerrainHeightAt(x, z) + 0.46, z]);
+            if (projected) points.push(projected);
+          }
+          if (points.length < 2) continue;
+          context.beginPath(); context.moveTo(points[0][0], points[0][1]);
+          for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
+          context.stroke();
+        }
+      }
+      context.restore();
+    }
+  }
+
   function drawRoads(project, focal, simplified) {
     const visibleRoads = [];
     for (const road of roads) {
-      const style = roadStyle(road.highway);
+      if ((heatState.enabled || windState.enabled) && road.attributes?.groundMaterialOverride) continue;
+      const style = roadStyle(road);
       if ((style.path && !visibility.paths) || (!style.path && !visibility.roads)) continue;
       if ((road.highway === 'footway' || road.highway === 'path') && camera.distance > 1000 && !shadowState.enabled) continue;
       if (simplified && !['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary'].includes(road.highway)) continue;
@@ -2048,6 +2241,10 @@ export async function startScene(canvas, status) {
       if (asphaltPattern) for (const road of tier) {
         if (road.path) continue;
         strokeRoad(road, road.width, asphaltPattern);
+      }
+      if (pavingPattern) for (const road of tier) {
+        if (!road.path) continue;
+        strokeRoad(road, road.width, pavingPattern);
       }
     }
     const detailOpacity = 1 - clamp((camera.distance - 650) / 1500, 0, 1);
@@ -2134,13 +2331,20 @@ export async function startScene(canvas, status) {
       const night = sun.altitude < -0.12;
       const rainy = Number(skyWeather?.precipitation_mm) > 0.1 || Number(skyWeather?.weather_code) >= 51;
       const sky = context.createLinearGradient(0, 0, 0, canvas.height);
-      sky.addColorStop(0, night ? '#101a30' : rainy ? '#53616b' : `hsl(${204 - cloudCover * 8} 48% ${68 - cloudCover * 28}%)`);
-      sky.addColorStop(0.58, !rainy && twilight > 0.08 ? '#cf795f' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
-      sky.addColorStop(0.76, !rainy && twilight > 0.08 ? '#f0a16a' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
-      sky.addColorStop(1, COLORS.background);
+      if (shadowState.enabled) {
+        sky.addColorStop(0, '#f7f7f7');
+        sky.addColorStop(0.58, '#f7f7f7');
+        sky.addColorStop(0.76, '#f7f7f7');
+        sky.addColorStop(1, '#f7f7f7');
+      } else {
+        sky.addColorStop(0, night ? '#101a30' : rainy ? '#53616b' : `hsl(${204 - cloudCover * 8} 48% ${68 - cloudCover * 28}%)`);
+        sky.addColorStop(0.58, !rainy && twilight > 0.08 ? '#cf795f' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
+        sky.addColorStop(0.76, !rainy && twilight > 0.08 ? '#f0a16a' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
+        sky.addColorStop(1, COLORS.background);
+      }
       context.fillStyle = sky;
       context.fillRect(0, 0, canvas.width, canvas.height);
-      if (sun.altitude > -0.018) {
+      if (!shadowState.enabled && sun.altitude > -0.018) {
         const x = clamp(canvas.width * (0.5 - Math.sin(sun.azimuth) * 0.34), 24, canvas.width - 24);
         const y = clamp(canvas.height * (0.48 - Math.sin(sun.altitude) * 0.38), 24, canvas.height * 0.48);
         context.save();
@@ -2169,7 +2373,7 @@ export async function startScene(canvas, status) {
       const lunarAge = (lunarDate.getTime() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
       const moonPhase = ((lunarAge / 29.530588853) % 1 + 1) % 1;
       const moonIllumination = 0.5 - 0.5 * Math.cos(moonPhase * Math.PI * 2);
-      if (sun.altitude < 0.12 && moonIllumination > 0.045) {
+      if (!shadowState.enabled && sun.altitude < 0.12 && moonIllumination > 0.045) {
         const moonAngle = moonPhase * Math.PI * 2 + shadowState.minutes / 1440 * Math.PI * 2;
         const x = canvas.width * (0.68 + Math.sin(moonAngle) * 0.055);
         const y = canvas.height * (0.19 + Math.cos(moonAngle) * 0.025);
@@ -2208,6 +2412,7 @@ export async function startScene(canvas, status) {
       if (visibility.roads || visibility.paths) {
         drawRoads(project, focal, simplified);
       }
+      drawGroundSurfaces(project, projectPolygon, focal, simplified);
       drawGeneratedShadows(project, focal, simplified);
       // Keep ground features inside the CBD footprint, but restore the canvas
       // before drawing vertical geometry. An edge building must remain whole
@@ -2581,6 +2786,8 @@ export async function startScene(canvas, status) {
   document.querySelector('#fit').addEventListener('click', fitScene);
   document.querySelectorAll('[data-layer]').forEach(input => input.addEventListener('change', event => {
     visibility[event.target.dataset.layer] = event.target.checked;
+    if (event.target.dataset.layer === 'water' && !event.target.disabled) savedVisibility.water = event.target.checked;
+    syncVisibilityControls();
     requestRender();
   }));
 
@@ -2609,6 +2816,7 @@ export async function startScene(canvas, status) {
 
   windToggle.addEventListener('change', event => {
     windState.enabled = event.target.checked;
+    syncVisibilityControls();
     if (windState.enabled && windState.field) hideStreetLayersForWind();
     else restoreStreetLayersAfterWind();
     windStatus.textContent = windState.enabled ? '3D domain ready · drag it, then simulate.' : 'Wind display hidden.';
@@ -2780,6 +2988,7 @@ export async function startScene(canvas, status) {
       windToggle.checked = true;
       windToggle.dispatchEvent(new Event('change'));
     }
+    syncVisibilityControls();
     requestRender();
   });
   addEventListener('climate-streetview-clear', () => {
@@ -2881,7 +3090,7 @@ export async function startScene(canvas, status) {
     windState.particles = [];
     restoreStreetLayersAfterWind();
     updateWindLegend();
-    windStatus.textContent = `Current 10 m forcing set · ${windState.speed.toFixed(1)} m/s from ${Math.round(windState.direction)}° · click Simulate wind.`;
+  windStatus.textContent = `Current 10 m forcing set · ${windState.speed.toFixed(1)} m/s (${(windState.speed * 3.6).toFixed(1)} km/h) from ${Math.round(windState.direction)}° · click Simulate wind.`;
     requestRender();
   });
 

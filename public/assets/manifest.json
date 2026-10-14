@@ -47,9 +47,13 @@
       "roads": 2208,
       "railways": 100,
       "grass": 61,
-      "bytes": 2199491,
+      "groundSurfaces": 112,
+      "municipalSurfaceSegments": 476,
+      "municipalSurfaceMatches": 80,
+      "bytes": 2281289,
       "water": 16,
-      "cache_key": "2020a77d6d5e5ea6"
+      "cache_key": "5b03f8c8b627413e",
+      "trafficSignals": 429
     },
     "canopy": {
       "components": 2659,
@@ -58,24 +62,25 @@
       "cache_key": "e217a646f65eb4f3"
     },
     "city_model": {
-      "objects": 18021,
+      "objects": 18133,
       "types": {
         "ReliefFeature": 1,
         "Building": 1891,
         "RoofSurface": 1891,
-        "Road": 1874,
+        "Road": 1873,
         "CityFurniture": 4198,
-        "TrafficSpace": 1477,
+        "TrafficSpace": 1478,
         "AuxiliaryTrafficSpace": 3328,
         "GeodeticControlPoint": 85,
         "BuildingInstallation": 196,
         "WaterBody": 16,
+        "GroundSurface": 112,
         "Railway": 100,
         "PlantCover": 61,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 19751209,
-      "cache_key": "09c50e7616e54d86"
+      "bytes": 20083276,
+      "cache_key": "250788698f038d62"
     },
     "lighting": {
       "objects": 3672,

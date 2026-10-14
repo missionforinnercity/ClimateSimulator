@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=77">
+    <link rel="stylesheet" href="/style.css?v=83">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -148,6 +148,7 @@
                 </select>
               </label>
             </div>
+            <p class="method-note">Illustrative traffic follows TomTom speeds when available. Cars queue on slow streets and occupy mapped surface parking lots; totals are not traffic counts.</p>
           </section>
         </details>
         <details class="tool-disclosure streetview-disclosure">
@@ -168,14 +169,14 @@
         <div class="compact-section heat-layer-section">
           <b class="heat-section-title">Explore heat</b>
           <div class="heat-view-groups" role="group" aria-label="Heat evidence type">
-            <button type="button" data-heat-view-group="current" aria-pressed="true">Current</button>
-            <button type="button" data-heat-view-group="history" aria-pressed="false">Historical</button>
-            <button type="button" data-heat-view-group="screening" aria-pressed="false">Heat + shade</button>
+            <button type="button" data-heat-view-group="current" aria-pressed="true">Now · UTCI</button>
+            <button type="button" data-heat-view-group="history" aria-pressed="false">Seasonal UTCI</button>
+            <button type="button" data-heat-view-group="screening" aria-pressed="false">Satellite overview</button>
           </div>
           <div class="heat-spin-selector">
-            <button id="heat-spin" class="heat-spin-wheel" type="button" aria-label="Spin to choose a heat view">
+            <button id="heat-spin" class="heat-spin-wheel" type="button" aria-label="Advance to the next heat layer">
               <span id="heat-spin-value">UTCI</span>
-              <small>CLICK TO SPIN</small>
+              <small>NEXT LAYER</small>
             </button>
             <div class="heat-spin-controls">
               <button id="heat-spin-previous" type="button" aria-label="Previous heat view">‹</button>
@@ -189,10 +190,10 @@
                 <option value="tmrt_c">Radiant temperature (Tmrt)</option>
               </optgroup>
               <optgroup label="Satellite heat screening">
+                <option value="heat_model_lst_c" title="Modelled land-surface temperature informed by the satellite-era summer baseline">Land-surface temperature</option>
                 <option value="pedestrian_priority_score" title="Satellite-derived summer heat baseline plus selected-date shade">Priority · heat + shade</option>
                 <option value="pedestrian_heat_exposure_c" title="Proxy exposure delta; not UTCI or measured temperature">Exposure proxy</option>
                 <option value="shade_deficit_score">Shade deficit</option>
-                <option value="heat_model_lst_c">Surface temperature</option>
                 <option value="rooftop_temperature_c">Rooftop temperature</option>
               </optgroup>
             </select>
@@ -267,6 +268,25 @@
             <span><b id="heat-priority-area">—</b><i>Priority area</i></span>
             <span><b id="heat-maximum">—</b><i id="heat-maximum-label">Maximum</i></span>
           </div>
+          <section id="heat-explorer" class="heat-explorer" aria-label="Heat distribution and street rankings">
+            <div class="heat-explorer-heading"><b>Heat distribution</b><small id="heat-distribution-count">—</small></div>
+            <div class="heat-rankings">
+              <section><b id="heat-hot-streets-title">Hottest streets</b><ol id="heat-hot-streets"></ol></section>
+              <section><b id="heat-cool-streets-title">Coolest streets</b><ol id="heat-cool-streets"></ol></section>
+            </div>
+            <div id="heat-distribution" class="heat-distribution"></div>
+            <div class="heat-distribution-scale" aria-hidden="true"><i></i></div>
+            <p id="heat-explorer-note" class="heat-explorer-note"></p>
+            <section id="heat-surface-summary" class="heat-surface-summary" hidden>
+              <b>Satellite surface types</b><div id="heat-surface-types"></div>
+            </section>
+            <details class="heat-street-advanced">
+              <summary>Advanced · street heat map</summary>
+              <p>Paint OpenStreetMap street lines with the selected satellite or UTCI layer. UTCI uses model-grid samples along each named street.</p>
+              <label><input id="heat-street-map-toggle" type="checkbox"> Show street heat map on model</label>
+              <p id="heat-street-map-status" role="status">Choose a heat layer to color mapped streets.</p>
+            </details>
+          </section>
           <div class="heat-actions">
             <button id="heat-inspect-place" type="button">Inspect a place</button>
             <button id="heat-save-comparison" type="button">Save this view</button>
@@ -641,12 +661,21 @@
         <button id="wind-simulate" class="wind-run-button" type="button">Run comfort assessment</button>
         <p id="wind-status" class="wind-status">Run a comfort assessment to view available solved directions.</p>
         <div id="wind-results" class="wind-results" hidden></div>
+        <section id="wind-explorer" class="wind-explorer" aria-label="Wind hotspots and street rankings" hidden>
+          <div class="wind-explorer-heading"><b>Windiest locations</b><small id="wind-explorer-count">—</small></div>
+          <div class="wind-explorer-rankings">
+            <section><b>High-wind spots</b><ol id="wind-hot-areas"></ol></section>
+            <section><b>Windiest streets</b><ol id="wind-hot-streets"></ol></section>
+          </div>
+          <p id="wind-focus-status" class="wind-explorer-note" role="status">Click a ranked result to highlight it on the map.</p>
+          <p id="wind-explorer-note" class="wind-explorer-note"></p>
+        </section>
         <button id="wind-report" class="wind-report-button secondary" type="button" disabled hidden>Generate detailed wind report</button>
 
         <div class="wind-legend-scale" aria-label="Wind colour scale">
           <div class="wind-legend-heading"><b id="wind-legend-field">Velocity magnitude</b></div>
           <div class="wind-gradient"></div>
-          <div class="wind-legend-labels"><span id="wind-legend-low"><b id="wind-legend-min">0.0</b> m/s · low</span><span id="wind-legend-high"><b id="wind-legend-max">—</b> m/s · high</span></div>
+          <div class="wind-legend-labels"><span id="wind-legend-low"><b id="wind-legend-min">0.0</b> m/s · <b id="wind-legend-min-kmh">0.0</b> km/h · low</span><span id="wind-legend-high"><b id="wind-legend-max">—</b> m/s · <b id="wind-legend-max-kmh">—</b> km/h · high</span></div>
           <div id="wind-comfort-chips" class="wind-comfort-chips" hidden></div>
         </div>
         <div class="wind-map-tools">
@@ -966,6 +995,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-50"></script>
+    <script type="module" src="/app.js?v=experience-62"></script>
 </body>
 </html>

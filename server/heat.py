@@ -355,6 +355,8 @@ def _load_heat_zones() -> dict[str, Any]:
             for metric in ("heat_model_lst_c", "pedestrian_heat_exposure_c", "shade_deficit_score")
         }
         normalized_properties["air_temp_c"] = float(properties.get("air_temp_c") or 20.71)
+        normalized_properties["nearest_road_name"] = properties.get("nearest_road_name")
+        normalized_properties["surface_type"] = properties.get("land_type") or properties.get("spectral_land_type")
         normalized_properties["rooftop_temperature_c"] = None
         normalized_properties["pedestrian_heat_score"] = (
             float(properties["pedestrian_heat_score"])
@@ -487,6 +489,8 @@ def heat_zones(
                 features.append({
                     "geometry": mapping(clipped), "value": value,
                     "area_m2": clipped.area, "surface_y": round(surface_y, 2),
+                    "nearest_road_name": source["properties"].get("nearest_road_name"),
+                    "surface_type": source["properties"].get("surface_type"),
                 })
     else:
         for index, feature in enumerate(source_features):
@@ -497,6 +501,8 @@ def heat_zones(
                 "geometry": feature["geometry"],
                 "value": value,
                 "area_m2": shape(feature["geometry"]).area,
+                "nearest_road_name": feature["properties"].get("nearest_road_name"),
+                "surface_type": feature["properties"].get("surface_type"),
             })
     metric_values = [feature["value"] for feature in features]
     raw_range = {"min": min(metric_values), "max": max(metric_values)} if metric_values else None

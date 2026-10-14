@@ -1,5 +1,5 @@
 export const CAMERA_DRAG_SENSITIVITY = 0.006;
-export const CAMERA_MIN_DISTANCE = 600;
+export const CAMERA_MIN_DISTANCE = 80;
 export const CAMERA_MAX_DISTANCE = 7000;
 export const CAMERA_MIN_ELEVATION = 0.35;
 

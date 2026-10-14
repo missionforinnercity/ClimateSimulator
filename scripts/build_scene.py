@@ -21,6 +21,7 @@ from scipy.ndimage import distance_transform_edt, find_objects, median_filter
 from scipy.spatial import Delaunay, QhullError
 from shapely.geometry import LineString, Point, Polygon, box, mapping, shape
 from shapely.ops import transform as transform_geometry, unary_union
+from shapely.strtree import STRtree
 
 try:
     from .city_model import add_semantic_renderer_context, build_city_model, write_city_model
@@ -31,6 +32,30 @@ except ImportError:  # Direct execution: python scripts/build_scene.py
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 ROAD_WIDTHS = {"motorway": 15.0, "trunk": 13.0, "primary": 11.0, "secondary": 9.0, "tertiary": 7.0, "residential": 5.5, "unclassified": 5.5, "living_street": 5.0, "service": 4.0, "pedestrian": 4.0, "cycleway": 2.5, "footway": 2.0, "path": 1.5}
+GROUND_SURFACE_OVERRIDES = {
+    # Site materials checked against the reference images supplied for this scene.
+    "5216621": "grand_parade",
+    "724854797": "red_pavers",
+    "23106905": "concrete",
+}
+
+
+def surface_material(surface: str | None) -> str | None:
+    """Map observed surface tags to the compact renderer's neutral material families."""
+    value = str(surface or "").strip().lower().replace(" ", "_")
+    if value in {"asphalt", "tar", "chipseal", "tarmac"}:
+        return "asphalt"
+    if value in {"concrete", "concrete:plates"}:
+        return "concrete"
+    if value in {"brick", "bricks"}:
+        return "brick"
+    if value in {"paving_stones", "sett", "cobblestone", "cobblestone:flattened", "unhewn_cobblestone"}:
+        return "stone"
+    if value in {"gravel", "fine_gravel", "compacted", "ground", "dirt", "earth", "sand", "unpaved"}:
+        return "gravel"
+    if value == "paved":
+        return "paved"
+    return None
 
 
 def source_fingerprint(path: Path) -> dict[str, object]:
@@ -152,9 +177,9 @@ def osm_direction_degrees(value):
     return result % 360 if math.isfinite(result) else None
 
 
-def local_osm_transport(osm_path, clip, keys):
+def local_osm_transport(osm_path, clip, keys, extract=None):
     """Yield clipped OSM transport lines with their rendering attributes."""
-    extract = load_osm(osm_path)
+    extract = extract or load_osm(osm_path)
     for way in extract.ways.values():
         feature_class = next((way.tags.get(key) for key in keys if way.tags.get(key)), None)
         if not feature_class:
@@ -175,6 +200,165 @@ def local_osm_transport(osm_path, clip, keys):
                 }
                 attributes["osmId"] = way.identifier
                 yield feature_class, part.simplify(0.35, preserve_topology=False), attributes
+
+
+def municipal_surface_index(path, clip):
+    """Index mapped City road materials near the scene for OSM surface-tag gaps."""
+    if path is None or not path.exists():
+        return None, [], 0
+    to_wgs84 = Transformer.from_crs(LOCAL_CRS, "EPSG:4326", always_xy=True)
+    left, bottom, right, top = clip.bounds
+    corners = [to_wgs84.transform(x, y) for x, y in ((left, bottom), (left, top), (right, bottom), (right, top))]
+    lon_min, lon_max = min(point[0] for point in corners), max(point[0] for point in corners)
+    lat_min, lat_max = min(point[1] for point in corners), max(point[1] for point in corners)
+    to_local = Transformer.from_crs("EPSG:4326", LOCAL_CRS, always_xy=True)
+    collection = json.loads(path.read_text(encoding="utf-8-sig"))
+    lines = []
+    materials = []
+    counts = {"Asphalt": "asphalt", "Paving Blocks": "stone", "Concrete": "concrete", "Gravel": "gravel"}
+    for feature in collection.get("features", []):
+        properties = feature.get("properties") or {}
+        material = counts.get(str(properties.get("SURF_TYPE") or "").strip())
+        geometry = feature.get("geometry")
+        if material is None or not geometry:
+            continue
+        raw = shape(geometry)
+        bounds = raw.bounds
+        if bounds[2] < lon_min or bounds[0] > lon_max or bounds[3] < lat_min or bounds[1] > lat_max:
+            continue
+        projected = transform_geometry(to_local.transform, raw).intersection(clip)
+        parts = projected.geoms if projected.geom_type == "MultiLineString" else (projected,)
+        for part in parts:
+            if part.geom_type != "LineString" or part.length < 3:
+                continue
+            lines.append(part.simplify(0.5, preserve_topology=False))
+            materials.append(material)
+    return (STRtree(lines) if lines else None), materials, len(lines)
+
+
+def match_municipal_surface(line, tree, materials, maximum_distance=6.0):
+    if tree is None or line.is_empty or line.length < 2:
+        return None
+    candidates = tree.query(line.buffer(maximum_distance))
+    best = None
+    best_score = 0.0
+    search_area = line.buffer(4.0)
+    for candidate_index in candidates:
+        candidate = tree.geometries[int(candidate_index)]
+        distance = line.distance(candidate)
+        if distance > maximum_distance:
+            continue
+        overlap = candidate.intersection(search_area).length
+        coverage = min(1.0, overlap / max(line.length, 1.0))
+        score = coverage - distance * 0.02
+        if score > best_score:
+            best = materials[int(candidate_index)]
+            best_score = score
+    return best if best_score >= 0.35 else None
+
+
+def local_ground_surfaces(extract, clip, building_records, origin_x, origin_y):
+    """Export clipped OSM area surfaces plus the three image-verified site finishes."""
+    building_mask = unary_union([record[2] for record in building_records if record[2] is not None])
+    candidates = []
+
+    def add_source(source_kind, source_id, tags, polygons):
+        if tags.get("building") or tags.get("indoor") == "yes":
+            return
+        if tags.get("amenity") == "parking" and tags.get("parking") not in {None, "surface"}:
+            return
+        try:
+            layer = float(tags.get("layer", 0) or 0)
+        except (TypeError, ValueError):
+            layer = 0
+        if layer < 0 or tags.get("parking") in {"underground", "multi-storey", "rooftop", "carports", "garage_boxes"}:
+            return
+        surface = tags.get("surface")
+        material = GROUND_SURFACE_OVERRIDES.get(str(source_id))
+        if material is None:
+            material = surface_material(surface)
+        if material == "paved":
+            material = "stone"
+        if material is None and tags.get("place") == "square":
+            material = "stone"
+        if material is None and tags.get("highway") in {"pedestrian", "footway"} and tags.get("area") == "yes":
+            material = "stone"
+        if material is None and tags.get("amenity") == "parking" and tags.get("parking") == "surface":
+            material = "asphalt"
+        if material is None:
+            return
+        name = tags.get("name")
+        special = str(source_id) in GROUND_SURFACE_OVERRIDES
+        for polygon in polygons:
+            if polygon.is_empty or polygon.area < 4:
+                continue
+            clipped = polygon.intersection(clip)
+            if clipped.is_empty:
+                continue
+            # Building footprints have their own mapped geometry and remain clear
+            # of the ground-surface overlays even where source areas are coarse.
+            clipped = clipped.difference(building_mask)
+            parts = clipped.geoms if clipped.geom_type == "MultiPolygon" else (clipped,)
+            for part in parts:
+                if part.geom_type != "Polygon" or part.area < 4:
+                    continue
+                part = part.simplify(0.15, preserve_topology=True)
+                rings = []
+                for ring in [part.exterior, *part.interiors]:
+                    points = [[round(x - origin_x, 2), round(-(y - origin_y), 2)] for x, y in list(ring.coords)[:-1]]
+                    if len(points) >= 3:
+                        rings.append(points)
+                if rings:
+                    candidates.append({
+                        "osmId": str(source_id), "source": f"osm:{source_kind}",
+                        "name": name, "material": material, "special": special,
+                        "amenity": tags.get("amenity"), "parking": tags.get("parking"),
+                        "access": tags.get("access"),
+                        "rings": rings,
+                    })
+
+    for way in extract.ways.values():
+        tags = way.tags
+        if tags.get("building") or not way.refs or way.refs[0] != way.refs[-1]:
+            continue
+        explicit_area = tags.get("area") == "yes"
+        surface_area = surface_material(tags.get("surface")) is not None
+        outdoor_parking = tags.get("amenity") == "parking" and tags.get("building") is None
+        named_square = tags.get("place") == "square"
+        if not (explicit_area or surface_area or outdoor_parking or named_square or str(way.identifier) in GROUND_SURFACE_OVERRIDES):
+            continue
+        polygon = extract.way_polygon(way)
+        if polygon is not None:
+            add_source("way", way.identifier, tags, [polygon])
+
+    for relation in extract.relations:
+        tags = relation.tags
+        if tags.get("building") or not (
+            surface_material(tags.get("surface")) or tags.get("place") == "square"
+            or tags.get("amenity") == "parking"
+        ):
+            continue
+        add_source("relation", relation.identifier, tags, extract.relation_polygons(relation))
+
+    # General OSM pavement areas sit below named, photo-checked site finishes.
+    candidates.sort(key=lambda record: record["special"])
+    return candidates
+
+
+def local_traffic_signals(extract, clip, origin_x, origin_y):
+    """Return mapped OSM traffic-signal nodes in the viewer's local frame."""
+    signals = []
+    for node in extract.nodes.values():
+        if node.tags.get("highway") != "traffic_signals" and node.tags.get("crossing") != "traffic_signals":
+            continue
+        if not clip.covers(Point(node.x, node.y)):
+            continue
+        signals.append({
+            "osmId": node.identifier,
+            "coordinates": [round(node.x - origin_x, 1), round(-(node.y - origin_y), 1)],
+            "kind": node.tags.get("highway", "crossing"),
+        })
+    return sorted(signals, key=lambda item: item["osmId"])
 
 
 def local_green_areas(green_path, clip):
@@ -445,7 +629,7 @@ def load_building_records(footprints_path, height_path, dtm_path):
             }
 
 
-def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, green_path, instances, output, origin_x, origin_y):
+def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, green_path, instances, output, origin_x, origin_y, municipal_roads_path=None):
     """Write the compact footprint scene the Canvas2D renderer loads."""
     with rasterio.open(dtm_path) as dtm_source:
         dtm_raster = dtm_source.read(1, masked=True)
@@ -484,8 +668,11 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, g
             ])
 
     trees = [[round(float(value), 1) for value in row[:6]] for row in instances]
+    osm_extract = load_osm(osm_path)
+    municipal_tree, municipal_materials, municipal_segment_count = municipal_surface_index(municipal_roads_path, clip)
     roads = []
-    for highway, line, attributes in local_osm_transport(osm_path, clip, ("highway",)):
+    municipal_matches = 0
+    for highway, line, attributes in local_osm_transport(osm_path, clip, ("highway",), osm_extract):
         coordinates = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in line.coords]
         if len(coordinates) >= 2:
             try:
@@ -494,9 +681,23 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, g
                 width = ROAD_WIDTHS.get(highway, 4.0)
             if not math.isfinite(width) or not 0.5 <= width <= 30:
                 width = ROAD_WIDTHS.get(highway, 4.0)
+            normalized_name = " ".join(str(attributes.get("name") or "").lower().replace("'", "").replace(".", "").split())
+            if normalized_name in {"saint george s mall", "st george s mall", "saint georges mall", "st georges mall"}:
+                # The named pedestrian mall is a full-width red-paved corridor;
+                # OSM stores its centerline but not the paved area width.
+                attributes["groundMaterialOverride"] = "red_pavers"
+                attributes["renderWidthM"] = 14.0
+                width = 14.0
+            osm_surface = surface_material(attributes.get("surface"))
+            if not osm_surface or osm_surface == "paved":
+                municipal_surface = match_municipal_surface(line, municipal_tree, municipal_materials)
+                if municipal_surface:
+                    attributes["renderSurface"] = municipal_surface
+                    attributes["municipalSurfaceSource"] = "City of Cape Town SURF_TYPE"
+                    municipal_matches += 1
             roads.append([width, highway, coordinates, attributes])
     railways = []
-    for railway, line, attributes in local_osm_transport(osm_path, clip, ("railway",)):
+    for railway, line, attributes in local_osm_transport(osm_path, clip, ("railway",), osm_extract):
         if railway not in {"rail", "tram", "light_rail"}:
             continue
         coordinates = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in line.coords]
@@ -507,6 +708,8 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, g
         ring = [[round(x - origin_x, 1), round(-(y - origin_y), 1)] for x, y in list(polygon.simplify(0.6, preserve_topology=True).exterior.coords)[:-1]]
         if len(ring) >= 3:
             grass.append(ring)
+    ground_surfaces = local_ground_surfaces(osm_extract, clip, building_records, origin_x, origin_y)
+    traffic_signals = local_traffic_signals(osm_extract, clip, origin_x, origin_y)
     terrain = canvas_terrain_grid(
         dtm,
         valid.astype("uint8"),
@@ -516,8 +719,14 @@ def build_canvas_fallback(building_records, roof_profiles, dtm_path, osm_path, g
         origin_y,
         clip,
     )
-    output.write_text(json.dumps({"buildings": buildings, "trees": trees, "roads": roads, "railways": railways, "grass": grass, "terrain": terrain}, separators=(",", ":")) + "\n", encoding="utf-8")
-    return {"buildings": len(buildings), "trees": len(trees), "roads": len(roads), "railways": len(railways), "grass": len(grass), "bytes": output.stat().st_size}
+    output.write_text(json.dumps({"buildings": buildings, "trees": trees, "roads": roads, "railways": railways, "grass": grass, "groundSurfaces": ground_surfaces, "trafficSignals": traffic_signals, "terrain": terrain}, separators=(",", ":")) + "\n", encoding="utf-8")
+    return {
+        "buildings": len(buildings), "trees": len(trees), "roads": len(roads),
+        "railways": len(railways), "grass": len(grass), "groundSurfaces": len(ground_surfaces),
+        "trafficSignals": len(traffic_signals),
+        "municipalSurfaceSegments": municipal_segment_count, "municipalSurfaceMatches": municipal_matches,
+        "bytes": output.stat().st_size,
+    }
 
 
 def parametric_roof_is_credible(
@@ -1171,6 +1380,7 @@ def main():
         args.out / "fallback.json",
         origin_x,
         origin_y,
+        args.street_data / "TCT_Road_Centerline.geojson",
     )
     manifest["layers"]["canopy"] = write_canopy_asset(canopies, args.out / "canopy.json")
     compact_scene = json.loads((args.out / "fallback.json").read_text(encoding="utf-8"))

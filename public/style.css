@@ -985,6 +985,23 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .wind-panel .wind-results span { padding: 8px; border-color: #35433c; border-radius: 7px; background: #222a25; color: #9fafa6; font-size: 8px; }
 .wind-panel .wind-results b { color: #e3eee7; font-size: 11px; }
 .wind-panel .wind-results .wind-result-facts span { min-width: 0; overflow-wrap: anywhere; }
+.wind-explorer { display: grid; gap: 7px; padding: 9px; border: 1px solid #35423c; border-radius: 8px; background: #1c2320; }
+.wind-explorer[hidden] { display: none !important; }
+.wind-explorer-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.wind-explorer-heading b, .wind-explorer-rankings section > b { color: #e0e8e3; font-size: 9px; }
+.wind-explorer-heading small { color: #9caaa2; font-size: 8px; }
+.wind-explorer-rankings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.wind-explorer-rankings section { min-width: 0; }
+.wind-explorer-rankings ol { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.wind-explorer-rankings li { min-width: 0; }
+.wind-explorer-rankings button { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px; align-items: center; width: 100%; min-height: 25px; padding: 3px 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #b8c6bd; text-align: left; cursor: pointer; }
+.wind-explorer-rankings button:hover, .wind-explorer-rankings button:focus-visible { border-color: #70bda0; background: #26372f; outline: none; }
+.wind-explorer-rankings button small { color: #718178; font-size: 7px; }
+.wind-explorer-rankings button span { overflow: hidden; color: #cbd8d0; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.wind-explorer-rankings button b { color: #f0f5f1; font-size: 8px; }
+.wind-explorer-note { margin: 0; color: #9ca9a2; font-size: 8px; line-height: 1.45; }
+#wind-focus-status { color: #f4d46e; }
+@media (max-width: 380px) { .wind-explorer-rankings { grid-template-columns: 1fr; } }
 .wind-panel .wind-tool-card { margin-top: 8px; padding: 9px 10px; border-color: #35413b; border-radius: 7px; background: #202723; }
 .wind-panel .wind-tool-card > summary { color: #d7e3dc; font-size: 9px; font-weight: 700; }
 .wind-panel .wind-tool-card > p { color: #aab8b0; font-size: 8px; line-height: 1.5; }
@@ -1408,6 +1425,39 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .heat-legend-labels { color: #9fada6; font-size: 8px; }
 .heat-evidence { margin-top: 2px; padding-top: 7px; border-top: 1px solid #353f3b; }
 .heat-evidence > summary { padding: 2px 0; font-size: 8px; }
+.heat-explorer { display: grid; gap: 7px; padding: 9px; border: 1px solid #35423c; border-radius: 8px; background: #1c2320; }
+.heat-explorer[hidden], .heat-surface-summary[hidden] { display: none !important; }
+.heat-explorer-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.heat-explorer-heading b, .heat-rankings section > b, .heat-surface-summary > b { color: #e0e8e3; font-size: 9px; }
+.heat-explorer-heading small { color: #9caaa2; font-size: 8px; }
+.heat-distribution { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.heat-distribution > span { display: grid; gap: 3px; min-width: 0; padding: 5px 3px; border: 1px solid #303a35; border-radius: 5px; background: #202825; text-align: center; }
+.heat-distribution small { color: #94a39a; font-size: 7px; }
+.heat-distribution b { overflow-wrap: anywhere; color: #eef5f0; font-size: 10px; }
+.heat-distribution-scale { height: 7px; overflow: hidden; border-radius: 5px; background: linear-gradient(90deg, #2b50be, #2daede 20%, #74cf48 42%, #ffe241 64%, #ff9619 82%, #e03020 100%); }
+.heat-distribution-scale i { display: none; }
+.heat-explorer-note { margin: 0; color: #9ca9a2; font-size: 8px; line-height: 1.45; }
+.heat-rankings { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.heat-rankings section { min-width: 0; }
+.heat-rankings ol { display: grid; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.heat-rankings li { min-width: 0; }
+.heat-rankings button { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 4px; align-items: center; width: 100%; min-height: 25px; padding: 3px 4px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: #b8c6bd; text-align: left; cursor: pointer; }
+.heat-rankings button:hover, .heat-rankings button:focus-visible, .heat-rankings button.is-highlighted { border-color: #b5aa58; background: #36351f; outline: none; }
+.heat-rankings button small { color: #718178; font-size: 7px; }
+.heat-rankings button span { overflow: hidden; color: #cbd8d0; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.heat-rankings button b { color: #f0f5f1; font-size: 8px; }
+.heat-surface-summary { display: grid; gap: 5px; padding-top: 7px; border-top: 1px solid #303b35; }
+.heat-surface-summary > div { display: grid; gap: 4px; }
+.heat-surface-type-row { display: grid; grid-template-columns: 92px minmax(0, 1fr) 24px; gap: 5px; align-items: center; color: #aebdb4; font-size: 8px; }
+.heat-surface-type-row i { display: block; height: 5px; border-radius: 4px; background: linear-gradient(90deg, #4277e5, #51c2dc, #b2d36e, #f4c743, #f06b43); }
+.heat-surface-type-row b { color: #dbe7df; font-size: 8px; text-align: right; }
+.heat-street-advanced { padding-top: 7px; border-top: 1px solid #303b35; }
+.heat-street-advanced > summary { color: #d4e0d8; font-size: 8px; font-weight: 650; cursor: pointer; }
+.heat-street-advanced > p { margin: 5px 0; color: #9ca9a2; font-size: 8px; line-height: 1.45; }
+.heat-street-advanced > label { display: flex; gap: 6px; align-items: flex-start; color: #c9d6ce; font-size: 8px; cursor: pointer; }
+.heat-street-advanced input { margin: 1px 0 0; accent-color: #7cd9b1; }
+.heat-street-advanced #heat-street-map-status { min-height: 0; margin: 5px 0 0; }
+@media (max-width: 380px) { .heat-rankings { grid-template-columns: 1fr; } }
 .heat-panel > .compact-about:last-child { margin-top: 2px; padding-top: 7px; border-top: 1px solid #353f3b; }
 .heat-panel .compact-about > summary { color: #a7b5ad; font-size: 8px; }
 

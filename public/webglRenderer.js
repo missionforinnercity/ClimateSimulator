@@ -8,20 +8,19 @@ import { createTransportLayer } from './transportLayer.js?v=30';
 const COLORS = {
   background: 0x101719,
   fog: 0x101719,
-  terrain: 0xb5bd97,
-  terrainSun: 0xf6ecd7,
-  grass: 0x86b66f,
+  terrain: 0xc0b49b,
+  terrainSun: 0xf9f9f9,
   wall: 0xb4b4b4,
   wallSun: 0xffffff,
   roof: 0xcacaca,
   roofSun: 0xffffff,
-  road: 0xb8b1a5,
-  roadMajor: 0xa9b6b5,
-  roadSecondary: 0xb6b2a8,
+  road: 0x59605d,
+  roadMajor: 0x646b67,
+  roadSecondary: 0x5f6662,
   // Permanent pedestrian streets should read as context, while the brighter
   // red/orange simulation ribbons remain the attention-grabbing states.
-  pedestrian: 0xd0ad87,
-  path: 0xb4a98f,
+  pedestrian: 0xa87967,
+  path: 0xb5a994,
   rail: 0x929b9c,
   plinthTop: 0xc5c7c4,
   plinthSide: 0x747977,
@@ -210,7 +209,10 @@ export async function startWebGLScene(canvas, status) {
   function updateWeatherSky(weather = skyWeather, sun = null) {
     skyWeather = weather;
     const skyActive = Boolean(shadowState.enabled && shadowState.mode === 'shadows');
-    skySphere.visible = skyActive;
+    // The analytical shadow view uses a neutral studio-white environment so
+    // pavement, sky and weather colours cannot compete with the shade result.
+    skySphere.visible = false;
+    scene.background.set(shadowState.enabled ? '#f7f7f7' : COLORS.background);
     const day = sun ? sun.altitude > 0 : weather?.is_day !== false;
     const clouds = clamp(Number(weather?.cloud_cover_pct) || 0, 0, 100) / 100;
     const rainy = Number(weather?.precipitation_mm) > 0.1 || Number(weather?.weather_code) >= 51;
@@ -220,9 +222,7 @@ export async function startWebGLScene(canvas, status) {
     skyUniforms.isRainy.value = rainy ? 1 : 0;
     const twilight = sun ? Math.exp(-Math.abs(sun.altitude) / 0.18) : 0;
     skyUniforms.twilight.value = twilight;
-    if (scene.fog) scene.fog.color.set(skyActive
-      ? (twilight > 0.28 && !rainy ? '#bb8175' : daylight > 0.5 ? (rainy ? '#89979f' : '#becdd2') : '#202b42')
-      : COLORS.fog);
+    if (scene.fog) scene.fog.color.set(shadowState.enabled ? '#f7f7f7' : COLORS.fog);
     const phaseDate = new Date(`${shadowState.date}T12:00:00+02:00`);
     const newMoonReference = Date.UTC(2000, 0, 6, 18, 14);
     const lunarDays = (phaseDate.getTime() - newMoonReference) / 86400000;
@@ -412,6 +412,12 @@ export async function startWebGLScene(canvas, status) {
     buildings: new THREE.Group(),
     trees: new THREE.Group(),
   };
+  let ambientTrafficRoads = [];
+  let ambientParkingAisles = [];
+  const ambientParkingLots = [];
+  const groundSurfaceMeshes = [];
+  const pavementOverrideMeshes = [];
+  const sunModeNeutralMeshes = [];
   Object.values(layerGroups).forEach(group => scene.add(group));
 
   // Decorative and municipal lighting share the same solar switch. Street
@@ -671,14 +677,149 @@ export async function startWebGLScene(canvas, status) {
     return [rim, slab];
   }
 
+  function makeSurfaceTexture(kind) {
+    const size = 256;
+    const pixels = new Uint8Array(size * size * 4);
+    const fract = value => value - Math.floor(value);
+    const hash = (x, y, cells, seed) => {
+      const wrappedX = (x % cells + cells) % cells;
+      const wrappedY = (y % cells + cells) % cells;
+      const value = Math.sin((wrappedX + seed * 13.1) * 127.1 + (wrappedY - seed * 3.7) * 311.7) * 43758.5453;
+      return fract(value);
+    };
+    const noise = (u, v, cells, seed) => {
+      const x = u * cells, y = v * cells;
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const fx = x - x0, fy = y - y0;
+      const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const top = hash(x0, y0, cells, seed) * (1 - sx) + hash(x0 + 1, y0, cells, seed) * sx;
+      const bottom = hash(x0, y0 + 1, cells, seed) * (1 - sx) + hash(x0 + 1, y0 + 1, cells, seed) * sx;
+      return top * (1 - sy) + bottom * sy;
+    };
+    const smoothstep = (edge0, edge1, value) => {
+      const amount = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+      return amount * amount * (3 - 2 * amount);
+    };
+    const put = (x, y, red, green = red, blue = red) => {
+      const offset = (y * size + x) * 4;
+      pixels[offset] = Math.round(clamp(red, 0, 255));
+      pixels[offset + 1] = Math.round(clamp(green, 0, 255));
+      pixels[offset + 2] = Math.round(clamp(blue, 0, 255));
+      pixels[offset + 3] = 255;
+    };
+
+    for (let y = 0; y < size; y += 1) {
+      for (let x = 0; x < size; x += 1) {
+        const u = x / size, v = y / size;
+        const broad = noise(u, v, 4, 17);
+        const medium = noise(u, v, 13, 29);
+        const fine = noise(u, v, 44, 41);
+        if (kind === 'grass') {
+          const dry = smoothstep(0.61, 0.86, broad * 0.7 + medium * 0.3);
+          const variation = (broad - 0.5) * 17 + (medium - 0.5) * 12 + (fine - 0.5) * 7;
+          const straw = fine > 0.982 ? 12 : 0;
+          put(x, y,
+            113 + variation + dry * 21 + straw,
+            126 + variation + dry * 5 + straw * 0.7,
+            76 + variation * 0.52 + dry * 12 + straw * 0.35);
+          continue;
+        }
+        if (kind === 'terrain') {
+          const value = 229 + (broad - 0.5) * 9 + (medium - 0.5) * 6 + (fine - 0.5) * 4;
+          put(x, y, value, value, value);
+          continue;
+        }
+
+        let value = 229 + (broad - 0.5) * 9 + (medium - 0.5) * 12 + (fine - 0.5) * 8;
+        if (kind === 'asphalt') {
+          if (fine > 0.995) value -= 30 + medium * 22;
+          put(x, y, value + 2, value + 1, value - 1);
+          continue;
+        }
+        if (kind === 'gravel') {
+          if (fine > 0.978) value -= 26 + medium * 27;
+          put(x, y, value + 4, value + 2, value - 3);
+          continue;
+        }
+
+        if (kind === 'brick' || kind === 'stone') {
+          const across = kind === 'brick' ? 24 : 12;
+          const down = kind === 'brick' ? 16 : 12;
+          const row = Math.floor(v * down);
+          const columnOffset = kind === 'brick' && row % 2 ? 0.5 : 0;
+          const cellU = fract(u * across + columnOffset);
+          const cellV = fract(v * down);
+          const mortar = kind === 'brick'
+            ? cellU < 0.055 || cellU > 0.945 || cellV < 0.065 || cellV > 0.935
+            : cellU < 0.035 || cellU > 0.965 || cellV < 0.035 || cellV > 0.965;
+          const blockTone = hash(Math.floor(u * across), row, across * down, kind === 'brick' ? 53 : 67);
+          value += (blockTone - 0.5) * (kind === 'brick' ? 14 : 9);
+          if (mortar) value -= kind === 'brick' ? 39 : 31;
+          put(x, y, value + (kind === 'brick' ? 4 : 3), value, value - (kind === 'brick' ? 2 : 1));
+          continue;
+        }
+
+        if (kind === 'grandParade') {
+          // The Parade is a warm, finely jointed stone field, with the broad
+          // darker divider bands visible in the aerial reference every few
+          // metres. UVs repeat in real-world units, so these remain at a
+          // consistent scale as the camera moves.
+          const across = 24;
+          const down = 24;
+          const column = Math.floor(u * across);
+          const row = Math.floor(v * down);
+          const cellU = fract(u * across), cellV = fract(v * down);
+          const fineJoint = cellU < 0.025 || cellU > 0.975 || cellV < 0.025 || cellV > 0.975;
+          const broadBand = column % 12 === 0 || row % 12 === 0;
+          const blockTone = hash(column, row, across * down, 83);
+          value += (blockTone - 0.5) * 8 - (broadBand ? 10 : 0);
+          if (fineJoint) value -= 26;
+          put(x, y, value + 5, value + 1, value - 8);
+          continue;
+        }
+
+        if (kind === 'redPavers') {
+          // Restrained terracotta blocks with the larger square joints from
+          // Thibault Square and St George's Mall readable at close zoom.
+          const across = 24;
+          const down = 24;
+          const column = Math.floor(u * across);
+          const row = Math.floor(v * down);
+          const cellU = fract(u * across), cellV = fract(v * down);
+          const fineJoint = cellU < 0.024 || cellU > 0.976 || cellV < 0.024 || cellV > 0.976;
+          const squareBand = column % 6 === 0 || row % 6 === 0;
+          const blockTone = hash(column, row, across * down, 97);
+          value += (blockTone - 0.5) * 9 - (squareBand ? 12 : 0);
+          if (fineJoint) value -= 24;
+          put(x, y, value + 14, value - 20, value - 31);
+          continue;
+        }
+
+        put(x, y, value + 4, value + 2, value);
+      }
+    }
+    const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.generateMipmaps = true;
+    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
   function makeTerrain() {
     const positions = [];
+    const uvs = [];
     const indices = [];
     for (let row = 0; row < terrain.rows; row += 1) {
       for (let column = 0; column < terrain.columns; column += 1) {
         const x = left + terrainWidth * column / (terrain.columns - 1);
         const z = minZ + terrainDepth * row / (terrain.rows - 1);
         positions.push(x, terrain.heights[row * terrain.columns + column], z);
+        uvs.push(x / 32, z / 32);
       }
     }
     for (let row = 0; row < terrain.rows - 1; row += 1) {
@@ -707,7 +848,10 @@ export async function startWebGLScene(canvas, status) {
           if (flags.every(Boolean)) indices.push(...baseIndices);
           else if (flags.some(Boolean) && centerValid) {
             const first = positions.length / 3;
-            for (const [x, y, z] of triangle) positions.push(x, y, z);
+            for (const [x, y, z] of triangle) {
+              positions.push(x, y, z);
+              uvs.push(x / 32, z / 32);
+            }
             indices.push(first, first + 1, first + 2);
           }
         }
@@ -715,10 +859,12 @@ export async function startWebGLScene(canvas, status) {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
     const material = new THREE.MeshLambertMaterial({
       color: COLORS.terrain,
+      map: makeSurfaceTexture('terrain'),
       side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -744,7 +890,15 @@ export async function startWebGLScene(canvas, status) {
     shadowCatcher.renderOrder = 4;
     let minimumY = Infinity;
     for (let index = 1; index < positions.length; index += 3) minimumY = Math.min(minimumY, positions[index]);
-    layerGroups.terrain.add(...makeDioramaBase(minimumY));
+    const plinthMeshes = makeDioramaBase(minimumY);
+    for (const plinth of plinthMeshes) {
+      plinth.userData.normalMaterial = plinth.material;
+      plinth.userData.sunMaterial = Array.isArray(plinth.material)
+        ? plinth.material.map(() => new THREE.MeshStandardMaterial({ color: COLORS.terrainSun, roughness: 0.9, side: THREE.DoubleSide }))
+        : new THREE.MeshStandardMaterial({ color: COLORS.terrainSun, roughness: 0.9, side: THREE.DoubleSide });
+      sunModeNeutralMeshes.push(plinth);
+    }
+    layerGroups.terrain.add(...plinthMeshes);
     layerGroups.terrain.add(mesh, shadowCatcher);
     return { mesh, shadowCatcher };
   }
@@ -866,10 +1020,15 @@ export async function startWebGLScene(canvas, status) {
       });
       const mesh = new THREE.Mesh(geometry, material);
       mesh.name = `osm-water-${kind}`;
+      mesh.userData.normalMaterial = material;
+      mesh.userData.sunMaterial = new THREE.MeshLambertMaterial({
+        color: COLORS.terrainSun, emissive: 0x242424, emissiveIntensity: 0.24, side: THREE.DoubleSide,
+      });
       mesh.renderOrder = 2;
       mesh.castShadow = false;
       mesh.receiveShadow = true;
       layerGroups.water.add(mesh);
+      sunModeNeutralMeshes.push(mesh);
     }
     return data.water?.length || 0;
   }
@@ -1315,6 +1474,7 @@ export async function startWebGLScene(canvas, status) {
 
   function makeGrass() {
     const positions = [];
+    const uvs = [];
     const clipToTerrainTriangle = (subject, clip) => {
       const signedArea = clip.reduce((sum, point, index) => {
         const next = clip[(index + 1) % clip.length];
@@ -1351,7 +1511,10 @@ export async function startWebGLScene(canvas, status) {
         const centerX = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
         const centerZ = (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3;
         if (pointInMappedWater(centerX, centerZ) || !terrainValidAt(centerX, centerZ)) continue;
-        for (const [x, z] of triangle) positions.push(x, terrainSurfaceHeightAt(x, z) + 0.14, z);
+        for (const [x, z] of triangle) {
+          positions.push(x, terrainSurfaceHeightAt(x, z) + 0.14, z);
+          uvs.push(x / 12, z / 12);
+        }
       }
     };
     for (const ring of data.grass || []) {
@@ -1385,9 +1548,10 @@ export async function startWebGLScene(canvas, status) {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geometry.computeVertexNormals();
     const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({
-      color: COLORS.grass, side: THREE.DoubleSide,
+      color: 0xffffff, map: makeSurfaceTexture('grass'), side: THREE.DoubleSide,
       polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
     }));
     mesh.receiveShadow = true;
@@ -1396,31 +1560,15 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function makeRoads() {
-    const textureSize = 256;
-    const textureData = new Uint8Array(textureSize * textureSize * 4);
-    for (let y = 0; y < textureSize; y += 1) {
-      for (let x = 0; x < textureSize; x += 1) {
-        const index = (y * textureSize + x) * 4;
-        const noise = Math.sin(x * 91.73 + y * 37.19 + x * y * 0.17) * 43758.5453;
-        const grain = noise - Math.floor(noise);
-        const broad = Math.sin(x * 0.035 + Math.sin(y * 0.021) * 2.4) * 7.2
-          + Math.sin(y * 0.047 - x * 0.013) * 5.4;
-        const fine = Math.sin(x * 0.29 + y * 0.18) * 2.8 + Math.cos(y * 0.31 - x * 0.12) * 2.2;
-        const aggregate = grain > 0.995 ? 158 : Math.round(clamp(239 + broad + fine + (grain - 0.5) * 23, 176, 255));
-        const warmAggregate = Math.sin(x * 0.08 - y * 0.03) * 3.2;
-        textureData[index] = clamp(aggregate + warmAggregate, 0, 255);
-        textureData[index + 1] = clamp(aggregate + Math.sin(y * 0.07 + x * 0.02) * 1.4, 0, 255);
-        textureData[index + 2] = clamp(aggregate - warmAggregate * 0.65, 0, 255);
-        textureData[index + 3] = 255;
-      }
-    }
-    const asphaltTexture = new THREE.DataTexture(textureData, textureSize, textureSize, THREE.RGBAFormat);
-    asphaltTexture.wrapS = THREE.RepeatWrapping;
-    asphaltTexture.wrapT = THREE.RepeatWrapping;
-    asphaltTexture.colorSpace = THREE.SRGBColorSpace;
-    asphaltTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
-    asphaltTexture.needsUpdate = true;
-    const positionsByStyle = [[], [], [], [], [], [], [], []];
+    const asphaltTexture = makeSurfaceTexture('asphalt');
+    const stoneTexture = makeSurfaceTexture('stone');
+    const brickTexture = makeSurfaceTexture('brick');
+    const surfaceTextures = [
+      asphaltTexture, asphaltTexture, asphaltTexture,
+      stoneTexture, brickTexture, makeSurfaceTexture('gravel'),
+      stoneTexture, makeSurfaceTexture('concrete'), brickTexture, makeSurfaceTexture('redPavers'),
+    ];
+    const positionsByStyle = [[], [], [], [], [], [], [], [], [], []];
     const major = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link']);
     const secondary = new Set(['secondary', 'secondary_link', 'tertiary']);
     const paths = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator']);
@@ -1452,16 +1600,30 @@ export async function startWebGLScene(canvas, status) {
       // carries a source marker and stores them at index 4.
       const attributes = (record[4] && typeof record[4] === 'object')
         ? record[4] : ((record[3] && typeof record[3] === 'object') ? record[3] : {});
-      const surface = String(attributes.surface || '').toLowerCase();
+      const surface = String(attributes.renderSurface || attributes.surface || '').toLowerCase();
+      const siteOverride = attributes.groundMaterialOverride;
       const unsealed = new Set(['unpaved', 'gravel', 'fine_gravel', 'dirt', 'earth', 'ground', 'sand', 'compacted']);
-      const pavedUnits = new Set(['paving_stones', 'sett', 'cobblestone', 'unhewn_cobblestone', 'bricks']);
-      const baseStyle = highway === 'pedestrian' ? 4 : paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
-      const styleIndex = baseStyle >= 3 ? baseStyle : unsealed.has(surface) ? 5 : pavedUnits.has(surface) ? 6 : surface === 'concrete' || surface === 'concrete:plates' ? 7 : baseStyle;
+      const pavedUnits = new Set(['paving_stones', 'sett', 'cobblestone', 'cobblestone:flattened', 'unhewn_cobblestone']);
+      const brickSurfaces = new Set(['brick', 'bricks']);
+      const baseStyle = siteOverride === 'red_pavers' || highway === 'pedestrian' ? 4 : paths.has(highway) ? 3 : major.has(highway) ? 1 : secondary.has(highway) ? 2 : 0;
+      const taggedSurfaceStyle = unsealed.has(surface) ? 5
+        : brickSurfaces.has(surface) ? 8
+          : pavedUnits.has(surface) ? 6
+            : surface === 'concrete' || surface === 'concrete:plates' ? 7
+              : surface === 'asphalt' ? null : null;
+      const siteSurfaceStyle = siteOverride === 'red_pavers' ? 9 : null;
+      const mappedSurfaceStyle = surface === 'asphalt' ? baseStyle
+        : surface === 'stone' ? 6 : surface === 'brick' || surface === 'bricks' ? 8
+          : surface === 'gravel' ? 5 : surface === 'concrete' ? 7 : null;
+      const styleIndex = siteSurfaceStyle ?? mappedSurfaceStyle ?? taggedSurfaceStyle ?? baseStyle;
       if (points.length > 1) {
         const verticalOffset = inferredVerticalOffset(attributes, highway);
+        const renderWidth = Number(attributes.renderWidthM);
+        const parkingAisle = attributes.service === 'parking_aisle';
         const roadRecord = {
           points,
-          width: clamp(Number(mappedWidth) || 4, paths.has(highway) ? 0.8 : 2.5, 18),
+          width: parkingAisle ? clamp(Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : 3.1, 2.7, 3.5)
+            : clamp(Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : Number(mappedWidth) || 4, baseStyle >= 3 ? 0.8 : 2.5, 18),
           verticalOffset,
           surfaceOffset: ROAD_CLASS_OFFSETS[baseStyle] ?? ROAD_CLASS_OFFSETS[0],
           highway,
@@ -1471,10 +1633,10 @@ export async function startWebGLScene(canvas, status) {
           attributes,
           // Paths < local streets < secondary streets < primary/trunk roads.
           // Keep this even when surface material changes the colour bucket.
-          priority: baseStyle >= 3 ? 0 : baseStyle === 1 ? 3 : baseStyle === 2 ? 2 : 1,
+          priority: parkingAisle ? 0 : baseStyle >= 3 ? 0 : baseStyle === 1 ? 3 : baseStyle === 2 ? 2 : 1,
         };
         positionsByStyle[styleIndex].push(roadRecord);
-        if (!paths.has(highway) && highway !== 'pedestrian') {
+        if (baseStyle < 3) {
           const width = clamp(Number(mappedWidth) || 4, 2.5, 18);
           const sidewalk = String(attributes.sidewalk || '').toLowerCase();
           const left = ['yes', 'both', 'left', 'separate'].includes(sidewalk) || ['yes', 'separate'].includes(String(attributes.sidewalkLeft || '').toLowerCase());
@@ -1485,7 +1647,7 @@ export async function startWebGLScene(canvas, status) {
         }
       }
     }
-    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian, 0x807564, 0x948878, 0x8d8980];
+    const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian, 0x80796b, 0x9b8e79, 0x99958b, 0xa67866, 0xa66f5c];
     // Higher-priority carriageways sit a few centimetres above lower classes
     // at overlaps. Footways remain contextual and below carriageways so they
     // cannot slice a visible road into disconnected pieces at junctions.
@@ -1496,7 +1658,8 @@ export async function startWebGLScene(canvas, status) {
       const pushVertex = (x, z, elevationOffset, surfaceY = roadSurfaceHeightAt(x, z)) => {
         const index = vertices.length / 3;
         vertices.push(x, surfaceY + elevationOffset, z);
-        uvs.push(x / 12, z / 12);
+        const repeatMetres = styleIndex === 9 ? 18 : styleIndex === 4 || styleIndex === 6 || styleIndex === 8 ? 6 : styleIndex === 3 ? 8 : styleIndex === 5 ? 7 : 12;
+        uvs.push(x / repeatMetres, z / repeatMetres);
         return index;
       };
       const addDisc = (x, z, radius, elevationOffset) => {
@@ -1571,7 +1734,7 @@ export async function startWebGLScene(canvas, status) {
       geometry.computeVertexNormals();
       const material = new THREE.MeshStandardMaterial({
         color: colors[styleIndex],
-        map: styleIndex <= 2 ? asphaltTexture : null,
+        map: surfaceTextures[styleIndex],
         roughness: 0.94,
         metalness: 0,
         transparent: false,
@@ -1590,17 +1753,22 @@ export async function startWebGLScene(canvas, status) {
       // preserving fine-grained ordering among the four network tiers.
       mesh.renderOrder = 2.1 + priority * 0.2;
       mesh.receiveShadow = true;
+      if (styleIndex === 9) pavementOverrideMeshes.push(mesh);
       return mesh;
     };
     positionsByStyle.forEach((roads, index) => {
       if (!roads.length) return;
-      const target = index === 3 || index === 4 ? layerGroups.paths : layerGroups.roads;
-      for (let priority = 0; priority <= 3; priority += 1) {
-        const tier = roads.filter(road => road.priority === priority);
-        for (const gradeSeparated of [false, true]) {
-          const grade = tier.filter(road => (Math.abs(road.verticalOffset || 0) > 1) === gradeSeparated);
-          if (!grade.length) continue;
-          target.add(buildRibbon(grade, index, priority, gradeSeparated));
+      for (const pedestrianLayer of [true, false]) {
+        const surfaceGroup = roads.filter(road => (road.baseStyle >= 3) === pedestrianLayer);
+        if (!surfaceGroup.length) continue;
+        const target = pedestrianLayer ? layerGroups.paths : layerGroups.roads;
+        for (let priority = 0; priority <= 3; priority += 1) {
+          const tier = surfaceGroup.filter(road => road.priority === priority);
+          for (const gradeSeparated of [false, true]) {
+            const grade = tier.filter(road => (Math.abs(road.verticalOffset || 0) > 1) === gradeSeparated);
+            if (!grade.length) continue;
+            target.add(buildRibbon(grade, index, priority, gradeSeparated));
+          }
         }
       }
     });
@@ -1731,6 +1899,9 @@ export async function startWebGLScene(canvas, status) {
         roadVertices.set(key, entries);
       }
     }
+    ambientParkingAisles = positionsByStyle.flat().filter(road => road.attributes?.service === 'parking_aisle' && road.points?.length > 1);
+    ambientTrafficRoads = positionsByStyle.flat().filter(road => road.baseStyle < 3
+      && road.attributes?.service !== 'parking_aisle' && road.points?.length > 1);
     for (const entries of roadVertices.values()) {
       for (const entry of entries) {
         const joinsAnotherAtGrade = entries.some(other => other.road !== entry.road
@@ -2183,6 +2354,104 @@ export async function startWebGLScene(canvas, status) {
     return (data.railways || []).length;
   }
 
+  function makeGroundSurfaces() {
+    const palette = {
+      grand_parade: { color: 0xc4b391, texture: 'grandParade', repeat: 22 },
+      red_pavers: { color: 0xa66f5c, texture: 'redPavers', repeat: 18 },
+      concrete: { color: 0xa6a398, texture: 'concrete', repeat: 12 },
+      asphalt: { color: 0x686a65, texture: 'asphalt', repeat: 12 },
+      stone: { color: 0xa69a82, texture: 'stone', repeat: 10 },
+      brick: { color: 0xa67866, texture: 'brick', repeat: 8 },
+      gravel: { color: 0x80796b, texture: 'gravel', repeat: 8 },
+    };
+    const groups = new Map();
+    for (const surface of data.groundSurfaces || []) {
+      if (surface.amenity === 'parking'
+        && [undefined, null, 'surface'].includes(surface.parking)) {
+        ambientParkingLots.push(surface);
+      }
+      const style = palette[surface.material] || palette.stone;
+      const key = `${surface.special ? 'site' : 'mapped'}:${surface.material || 'stone'}`;
+      if (!groups.has(key)) groups.set(key, { style, special: Boolean(surface.special), vertices: [], uvs: [], indices: [], vertexLookup: new Map() });
+      const batch = groups.get(key);
+      const rings = surface.rings || [];
+      const outer = rings[0];
+      if (!outer || outer.length < 3) continue;
+      let triangulated;
+      try {
+        triangulated = triangulateRings(outer, rings.slice(1));
+      } catch {
+        continue;
+      }
+      if (!triangulated.faces.length) continue;
+      const appendDrapedTriangle = (a, b, c) => {
+        const edgeLength = Math.max(
+          Math.hypot(b[0] - a[0], b[1] - a[1]),
+          Math.hypot(c[0] - b[0], c[1] - b[1]),
+          Math.hypot(a[0] - c[0], a[1] - c[1]),
+        );
+        const divisions = clamp(Math.ceil(edgeLength / 8), 1, 48);
+        const rows = [];
+        for (let row = 0; row <= divisions; row += 1) {
+          const indices = [];
+          for (let column = 0; column <= divisions - row; column += 1) {
+            const bWeight = column / divisions;
+            const cWeight = row / divisions;
+            const aWeight = 1 - bWeight - cWeight;
+            const x = a[0] * aWeight + b[0] * bWeight + c[0] * cWeight;
+            const z = a[1] * aWeight + b[1] * bWeight + c[1] * cWeight;
+            const key = `${x.toFixed(3)}:${z.toFixed(3)}`;
+            let vertex = batch.vertexLookup.get(key);
+            if (vertex === undefined) {
+              vertex = batch.vertices.length / 3;
+              batch.vertexLookup.set(key, vertex);
+              batch.vertices.push(x, terrainSurfaceHeightAt(x, z) + 0.42, z);
+              batch.uvs.push(x / batch.style.repeat, z / batch.style.repeat);
+            }
+            indices.push(vertex);
+          }
+          rows.push(indices);
+        }
+        for (let row = 0; row < divisions; row += 1) {
+          for (let column = 0; column < divisions - row; column += 1) {
+            batch.indices.push(rows[row][column], rows[row][column + 1], rows[row + 1][column]);
+            if (column + row < divisions - 1) {
+              batch.indices.push(rows[row][column + 1], rows[row + 1][column + 1], rows[row + 1][column]);
+            }
+          }
+        }
+      };
+      for (const face of triangulated.faces) {
+        const a = triangulated.vertices[face[0]], b = triangulated.vertices[face[1]], c = triangulated.vertices[face[2]];
+        appendDrapedTriangle(a, b, c);
+      }
+    }
+    for (const batch of groups.values()) {
+      if (!batch.indices.length) continue;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(batch.vertices, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(batch.uvs, 2));
+      geometry.setIndex(batch.indices);
+      geometry.computeVertexNormals();
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+        color: batch.style.color,
+        map: makeSurfaceTexture(batch.style.texture),
+        roughness: 0.96,
+        metalness: 0,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      }));
+      const materialPriority = ['asphalt', 'gravel', 'stone', 'brick', 'concrete', 'red_pavers', 'grand_parade'].indexOf(batch.style.texture);
+      mesh.renderOrder = 3.0 + Math.max(0, materialPriority) * 0.06 + (batch.special ? 0.48 : 0);
+      mesh.receiveShadow = true;
+      mesh.name = batch.special ? 'image-checked-ground-surfaces' : `mapped-${batch.style.texture}-ground-surfaces`;
+      layerGroups.terrain.add(mesh);
+      groundSurfaceMeshes.push(mesh);
+    }
+  }
+
   function makeCanopies() {
     const canopies = canopyAsset.canopies || [];
     const positions = [];
@@ -2299,11 +2568,20 @@ export async function startWebGLScene(canvas, status) {
       side: THREE.DoubleSide,
     });
     const crowns = new THREE.Mesh(geometry, crownMaterial);
+    crowns.userData.normalMaterial = crownMaterial;
+    crowns.userData.sunMaterial = new THREE.MeshLambertMaterial({
+      color: 0x7da55d, vertexColors: true, side: THREE.DoubleSide,
+    });
     crowns.castShadow = true;
     crowns.receiveShadow = true;
 
     const trunkGeometry = new THREE.CylinderGeometry(0.22, 0.3, 1, 5);
-    const trunks = new THREE.InstancedMesh(trunkGeometry, new THREE.MeshLambertMaterial({ color: 0x6b4d35 }), data.trees.length);
+    const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x6b4d35 });
+    const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, data.trees.length);
+    trunks.userData.normalMaterial = trunkMaterial;
+    trunks.userData.sunMaterial = new THREE.MeshLambertMaterial({
+      color: COLORS.terrainSun, emissive: 0x242424, emissiveIntensity: 0.24, side: THREE.DoubleSide,
+    });
     const matrix = new THREE.Matrix4();
     data.trees.forEach(([x, ground, z, , height], index) => {
       matrix.compose(
@@ -2316,6 +2594,7 @@ export async function startWebGLScene(canvas, status) {
     trunks.instanceMatrix.needsUpdate = true;
     trunks.castShadow = true;
     layerGroups.trees.add(trunks, crowns);
+    sunModeNeutralMeshes.push(trunks, crowns);
 
     return canopies.length;
   }
@@ -2595,7 +2874,10 @@ export async function startWebGLScene(canvas, status) {
       const roadCentre = item.attributes?.roadCentre || item.coordinates;
       const sideAmount = (item.coordinates[0] - roadCentre[0]) * normal[0] + (item.coordinates[1] - roadCentre[1]) * normal[1];
       const side = sideAmount < 0 ? -1 : 1;
-      const roadKey = item.attributes?.roadName || item.attributes?.roadFeatureId || 'unknown-road';
+      // Segment identifiers keep similarly named Bree Street parking rows
+      // separate when the street curves or changes alignment. Grouping by the
+      // display name alone joined distant bays into implausibly long markings.
+      const roadKey = item.attributes?.roadFeatureId || item.attributes?.roadName || 'unknown-road';
       const key = `${roadKey}:${bearing}:${side}`;
       if (!parkingGroups.has(key)) parkingGroups.set(key, { bearing, tangent, normal, items: [] });
       parkingGroups.get(key).items.push({
@@ -3156,12 +3438,39 @@ export async function startWebGLScene(canvas, status) {
   makeOsmDetails();
   const railwayCount = makeRailways();
   makeRoads();
+  makeGroundSurfaces();
   const canopyCount = makeCanopies();
   makeStreetFurniture();
 
   const heatGroup = new THREE.Group();
+  const heatStreetGroup = new THREE.Group();
+  heatStreetGroup.renderOrder = 15;
+  heatStreetGroup.visible = false;
   const sunDomainGroup = new THREE.Group();
   const windGroup = new THREE.Group();
+  const windFocusMarker = new THREE.Group();
+  const windFocusRing = new THREE.Mesh(
+    new THREE.RingGeometry(9, 12, 40),
+    new THREE.MeshBasicMaterial({ color: 0xffd34e, side: THREE.DoubleSide, depthTest: false, depthWrite: false }),
+  );
+  windFocusRing.rotation.x = -Math.PI / 2;
+  windFocusRing.position.y = 0.5;
+  windFocusRing.renderOrder = 1005;
+  const windFocusStem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.8, 1.2, 18, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffe78c, depthTest: false, depthWrite: false }),
+  );
+  windFocusStem.position.y = 14;
+  windFocusStem.renderOrder = 1006;
+  const windFocusCap = new THREE.Mesh(
+    new THREE.SphereGeometry(3.2, 12, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffb739, depthTest: false, depthWrite: false }),
+  );
+  windFocusCap.position.y = 25;
+  windFocusCap.renderOrder = 1007;
+  windFocusMarker.add(windFocusRing, windFocusStem, windFocusCap);
+  windFocusMarker.visible = false;
+  scene.add(windFocusMarker);
   const pollutionGroup = new THREE.Group();
   windGroup.add(pollutionGroup);
   const trafficGroup = new THREE.Group();
@@ -3187,7 +3496,7 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup, walkingRouteGroup);
+  scene.add(heatGroup, heatStreetGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup, walkingRouteGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
@@ -3247,6 +3556,18 @@ export async function startWebGLScene(canvas, status) {
   const heatMaximum = document.querySelector('#heat-maximum');
   const heatAverageLabel = document.querySelector('#heat-average-label');
   const heatMaximumLabel = document.querySelector('#heat-maximum-label');
+  const heatExplorer = document.querySelector('#heat-explorer');
+  const heatDistribution = document.querySelector('#heat-distribution');
+  const heatDistributionCount = document.querySelector('#heat-distribution-count');
+  const heatExplorerNote = document.querySelector('#heat-explorer-note');
+  const heatHotStreets = document.querySelector('#heat-hot-streets');
+  const heatCoolStreets = document.querySelector('#heat-cool-streets');
+  const heatHotStreetsTitle = document.querySelector('#heat-hot-streets-title');
+  const heatCoolStreetsTitle = document.querySelector('#heat-cool-streets-title');
+  const heatSurfaceSummary = document.querySelector('#heat-surface-summary');
+  const heatSurfaceTypes = document.querySelector('#heat-surface-types');
+  const heatStreetMapToggle = document.querySelector('#heat-street-map-toggle');
+  const heatStreetMapStatus = document.querySelector('#heat-street-map-status');
   const sunToggle = document.querySelector('#sun-toggle');
   const sunDate = document.querySelector('#sun-date');
   const sunAnalysisDate = document.querySelector('#sun-analysis-date');
@@ -3560,6 +3881,11 @@ export async function startWebGLScene(canvas, status) {
   let heatMesh = null;
   let heatRange = null;
   let heatPayload = null;
+  let heatStreetRankings = [];
+  let selectedHeatStreet = '';
+  let selectedHeatStreetLocation = null;
+  let heatStreetSegmentsCache = null;
+  const heatZoneRoadCache = new Map();
   let heatCurrentSummary = null;
   let heatSavedComparison = null;
   let analysisGroupMode = null;
@@ -3635,17 +3961,23 @@ export async function startWebGLScene(canvas, status) {
     refreshTransportVehicleLayers();
   }
 
+  function syncGroundSurfaceMaterials() {
+    const analysisView = Boolean(shadowState.enabled || heatToggle?.checked || windToggle?.checked);
+    for (const mesh of groundSurfaceMeshes) mesh.visible = !analysisView;
+    for (const mesh of pavementOverrideMeshes) mesh.visible = !analysisView;
+  }
+
   const sectionLayerProfiles = {
     analysis: {
-      terrain: true, grass: false, railways: false,
+      terrain: true, water: false, grass: false, railways: false,
       paths: false, roads: false, cityFurniture: false, buildings: true, trees: true,
     },
     traffic: {
-      terrain: true, grass: false, railways: false,
+      terrain: true, water: false, grass: false, railways: false,
       paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
     },
     transport: {
-      terrain: true, grass: false, railways: true,
+      terrain: true, water: false, grass: false, railways: true,
       paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
     },
   };
@@ -3888,39 +4220,20 @@ export async function startWebGLScene(canvas, status) {
     cameraState.distance = clamp(cameraState.distance, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     cameraState.elevation = clamp(cameraState.elevation, CAMERA_MIN_ELEVATION, 1.35);
     const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
-    let targetY = cameraState.target.y;
     const targetIsOnMap = terrainValidAt(cameraState.target.x, cameraState.target.z);
     const targetGround = targetIsOnMap
       ? terrainSurfaceHeightAt(cameraState.target.x, cameraState.target.z)
       : shadowMinimumY;
-    const nominalEyeY = targetY + Math.sin(cameraState.elevation) * cameraState.distance;
-    const cameraClearance = 24;
-    // A focus point below the slab is useful for the distant diorama framing,
-    // but at close range it can pull the camera under the ground. Bring the
-    // focus onto the mapped surface once the eye would otherwise cross it.
-    if (targetIsOnMap && nominalEyeY < targetGround + cameraClearance) {
-      targetY = targetGround + 10;
-    }
+    // Keep a stable orbit pivot just above street level. The camera's position
+    // remains entirely determined by its distance and elevation, so wheel and
+    // pinch zoom do not change direction or jump as the ground approaches.
+    if (targetIsOnMap) cameraState.target.y = Math.max(cameraState.target.y, targetGround + 12);
+    const targetY = cameraState.target.y;
     camera.position.set(
       cameraState.target.x + Math.cos(cameraState.azimuth) * horizontal,
       targetY + Math.sin(cameraState.elevation) * cameraState.distance,
       cameraState.target.z + Math.sin(cameraState.azimuth) * horizontal,
     );
-    const eyeIsOnMap = terrainValidAt(camera.position.x, camera.position.z);
-    const eyeGround = eyeIsOnMap
-      ? terrainSurfaceHeightAt(camera.position.x, camera.position.z)
-      : shadowMinimumY;
-    const eyeRoof = rooftopHeightAt(camera.position.x, camera.position.z);
-    const minimumEyeY = Math.max(
-      shadowMinimumY + cameraClearance,
-      eyeGround + cameraClearance,
-      eyeRoof + cameraClearance,
-    );
-    if (camera.position.y < minimumEyeY) {
-      const lift = minimumEyeY - camera.position.y;
-      camera.position.y += lift;
-      targetY += lift;
-    }
     camera.lookAt(cameraState.target.x, targetY, cameraState.target.z);
     const atmosphereScale = Math.max(1, cameraState.distance / 1600);
     scene.fog.near = 1900 * atmosphereScale;
@@ -3981,7 +4294,10 @@ export async function startWebGLScene(canvas, status) {
     const mapOffset = terrainWidth * 0.15;
     // Shift the world opposite the panel, so the complete city remains in the
     // unobscured canvas area when the controls occupy the right edge.
-    cameraState.target.set(Math.sin(cameraState.azimuth) * mapOffset, -180, -Math.cos(cameraState.azimuth) * mapOffset);
+    const targetX = Math.sin(cameraState.azimuth) * mapOffset;
+    const targetZ = -Math.cos(cameraState.azimuth) * mapOffset;
+    const targetGround = terrainValidAt(targetX, targetZ) ? terrainSurfaceHeightAt(targetX, targetZ) : shadowMinimumY;
+    cameraState.target.set(targetX, targetGround + 12, targetZ);
     cameraState.distance = Math.max(CAMERA_MIN_DISTANCE, Math.min(2800, Math.hypot(terrainWidth, terrainDepth) * 0.76));
     cameraState.elevation = 0.60;
     updateCamera();
@@ -4166,13 +4482,18 @@ export async function startWebGLScene(canvas, status) {
     sunLight.visible = directShadowStudy && shadowState.generated;
     shadowCatcher.visible = directShadowStudy && shadowState.generated;
     ambient.intensity = directShadowStudy ? 0.5 : 1.72;
+    cityFill.color.setHex(enabled ? 0xffffff : 0xffe8c7);
+    skyFill.color.setHex(enabled ? 0xffffff : 0xbfe3ef);
+    sunLight.color.setHex(enabled ? 0xffffff : 0xfff3d6);
+    scene.background.set(enabled ? '#f7f7f7' : COLORS.background);
+    if (scene.fog) scene.fog.color.set(enabled ? '#f7f7f7' : COLORS.fog);
     terrainMesh.material.color.setHex(enabled ? terrainMesh.userData.sunColor : terrainMesh.userData.normalColor);
     // The single, non-indexed façade mesh is a receiver and caster for the
     // entire CBD. Receiving its own low-resolution city-wide shadow map creates
     // repeated self-shadow acne across otherwise flat walls. Keep wall faces
     // lit by the sun direction and keep casting shadows onto terrain/roofs.
     if (buildingMeshes.walls) buildingMeshes.walls.receiveShadow = !directShadowStudy;
-    for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
+    for (const mesh of [...[buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean), ...sunModeNeutralMeshes]) {
       mesh.material = enabled ? mesh.userData.sunMaterial : mesh.userData.normalMaterial;
     }
   }
@@ -4254,6 +4575,7 @@ export async function startWebGLScene(canvas, status) {
     if (sunToggle) sunToggle.checked = enabled;
     document.body.classList.toggle('sun-mode', enabled);
     if (enabled) {
+      windFocusMarker.visible = false;
       if (heatToggle) heatToggle.checked = false;
       setHeatMode(false);
       heatGroup.visible = false;
@@ -4274,6 +4596,7 @@ export async function startWebGLScene(canvas, status) {
     }
     refreshTransportVehicleLayers();
     setSunMaterials(enabled);
+    syncGroundSurfaceMaterials();
     updateSunBox();
     syncLayerControls();
     updateSunStatus();
@@ -4318,9 +4641,17 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function syncLayerControls() {
+    const activePanel = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
+    const waterDisabled = Boolean(shadowState.enabled || heatGroup.visible || windGroup.visible || trafficGroup.visible
+      || ['heat', 'sun', 'wind', 'walking', 'traffic', 'transport'].includes(activePanel));
+    layerGroups.water.visible = waterDisabled ? false : Boolean(savedVisibility.water);
     document.querySelectorAll('[data-layer]').forEach(input => {
       const group = layerGroups[input.dataset.layer];
       if (!group) return;
+      if (input.dataset.layer === 'water') {
+        input.disabled = waterDisabled;
+        input.title = waterDisabled ? 'Water is hidden while an analysis layer is active.' : 'OpenStreetMap water bodies';
+      }
       input.checked = group.visible;
       document.querySelector(`[data-legend-layer="${input.dataset.layer}"]`)
         ?.classList.toggle('is-hidden', !group.visible);
@@ -4965,6 +5296,7 @@ export async function startWebGLScene(canvas, status) {
     const periodLabel = aggregate === 'annual' ? 'Annual composite' : aggregate === 'season'
       ? `${selectedSeason[0].toUpperCase()}${selectedSeason.slice(1)} mean` : sourceFrames[0].month_name;
     heatStatus.textContent = `${metric === 'utci_c' ? 'UTCI' : 'Tmrt'} · ${periodLabel} · ${localHour} SAST · 2016–2025 climate composite`;
+    renderHeatExplorer(heatPayload, channel);
     if (heatWeatherInputs) heatWeatherInputs.hidden = true;
     if (heatEnergy) heatEnergy.hidden = true;
     const legendHelp = document.querySelector('#heat-legend-help');
@@ -5082,6 +5414,7 @@ export async function startWebGLScene(canvas, status) {
       hotspot_area_m2: metric === 'utci_c' ? hotspotCells * Number(thermalManifest.grid.resolution_m) ** 2 : 0,
       hotspot_area_pct: metric === 'utci_c' ? hotspotCells / Math.max(1, validCells) * 100 : 0,
     }, channel);
+    renderHeatExplorer(heatPayload, channel);
     if (metric === 'utci_c') {
       heatLegendMin.textContent = `P10 ${formatHeatValue(range.min, channel)}`;
       heatLegendMax.textContent = `P90 ${formatHeatValue(range.max, channel)}`;
@@ -5275,6 +5608,330 @@ export async function startWebGLScene(canvas, status) {
     heatStatus.textContent = 'Experimental modelled UTCI forecast · not observed';
   }
 
+  function heatDistributionValues(payload, metadata) {
+    if (!payload?.thermal) return (payload?.features || [])
+      .map(feature => Number(feature.value)).filter(Number.isFinite);
+    const manifest = payload.manifest;
+    const grid = manifest?.grid;
+    if (!grid || !payload.values) return [];
+    const channel = thermalChannel(manifest, payload.metric);
+    const pixels = grid.width * grid.height;
+    const stride = Math.max(1, Math.floor(pixels / 24000));
+    const values = [];
+    const nodata = Number(manifest.nodata ?? -32768);
+    for (let pixel = 0; pixel < pixels; pixel += stride) {
+      const raw = payload.values[pixel * manifest.channels.length + channel.index];
+      if (raw === nodata) continue;
+      values.push(raw * Number(channel.scale) + Number(channel.offset || 0));
+    }
+    return values;
+  }
+
+  function heatStreetSegments() {
+    if (heatStreetSegmentsCache) return heatStreetSegmentsCache;
+    heatStreetSegmentsCache = [];
+    for (const road of data.roads || []) {
+      const name = String(road?.[3]?.name || '').trim();
+      const line = road?.[2];
+      if (!name || !Array.isArray(line)) continue;
+      for (let index = 1; index < line.length; index += 1) {
+        const [x1, z1] = line[index - 1], [x2, z2] = line[index];
+        if (Math.hypot(x2 - x1, z2 - z1) > 0.01) heatStreetSegmentsCache.push({ name, x1, z1, x2, z2 });
+      }
+    }
+    return heatStreetSegmentsCache;
+  }
+
+  function nearestMappedStreetName(x, z) {
+    const cacheKey = `${Math.round(x * 10)}:${Math.round(z * 10)}`;
+    if (heatZoneRoadCache.has(cacheKey)) return heatZoneRoadCache.get(cacheKey);
+    let nearestName = '', nearestDistance = Infinity;
+    for (const segment of heatStreetSegments()) {
+      const dx = segment.x2 - segment.x1, dz = segment.z2 - segment.z1;
+      const lengthSquared = dx * dx + dz * dz;
+      const fraction = clamp(((x - segment.x1) * dx + (z - segment.z1) * dz) / lengthSquared, 0, 1);
+      const distance = Math.hypot(x - (segment.x1 + dx * fraction), z - (segment.z1 + dz * fraction));
+      if (distance < nearestDistance) { nearestDistance = distance; nearestName = segment.name; }
+    }
+    heatZoneRoadCache.set(cacheKey, nearestName);
+    return nearestName;
+  }
+
+  function rankHeatStreets(payload, metadata) {
+    const groups = new Map();
+    const add = (name, value, weight, x, z) => {
+      const label = String(name || '').trim();
+      if (!label || !Number.isFinite(value) || !(weight > 0)) return;
+      let item = groups.get(label);
+      if (!item) groups.set(label, item = { name: label, total: 0, weight: 0, x: 0, z: 0, samples: 0 });
+      item.total += value * weight;
+      item.weight += weight;
+      item.x += x * weight;
+      item.z += z * weight;
+      item.samples += 1;
+    };
+
+    if (!payload?.thermal) {
+      const mappedNames = new Set(heatStreetSegments().map(segment => heatStreetKey(segment.name)));
+      for (const feature of payload?.features || []) {
+        const area = Number(feature.area_m2);
+        const value = Number(feature.value);
+        let name = feature.nearest_road_name || feature.properties?.nearest_road_name;
+        const geometry = feature.geometry;
+        const rings = geometry?.type === 'Polygon' ? [geometry.coordinates?.[0]]
+          : geometry?.type === 'MultiPolygon' ? geometry.coordinates?.map(polygon => polygon?.[0]) : [];
+        const points = (rings || []).flat().filter(point => Array.isArray(point) && point.length >= 2);
+        if (!points.length) continue;
+        const center = points.reduce((acc, point) => [acc[0] + Number(point[0]), acc[1] + Number(point[1])], [0, 0]);
+        const x = center[0] / points.length, z = center[1] / points.length;
+        if (!mappedNames.has(heatStreetKey(name))) name = nearestMappedStreetName(x, z) || name;
+        add(name, value, area, x, z);
+      }
+    } else {
+      const manifest = payload.manifest, grid = manifest?.grid;
+      if (!grid || !payload.values || !Array.isArray(data.roads)) return [];
+      const channel = thermalChannel(manifest, payload.metric);
+      const [minX, minZ] = grid.bounds.map(Number);
+      const resolution = Number(grid.resolution_m);
+      const nodata = Number(manifest.nodata ?? -32768);
+      const sample = (x, z) => {
+        const column = Math.floor((x - minX) / resolution), row = Math.floor((z - minZ) / resolution);
+        if (column < 0 || row < 0 || column >= grid.width || row >= grid.height) return null;
+        const raw = payload.values[(row * grid.width + column) * manifest.channels.length + channel.index];
+        return raw === nodata ? null : raw * Number(channel.scale) + Number(channel.offset || 0);
+      };
+      const spacing = Math.max(20, resolution * 0.65);
+      for (const road of data.roads) {
+        const points = road?.[2], name = road?.[3]?.name;
+        if (!name || !Array.isArray(points) || points.length < 2) continue;
+        for (let index = 1; index < points.length; index += 1) {
+          const [x1, z1] = points[index - 1], [x2, z2] = points[index];
+          const length = Math.hypot(x2 - x1, z2 - z1);
+          if (!(length > 0)) continue;
+          const steps = Math.max(1, Math.ceil(length / spacing));
+          const weight = length / steps;
+          for (let step = 0; step < steps; step += 1) {
+            const fraction = (step + 0.5) / steps;
+            const x = x1 + (x2 - x1) * fraction, z = z1 + (z2 - z1) * fraction;
+            const value = sample(x, z);
+            if (value != null) add(name, value, weight, x, z);
+          }
+        }
+      }
+    }
+
+    return [...groups.values()].map(item => ({
+      ...item, value: item.total / item.weight, x: item.x / item.weight, z: item.z / item.weight,
+    })).filter(item => item.samples > 0).sort((a, b) => b.value - a.value);
+  }
+
+  function heatStreetKey(name) {
+    const removable = new Set(['street', 'st', 'road', 'rd', 'avenue', 'ave', 'boulevard', 'blvd', 'drive', 'dr', 'lane', 'ln', 'mall', 'place', 'pl', 'crescent', 'close', 'parade']);
+    return String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/)
+      .filter(token => token && !removable.has(token)).join(' ');
+  }
+
+  function clearHeatStreetOverlay() {
+    for (const object of [...heatStreetGroup.children]) {
+      heatStreetGroup.remove(object);
+      disposeObject(object);
+    }
+  }
+
+  function buildHeatStreetOverlay() {
+    clearHeatStreetOverlay();
+    const showAll = Boolean(heatStreetMapToggle?.checked);
+    const selectedKey = heatStreetKey(selectedHeatStreet);
+    if (!heatPayload || (!showAll && !selectedKey) || !heatStreetRankings.length) {
+      heatStreetGroup.visible = false;
+      return;
+    }
+    const stats = new Map(heatStreetRankings.map(item => [heatStreetKey(item.name), item.value]));
+    const roadFeatures = data.roads || [];
+    const hasNamedMatch = selectedKey && roadFeatures.some(road => heatStreetKey(road?.[3]?.name) === selectedKey);
+    let fallbackRoadKey = '';
+    if (selectedKey && !hasNamedMatch && selectedHeatStreetLocation) {
+      let nearestDistance = Infinity;
+      for (const road of roadFeatures) {
+        const line = road?.[2], key = heatStreetKey(road?.[3]?.name);
+        if (!key || !Array.isArray(line)) continue;
+        for (let index = 1; index < line.length; index += 1) {
+          const [x1, z1] = line[index - 1], [x2, z2] = line[index];
+          const dx = x2 - x1, dz = z2 - z1, lengthSquared = dx * dx + dz * dz;
+          if (!(lengthSquared > 0)) continue;
+          const fraction = clamp(((selectedHeatStreetLocation.x - x1) * dx
+            + (selectedHeatStreetLocation.z - z1) * dz) / lengthSquared, 0, 1);
+          const distance = Math.hypot(selectedHeatStreetLocation.x - (x1 + dx * fraction),
+            selectedHeatStreetLocation.z - (z1 + dz * fraction));
+          if (distance < nearestDistance) { nearestDistance = distance; fallbackRoadKey = key; }
+        }
+      }
+    }
+    const range = heatPayload.thermal ? heatPayload.range : heatPayload.color_range || heatPayload.range || heatRange;
+    if (!range || !Number.isFinite(Number(range.min)) || !Number.isFinite(Number(range.max))) {
+      heatStreetGroup.visible = false;
+      return;
+    }
+    const positions = [], colors = [], indices = [];
+    let paintedRoadSegments = 0;
+    for (const road of data.roads || []) {
+      const roadName = road?.[3]?.name;
+      const key = heatStreetKey(roadName);
+      const value = stats.get(key);
+      const isSelected = Boolean(selectedKey && (key === selectedKey || (!hasNamedMatch && key === fallbackRoadKey)));
+      if (!key || (!showAll && !isSelected) || !Number.isFinite(value)) continue;
+      paintedRoadSegments += 1;
+      const colorMetric = heatPayload.thermal && heatPayload.climatology && heatPayload.metric === 'utci_c'
+        ? 'utci_absolute_c' : heatPayload.metric;
+      const color = isSelected ? new THREE.Color(0xfff38a)
+        : heatColor(value, Number(range.min), Number(range.max), colorMetric,
+          colorMetric === 'utci_absolute_c' ? null : range.percentiles);
+      const line = road[2];
+      if (!Array.isArray(line) || line.length < 2) continue;
+      const roadWidth = clamp(Number(road[0]) || 6, 3.5, 16) + (isSelected ? 4 : 0);
+      const yOffset = isSelected ? 1.25 : 0.82;
+      for (let index = 1; index < line.length; index += 1) {
+        const [x1, z1] = line[index - 1], [x2, z2] = line[index];
+        const dx = x2 - x1, dz = z2 - z1, length = Math.hypot(dx, dz);
+        if (!(length > 0.01)) continue;
+        const nx = -dz / length * roadWidth * 0.5, nz = dx / length * roadWidth * 0.5;
+        const base = positions.length / 3;
+        for (const [x, z] of [[x1 + nx, z1 + nz], [x1 - nx, z1 - nz], [x2 + nx, z2 + nz], [x2 - nx, z2 - nz]]) {
+          positions.push(x, terrainHeightAt(x, z) + yOffset, z);
+          colors.push(color.r, color.g, color.b);
+        }
+        indices.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+      }
+    }
+    if (positions.length) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setIndex(indices);
+      const surface = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.98, side: THREE.DoubleSide,
+        depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
+      }));
+      surface.renderOrder = 16;
+      heatStreetGroup.add(surface);
+    }
+    heatStreetGroup.visible = Boolean(heatToggle?.checked && positions.length);
+    if (heatStreetMapStatus) {
+      heatStreetMapStatus.textContent = showAll
+        ? `${paintedRoadSegments ? 'Street heat map ready' : 'No named streets matched'} · ${paintedRoadSegments.toLocaleString()} OSM road segments colored.`
+        : `${selectedHeatStreet || 'Street'} highlighted on the model · ${paintedRoadSegments.toLocaleString()} ${hasNamedMatch ? 'matching' : 'nearest'} OSM road segments${fallbackRoadKey ? ' (street name unavailable in the scene)' : ''}.`;
+    }
+  }
+
+  function renderHeatExplorer(payload, metadata = {}) {
+    if (!heatExplorer || !heatDistribution || !heatHotStreets || !heatCoolStreets) return;
+    const values = heatDistributionValues(payload, metadata).sort((a, b) => a - b);
+    if (!values.length) {
+      heatDistribution.replaceChildren();
+      if (heatDistributionCount) heatDistributionCount.textContent = '—';
+      for (const list of [heatHotStreets, heatCoolStreets]) {
+        const item = document.createElement('li');
+        item.textContent = 'Street rankings are unavailable for this layer.';
+        list.replaceChildren(item);
+      }
+      if (heatExplorerNote) heatExplorerNote.textContent = 'No heat samples are available for this selection.';
+      if (heatSurfaceSummary) heatSurfaceSummary.hidden = true;
+      heatExplorer.hidden = false;
+      return;
+    }
+    const percentile = fraction => values[Math.round((values.length - 1) * fraction)];
+    const unit = metadata.unit || '';
+    const stats = [
+      ['Lowest', values[0]], ['P25', percentile(0.25)], ['Median', percentile(0.5)],
+      ['P75', percentile(0.75)], ['Highest', values.at(-1)],
+    ];
+    heatDistribution.replaceChildren(...stats.map(([label, value]) => {
+      const cell = document.createElement('span');
+      const title = document.createElement('small'); title.textContent = label;
+      const number = document.createElement('b'); number.textContent = `${Number(value).toFixed(metadata.decimals ?? 1)}${unit}`;
+      cell.append(title, number); return cell;
+    }));
+    if (heatDistributionCount) heatDistributionCount.textContent = payload.thermal
+      ? `${values.length.toLocaleString()} grid samples` : `${values.length.toLocaleString()} mapped zones`;
+    const rankings = rankHeatStreets(payload, metadata);
+    heatStreetRankings = rankings;
+    buildHeatStreetOverlay();
+    const rankingTitles = {
+      shade_deficit_score: ['Largest shade deficit', 'Smallest shade deficit'],
+      pedestrian_priority_score: ['Highest heat + shade priority', 'Lowest heat + shade priority'],
+      pedestrian_heat_exposure_c: ['Highest exposure proxy', 'Lowest exposure proxy'],
+      cumulative_sun_hours: ['Most direct sun', 'Least direct sun'],
+      tmrt_c: ['Highest radiant heat', 'Lowest radiant heat'],
+    }[payload.metric] || ['Hottest streets', 'Coolest streets'];
+    if (heatHotStreetsTitle) heatHotStreetsTitle.textContent = rankingTitles[0];
+    if (heatCoolStreetsTitle) heatCoolStreetsTitle.textContent = rankingTitles[1];
+    const renderList = (target, items, reverse = false) => {
+      const selected = reverse ? [...items].reverse().slice(0, 5) : items.slice(0, 5);
+      target.replaceChildren();
+      if (!selected.length) {
+        const empty = document.createElement('li'); empty.textContent = 'Street attribution is not available for this layer.';
+        target.append(empty); return;
+      }
+      selected.forEach((item, index) => {
+        const row = document.createElement('li');
+        const button = document.createElement('button'); button.type = 'button';
+        button.setAttribute('aria-label', `Focus map on ${item.name}, ${formatHeatValue(item.value, metadata)}`);
+        button.setAttribute('aria-pressed', String(heatStreetKey(item.name) === heatStreetKey(selectedHeatStreet)));
+        if (heatStreetKey(item.name) === heatStreetKey(selectedHeatStreet)) button.classList.add('is-highlighted');
+        const name = document.createElement('span'); name.textContent = item.name;
+        const value = document.createElement('b'); value.textContent = formatHeatValue(item.value, metadata);
+        const rank = document.createElement('small'); rank.textContent = String(index + 1).padStart(2, '0');
+        button.append(rank, name, value);
+        button.addEventListener('click', () => {
+          selectedHeatStreet = item.name;
+          selectedHeatStreetLocation = { x: item.x, z: item.z };
+          heatExplorer.querySelectorAll('.heat-rankings button').forEach(candidate => {
+            const active = candidate === button;
+            candidate.setAttribute('aria-pressed', String(active));
+            candidate.classList.toggle('is-highlighted', active);
+          });
+          buildHeatStreetOverlay();
+          if (heatToggle && !heatToggle.checked) {
+            heatToggle.checked = true;
+            heatToggle.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          cameraState.target.set(item.x, terrainHeightAt(item.x, item.z) + 18, item.z);
+          cameraState.distance = Math.max(CAMERA_MIN_DISTANCE, 520);
+          updateCamera();
+        });
+        row.append(button); target.append(row);
+      });
+    };
+    renderList(heatHotStreets, rankings);
+    renderList(heatCoolStreets, rankings, true);
+    if (heatExplorerNote) heatExplorerNote.textContent = payload.thermal
+      ? `Street averages sample the ${payload.manifest.grid.resolution_m} m ${payload.climatology ? 'climate' : 'forecast'} grid along mapped street lines; they are model estimates, not street sensors.`
+      : 'Satellite zones are grouped by street; unmatched source labels are assigned to the nearest OSM street line. Values describe surface heat, not air temperature.';
+
+    if (heatSurfaceSummary && heatSurfaceTypes) {
+      const totals = new Map();
+      for (const feature of payload.features || []) {
+        const raw = feature.surface_type || feature.properties?.surface_type;
+        if (!raw) continue;
+        const name = ({ 'Soil/Dirt': 'Bare / soil', Impervious: 'Built / paved', Grass: 'Vegetation', Tree: 'Vegetation', Water: 'Water' })[raw] || raw;
+        totals.set(name, (totals.get(name) || 0) + Number(feature.area_m2 || 0));
+      }
+      heatSurfaceSummary.hidden = payload.thermal || !totals.size;
+      if (!payload.thermal && totals.size) {
+        const totalArea = [...totals.values()].reduce((sum, area) => sum + area, 0) || 1;
+        heatSurfaceTypes.replaceChildren(...[...totals].sort((a, b) => b[1] - a[1]).map(([name, area]) => {
+          const row = document.createElement('div'); row.className = 'heat-surface-type-row';
+          const label = document.createElement('span'); label.textContent = name;
+          const bar = document.createElement('i'); bar.style.width = `${(area / totalArea * 100).toFixed(1)}%`;
+          const amount = document.createElement('b'); amount.textContent = `${(area / totalArea * 100).toFixed(0)}%`;
+          row.append(label, bar, amount); return row;
+        }));
+      }
+    }
+    heatExplorer.hidden = false;
+  }
+
   function renderHeatSummary(summary, metadata = {}) {
     if (!heatSummary) return;
     const ready = summary?.area_weighted_mean != null && summary?.maximum != null;
@@ -5319,6 +5976,24 @@ export async function startWebGLScene(canvas, status) {
   async function loadHeat(metric = heatMetric?.value || 'pedestrian_priority_score') {
     if (!heatStatus) return;
     const loadToken = ++heatLoadToken;
+    selectedHeatStreet = '';
+    selectedHeatStreetLocation = null;
+    heatStreetRankings = [];
+    clearHeatStreetOverlay();
+    heatStreetGroup.visible = false;
+    if (heatExplorer) {
+      heatExplorer.hidden = false;
+      if (heatDistribution) heatDistribution.replaceChildren();
+      if (heatDistributionCount) heatDistributionCount.textContent = 'Loading…';
+      if (heatExplorerNote) heatExplorerNote.textContent = 'Updating street rankings for the selected layer…';
+      for (const list of [heatHotStreets, heatCoolStreets]) {
+        if (!list) continue;
+        const item = document.createElement('li');
+        item.textContent = 'Updating…';
+        list.replaceChildren(item);
+      }
+      if (heatSurfaceSummary) heatSurfaceSummary.hidden = true;
+    }
     syncHeatTemporalControls(metric);
     const legendGradient = document.querySelector('.heat-gradient');
     if (legendGradient) legendGradient.style.background = '';
@@ -5337,6 +6012,7 @@ export async function startWebGLScene(canvas, status) {
     }
     heatStatus.textContent = metric === 'utci_c' ? 'Loading UTCI…' : metric === 'tmrt_c' ? 'Loading Tmrt…' : 'Loading heat…';
     heatStatus.setAttribute('aria-busy', 'true');
+    if (heatSummary) heatSummary.hidden = true;
     if (heatLoadingState) heatLoadingState.hidden = metric !== 'utci_c';
     try {
       if (['utci_c', 'tmrt_c'].includes(metric)) {
@@ -5354,7 +6030,12 @@ export async function startWebGLScene(canvas, status) {
         date: heatDate?.value || '2026-01-15',
         minutes: heatTime?.value || '720',
       });
-      const response = await fetch(`${windApi}/heat/zones?${params}`);
+      // Metric/date controls can change several times in quick succession.
+      // Wait for the selection to settle, and let the request client supersede
+      // any already-started heat-zone read with the same stable key.
+      await new Promise(resolve => setTimeout(resolve, 220));
+      if (loadToken !== heatLoadToken) return;
+      const response = await fetch(`${windApi}/heat/zones?${params}`, { requestKey: 'heat-zones' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const payload = await response.json();
       if (loadToken !== heatLoadToken) return;
@@ -5365,6 +6046,7 @@ export async function startWebGLScene(canvas, status) {
       } } }));
       if (heatToggle?.checked && !shadowState.enabled) buildHeatMesh(payload);
       renderHeatSummary(payload.summary, payload.metric_metadata, payload.metric_label);
+      renderHeatExplorer(payload, payload.metric_metadata);
       const range = payload.color_range || payload.range;
       heatRange = range;
       const scale = payload.color_scale || {};
@@ -5392,6 +6074,14 @@ export async function startWebGLScene(canvas, status) {
         analysisGroupMode = null;
       }
       renderHeatSummary(null);
+      if (heatExplorerNote) heatExplorerNote.textContent = `Street rankings unavailable: ${error.message}`;
+      for (const list of [heatHotStreets, heatCoolStreets]) {
+        if (!list) continue;
+        const item = document.createElement('li');
+        item.textContent = 'Rankings unavailable for this layer.';
+        list.replaceChildren(item);
+      }
+      if (heatDistributionCount) heatDistributionCount.textContent = 'Unavailable';
       heatStatus.textContent = `Heat data unavailable (${error.message})`;
     } finally {
       if (loadToken === heatLoadToken) {
@@ -5664,8 +6354,11 @@ export async function startWebGLScene(canvas, status) {
       }
     }
     heatGroup.visible = enabled && analysisGroupMode === 'heat';
+    heatStreetGroup.visible = Boolean(enabled && heatStreetRankings.length
+      && (heatStreetMapToggle?.checked || selectedHeatStreet));
     document.body.classList.toggle('heat-mode', enabled);
     if (enabled) {
+      windFocusMarker.visible = false;
       shadowState.enabled = false;
       if (sunToggle) sunToggle.checked = false;
       document.body.classList.remove('sun-mode');
@@ -5682,6 +6375,7 @@ export async function startWebGLScene(canvas, status) {
       layerGroups.buildings.visible = true;
       layerGroups.trees.visible = true;
       windState.enabled = false;
+      windFocusMarker.visible = false;
       if (windToggle) windToggle.checked = false;
       windGroup.visible = false;
       trafficState.enabled = false;
@@ -5697,6 +6391,7 @@ export async function startWebGLScene(canvas, status) {
     }
     syncLayerControls();
     refreshTransportVehicleLayers();
+    syncGroundSurfaceMaterials();
     requestRender();
   }
 
@@ -5761,6 +6456,1095 @@ export async function startWebGLScene(canvas, status) {
   const carScale = new THREE.Vector3(1, 1, 1);
   const carColor = new THREE.Color();
   const carUp = new THREE.Vector3(0, 1, 0);
+  const ambientWheelLocal = new THREE.Vector3();
+  const ambientWheelPosition = new THREE.Vector3();
+  const ambientLanePosition = new THREE.Vector3();
+  const ambientWheelMatrix = new THREE.Matrix4();
+
+  // Ambient cars are a restrained scale cue for the road network. Their paths
+  // come from the same mapped carriageways as the road ribbons, while TomTom
+  // speed ratios set their pace as soon as the live snapshot arrives.
+  const ambientTraffic = {
+    group: null, fleets: [], speedByName: new Map(), parkedVehicles: [],
+    movingVehicles: [], controllers: [], signalGroup: null, signalLensMeshes: null,
+    clock: performance.now(),
+  };
+  const ambientCarPaint = [0x8a5547, 0x617a72, 0xc0a66f, 0x596776, 0xb2b0a3, 0x885f70, 0x687c91, 0x9b684c, 0x76816a, 0x545756];
+  const ambientCarSpecs = [
+    { body: [1.82, 0.62, 4.05], cabin: [1.52, 0.58, 2.18], cabinZ: -0.05, wheelZ: 1.26 }, // compact hatchback
+    { body: [1.88, 0.61, 4.55], cabin: [1.5, 0.54, 2.12], cabinZ: -0.24, wheelZ: 1.39 }, // three-box sedan
+    { body: [1.94, 0.73, 4.65], cabin: [1.62, 0.72, 2.72], cabinZ: 0.08, wheelZ: 1.42 }, // minibus taxi
+  ];
+  const ambientMaxCars = 2400;
+  // A guideline-informed fixed-time fallback where no site timing plan is
+  // mapped. SARTSM Vol 3 §§6.12–6.13 (May 2012) gives a 50–100 s typical
+  // cycle range, a 3 s minimum yellow at <=60 km/h, and a 2 s minimum
+  // all-red for ordinary movements. OSM contains signal locations, not the
+  // commissioned timing sheets, so these are plausible local defaults rather
+  // than claimed Cape Town timings. Both greens exceed its 11 s preference.
+  // This 60 s plan gives 32 s major green + 18 s minor green, with a 3 s
+  // yellow and 2 s all-red clearance between stages.
+  const trafficSignalTiming = {
+    cycleSeconds: 60,
+    majorGreenSeconds: 32,
+    minorGreenSeconds: 18,
+    yellowSeconds: 3,
+    allRedSeconds: 2,
+  };
+
+  function normalizeTrafficRoadName(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ').trim()
+      .replace(/\b(street|st|str|road|rd|avenue|ave|boulevard|blvd)\s*$/, '')
+      .replace(/\s+/g, '');
+  }
+
+  function findTrafficSignalControllers(corridors) {
+    const sites = [];
+    for (const signal of data.trafficSignals || []) {
+      const [x, z] = signal.coordinates || [];
+      if (!Number.isFinite(x) || !Number.isFinite(z) || !terrainValidAt(x, z)) continue;
+      let site = sites.find(candidate => Math.hypot(candidate.x - x, candidate.z - z) < 36);
+      if (!site) {
+        site = { osmId: signal.osmId, x, z, signals: [], stops: [], heading: 0, goAxis: 0, lastGoAxis: null };
+        sites.push(site);
+      }
+      site.signals.push(signal);
+    }
+
+    for (const site of sites) {
+      site.x = site.signals.reduce((sum, signal) => sum + signal.coordinates[0], 0) / site.signals.length;
+      site.z = site.signals.reduce((sum, signal) => sum + signal.coordinates[1], 0) / site.signals.length;
+    }
+
+    for (const site of sites) {
+      for (const signal of site.signals) {
+        const [signalX, signalZ] = signal.coordinates;
+        let nearest = null;
+        for (let corridorIndex = 0; corridorIndex < corridors.length; corridorIndex += 1) {
+          const corridor = corridors[corridorIndex];
+          const bounds = corridor.bounds;
+          if (signalX < bounds.minX - 18 || signalX > bounds.maxX + 18
+            || signalZ < bounds.minZ - 18 || signalZ > bounds.maxZ + 18) continue;
+          for (let segment = 1; segment < corridor.points.length; segment += 1) {
+            const [ax, az] = corridor.points[segment - 1], [bx, bz] = corridor.points[segment];
+            const dx = bx - ax, dz = bz - az;
+            const segmentLength = corridor.cumulative[segment] - corridor.cumulative[segment - 1];
+            if (segmentLength < 0.1) continue;
+            const amount = clamp(((signalX - ax) * dx + (signalZ - az) * dz) / (segmentLength * segmentLength), 0, 1);
+            const x = ax + dx * amount, z = az + dz * amount;
+            const distanceSq = (signalX - x) ** 2 + (signalZ - z) ** 2;
+            if (!nearest || distanceSq < nearest.distanceSq) {
+              nearest = {
+                corridorIndex,
+                distance: corridor.cumulative[segment - 1] + segmentLength * amount,
+                distanceSq,
+                roadX: x,
+                roadZ: z,
+                roadWidth: Number(corridor.road.width) || 4,
+                heading: Math.atan2(dx, dz),
+                axis: Math.abs(dx) >= Math.abs(dz) ? 0 : 1,
+              };
+            }
+          }
+        }
+        if (!nearest || nearest.distanceSq > 18 * 18) continue;
+        const corridor = corridors[nearest.corridorIndex];
+        signal.controller = site;
+        signal.axis = nearest.axis;
+        signal.heading = nearest.heading;
+        const tangentX = Math.sin(nearest.heading);
+        const tangentZ = Math.cos(nearest.heading);
+        const towardCenter = (site.x - nearest.roadX) * tangentX + (site.z - nearest.roadZ) * tangentZ;
+        const approachDirection = Math.abs(towardCenter) > 1
+          ? Math.sign(towardCenter)
+          : (Number(signal.osmId) % 2 ? 1 : -1);
+        const centerlineOffset = (signalX - nearest.roadX) * -tangentZ + (signalZ - nearest.roadZ) * tangentX;
+        const roadside = Math.abs(centerlineOffset) > 1.5 ? Math.sign(centerlineOffset) : approachDirection;
+        const roadsideX = -tangentZ * roadside;
+        const roadsideZ = tangentX * roadside;
+        const poleOffset = Math.max(2.8, nearest.roadWidth * 0.5 + 1.1);
+        signal.lightCoordinates = [nearest.roadX + roadsideX * poleOffset, nearest.roadZ + roadsideZ * poleOffset];
+        // The signal face looks back toward its approaching traffic. South
+        // African traffic keeps left, so the pole is on the approach's left.
+        signal.lightHeading = nearest.heading + (approachDirection > 0 ? Math.PI : 0);
+        // OSM traffic-signal points are usually placed on a pole at the
+        // corner, rather than on the stop line. Keep a stop for the approach
+        // the signal faces and move it upstream of the junction. A signal
+        // must not stop traffic travelling away from it on the same road.
+        const setback = clamp(2 + nearest.roadWidth * 0.35, 3.5, 5.5);
+        const stopDistance = nearest.distance - approachDirection * setback;
+        if (stopDistance < 1 || stopDistance > corridor.length - 1) continue;
+        if (corridor.stops.some(stop => stop.site === site && stop.direction === approachDirection
+          && Math.abs(stop.distance - stopDistance) < 8)) continue;
+        const stop = {
+          ...nearest,
+          distance: stopDistance,
+          intersectionDistance: nearest.distance,
+          clearanceDistance: clamp(nearest.roadWidth * 1.5, 7, 12),
+          direction: approachDirection,
+          site,
+          index: site.stops.length,
+        };
+        corridor.stops.push(stop);
+        site.stops.push(stop);
+        if (site.stops.length === 1) site.heading = nearest.heading;
+      }
+    }
+
+    return sites.filter(site => site.stops.length > 0);
+  }
+
+  function buildMappedTrafficLights(controllers) {
+    const mappedSignals = controllers.flatMap(controller => controller.signals
+      .filter(signal => Number.isFinite(signal.heading))
+      .map(signal => ({ ...signal, controller })));
+    if (!mappedSignals.length) return;
+    const group = new THREE.Group();
+    group.name = 'mapped-osm-traffic-lights';
+    group.renderOrder = 8;
+    const count = mappedSignals.length;
+    const parts = [
+      ['pole', new THREE.CylinderGeometry(0.065, 0.09, 4.5, 8), new THREE.MeshStandardMaterial({ color: 0x465156, metalness: 0.28, roughness: 0.56 })],
+      ['head', new THREE.BoxGeometry(0.42, 1.02, 0.34), new THREE.MeshStandardMaterial({ color: 0x293237, metalness: 0.12, roughness: 0.62 })],
+      ['red', new THREE.SphereGeometry(0.105, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff })],
+      ['amber', new THREE.SphereGeometry(0.105, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff })],
+      ['green', new THREE.SphereGeometry(0.105, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffffff })],
+    ];
+    const meshes = new Map();
+    for (const [name, geometry, material] of parts) {
+      const mesh = new THREE.InstancedMesh(geometry, material, count);
+      mesh.name = `osm-traffic-light-${name}`;
+      mesh.frustumCulled = false;
+      mesh.castShadow = name === 'pole' || name === 'head';
+      mesh.receiveShadow = false;
+      group.add(mesh);
+      meshes.set(name, mesh);
+    }
+
+    const up = new THREE.Vector3(0, 1, 0);
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3(1, 1, 1);
+    const matrix = new THREE.Matrix4();
+    mappedSignals.forEach((signal, index) => {
+      signal.lightIndex = index;
+      const groundY = terrainSurfaceHeightAt(signal.lightCoordinates[0], signal.lightCoordinates[1]);
+      const yaw = signal.lightHeading;
+      quaternion.setFromAxisAngle(up, yaw);
+      const setPart = (name, x, y, z) => {
+        position.set(signal.lightCoordinates[0], groundY + y, signal.lightCoordinates[1]);
+        position.x += Math.sin(yaw) * z + Math.cos(yaw) * x;
+        position.z += Math.cos(yaw) * z - Math.sin(yaw) * x;
+        matrix.compose(position, quaternion, scale);
+        meshes.get(name).setMatrixAt(index, matrix);
+      };
+      setPart('pole', 0, 2.25, 0);
+      setPart('head', 0, 4.18, 0.12);
+      setPart('red', 0, 4.48, 0.31);
+      setPart('amber', 0, 4.18, 0.31);
+      setPart('green', 0, 3.88, 0.31);
+    });
+    for (const mesh of meshes.values()) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+    ambientTraffic.signalGroup = group;
+    ambientTraffic.signalLensMeshes = { red: meshes.get('red'), amber: meshes.get('amber'), green: meshes.get('green') };
+    layerGroups.roads.add(group);
+    updateTrafficSignalLights(performance.now(), mappedSignals);
+  }
+
+  function updateTrafficSignalLights(now, mappedSignals = null) {
+    const lenses = ambientTraffic.signalLensMeshes;
+    if (!lenses) return;
+    const signals = mappedSignals || ambientTraffic.mappedSignals || [];
+    let changed = { red: false, amber: false, green: false };
+    const changedControllers = new Set();
+    for (const controller of ambientTraffic.controllers) {
+      const { cycleSeconds, majorGreenSeconds, minorGreenSeconds, yellowSeconds, allRedSeconds } = trafficSignalTiming;
+      const phase = ((now / 1000 + controller.phaseOffset) % cycleSeconds + cycleSeconds) % cycleSeconds;
+      const majorAxis = controller.majorAxis;
+      const minorAxis = 1 - majorAxis;
+      const majorYellowStart = majorGreenSeconds;
+      const majorRedStart = majorYellowStart + yellowSeconds;
+      const minorGreenStart = majorRedStart + allRedSeconds;
+      const minorYellowStart = minorGreenStart + minorGreenSeconds;
+      const minorRedStart = minorYellowStart + yellowSeconds;
+      if (phase < majorYellowStart) {
+        controller.goAxis = majorAxis;
+        controller.yellowAxis = -1;
+        controller.allRed = false;
+      } else if (phase < majorRedStart) {
+        controller.goAxis = -1;
+        controller.yellowAxis = majorAxis;
+        controller.allRed = false;
+      } else if (phase < minorGreenStart) {
+        controller.goAxis = -1;
+        controller.yellowAxis = -1;
+        controller.allRed = true;
+      } else if (phase < minorYellowStart) {
+        controller.goAxis = minorAxis;
+        controller.yellowAxis = -1;
+        controller.allRed = false;
+      } else if (phase < minorRedStart) {
+        controller.goAxis = -1;
+        controller.yellowAxis = minorAxis;
+        controller.allRed = false;
+      } else {
+        controller.goAxis = -1;
+        controller.yellowAxis = -1;
+        controller.allRed = true;
+      }
+      const displayKey = `${controller.goAxis}:${controller.yellowAxis}:${controller.allRed}`;
+      if (controller.lastDisplayKey === displayKey) continue;
+      controller.lastDisplayKey = displayKey;
+      changedControllers.add(controller);
+    }
+    for (const signal of signals) {
+      if (!changedControllers.has(signal.controller)) continue;
+      const colors = signal.controller.yellowAxis === signal.axis
+        ? { red: 0x641b16, amber: 0xffc641, green: 0x164526 }
+        : signal.controller.goAxis === signal.axis
+          ? { red: 0x641b16, amber: 0x59431a, green: 0x39ff78 }
+          : { red: 0xff3328, amber: 0x59431a, green: 0x164526 };
+      for (const name of ['red', 'amber', 'green']) {
+        lenses[name].setColorAt(signal.lightIndex, carColor.setHex(colors[name]));
+        changed[name] = true;
+      }
+    }
+    for (const name of Object.keys(changed)) {
+      if (changed[name] && lenses[name].instanceColor) lenses[name].instanceColor.needsUpdate = true;
+    }
+    if (mappedSignals) ambientTraffic.mappedSignals = mappedSignals;
+  }
+
+  function makeAmbientBodyGeometry(model) {
+    const spec = ambientCarSpecs[model];
+    const main = new THREE.BoxGeometry(...spec.body);
+    main.translate(0, 0.38, 0);
+    const roof = new THREE.BoxGeometry(spec.cabin[0] * 0.91, 0.13, spec.cabin[2] * 0.58);
+    roof.translate(0, 1.15, spec.cabinZ);
+    const mainPositions = main.getAttribute('position').array;
+    const roofPositions = roof.getAttribute('position').array;
+    const mainNormals = main.getAttribute('normal').array;
+    const roofNormals = roof.getAttribute('normal').array;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute([...mainPositions, ...roofPositions], 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute([...mainNormals, ...roofNormals], 3));
+    geometry.setIndex([
+      ...main.getIndex().array,
+      ...[...roof.getIndex().array].map(index => index + mainPositions.length / 3),
+    ]);
+    main.dispose();
+    roof.dispose();
+    geometry.name = `ambient-${model}-body`;
+    return geometry;
+  }
+
+  function makeAmbientCabinGeometry(model) {
+    const spec = ambientCarSpecs[model];
+    const cabin = new THREE.BoxGeometry(...spec.cabin);
+    cabin.translate(0, 0.86, spec.cabinZ);
+    return cabin;
+  }
+
+  function ambientCorridorRatio(corridor) {
+    const ratio = corridor.nameKey ? ambientTraffic.speedByName.get(corridor.nameKey) : null;
+    if (Number.isFinite(ratio)) return clamp(ratio, 0.08, 1.12);
+    return Number.isFinite(ambientTraffic.cityRatio) ? clamp(ambientTraffic.cityRatio, 0.08, 1.12) : 0.62;
+  }
+
+  function pointInsideRing(x, z, ring) {
+    let inside = false;
+    for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+      const [ax, az] = ring[index], [bx, bz] = ring[previous];
+      if ((az > z) !== (bz > z) && x < ((bx - ax) * (z - az)) / (bz - az) + ax) inside = !inside;
+    }
+    return inside;
+  }
+
+  function parkingLotContains(lot, x, z) {
+    const rings = lot.rings || [];
+    return Boolean(rings[0]?.length >= 3 && pointInsideRing(x, z, rings[0])
+      && !rings.slice(1).some(hole => pointInsideRing(x, z, hole)));
+  }
+
+  function parkingSlotFits(lot, x, z, heading, scale) {
+    const halfWidth = 1.0 * scale;
+    const halfLength = 2.15 * scale;
+    const sin = Math.sin(heading), cos = Math.cos(heading);
+    for (const side of [-1, 1]) {
+      for (const end of [-1, 1]) {
+        const cornerX = x + side * halfWidth * cos + end * halfLength * sin;
+        const cornerZ = z - side * halfWidth * sin + end * halfLength * cos;
+        if (!parkingLotContains(lot, cornerX, cornerZ)) return false;
+      }
+    }
+    return true;
+  }
+
+  function makeParkedLotVehicles() {
+    const vehicles = [];
+    const occupied = new Set();
+    const maxParkedCars = 800;
+    const addSlot = (lot, x, z, heading, seed, arrival = null) => {
+      if (vehicles.length >= maxParkedCars) return;
+      const scale = 0.82 + (seed % 5) * 0.035;
+      if (!parkingLotContains(lot, x, z) || !parkingSlotFits(lot, x, z, heading, scale)) return;
+      const key = `${Math.round(x / 2.5)}:${Math.round(z / 2.5)}`;
+      if (occupied.has(key) || seed % 100 >= 62) return;
+      occupied.add(key);
+      vehicles.push({
+        parked: true,
+        x, z, heading,
+        y: terrainSurfaceHeightAt(x, z) + 0.44,
+        arrival: arrival ? {
+          ...arrival,
+          startAt: performance.now() + ((seed * 137) % 45000),
+          duration: 2800,
+          targetX: x, targetZ: z, targetY: terrainSurfaceHeightAt(x, z) + 0.44,
+          targetHeading: heading,
+        } : null,
+        model: seed % 3,
+        color: ambientCarPaint[seed % ambientCarPaint.length],
+        scale,
+        lane: 0,
+        speed: 0,
+      });
+    };
+
+    for (let lotIndex = 0; lotIndex < ambientParkingLots.length && vehicles.length < maxParkedCars; lotIndex += 1) {
+      const lot = ambientParkingLots[lotIndex];
+      const lotCandidates = [];
+      for (const aisle of ambientParkingAisles) {
+        const points = aisle.points || [];
+        let distanceAlong = 0;
+        for (let segment = 1; segment < points.length; segment += 1) {
+          const [ax, az] = points[segment - 1], [bx, bz] = points[segment];
+          const dx = bx - ax, dz = bz - az;
+          const length = Math.hypot(dx, dz);
+          if (length < 4) { distanceAlong += length; continue; }
+          const stepCount = Math.max(1, Math.floor(length / 6.3));
+          for (let step = 0; step < stepCount; step += 1) {
+            const along = Math.min(length, (step + 0.5) * length / stepCount);
+            const aisleX = ax + dx * along / length;
+            const aisleZ = az + dz * along / length;
+            if (!parkingLotContains(lot, aisleX, aisleZ)) continue;
+            const tangentX = dx / length, tangentZ = dz / length;
+            for (const side of [-1, 1]) {
+              const normalX = -tangentZ * side, normalZ = tangentX * side;
+              const x = aisleX + normalX * 4.0;
+              const z = aisleZ + normalZ * 4.0;
+              const heading = Math.atan2(normalX, normalZ);
+              if (!parkingSlotFits(lot, x, z, heading, 0.88)) continue;
+              const aisleHeading = Math.atan2(tangentX, tangentZ);
+              const startX = aisleX + normalX * 0.55;
+              const startZ = aisleZ + normalZ * 0.55;
+              const seed = (Number(lot.osmId) * 37 + segment * 19 + step * 11 + side * 23) >>> 0;
+              const aisleY = roadSurfaceHeightAt(startX, startZ) + (aisle.verticalOffset || 0) + (aisle.surfaceOffset || 0) + 0.02;
+              lotCandidates.push({
+                x, z, heading, seed,
+                arrival: seed % 19 === 0 ? { startX, startZ, startY: aisleY, startHeading: aisleHeading } : null,
+              });
+            }
+          }
+          distanceAlong += length;
+        }
+      }
+
+      // Some surface lots have no mapped aisle lines. Give those a simple
+      // perpendicular parking layout based on their longest mapped edge.
+      if (!lotCandidates.length) {
+        const ring = lot.rings?.[0] || [];
+        let longest = null;
+        for (let index = 0; index < ring.length; index += 1) {
+          const a = ring[index], b = ring[(index + 1) % ring.length];
+          const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          if (!longest || length > longest.length) longest = { a, b, length };
+        }
+        if (longest?.length > 12) {
+          const tx = (longest.b[0] - longest.a[0]) / longest.length;
+          const tz = (longest.b[1] - longest.a[1]) / longest.length;
+          const nx = -tz, nz = tx;
+          const projected = ring.map(([x, z]) => [x * tx + z * tz, x * nx + z * nz]);
+          const minAlong = Math.min(...projected.map(point => point[0]));
+          const maxAlong = Math.max(...projected.map(point => point[0]));
+          const minAcross = Math.min(...projected.map(point => point[1]));
+          const maxAcross = Math.max(...projected.map(point => point[1]));
+          let seed = Number(lot.osmId) || lotIndex + 1;
+          for (let across = minAcross + 4.2; across < maxAcross - 3; across += 8.5) {
+            for (let along = minAlong + 3.1; along < maxAlong - 3; along += 6.3) {
+              const x = tx * along + nx * across;
+              const z = tz * along + nz * across;
+              const heading = Math.atan2(nx, nz);
+              if (parkingSlotFits(lot, x, z, heading, 0.88)) lotCandidates.push({ x, z, heading, seed: seed++ });
+            }
+          }
+        }
+      }
+
+      for (const candidate of lotCandidates) {
+        addSlot(lot, candidate.x, candidate.z, candidate.heading, candidate.seed, candidate.arrival);
+      }
+    }
+    return vehicles;
+  }
+
+  function rebuildAmbientTrafficFleet() {
+    if (!ambientTraffic.corridors?.length) return;
+    if (ambientTraffic.group) {
+      layerGroups.roads.remove(ambientTraffic.group);
+      disposeObject(ambientTraffic.group);
+    }
+    const vehicles = [];
+    const counts = [];
+    let desiredTotal = 0;
+    for (const corridor of ambientTraffic.corridors) {
+      corridor.vehicles = [];
+      const road = corridor.road;
+      const ratio = ambientCorridorRatio(corridor);
+      const congestion = clamp((0.94 - ratio) / 0.82, 0, 1);
+      // Keep at least 10 m between cars in a near-standstill queue, then spread
+      // them toward 115 m on clear streets. This leaves room for the longest
+      // modeled car and its following distance before the first frame.
+      const spacing = 115 - congestion * 105;
+      const taggedLanes = Number.parseInt(road.attributes?.lanes, 10);
+      const laneCount = clamp(Number.isFinite(taggedLanes) && taggedLanes > 0
+        ? taggedLanes : Math.round((Number(road.width) || 4) / 3.35), 1, 4);
+      // TomTom supplies sampled speeds, not vehicle counts. Closer spacing
+      // therefore follows a matched road's observed slowdown as an illustrative
+      // queue, while unsampled roads use the citywide speed ratio.
+      const desired = corridor.length / spacing * laneCount;
+      counts.push(desired);
+      desiredTotal += desired;
+      corridor.laneCount = laneCount;
+      corridor.congestion = congestion;
+    }
+
+    const populationScale = Math.min(1, ambientMaxCars / desiredTotal);
+    for (let corridorIndex = 0; corridorIndex < ambientTraffic.corridors.length; corridorIndex += 1) {
+      const corridor = ambientTraffic.corridors[corridorIndex];
+      const count = Math.floor(counts[corridorIndex] * populationScale);
+      const attributes = corridor.road.attributes || {};
+      const oneWay = String(attributes.oneway || '').toLowerCase();
+      const oneWayDirection = oneWay === '-1' ? -1 : 1;
+      for (let index = 0; index < count; index += 1) {
+        const seed = (corridorIndex * 37 + index * 19) % 997;
+        const laneIndex = index % corridor.laneCount;
+        const oneWayRoad = ['yes', 'true', '1', '-1'].includes(oneWay);
+        const direction = oneWayRoad ? oneWayDirection
+          : corridor.laneCount > 1 ? (laneIndex % 2 ? -1 : 1) : (index % 2 ? -1 : 1);
+        const roadWidth = Number(corridor.road.width) || 4;
+        const laneWidth = roadWidth / corridor.laneCount;
+        const lane = oneWayRoad
+          ? (laneIndex - (corridor.laneCount - 1) / 2) * Math.min(2.8, laneWidth)
+          : corridor.laneCount === 1 ? (direction > 0 ? -1 : 1) * Math.max(0.85, Math.min(1.15, roadWidth * 0.28)) : (direction > 0 ? -1 : 1) * Math.min(
+            Math.max(0.45, roadWidth * 0.5 - 0.8),
+            Math.min(1.35, Math.max(0.45, laneWidth * 0.5)) + Math.floor(laneIndex / 2) * Math.min(2.8, laneWidth),
+          );
+        const progress = (index + 0.35 + (seed % 13) / 25) / Math.max(count, 1);
+        const vehicle = {
+          corridorIndex,
+          distance: progress * corridor.length,
+          direction,
+          model: seed % 3,
+          color: ambientCarPaint[seed % ambientCarPaint.length],
+          scale: 0.78 + (seed % 5) * 0.035,
+          lane,
+          laneCount: corridor.laneCount,
+          speed: 8.5 + (seed % 7) * 0.55,
+        };
+        vehicles.push(vehicle);
+        corridor.vehicles.push(vehicle);
+      }
+    }
+    stageAmbientTrafficSpawnsAtSignals(vehicles);
+    resolveAmbientTrafficSpawnOverlaps(vehicles);
+    ambientTraffic.movingVehicles = vehicles;
+    for (const corridor of ambientTraffic.corridors) {
+      corridor.vehicles = corridor.vehicles.filter(vehicle => !vehicle.disabled);
+    }
+    vehicles.push(...ambientTraffic.parkedVehicles);
+
+    const group = new THREE.Group();
+    group.name = 'ambient-tomtom-traffic';
+    group.renderOrder = 7;
+    layerGroups.roads.add(group);
+    ambientTraffic.group = group;
+    ambientTraffic.fleets = [0, 1, 2].map(model => {
+      const selected = vehicles.filter(vehicle => vehicle.model === model);
+      const body = new THREE.InstancedMesh(
+        makeAmbientBodyGeometry(model),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.68, metalness: 0.05 }),
+        Math.max(1, selected.length),
+      );
+      const cabin = new THREE.InstancedMesh(
+        makeAmbientCabinGeometry(model),
+        new THREE.MeshStandardMaterial({ color: 0x34454c, roughness: 0.28, metalness: 0.12 }),
+        Math.max(1, selected.length),
+      );
+      const wheelGeometry = new THREE.CylinderGeometry(0.31, 0.31, 0.2, 9);
+      wheelGeometry.rotateZ(Math.PI / 2);
+      const wheels = new THREE.InstancedMesh(
+        wheelGeometry,
+        new THREE.MeshStandardMaterial({ color: 0x292b2a, roughness: 0.96 }),
+        Math.max(1, selected.length * 4),
+      );
+      const rimGeometry = new THREE.CylinderGeometry(0.14, 0.14, 0.22, 8);
+      rimGeometry.rotateZ(Math.PI / 2);
+      const rims = new THREE.InstancedMesh(
+        rimGeometry,
+        new THREE.MeshStandardMaterial({ color: 0x96948b, roughness: 0.5, metalness: 0.26 }),
+        Math.max(1, selected.length * 4),
+      );
+      body.name = `ambient-car-bodies-${model}`;
+      cabin.name = `ambient-car-glass-${model}`;
+      wheels.name = `ambient-car-wheels-${model}`;
+      rims.name = `ambient-car-rims-${model}`;
+      for (const mesh of [body, cabin, wheels, rims]) {
+        mesh.frustumCulled = false;
+        mesh.count = 0;
+        group.add(mesh);
+      }
+      selected.forEach((vehicle, index) => body.setColorAt(index, carColor.setHex(vehicle.color)));
+      if (body.instanceColor) body.instanceColor.needsUpdate = true;
+      return { model, vehicles: selected, body, cabin, wheels, rims };
+    });
+    ambientTraffic.clock = performance.now();
+  }
+
+  function setupAmbientTraffic() {
+    const corridors = ambientTrafficRoads.flatMap(road => visiblePolyline(road.points).map(points => {
+      if (!points || points.length < 2) return null;
+      const corridorRoad = { ...road, points };
+      const cumulative = [0];
+      const bounds = { minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity };
+      for (let index = 1; index < points.length; index += 1) {
+        cumulative.push(cumulative[index - 1] + Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]));
+      }
+      for (const [x, z] of points) {
+        bounds.minX = Math.min(bounds.minX, x); bounds.maxX = Math.max(bounds.maxX, x);
+        bounds.minZ = Math.min(bounds.minZ, z); bounds.maxZ = Math.max(bounds.maxZ, z);
+      }
+      const length = cumulative[cumulative.length - 1];
+      if (length < 15) return null;
+      const rawName = corridorRoad.attributes?.name || corridorRoad.attributes?.['name:en'] || '';
+      const name = String(rawName).trim().toLocaleLowerCase();
+      return { road: corridorRoad, points, cumulative, length, name, nameKey: normalizeTrafficRoadName(name), bounds, stops: [], vehicles: [] };
+    })).filter(Boolean);
+    if (!corridors.length) return;
+    ambientTraffic.corridors = corridors;
+    ambientTraffic.controllers = findTrafficSignalControllers(corridors);
+    for (const controller of ambientTraffic.controllers) {
+      controller.phaseOffset = Number(controller.osmId) % trafficSignalTiming.cycleSeconds;
+      const axisPriority = [0, 0];
+      const classPriority = {
+        motorway: 10, trunk: 9, primary: 8, secondary: 7, tertiary: 6,
+        unclassified: 5, residential: 5, living_street: 4, service: 3,
+      };
+      for (const stop of controller.stops) {
+        const corridor = corridors[stop.corridorIndex];
+        const roadClass = String(corridor.road.attributes?.highway || '').toLowerCase();
+        const lanes = Number.parseInt(corridor.road.attributes?.lanes, 10) || 1;
+        const priority = (classPriority[roadClass] || 3) * 10 + Math.min(4, lanes);
+        axisPriority[stop.axis] = Math.max(axisPriority[stop.axis], priority);
+      }
+      controller.majorAxis = axisPriority[0] >= axisPriority[1] ? 0 : 1;
+    }
+    ambientTraffic.parkedVehicles = makeParkedLotVehicles();
+    rebuildAmbientTrafficFleet();
+    buildMappedTrafficLights(ambientTraffic.controllers);
+  }
+
+  function trafficSignalQueueTargets() {
+    const targets = new Map();
+    for (const corridor of ambientTraffic.corridors) {
+      const queues = new Map();
+      const oneway = ['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase());
+      for (const vehicle of corridor.vehicles) {
+        let nearest = null;
+        for (const stop of corridor.stops) {
+          if (vehicle.direction !== stop.direction) continue;
+          let gap = vehicle.direction > 0 ? stop.distance - vehicle.distance : vehicle.distance - stop.distance;
+          if (gap < 0 && oneway) gap += corridor.length;
+          const passedIntersection = vehicle.direction > 0
+            ? vehicle.distance - stop.intersectionDistance
+            : stop.intersectionDistance - vehicle.distance;
+          const clearance = vehicle.signalClearance;
+          if (clearance?.site === stop.site && clearance.corridorIndex === vehicle.corridorIndex
+            && clearance.direction === vehicle.direction) {
+            if (passedIntersection <= clearance.clearanceDistance) continue;
+            vehicle.signalClearance = null;
+          }
+          // A vehicle close to the stop line when amber begins should clear
+          // the junction. Holding it at the line during an all-red transition
+          // can leave its body stopped across the crossing.
+          if (stop.site.yellowAxis === stop.axis && gap <= 0
+            && passedIntersection <= stop.clearanceDistance && passedIntersection >= -12) {
+            vehicle.signalClearance = {
+              site: stop.site,
+              corridorIndex: vehicle.corridorIndex,
+              direction: vehicle.direction,
+              clearanceDistance: stop.clearanceDistance,
+            };
+            continue;
+          }
+          if (stop.site.yellowAxis === stop.axis && gap >= 0) {
+            const frontLength = ambientCarSpecs[vehicle.model].body[2] * vehicle.scale * 0.5;
+            const approachSpeed = vehicle.speed * ambientCorridorRatio(corridor);
+            const clearanceGap = frontLength + Math.max(4, approachSpeed * 0.75);
+            if (gap <= clearanceGap && passedIntersection <= stop.clearanceDistance) {
+              vehicle.signalClearance = {
+                site: stop.site,
+                corridorIndex: vehicle.corridorIndex,
+                direction: vehicle.direction,
+                clearanceDistance: stop.clearanceDistance,
+              };
+              continue;
+            }
+          }
+          if (stop.site.goAxis === stop.axis) continue;
+          if (gap < 0 || gap > 420 || (nearest && gap >= nearest.gap)) continue;
+          nearest = { stop, gap };
+        }
+        if (!nearest) continue;
+        const directionQueues = queues.get(nearest.stop) || new Map([[1, new Map()], [-1, new Map()]]);
+        const laneKey = Math.round(vehicle.lane / 0.75);
+        const laneQueue = directionQueues.get(vehicle.direction).get(laneKey) || [];
+        laneQueue.push({ vehicle, gap: nearest.gap });
+        directionQueues.get(vehicle.direction).set(laneKey, laneQueue);
+        queues.set(nearest.stop, directionQueues);
+      }
+      for (const [stop, directionQueues] of queues) {
+        for (const laneQueues of directionQueues.values()) {
+          for (const queue of laneQueues.values()) {
+            queue.sort((first, second) => first.gap - second.gap);
+            queue.forEach(({ vehicle, gap }, index) => {
+              const frontClearance = ambientCarSpecs[vehicle.model].body[2] * vehicle.scale * 0.5 + 1.5;
+              targets.set(vehicle, { gap, slotGap: frontClearance + index * 7.2 });
+            });
+          }
+        }
+      }
+    }
+    return targets;
+  }
+
+  function ambientTrafficVehiclePose(vehicle, distance = vehicle.distance, direction = vehicle.direction, lane = vehicle.lane) {
+    const corridor = ambientTraffic.corridors[vehicle.corridorIndex];
+    if (!corridor) return null;
+    distance = clamp(distance, 0, corridor.length);
+    let segment = 0;
+    while (segment < corridor.cumulative.length - 2 && corridor.cumulative[segment + 1] < distance) segment += 1;
+    const start = corridor.points[segment], end = corridor.points[segment + 1];
+    const segmentLength = corridor.cumulative[segment + 1] - corridor.cumulative[segment] || 1;
+    const fraction = (distance - corridor.cumulative[segment]) / segmentLength;
+    const dx = (end[0] - start[0]) / segmentLength * direction;
+    const dz = (end[1] - start[1]) / segmentLength * direction;
+    return {
+      x: start[0] + (end[0] - start[0]) * fraction + dz * lane,
+      z: start[1] + (end[1] - start[1]) * fraction - dx * lane,
+      heading: Math.atan2(dx, dz),
+      direction,
+      lane,
+      halfLength: ambientCarSpecs[vehicle.model].body[2] * vehicle.scale * 0.5 + 0.08,
+      halfWidth: ambientCarSpecs[vehicle.model].body[0] * vehicle.scale * 0.5 + 0.08,
+    };
+  }
+
+  function ambientTrafficAdvance(vehicle, travel) {
+    const corridor = ambientTraffic.corridors[vehicle.corridorIndex];
+    const oneway = ['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase());
+    let distance = vehicle.distance;
+    let direction = vehicle.direction;
+    let lane = vehicle.lane;
+    if (oneway) {
+      distance = (distance + travel * direction) % corridor.length;
+      if (distance < 0) distance += corridor.length;
+    } else if (direction > 0) {
+      distance += travel;
+      if (distance >= corridor.length) {
+        distance = corridor.length - (distance - corridor.length);
+        direction = -1;
+        lane = -lane;
+      }
+    } else {
+      distance -= travel;
+      if (distance <= 0) {
+        distance = -distance;
+        direction = 1;
+        lane = -lane;
+      }
+    }
+    return { distance, direction, lane };
+  }
+
+  function ambientTrafficBoxesOverlap(first, second) {
+    const deltaX = second.x - first.x;
+    const deltaZ = second.z - first.z;
+    const firstForwardX = Math.sin(first.heading), firstForwardZ = Math.cos(first.heading);
+    const firstSideX = Math.cos(first.heading), firstSideZ = -Math.sin(first.heading);
+    const secondForwardX = Math.sin(second.heading), secondForwardZ = Math.cos(second.heading);
+    const secondSideX = Math.cos(second.heading), secondSideZ = -Math.sin(second.heading);
+    const axes = [
+      [firstForwardX, firstForwardZ], [firstSideX, firstSideZ],
+      [secondForwardX, secondForwardZ], [secondSideX, secondSideZ],
+    ];
+    for (const [axisX, axisZ] of axes) {
+      const centerGap = Math.abs(deltaX * axisX + deltaZ * axisZ);
+      const firstRadius = first.halfLength * Math.abs(firstForwardX * axisX + firstForwardZ * axisZ)
+        + first.halfWidth * Math.abs(firstSideX * axisX + firstSideZ * axisZ);
+      const secondRadius = second.halfLength * Math.abs(secondForwardX * axisX + secondForwardZ * axisZ)
+        + second.halfWidth * Math.abs(secondSideX * axisX + secondSideZ * axisZ);
+      if (centerGap >= firstRadius + secondRadius) return false;
+    }
+    return true;
+  }
+
+  function trafficGridKey(x, z) {
+    return `${Math.floor(x / 8)}:${Math.floor(z / 8)}`;
+  }
+
+  function trafficGridNearby(grid, pose, callback, cellRadius = 1) {
+    const cellX = Math.floor(pose.x / 8), cellZ = Math.floor(pose.z / 8);
+    for (let x = cellX - cellRadius; x <= cellX + cellRadius; x += 1) {
+      for (let z = cellZ - cellRadius; z <= cellZ + cellRadius; z += 1) {
+        for (const entry of grid.get(`${x}:${z}`) || []) callback(entry);
+      }
+    }
+  }
+
+  function trafficPoseOnValidTerrain(pose) {
+    return Boolean(pose && terrainValidAt(pose.x, pose.z));
+  }
+
+  function stageAmbientTrafficSpawnsAtSignals(vehicles) {
+    for (const vehicle of vehicles) {
+      const corridor = ambientTraffic.corridors[vehicle.corridorIndex];
+      const oneWay = ['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase());
+      let nearest = null;
+      for (const stop of corridor.stops) {
+        if (vehicle.direction !== stop.direction) continue;
+        let gap = vehicle.direction > 0 ? stop.distance - vehicle.distance : vehicle.distance - stop.distance;
+        if (gap < 0 && oneWay) gap += corridor.length;
+        const safeGap = ambientCarSpecs[vehicle.model].body[2] * vehicle.scale * 0.5 + 1.5;
+        if (gap >= safeGap || gap < -12 || (nearest && Math.abs(gap) >= Math.abs(nearest.gap))) continue;
+        nearest = { stop, gap, safeGap };
+      }
+      if (!nearest) continue;
+      vehicle.distance = clamp(nearest.stop.distance - vehicle.direction * nearest.safeGap, 1, corridor.length - 1);
+    }
+  }
+
+  function resolveAmbientTrafficSpawnOverlaps(vehicles) {
+    const grid = new Map();
+    const classPriority = {
+      motorway: 10, trunk: 9, primary: 8, secondary: 7, tertiary: 6,
+      unclassified: 5, residential: 5, living_street: 4, service: 3,
+    };
+    const isClear = pose => {
+      let clear = trafficPoseOnValidTerrain(pose);
+      trafficGridNearby(grid, pose, other => {
+        if (clear && ambientTrafficBoxesOverlap(pose, other)) clear = false;
+      });
+      return clear;
+    };
+    const add = pose => {
+      const key = trafficGridKey(pose.x, pose.z);
+      const entries = grid.get(key) || [];
+      entries.push(pose);
+      grid.set(key, entries);
+    };
+    vehicles.sort((first, second) => {
+      const firstRoad = ambientTraffic.corridors[first.corridorIndex]?.road.attributes?.highway || '';
+      const secondRoad = ambientTraffic.corridors[second.corridorIndex]?.road.attributes?.highway || '';
+      return (classPriority[secondRoad] || 3) - (classPriority[firstRoad] || 3);
+    });
+    for (const vehicle of vehicles) {
+      let pose = ambientTrafficVehiclePose(vehicle);
+      if (pose && !isClear(pose)) {
+        const corridor = ambientTraffic.corridors[vehicle.corridorIndex];
+        const oneWay = ['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase());
+        let replacement = null;
+        for (let offset = 3; offset <= 24 && !replacement; offset += 3) {
+          for (const sign of [-1, 1]) {
+            let distance = vehicle.distance + sign * offset;
+            let direction = vehicle.direction;
+            let lane = vehicle.lane;
+            if (oneWay) {
+              distance = (distance % corridor.length + corridor.length) % corridor.length;
+            } else if (distance <= 1 || distance >= corridor.length - 1) continue;
+            const candidate = ambientTrafficVehiclePose(vehicle, distance, direction, lane);
+            if (candidate && isClear(candidate)) {
+              replacement = { distance, pose: candidate };
+              break;
+            }
+          }
+        }
+        if (replacement) {
+          vehicle.distance = replacement.distance;
+          pose = replacement.pose;
+        } else {
+          vehicle.disabled = true;
+          continue;
+        }
+      }
+      if (pose) add(pose);
+    }
+    for (const corridor of ambientTraffic.corridors) {
+      corridor.vehicles = corridor.vehicles.filter(vehicle => !vehicle.disabled);
+    }
+    for (let index = vehicles.length - 1; index >= 0; index -= 1) {
+      if (vehicles[index].disabled) vehicles.splice(index, 1);
+    }
+  }
+
+  function ambientTrafficCollisionTargets(targets) {
+    const vehicles = ambientTraffic.movingVehicles.filter(vehicle => !vehicle.parked && !vehicle.disabled);
+    const grid = new Map();
+    const classPriority = {
+      motorway: 10, trunk: 9, primary: 8, secondary: 7, tertiary: 6,
+      unclassified: 5, residential: 5, living_street: 4, service: 3,
+    };
+    const records = vehicles.map(vehicle => ({ vehicle, pose: ambientTrafficVehiclePose(vehicle) }));
+    const add = record => {
+      if (!record.pose) return;
+      const key = trafficGridKey(record.pose.x, record.pose.z);
+      const entries = grid.get(key) || [];
+      entries.push(record);
+      grid.set(key, entries);
+      record.key = key;
+    };
+    const remove = record => {
+      if (!record.key) return;
+      const entries = grid.get(record.key);
+      if (entries) {
+        const index = entries.indexOf(record);
+        if (index >= 0) entries.splice(index, 1);
+        if (!entries.length) grid.delete(record.key);
+      }
+      record.key = null;
+    };
+    records.forEach(add);
+    records.sort((first, second) => {
+      const firstRoad = ambientTraffic.corridors[first.vehicle.corridorIndex]?.road.attributes?.highway || '';
+      const secondRoad = ambientTraffic.corridors[second.vehicle.corridorIndex]?.road.attributes?.highway || '';
+      return (classPriority[secondRoad] || 3) - (classPriority[firstRoad] || 3);
+    });
+
+    for (const record of records) {
+      remove(record);
+      const vehicle = record.vehicle;
+      let requested = Math.max(0, targets.get(vehicle) || 0);
+      const corridor = ambientTraffic.corridors[vehicle.corridorIndex];
+      const oneWay = ['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase());
+      const frontClearance = ambientCarSpecs[vehicle.model].body[2] * vehicle.scale * 0.5 + 1.5;
+      // If a car from the crossing road has already entered this junction,
+      // wait before the mapped stop line. This prevents collision avoidance
+      // from leaving a car paused halfway into the intersection.
+      for (const stop of corridor.stops) {
+        if (vehicle.direction !== stop.direction) continue;
+        let gap = vehicle.direction > 0 ? stop.distance - vehicle.distance : vehicle.distance - stop.distance;
+        if (gap < 0 && oneWay) gap += corridor.length;
+        if (gap < 0 || gap > 420) continue;
+        let crossingOccupied = false;
+        trafficGridNearby(grid, stop.site, other => {
+          if (crossingOccupied || other.vehicle.corridorIndex === vehicle.corridorIndex) return;
+          const crossingStop = stop.site.stops.find(candidate => candidate.corridorIndex === other.vehicle.corridorIndex
+            && candidate.axis !== stop.axis && candidate.direction === other.vehicle.direction);
+          if (!crossingStop) return;
+          const distanceToSite = Math.hypot(other.pose.x - stop.site.x, other.pose.z - stop.site.z);
+          const clearingRadius = Math.max(stop.clearanceDistance, crossingStop.clearanceDistance) + 5;
+          if (distanceToSite > clearingRadius) return;
+          const crossingGap = other.vehicle.direction > 0
+            ? crossingStop.distance - other.vehicle.distance
+            : other.vehicle.distance - crossingStop.distance;
+          if (crossingGap < 0 && crossingGap > -(crossingStop.clearanceDistance + 8)) crossingOccupied = true;
+        }, 2);
+        if (crossingOccupied) requested = Math.min(requested, Math.max(0, gap - frontClearance));
+      }
+      let safeTravel = requested;
+      const poseAt = travel => {
+        const next = ambientTrafficAdvance(vehicle, travel);
+        return ambientTrafficVehiclePose(vehicle, next.distance, next.direction, next.lane);
+      };
+      const clearAt = travel => {
+        const pose = poseAt(travel);
+        if (!pose) return false;
+        let clear = trafficPoseOnValidTerrain(pose);
+        trafficGridNearby(grid, pose, other => {
+          if (clear && ambientTrafficBoxesOverlap(pose, other.pose)) clear = false;
+        });
+        return clear;
+      };
+      if (requested > 0) {
+        const steps = Math.max(1, Math.ceil(requested / 0.65));
+        let lastSafe = 0;
+        for (let step = 1; step <= steps; step += 1) {
+          const candidate = requested * step / steps;
+          if (!clearAt(candidate)) {
+            let low = lastSafe, high = candidate;
+            for (let pass = 0; pass < 5; pass += 1) {
+              const middle = (low + high) * 0.5;
+              if (clearAt(middle)) low = middle;
+              else high = middle;
+            }
+            safeTravel = low;
+            break;
+          }
+          lastSafe = candidate;
+        }
+      }
+      targets.set(vehicle, safeTravel);
+      record.pose = poseAt(safeTravel);
+      add(record);
+    }
+    return targets;
+  }
+
+  function ambientTrafficTravelTargets(elapsed, queuedVehicles) {
+    const travelTargets = new Map();
+    for (const corridor of ambientTraffic.corridors) {
+      const laneGroups = new Map();
+      const oneWay = ['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase());
+      const speedRatio = ambientCorridorRatio(corridor);
+      for (const vehicle of corridor.vehicles) {
+        const speed = vehicle.speed * speedRatio;
+        let travel = elapsed * speed;
+        const queue = queuedVehicles.get(vehicle);
+        if (queue) travel = Math.min(travel, Math.max(0, queue.gap - queue.slotGap));
+        const laneKey = `${vehicle.direction}:${Math.round(vehicle.lane / 0.75)}`;
+        const progress = vehicle.direction > 0 ? vehicle.distance : corridor.length - vehicle.distance;
+        const lane = laneGroups.get(laneKey) || [];
+        lane.push({ vehicle, progress, travel, speed });
+        laneGroups.set(laneKey, lane);
+      }
+
+      for (const lane of laneGroups.values()) {
+        lane.sort((first, second) => first.progress - second.progress);
+        const passCount = oneWay ? lane.length : 1;
+        for (let pass = 0; pass < passCount; pass += 1) {
+          let adjusted = false;
+          for (let index = lane.length - 1; index >= 0; index -= 1) {
+            const follower = lane[index];
+            let leader = lane[index + 1];
+            let gap = leader ? leader.progress - follower.progress : Infinity;
+            if (!leader && oneWay && lane.length > 1) {
+              leader = lane[0];
+              gap = leader.progress + corridor.length - follower.progress;
+            }
+            if (!leader) continue;
+            const leaderLength = ambientCarSpecs[leader.vehicle.model].body[2] * leader.vehicle.scale;
+            const followerLength = ambientCarSpecs[follower.vehicle.model].body[2] * follower.vehicle.scale;
+            const closingSpeed = Math.max(follower.speed, leader.speed);
+            const followingGap = Math.max(1.6, Math.min(4.5, closingSpeed * 0.5));
+            const minimumCenterGap = (leaderLength + followerLength) * 0.5 + followingGap;
+            const safeTravel = Math.max(0, gap + leader.travel - minimumCenterGap);
+            if (safeTravel + 1e-6 < follower.travel) {
+              follower.travel = safeTravel;
+              adjusted = true;
+            }
+          }
+          if (!adjusted) break;
+        }
+        for (const follower of lane) travelTargets.set(follower.vehicle, follower.travel);
+      }
+    }
+    return travelTargets;
+  }
+
+  function updateAmbientTraffic(now) {
+    const group = ambientTraffic.group;
+    if (!group) return;
+    const activeTool = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
+    group.visible = activeTool !== 'transport';
+    if (ambientTraffic.signalGroup) ambientTraffic.signalGroup.visible = group.visible;
+    if (!group.visible || !layerGroups.roads.visible) {
+      ambientTraffic.clock = now;
+      return;
+    }
+    const elapsed = Math.min(0.15, Math.max(0, (now - ambientTraffic.clock) / 1000));
+    ambientTraffic.clock = now;
+    updateTrafficSignalLights(now);
+    const queuedVehicles = trafficSignalQueueTargets();
+    const travelTargets = ambientTrafficCollisionTargets(
+      ambientTrafficTravelTargets(elapsed, queuedVehicles),
+    );
+    const corridors = ambientTraffic.corridors;
+    for (const fleet of ambientTraffic.fleets) {
+      let instance = 0;
+      let wheelInstance = 0;
+      for (const vehicle of fleet.vehicles) {
+        let x, z, y, heading, dx, dz;
+        if (vehicle.parked) {
+          x = vehicle.x; z = vehicle.z; y = vehicle.y; heading = vehicle.heading;
+          const arrival = vehicle.arrival;
+          if (arrival && now >= arrival.startAt) {
+            const progress = clamp((now - arrival.startAt) / arrival.duration, 0, 1);
+            x = arrival.startX + (arrival.targetX - arrival.startX) * progress;
+            z = arrival.startZ + (arrival.targetZ - arrival.startZ) * progress;
+            y = arrival.startY + (arrival.targetY - arrival.startY) * progress;
+            let turn = ((arrival.targetHeading - arrival.startHeading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+            heading = arrival.startHeading + turn * progress;
+            if (progress >= 1) vehicle.arrival = null;
+          }
+          dx = Math.sin(heading); dz = Math.cos(heading);
+        } else {
+          const corridor = corridors[vehicle.corridorIndex];
+          const travel = travelTargets.get(vehicle) || 0;
+          vehicle.distance += travel * vehicle.direction;
+          if (['yes', 'true', '1', '-1'].includes(String(corridor.road.attributes?.oneway || '').toLowerCase())) {
+            vehicle.distance = (vehicle.distance % corridor.length + corridor.length) % corridor.length;
+          } else if (vehicle.distance >= corridor.length) {
+            vehicle.distance = corridor.length - (vehicle.distance - corridor.length);
+            vehicle.direction = -1;
+            vehicle.lane = -vehicle.lane;
+          } else if (vehicle.distance <= 0) {
+            vehicle.distance = -vehicle.distance;
+            vehicle.direction = 1;
+            vehicle.lane = -vehicle.lane;
+          }
+          let segment = 0;
+          while (segment < corridor.cumulative.length - 2 && corridor.cumulative[segment + 1] < vehicle.distance) segment += 1;
+          const start = corridor.points[segment], end = corridor.points[segment + 1];
+          const segmentLength = corridor.cumulative[segment + 1] - corridor.cumulative[segment] || 1;
+          const fraction = (vehicle.distance - corridor.cumulative[segment]) / segmentLength;
+          dx = (end[0] - start[0]) / segmentLength * vehicle.direction;
+          dz = (end[1] - start[1]) / segmentLength * vehicle.direction;
+          x = start[0] + (end[0] - start[0]) * fraction;
+          z = start[1] + (end[1] - start[1]) * fraction;
+          y = roadSurfaceHeightAt(x, z) + (corridor.road.verticalOffset || 0) + (corridor.road.surfaceOffset || 0) + 0.02;
+        }
+        if (!terrainValidAt(x, z)) continue;
+        carPosition.set(x, y, z);
+        carQuaternion.setFromAxisAngle(carUp, heading ?? Math.atan2(dx, dz));
+        const size = vehicle.scale;
+        carScale.set(size, size, size);
+        const modelSpec = ambientCarSpecs[fleet.model];
+        for (const wheelX of [-modelSpec.body[0] * 0.46, modelSpec.body[0] * 0.46]) {
+          for (const wheelZ of [-modelSpec.wheelZ, modelSpec.wheelZ]) {
+            ambientWheelLocal.set(wheelX, 0.31, wheelZ).multiplyScalar(size).applyQuaternion(carQuaternion);
+            ambientWheelPosition.copy(carPosition).add(ambientWheelLocal);
+            ambientWheelPosition.add(ambientLanePosition.set(dz * (vehicle.lane || 0), 0, -dx * (vehicle.lane || 0)));
+            ambientWheelMatrix.compose(ambientWheelPosition, carQuaternion, carScale);
+            fleet.wheels.setMatrixAt(wheelInstance++, ambientWheelMatrix);
+            fleet.rims.setMatrixAt(wheelInstance - 1, ambientWheelMatrix);
+          }
+        }
+        carPosition.add(ambientLanePosition.set(dz * (vehicle.lane || 0), 0, -dx * (vehicle.lane || 0)));
+        carMatrix.compose(carPosition, carQuaternion, carScale);
+        fleet.body.setMatrixAt(instance, carMatrix);
+        fleet.cabin.setMatrixAt(instance, carMatrix);
+        instance += 1;
+      }
+      fleet.body.count = instance;
+      fleet.cabin.count = instance;
+      fleet.wheels.count = wheelInstance;
+      fleet.rims.count = wheelInstance;
+      for (const mesh of [fleet.body, fleet.cabin, fleet.wheels, fleet.rims]) mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
 
   function visiblePolyline(points) {
     if (!points || points.length < 2) return [];
@@ -6778,6 +8562,24 @@ export async function startWebGLScene(canvas, status) {
       }
       const level = (payload.congestion_level || 'unknown').replace(/_/g, ' ');
       trafficState.liveRoads = payload.sampled_roads || [];
+      ambientTraffic.speedByName.clear();
+      const speedSamplesByName = new Map();
+      for (const road of trafficState.liveRoads) {
+        const name = normalizeTrafficRoadName(road.name);
+        const ratio = Number(road.speed_ratio);
+        if (!name || !Number.isFinite(ratio)) continue;
+        const samples = speedSamplesByName.get(name) || [];
+        samples.push(ratio);
+        speedSamplesByName.set(name, samples);
+      }
+      for (const [name, samples] of speedSamplesByName) {
+        ambientTraffic.speedByName.set(name, samples.reduce((total, ratio) => total + ratio, 0) / samples.length);
+      }
+      ambientTraffic.cityRatio = Number.isFinite(Number(payload.average_speed_ratio))
+        ? Number(payload.average_speed_ratio) : 0.62;
+      // The fleet is a persistent simulation. Speed ratios are read on every
+      // frame, so rebuilding here would only respawn every car on refresh.
+      requestRender();
       buildLiveRoadClosures(trafficState.liveRoads);
       const liveClosures = trafficState.liveRoads.filter(road => road.road_closure).length;
       trafficLiveStatus.textContent = `${level} congestion · ${payload.sampled_count}/${payload.requested_count} roads sampled`
@@ -7895,10 +9697,13 @@ export async function startWebGLScene(canvas, status) {
   function updateCfdLegend() {
     if (!windState.cfd) return;
     const [minimum, maximum] = cfdFieldRange(windState.cfdField);
-    const units = windState.cfdField === 'speed' ? 'm/s' : 'm²/s²';
+    const speedField = windState.cfdField === 'speed';
     if (windLegendField) windLegendField.textContent = CFD_FIELD_LABELS[windState.cfdField] || windState.cfdField;
-    windLegendLow.innerHTML = `<b>${minimum.toFixed(2)}</b> ${units} · low`;
-    windLegendHigh.innerHTML = `<b>${maximum.toFixed(2)}</b> ${units} · high`;
+    const formatBound = value => speedField
+      ? `${value.toFixed(2)} m/s · ${(value * 3.6).toFixed(1)} km/h`
+      : `${value.toFixed(2)} m²/s²`;
+    windLegendLow.innerHTML = `<b>${formatBound(minimum)}</b> · low`;
+    windLegendHigh.innerHTML = `<b>${formatBound(maximum)}</b> · high`;
     windGradient?.classList.remove('comfort');
     windGradient?.classList.toggle('pressure', windState.cfdField === 'p');
     windGradient?.classList.toggle('turbulence', windState.cfdField === 'k');
@@ -7913,7 +9718,7 @@ export async function startWebGLScene(canvas, status) {
     windComfortChips.hidden = false;
     windComfortChips.innerHTML = COMFORT_CATEGORY_DEFS.map(category => `
       <span><i style="background:${COMFORT_CHIP_COLORS[category.code]}"></i>${category.label}${
-        category.max_speed_mps ? ` ≤${category.max_speed_mps} m/s` : ''}</span>`).join('');
+        category.max_speed_mps ? ` ≤${category.max_speed_mps} m/s · ${(category.max_speed_mps * 3.6).toFixed(0)} km/h` : ''}</span>`).join('');
   }
 
   // Registry of converted OpenFOAM cases available to the browser. A solved
@@ -8124,6 +9929,87 @@ export async function startWebGLScene(canvas, status) {
     const exponent = Number(windState.field?.height_profile_exponent) || 0.28;
     const factor = clamp((Math.max(heightAboveGround, 0.5) / sourceHeight) ** exponent, 0.55, 2.4);
     return { u: sampled.u * factor, v: sampled.v * factor, speed: sampled.speed * factor };
+  }
+
+  function rankWindLocations(field) {
+    if (!field?.speed?.length || !field.width || !field.height) return { areas: [], streets: [] };
+    const directional = Array.isArray(field.basis_xz) && Array.isArray(field.basis_z);
+    const speedValue = index => {
+      const speed = Number(field.speed[index]);
+      return field.analysis_mode === 'comfort' && field.coverage_fraction > 0
+        ? speed / field.coverage_fraction : speed;
+    };
+    const sample = (x, z) => {
+      let column, row;
+      if (directional) {
+        const dx = x - field.origin[0], dz = z - field.origin[1];
+        column = Math.round((dx * field.basis_xz[0] + dz * field.basis_xz[1]) / field.dx);
+        row = Math.round((dx * field.basis_z[0] + dz * field.basis_z[1]) / field.dz);
+      } else {
+        column = Math.floor((x - field.origin[0]) / field.dx);
+        row = Math.floor((z - field.origin[1]) / field.dz);
+      }
+      if (column < 0 || row < 0 || column >= field.width || row >= field.height) return null;
+      const index = row * field.width + column;
+      if (field.valid && !field.valid[index]) return null;
+      const value = speedValue(index);
+      return Number.isFinite(value) ? value : null;
+    };
+    const streets = new Map();
+    for (const road of data.roads || []) {
+      const name = String(road?.[3]?.name || '').trim();
+      const points = road?.[2];
+      if (!name || !Array.isArray(points) || points.length < 2) continue;
+      for (let index = 1; index < points.length; index += 1) {
+        const [x1, z1] = points[index - 1], [x2, z2] = points[index];
+        const length = Math.hypot(x2 - x1, z2 - z1);
+        if (!(length > 0)) continue;
+        const steps = Math.max(1, Math.ceil(length / 20));
+        const weight = length / steps;
+        let item = streets.get(name);
+        if (!item) streets.set(name, item = { name, total: 0, weight: 0, x: 0, z: 0 });
+        for (let step = 0; step < steps; step += 1) {
+          const fraction = (step + 0.5) / steps;
+          const x = x1 + (x2 - x1) * fraction, z = z1 + (z2 - z1) * fraction;
+          const value = sample(x, z);
+          if (value == null) continue;
+          item.total += value * weight;
+          item.weight += weight;
+          item.x += x * weight;
+          item.z += z * weight;
+        }
+      }
+    }
+    const rankedStreets = [...streets.values()].filter(item => item.weight > 0).map(item => ({
+      name: item.name, value: item.total / item.weight, x: item.x / item.weight, z: item.z / item.weight,
+    })).sort((a, b) => b.value - a.value).slice(0, 5);
+
+    const cells = [];
+    for (let row = 0; row < field.height; row += 1) {
+      for (let column = 0; column < field.width; column += 1) {
+        const index = row * field.width + column;
+        if ((field.valid && !field.valid[index]) || !Number.isFinite(Number(field.speed[index]))) continue;
+        const x = directional
+          ? field.origin[0] + column * field.dx * field.basis_xz[0] + row * field.dz * field.basis_z[0]
+          : field.origin[0] + (column + 0.5) * field.dx;
+        const z = directional
+          ? field.origin[1] + column * field.dx * field.basis_xz[1] + row * field.dz * field.basis_z[1]
+          : field.origin[1] + (row + 0.5) * field.dz;
+        cells.push({ x, z, value: speedValue(index) });
+      }
+    }
+    cells.sort((a, b) => b.value - a.value);
+    const areas = [];
+    for (const cell of cells) {
+      if (areas.some(item => Math.hypot(item.x - cell.x, item.z - cell.z) < 120)) continue;
+      const street = nearestMappedStreetName(cell.x, cell.z);
+      areas.push({
+        name: street ? `Near ${street}` : `CBD area · ${cell.x.toFixed(0)} m east / ${cell.z.toFixed(0)} m south`,
+        value: cell.value, x: cell.x, z: cell.z,
+      });
+      if (areas.length >= 5) break;
+    }
+    return { areas, streets: rankedStreets };
   }
 
   function windColor(value, minimum, maximum) {
@@ -9453,7 +11339,7 @@ export async function startWebGLScene(canvas, status) {
     windGroup.add(windHeatMesh);
     hideStreetLayersForWind();
     if (windState.analysisMode === 'direction' && windState.cfdField === 'speed') {
-      dispatchEvent(new CustomEvent('climate-wind-result', { detail: {
+      const result = {
         analysis_mode: 'direction', cfd: true,
         version: windState.cfd.manifest.solver?.case_id || 'openfoam-cfd',
         validation_status: windState.cfd.manifest.validation_status || 'exploratory_unvalidated_pilot',
@@ -9465,7 +11351,9 @@ export async function startWebGLScene(canvas, status) {
         basis_xz: windState.cfd.manifest.coordinates.x_downwind_in_viewer_xz,
         basis_z: windState.cfd.manifest.coordinates.y_crosswind_in_viewer_xz,
         speed: cellSamples.map(sample => sample?.speed || 0), valid: Uint8Array.from(valid, value => value ? 1 : 0),
-      } }));
+      };
+      result.wind_rankings = rankWindLocations(result);
+      dispatchEvent(new CustomEvent('climate-wind-result', { detail: result }));
     }
   }
 
@@ -10095,6 +11983,7 @@ export async function startWebGLScene(canvas, status) {
         forcing_coverage: climatology.coverage || null,
         forcing_dataset_version: climatology.dataset_version || null,
       };
+      windState.field.wind_rankings = rankWindLocations(windState.field);
       const sectorList = resolved.map(entry => entry.sector.sector.toUpperCase()).join(', ');
       windStatus.textContent = `OpenFOAM comfort · ${resolved.length}/16 sectors resolved (${sectorList}) · `
         + `${(coverage * 100).toFixed(1)}% of ${windState.season} wind hours covered · lower-bound estimate, `
@@ -10637,7 +12526,7 @@ export async function startWebGLScene(canvas, status) {
           const index = row * field.width + column;
           if (column >= 0 && row >= 0 && column < field.width && row < field.height && field.valid?.[index]
             && pointInLidarFootprint(x, z) && !windPointInsideBuilding(x, z, ground + field.height_m)) {
-            speed = field.speed[index];
+            speed = field.coverage_fraction > 0 ? field.speed[index] / field.coverage_fraction : field.speed[index];
             category = ['Long sitting', 'Short sitting', 'Standing', 'Strolling', 'Business walking', 'Uncomfortable'][field.comfort_category[index]] || 'Unclassified';
           }
         } else if (windState.cfd) {
@@ -10648,8 +12537,11 @@ export async function startWebGLScene(canvas, status) {
         }
         windInspectResult.textContent = speed == null
           ? 'No solved wind value at this point. Try a coloured part of the layer.'
-          : `${speed.toFixed(1)} m/s${category ? ` · ${category}` : ' · switch to Wind comfort for the comfort class'} · ${x.toFixed(0)} m east, ${z.toFixed(0)} m south`;
+          : `${speed.toFixed(1)} m/s · ${(speed * 3.6).toFixed(1)} km/h${category ? ` · ${category}` : ' · switch to Wind comfort for the comfort class'} · ${x.toFixed(0)} m east, ${z.toFixed(0)} m south`;
         windInspectResult.hidden = false;
+        dispatchEvent(new CustomEvent('climate-wind-focus', { detail: {
+          x, z, name: 'Inspected location', speed, focusCamera: false,
+        } }));
       }
     }
     if (isMapClick && scenePickHandlers.size
@@ -10726,6 +12618,14 @@ export async function startWebGLScene(canvas, status) {
   }));
 
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
+  heatStreetMapToggle?.addEventListener('change', event => {
+    if (event.target.checked && heatToggle && !heatToggle.checked) {
+      heatToggle.checked = true;
+      heatToggle.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    buildHeatStreetOverlay();
+    requestRender();
+  });
   heatMetric?.addEventListener('change', event => {
     loadHeat(event.target.value);
   });
@@ -11535,6 +13435,9 @@ export async function startWebGLScene(canvas, status) {
     }
     windState.enabled = event.target.checked;
     windGroup.visible = windState.enabled;
+    if (!windState.enabled) windFocusMarker.visible = false;
+    syncGroundSurfaceMaterials();
+    syncLayerControls();
     if (windState.enabled) {
       if (windState.field && windState.surfaceVisible) hideStreetLayersForWind();
       if (['direction', 'pollution'].includes(windState.analysisMode)
@@ -11647,6 +13550,7 @@ export async function startWebGLScene(canvas, status) {
   trafficToggle?.addEventListener('change', () => {
     trafficState.enabled = Boolean(trafficToggle.checked);
     syncTrafficSceneVisibility();
+    syncLayerControls();
     if (trafficState.enabled) {
       trafficState.lastTime = performance.now();
       requestRender();
@@ -11738,6 +13642,7 @@ export async function startWebGLScene(canvas, status) {
     }
     syncTrafficSceneVisibility();
     applySectionLayerProfile(name);
+    syncLayerControls();
     if (name === 'wind' && windState.analysisMode === 'pollution') {
       layerGroups.roads.visible = true;
       layerGroups.paths.visible = true;
@@ -11949,6 +13854,7 @@ export async function startWebGLScene(canvas, status) {
     updateWindParticles(now);
     updatePollutionVisuals(now);
     updateTrafficCars(now);
+    updateAmbientTraffic(now);
     const transportAnimating = transportLayer?.update(now) || false;
     if (trafficStatusGroup.visible && scenarioStatusGroup.children.length) {
       const pulse = 0.82 + Math.sin(now * 0.004) * 0.18;
@@ -11974,14 +13880,16 @@ export async function startWebGLScene(canvas, status) {
     renderer.clear();
     renderer.render(postScene, postCamera);
     renderRequested = false;
+    const ambientTrafficAnimating = Boolean(ambientTraffic.group?.visible && layerGroups.roads.visible);
     const otherAnimatedLayerActive = (windState.enabled && windState.field && windPoints?.visible)
       || (windState.enabled && pollutionState.playing)
       || (trafficGroup.visible && trafficState.tracks.length)
       || (trafficStatusGroup.visible && scenarioStatusGroup.children.length);
     const animatedLayerActive = (!reducedMotion || pollutionState.playing)
-      && (otherAnimatedLayerActive || transportAnimating);
+      && (otherAnimatedLayerActive || transportAnimating || ambientTrafficAnimating);
     if (animatedLayerActive) {
-      if (transportAnimating && !otherAnimatedLayerActive && !reducedMotion) {
+      if (((transportAnimating && !otherAnimatedLayerActive)
+        || (ambientTrafficAnimating && !otherAnimatedLayerActive && !transportAnimating)) && !reducedMotion) {
         animationTimer = window.setTimeout(() => {
           animationTimer = 0;
           if (sceneReadyToRender && !document.hidden && !animationFrame) animationFrame = requestAnimationFrame(render);
@@ -11998,6 +13906,30 @@ export async function startWebGLScene(canvas, status) {
   }
 
   addEventListener('resize', requestRender);
+  addEventListener('climate-wind-focus', event => {
+    const x = Number(event.detail?.x), z = Number(event.detail?.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    windFocusMarker.position.set(x, terrainHeightAt(x, z), z);
+    windFocusMarker.visible = true;
+    const label = String(event.detail?.name || 'Selected location');
+    const speed = Number(event.detail?.speed);
+    const focusStatus = document.querySelector('#wind-focus-status');
+    if (focusStatus) focusStatus.textContent = Number.isFinite(speed)
+      ? `Highlighted ${label} · ${speed.toFixed(2)} m/s (${(speed * 3.6).toFixed(1)} km/h).`
+      : `Highlighted ${label} on the map.`;
+    if (event.detail?.focusCamera) {
+      cameraState.target.set(x, terrainHeightAt(x, z) + 18, z);
+      cameraState.distance = Math.max(CAMERA_MIN_DISTANCE, 520);
+      updateCamera();
+    } else requestRender();
+  });
+  addEventListener('climate-wind-focus-clear', () => {
+    windFocusMarker.visible = false;
+    requestRender();
+  });
+  document.addEventListener('click', event => {
+    if (event.target.closest('[data-menu-target]')) requestRender();
+  });
   addEventListener('visibilitychange', () => { if (!document.hidden) requestRender(); });
   addEventListener('climate-retry-analysis', event => {
     const tool = event.detail?.tool;
@@ -12011,6 +13943,7 @@ export async function startWebGLScene(canvas, status) {
   setWindAnalysisMode(windState.analysisMode);
   updateWindBox();
   windGroup.visible = windState.enabled;
+  setupAmbientTraffic();
   syncTrafficSceneVisibility();
   const roofTriangles = roofSurfaceBuffer ? manifest.layers?.roof_surface?.triangles : 0;
   status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
