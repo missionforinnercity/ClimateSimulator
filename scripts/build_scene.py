@@ -1305,6 +1305,52 @@ def write_lighting_asset(model, output):
     }
 
 
+def write_public_realm_asset(model, output):
+    """Write a lazy-loaded inventory of mapped public-realm and street-use points."""
+    supported_classes = {
+        "bench", "bollard", "bicycleParking", "busStop", "fountain",
+        "publicToilet", "streetClock", "wasteBasket",
+    }
+    records = []
+    crossings = []
+    parking = []
+    for item in model.get("cityObjects", {}).values():
+        geometry = item.get("geometry") or {}
+        attributes = item.get("attributes") or {}
+        feature_class = attributes.get("class")
+        coordinates = geometry.get("coordinates")
+        if not isinstance(coordinates, list) or len(coordinates) != 2:
+            continue
+        record = {
+            "identifier": item.get("identifier"),
+            "class": feature_class,
+            "coordinates": coordinates,
+            "attributes": attributes,
+        }
+        if item.get("type") == "CityFurniture" and feature_class in supported_classes:
+            records.append(record)
+        elif item.get("type") == "TrafficSpace" and feature_class == "pedestrianCrossing":
+            crossings.append(record)
+        elif item.get("type") == "AuxiliaryTrafficSpace" and feature_class == "parkingSpace":
+            parking.append(record)
+    records.sort(key=lambda item: (item["class"], item["identifier"] or ""))
+    crossings.sort(key=lambda item: item["identifier"] or "")
+    parking.sort(key=lambda item: item["identifier"] or "")
+    output.write_text(json.dumps({"publicRealm": records, "crossings": crossings, "parking": parking}, separators=(",", ":")) + "\n", encoding="utf-8")
+    payload = output.read_bytes()
+    counts: dict[str, int] = {}
+    for item in records:
+        counts[item["class"]] = counts.get(item["class"], 0) + 1
+    return {
+        "features": len(records),
+        "classes": counts,
+        "crossings": len(crossings),
+        "parking_spaces": len(parking),
+        "bytes": len(payload),
+        "cache_key": hashlib.sha256(payload).hexdigest()[:16],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dtm", type=Path, default=Path("data/derived/company_gardens_hybrid_dem_2m.tif"))
@@ -1347,6 +1393,7 @@ def main():
             "city_model": "city_model.json",
             "canopy": "canopy.json",
             "lighting": "lighting.json",
+            "public_realm": "public_realm.json",
             "roof_surface": "roof_surface.bin",
         },
         "buildInputs": {
@@ -1410,6 +1457,7 @@ def main():
     })
     manifest["layers"]["city_model"] = write_city_model(city_model, args.out / "city_model.json")
     manifest["layers"]["lighting"] = write_lighting_asset(city_model, args.out / "lighting.json")
+    manifest["layers"]["public_realm"] = write_public_realm_asset(city_model, args.out / "public_realm.json")
     (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
 

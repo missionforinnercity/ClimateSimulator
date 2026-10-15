@@ -32,13 +32,13 @@ def test_cool_conditions_do_not_become_heat_stress_in_utci_polynomial():
     assert np.all((result > 5) & (result < 20))
 
 
-def test_satellite_refresh_recurs_each_hour_without_startup_drift():
+def test_full_model_refresh_waits_one_hour_after_each_run():
     from server.thermal_worker import next_refresh_at
     hour = 3600 * 100
-    assert next_refresh_at(hour + 60, 3600, 600) == hour + 660
-    assert next_refresh_at(hour + 660, 3600, 600) == hour + 1260
-    assert next_refresh_at(hour + 3660, 3600, 600) == hour + 4260
-    assert next_refresh_at(hour + 600, 3600, 600) == hour + 1200
+    assert next_refresh_at(hour + 60, 3600) == hour + 60
+    assert next_refresh_at(hour + 60, 3600, hour + 60) == hour + 3660
+    assert next_refresh_at(hour + 3660, 3600, hour + 60) == hour + 3660
+    assert next_refresh_at(hour + 600, 3600, hour - 4000) == hour + 600
 
 
 def test_latest_native_radiation_replaces_only_current_hour_and_keeps_weather_time():

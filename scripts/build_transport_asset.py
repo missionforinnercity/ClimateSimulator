@@ -23,6 +23,7 @@ from pyproj import Transformer
 ROOT = Path(__file__).resolve().parents[1]
 TRANSPORT = ROOT / "data" / "transport"
 OUT = ROOT / "public" / "assets" / "transport.json"
+WALK_NETWORK_OUT = ROOT / "public" / "assets" / "transport_walk_network.json"
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 TIME_RE = re.compile(r"\b([012]?\d):([0-5]\d)\b")
 RAIL_SERVICE_START = 300
@@ -565,15 +566,21 @@ def main() -> None:
         "hubStationId": hub["id"] if hub else None,
         "hubFootprints": station_footprints,
         "hubEntrances": station_entrances,
-        "walkNetwork": {"nodes": walk_nodes, "edges": [[a, b, length] for (a, b), length in walk_edges.items()]},
+        "walkNetworkAsset": WALK_NETWORK_OUT.name,
         "stops": stops, "routes": routes, "rail": rail,
         "railStations": rail_stations, "railTracks": rail_tracks,
     }
+    WALK_NETWORK_OUT.write_text(json.dumps({
+        "version": 1,
+        "nodes": walk_nodes,
+        "edges": [[a, b, length] for (a, b), length in walk_edges.items()],
+    }, separators=(",", ":")))
     OUT.write_text(json.dumps(payload, separators=(",", ":")))
     print(
         f"Wrote {OUT}: {len(routes)} route directions, {len(stops)} bus stops, "
         f"{len(rail)} rail corridors ({sum(1 for item in rail if item['inView'])} with in-view track), "
-        f"{len(rail_tracks)} track runs, {len(rail_stations)} rail stations"
+        f"{len(rail_tracks)} track runs, {len(rail_stations)} rail stations; "
+        f"wrote {WALK_NETWORK_OUT} with {len(walk_nodes)} nodes and {len(walk_edges)} edges"
     )
 
 

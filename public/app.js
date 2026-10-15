@@ -1,5 +1,5 @@
 import { setupExplorerExperience } from './explorerExperience.js?v=3';
-import { setupWalkingRoutes } from './walkingRoutes.js?v=2';
+import { setupWalkingRoutes } from './walkingRoutes.js?v=3';
 import { scopedFetch as fetch } from './requestClient.js';
 
 let canvas = document.querySelector('#scene');
@@ -92,6 +92,7 @@ function setupMenuNavigation() {
     const active = Boolean(toggle?.checked);
     let modeDetail = active ? 'Map layer active' : 'Map layer hidden';
     if (name === 'heat') modeDetail = `${document.querySelector('#heat-metric option:checked')?.textContent || 'Heat'} · ${active ? 'visible' : 'hidden'}`;
+    if (name === 'sun') modeDetail = `Solar view · ${active ? 'visible' : 'hidden'}`;
     if (name === 'wind') modeDetail = `${document.querySelector('[data-wind-lens].active')?.textContent.trim() || 'Direction'} · ${active ? 'visible' : 'hidden'}`;
     if (name === 'traffic') modeDetail = `Street simulation · ${active ? 'visible' : 'hidden'}`;
     if (name === 'transport') modeDetail = `Bus + rail network · ${active ? 'visible' : 'hidden'}`;
@@ -123,8 +124,11 @@ function setupMenuNavigation() {
       panel.hidden = !selected;
     });
     document.querySelector('.scene-mode')?.classList.toggle('is-active', name === 'tools' || Boolean(document.querySelector(`#${name}-toggle`)?.checked));
-    updateSceneMode(name);
     dispatchEvent(new CustomEvent('climate-menu-change', { detail: { name } }));
+    // Panel listeners may enable or disable their visualization as they open.
+    // Read the settled control state so the map badge describes what is
+    // actually visible after those synchronous state changes.
+    updateSceneMode(name);
   };
 
   tabs.forEach((tab, index) => {
@@ -372,7 +376,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=219');
+    const module = await import('./webglRenderer.js?v=244');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -381,7 +385,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=101');
+      const module = await import('./sceneRenderer.js?v=110');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);

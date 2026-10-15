@@ -68,6 +68,16 @@ def main():
                     violations = page.evaluate("async () => (await axe.run(document, {runOnly: {type: 'tag', values: ['wcag2a','wcag2aa','wcag21aa']}})).violations.map(v => ({id:v.id, impact:v.impact, nodes:v.nodes.map(n=>n.target)}))")
                     assert not [v for v in violations if v["impact"] in ["serious", "critical"]], (label, tool, violations)
 
+            page.locator("#menu-tools details").first.locator("summary").click()
+            page.locator('[data-layer="cycling"]').check()
+            page.wait_for_function("() => document.querySelector('#cycling-status')?.textContent.includes('mapped links')")
+            assert "connected groups" in page.locator("#cycling-status").inner_text()
+            assert "not a safety" in page.locator("#cycling-caveat").inner_text()
+            page.locator('[data-layer="groundcover"]').check()
+            page.wait_for_function("() => document.querySelector('#groundcover-status')?.textContent.includes('unavailable')")
+            page.locator('[data-layer="groundcover"]').uncheck()
+            page.locator('[data-layer="cycling"]').uncheck()
+
             def camera_state():
                 return page.evaluate("""() => new Promise(resolve => {
                   addEventListener('climate-scene-state', event => resolve(event.detail.camera), {once: true});

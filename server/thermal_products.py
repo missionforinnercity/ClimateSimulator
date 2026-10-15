@@ -16,6 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PRODUCT_ROOT = Path(os.getenv("THERMAL_PRODUCT_ROOT", PROJECT_ROOT / "data/thermal/products"))
 CURRENT_FILE = PRODUCT_ROOT / "CURRENT"
 STATUS_FILE = PRODUCT_ROOT / "STATUS.json"
+SKY_VIEW_FACTOR_FILE = PRODUCT_ROOT / "sky_view_factor.bin"
+SURFACE_ROOT = Path(os.getenv("THERMAL_SURFACE_ROOT", PROJECT_ROOT / "data/thermal/surfaces"))
 RUN_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{8,80}")
 FRAME_ID_PATTERN = re.compile(r"\d{8}T\d{4}Z")
 
@@ -196,6 +198,48 @@ def frame_path(run_id: str, frame_id: str) -> Path:
     if not path.is_file():
         raise ThermalProductUnavailable("thermal frame file is unavailable")
     return path
+
+
+def sky_view_factor_path() -> Path:
+    """Return the static SVF grid when the worker has published it."""
+    manifest = sky_view_factor_manifest()
+    grid = manifest["grid"]
+    expected_bytes = int(grid["width"]) * int(grid["height"]) * 2
+    try:
+        if expected_bytes > 0 and SKY_VIEW_FACTOR_FILE.stat().st_size == expected_bytes:
+            return SKY_VIEW_FACTOR_FILE
+    except OSError:
+        pass
+    raise ThermalProductUnavailable("sky-view-factor surface is unavailable")
+
+
+def sky_view_factor_manifest() -> dict[str, Any]:
+    """Return grid metadata for the geometry-only SVF product."""
+    path = SURFACE_ROOT / "grid.json"
+    try:
+        grid = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ThermalProductUnavailable("sky-view-factor surface grid is unavailable") from error
+    if grid.get("schema") != "conditions-thermal-surfaces/1":
+        raise ThermalProductUnavailable("sky-view-factor surface grid is incompatible")
+    try:
+        width, height = int(grid["width"]), int(grid["height"])
+        resolution_m = float(grid["resolution_m"])
+        bounds = [float(value) for value in grid["viewer_bounds"]]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ThermalProductUnavailable("sky-view-factor surface grid is invalid") from error
+    if width <= 0 or height <= 0 or resolution_m <= 0 or len(bounds) != 4:
+        raise ThermalProductUnavailable("sky-view-factor surface grid is invalid")
+    return {
+        "schema": "conditions-thermal-svf/1",
+        "grid": {
+            "width": width, "height": height, "resolution_m": resolution_m,
+            "bounds": bounds, "crs": "viewer-local-xz-metres",
+            "source_crs": grid.get("crs"),
+        },
+        "channels": [{"name": "sky_view_factor", "unit": "%", "scale": 100 / 32767, "offset": 0, "index": 0}],
+        "nodata": -32768,
+    }
 
 
 def energy_payload(run_id: str | None = None) -> dict[str, Any]:

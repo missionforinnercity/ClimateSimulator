@@ -54,6 +54,27 @@ function routeCard(route, activeId, fastest, scales) {
   </button>`;
 }
 
+function streetContextMarkup(route) {
+  const context = route?.street_context || {};
+  const crossings = context.crossings || {};
+  const lighting = context.lighting || {};
+  const sidewalk = context.sidewalk || {};
+  const width = context.width || {};
+  const crossingSummary = crossings.status === 'available'
+    ? `${number(crossings.nearby_point_count, 0)} within ${number(crossings.search_radius_m, 0, ' m')} · ${number(crossings.nearby_raised_point_count, 0)} raised`
+    : 'Inventory unavailable';
+  return `<section class="walking-street-context" aria-label="Mapped street context for ${escape(ROUTE_LABELS[route?.id] || route?.label || 'selected route')}">
+    <h3>Street evidence · ${escape(ROUTE_LABELS[route?.id] || route?.label || 'Selected route')}</h3>
+    <div class="walking-context-grid">
+      <div><b>Crossings nearby</b><span>${crossingSummary}</span></div>
+      <div><b>Lighting tags</b><span>${number(lighting.tagged_lit_percent, 0, '%')} lit · ${number(lighting.tagged_unlit_percent, 0, '%')} unlit · ${number(lighting.unknown_percent, 0, '%')} unknown</span></div>
+      <div><b>Sidewalk tags</b><span>${number(sidewalk.tagged_percent, 0, '%')} recorded · ${number(sidewalk.tagged_no_percent, 0, '%')} tagged no · ${number(sidewalk.unknown_percent, 0, '%')} unknown</span></div>
+      <div><b>Width tags</b><span>${number(width.tagged_percent, 0, '%')} recorded · ${number(width.unknown_percent, 0, '%')} unknown</span></div>
+    </div>
+    <p>Tag coverage is route-length weighted. Crossing points are counted within ${number(crossings.search_radius_m, 0, ' m')} of the walking line; proximity does not confirm a crossing on the route. Missing tags remain unknown. Width and curb accessibility are not assessed; this is not a safety score.</p>
+  </section>`;
+}
+
 function traceSvg(trace, key, title, className, width = 280, height = 62) {
   const values = trace.map(row => finite(row[key]));
   const available = values.filter(value => value !== null);
@@ -220,13 +241,14 @@ export function setupWalkingRoutes() {
   function render(payload) {
     const routes = payload.routes || [];
     const fastest = routes.find(route => route.id === 'fastest');
+    const selectedRoute = routes.find(route => route.id === activeRoute) || routes[0];
     const scales = {
       sun: Math.max(1, ...routes.map(route => finite(route.agent_summary?.direct_sun_minutes_p90) || 0)),
       heat: Math.max(1, ...routes.map(route => finite(route.agent_summary?.heat_load_degree_minutes_p90) || 0)),
     };
     const heatNotice = routes.some(route => route.id === 'lowest_heat') ? ''
       : '<div class="walking-network-provenance">Lowest-heat route unavailable: no usable UTCI forecast covers this departure window. Other route comparisons remain available.</div>';
-    results.innerHTML = `${routes.map(route => routeCard(route, activeRoute, fastest, scales)).join('') || '<p>No connected pedestrian routes were found.</p>'}${heatNotice}
+    results.innerHTML = `${routes.map(route => routeCard(route, activeRoute, fastest, scales)).join('') || '<p>No connected pedestrian routes were found.</p>'}${selectedRoute ? streetContextMarkup(selectedRoute) : ''}${heatNotice}
       <div class="walking-network-provenance">OSM network: ${Number(payload.network?.node_count || 0).toLocaleString()} nodes · ${Number(payload.network?.edge_count || 0).toLocaleString()} directed segments · matched walkers ${escape(payload.route_generation?.agent_status || 'pending')}.</div>
       ${traceMarkup(routes.find(route => route.id === activeRoute) || routes[0])}`;
     results.hidden = false;

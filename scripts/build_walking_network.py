@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from server.field import LOCAL_CRS, load_viewer_config  # noqa: E402
 
 SOURCE = PROJECT_ROOT / "data/osm_cbd.osm.xml"
+CITY_MODEL = PROJECT_ROOT / "public/assets/city_model.json"
 DEFAULT_OUTPUT = PROJECT_ROOT / "data/derived/walking_network.json.gz"
 BUFFER_M = 60.0
 EXCLUDED_HIGHWAYS = {"motorway", "motorway_link", "construction", "proposed", "raceway"}
@@ -61,6 +62,30 @@ def _is_walkable(tags: dict) -> bool:
     if access in DENIED_ACCESS and foot not in POSITIVE_FOOT:
         return False
     return True
+
+
+def _crossing_inventory(path: Path = CITY_MODEL) -> tuple[dict, list[list[float | int]]]:
+    """Extract the already-clipped municipal crossing points for route context."""
+    if not path.is_file():
+        return {"available": False, "source": "City of Cape Town pedestrian-crossing point inventory", "point_count": 0}, []
+    source_bytes = path.read_bytes()
+    model = json.loads(source_bytes)
+    points = []
+    for item in (model.get("cityObjects") or {}).values():
+        attributes = item.get("attributes") or {}
+        coordinates = (item.get("geometry") or {}).get("coordinates")
+        if attributes.get("class") != "pedestrianCrossing" or not coordinates or len(coordinates) < 2:
+            continue
+        raised = str(attributes.get("RAISED", "")).strip().lower() in {"1", "true", "yes"}
+        points.append([round(float(coordinates[0]), 2), round(float(coordinates[1]), 2), int(raised)])
+    points.sort(key=lambda point: (point[0], point[1], point[2]))
+    return {
+        "available": True,
+        "source": "City of Cape Town pedestrian-crossing point inventory",
+        "source_file": "public/assets/city_model.json",
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "point_count": len(points),
+    }, points
 
 
 def build(source: Path = SOURCE, output: Path = DEFAULT_OUTPUT) -> dict:
@@ -128,6 +153,8 @@ def build(source: Path = SOURCE, output: Path = DEFAULT_OUTPUT) -> dict:
     if not edges:
         raise RuntimeError("No walkable OSM edges intersect the current CBD scene")
 
+    crossing_inventory, crossing_points = _crossing_inventory()
+
     payload = {
         "schema": "conditions-walking-network/1",
         "built_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -139,6 +166,8 @@ def build(source: Path = SOURCE, output: Path = DEFAULT_OUTPUT) -> dict:
         "buffer_m": BUFFER_M,
         "node_count": len(nodes),
         "edge_count": len(edges),
+        "crossing_inventory": crossing_inventory,
+        "crossing_points": crossing_points,
         "nodes": [[node, xy[0], xy[1]] for node, xy in sorted(nodes.items())],
         "edges": edges,
     }

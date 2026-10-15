@@ -300,12 +300,46 @@ export async function createTransportLayer({
   const hubFootprints = data.hubFootprints || [];
   const hubEntrances = data.hubEntrances || [];
   const railById = new Map(data.rail.map(rail => [rail.id, rail]));
-  const walkNodes = data.walkNetwork?.nodes || [];
-  const walkEdges = data.walkNetwork?.edges || [];
-  const walkAdjacency = walkNodes.map(() => []);
-  for (const [a, b, length] of walkEdges) {
-    walkAdjacency[a]?.push([b, length]);
-    walkAdjacency[b]?.push([a, length]);
+  let walkNodes = [];
+  let walkEdges = [];
+  let walkAdjacency = null;
+  let stopWalkTargets = null;
+  let hubWalkTargets = null;
+  let walkNetworkPromise = null;
+
+  function ensureWalkNetwork() {
+    if (walkAdjacency) return Promise.resolve();
+    if (walkNetworkPromise) return walkNetworkPromise;
+    walkNetworkPromise = (async () => {
+      let network = data.walkNetwork;
+      if (!network) {
+        const asset = data.walkNetworkAsset || 'transport_walk_network.json';
+        const response = await fetch(`/assets/${encodeURIComponent(asset)}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Pedestrian network HTTP ${response.status}`);
+        network = await response.json();
+      }
+      walkNodes = Array.isArray(network.nodes) ? network.nodes : [];
+      walkEdges = Array.isArray(network.edges) ? network.edges : [];
+      if (!walkNodes.length || !walkEdges.length) throw new Error('Pedestrian network is empty or invalid');
+      walkAdjacency = walkNodes.map(() => []);
+      for (const [a, b, length] of walkEdges) {
+        walkAdjacency[a]?.push([b, length]);
+        walkAdjacency[b]?.push([a, length]);
+      }
+      stopWalkTargets = new Map(data.stops.map(stop => [stop.id, walkTarget(stop.point)]));
+      hubWalkTargets = (hubEntrances.length ? hubEntrances : hubStation ? [{ point: hubStation.point }] : [])
+        .map(entrance => ({ ...entrance, ...walkTarget(entrance.point) }));
+      data.walkNetwork = network;
+    })().catch(error => {
+      walkNodes = [];
+      walkEdges = [];
+      walkAdjacency = null;
+      stopWalkTargets = null;
+      hubWalkTargets = null;
+      walkNetworkPromise = null;
+      throw error;
+    });
+    return walkNetworkPromise;
   }
 
   const nearestWalkNode = point => {
@@ -363,9 +397,6 @@ export async function createTransportLayer({
   }
 
   const walkTarget = point => ({ point, ...nearestWalkNode(point) });
-  const stopWalkTargets = new Map(data.stops.map(stop => [stop.id, walkTarget(stop.point)]));
-  const hubWalkTargets = (hubEntrances.length ? hubEntrances : hubStation ? [{ point: hubStation.point }] : [])
-    .map(entrance => ({ ...entrance, ...walkTarget(entrance.point) }));
   const networkDistance = (network, target) => target?.node >= 0
     ? network.origin.offset + network.distances[target.node] + target.offset
     : Infinity;
@@ -898,19 +929,30 @@ export async function createTransportLayer({
 
   function setVenue(venue) {
     state.venue = venue;
+    state.walkNetwork = null;
     elements['transport-event-venue-label'].textContent = venue
       ? `${venue.name} · ${Math.round(venue.point[0])}, ${Math.round(venue.point[1])} m`
       : 'No venue set';
     drawVenue();
   }
 
-  function drawVenue() {
+  async function drawVenue() {
     eventGroup.clear();
     if (!state.panelActive) return;
     if (!state.venue) return requestRender();
+    const venue = state.venue;
+    if (!walkAdjacency) elements['transport-event-venue-label'].textContent = 'Loading the pedestrian network for the walking catchment…';
+    try {
+      await ensureWalkNetwork();
+    } catch (error) {
+      elements['transport-event-venue-label'].textContent = `Walking catchment unavailable (${error.message}). Reopen the tab to retry.`;
+      return;
+    }
+    if (!state.panelActive || state.venue !== venue) return;
+    elements['transport-event-venue-label'].textContent = `${venue.name} · ${Math.round(venue.point[0])}, ${Math.round(venue.point[1])} m`;
     const radius = Number(elements['transport-event-walk'].value);
-    const [vx, vz] = state.venue.point;
-    const walkNetwork = walkNetworkFrom(state.venue.point);
+    const [vx, vz] = venue.point;
+    const walkNetwork = state.walkNetwork || walkNetworkFrom(venue.point);
     state.walkNetwork = walkNetwork;
     const reachableVertices = [];
     for (const [a, b] of walkEdges) {
@@ -967,10 +1009,16 @@ export async function createTransportLayer({
   const cleanAreaName = name => String(name || '')
     .replace(/\s+-+(\s+-+)*\s*/g, ' ').replace(/\s+/g, ' ').replace(/\s+[12]$/, '').trim();
 
-  function analyseEvent() {
+  async function analyseEvent() {
     const venue = state.venue;
     if (!venue) {
       elements['transport-event-venue-label'].textContent = 'Choose a hub or pick a point on the map first.';
+      return;
+    }
+    try {
+      await ensureWalkNetwork();
+    } catch (error) {
+      elements['transport-event-venue-label'].textContent = `Event walking analysis unavailable (${error.message}). Reopen the tab to retry.`;
       return;
     }
     const start = timeValue(elements['transport-event-start'].value);

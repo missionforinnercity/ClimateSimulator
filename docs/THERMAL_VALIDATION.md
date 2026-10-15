@@ -176,9 +176,9 @@ with its period and software version. Any calibration must be evaluated on a
 separate time window and must not use the same samples that selected its
 correction.
 
-The worker now publishes immediately, then refreshes once after 25 minutes
-before continuing its hourly cadence. That second run lets the current-hour
-satellite estimate arrive without hiding the first forecast during startup.
+The worker publishes immediately, then waits one hour after each run attempt.
+This limits the full SUEWS/SOLWEIG calculation to an hourly cadence while
+keeping the newest available satellite radiation estimate at each run.
 While the heat forecast is open, the browser checks for a newer run every two
 minutes and reloads it when one is published. If satellite input is still
 unavailable, the model-radiation provenance remains visible and no arbitrary

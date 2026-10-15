@@ -52,8 +52,12 @@ measurement.
 - Request native satellite radiation, keep its exact interval-ending time and
   average length, and use it for a separate current-hour snapshot. Keep the
   air and wind forecast time explicit in that frame.
-- Refresh at least ten minutes after each completed model run, and expose radiation source, interval, age,
-  horizontal flux means, Tmrt, and the radiation counterfactual in diagnostics.
+- At the time of this audit, refresh at least ten minutes after each model run
+  to pick up later satellite scans. The current worker supersedes that cadence
+  with one full model run per hour to avoid repeating SOLWEIG setup. The hourly
+  run still uses the latest available satellite estimate and exposes its source,
+  interval and age alongside horizontal flux means, Tmrt and the radiation
+  counterfactual.
 
 The native 10-minute sample is still a satellite retrieval, not an instrument
 on the CBD ground. SOLWEIG's horizontal flux outputs are not the complete

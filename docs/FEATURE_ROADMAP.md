@@ -6,7 +6,7 @@ This is a proposed roadmap, not a claim that the current app is validated or sta
 
 | Priority | Feature | User value | Prerequisites / scale |
 | --- | --- | --- | --- |
-| 1 | Place and street inspector | Click/search a street or building and see identity, source age, geometry confidence, and available analyses | Existing semantic IDs; spatial index and missing-name handling. Medium |
+| 1 | Place and street inspector | Search and map picking are exercised in WebGL and Canvas; Wind handoff is exercised in WebGL. Finish keyboard, duplicate-name, missing-ID, and out-of-footprint QA. | Existing semantic IDs; indexed compact scene records. Medium |
 | 2 | Reproducible scenario packages | Reopen a study with exact geometry, dates, model version, closure edges, evidence and report | Extend current settings snapshots into versioned immutable result packages. Medium |
 | 3 | Observation and validation workbench | Compare modelled wind/heat/traffic with time-aligned observations; inspect bias and coverage | Quality-controlled sensors/counts and a defensible matching method. High, data-gated |
 | 4 | Shade-aware walking alternatives | Compare shortest vs shaded routes for a chosen date/time; explain trade-offs | Connected walk graph, directional access, calibrated shade sampling and surveyed accessibility where claimed. High |
@@ -23,7 +23,7 @@ This is a proposed roadmap, not a claim that the current app is validated or sta
 
 ### Place and street inspector
 
-Build local search over names/IDs already present, with a lightweight index generated alongside scene assets. Highlight the selected feature, show source/acquisition date, measured versus inferred attributes, and offer only analyses with actual coverage at that place. Show unknown values explicitly. Reuse source geometry and attribution.
+The initial release searches compact scene records by name or OSM ID, highlights selected buildings and streets in WebGL and Canvas, and shows source tags, roof/height representation, and explicit unknowns. Search results support Arrow, Home, End, Enter and Escape, and show source IDs or an explicit missing-ID label plus mapped centre coordinates to distinguish same-name features. Browser checks exercise search, keyboard selection and map picking in both renderers, plus the Wind handoff in WebGL. Each analysis remains responsible for its own coverage check. Add automated regression fixtures for duplicate names, missing IDs, and picks outside the mapped footprint.
 
 Done when a keyboard user can search, select and inspect a feature; selections remain stable after a rebuild; tests include duplicate names, missing IDs and points outside the footprint. No address geocoder or account is required for the first release.
 

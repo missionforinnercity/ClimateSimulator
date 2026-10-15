@@ -20,6 +20,21 @@ New Python HTTP tests use an in-process ASGI client without application lifespan
 - Open all six panels. Confirm visible tab names, one selected tab and keyboard Left/Right/Home/End behaviour. Check the nested wind controls too.
 - Dismiss and reopen the four-step guide. Verify its preference with storage disabled/private browsing.
 - Focus the map; orbit with arrows, zoom with +/− and fit with Home. Repeat on Canvas fallback.
+- At the full-city WebGL overview and neighborhood-scale place focus, confirm the scene settles without a continuous traffic render loop; zoom to very close street scale and confirm ambient traffic resumes.
+- Start on Tools in WebGL and Canvas: heat-zone data should not load until the Heat tab is selected; opening Heat should load the selected metric once.
+- Start on Tools in WebGL: traffic roads, live traffic and calibration data should stay unloaded until Traffic is selected; leaving Traffic should stop failed road-network retries until the panel is reopened.
+- Start on Tools in WebGL: the saved CFD proposal registry should stay unloaded until Wind is selected; opening Wind should initialize the proposal selector from the registry, with the empty-state label when no proposals are saved.
+- Start on Tools in WebGL: municipal lighting should stay unloaded until Sun is selected or shadows are enabled; confirm mapped fixtures appear in Sun and lamp glow after sunset, including the inferred-height caveat.
+- Start on Tools in WebGL: the walking graph should not load with the ambient transport layer; select a venue in Transport and confirm its catchment graph loads once, then adjust catchment radius without rerunning shortest paths.
+- With a published thermal surface, select Heat → Sky-view factor (SVF). Confirm the static map, summary and point inspector use the cached 2 m SVF grid without starting another weather/SOLWEIG run.
+- Confirm the simplified scene reaches ready before `roof_surface.bin` is requested; wait for the detailed roof count in the status line after it loads.
+- Tools → Map layers: toggle the mapped surface inventory in WebGL and Canvas. Confirm the paved, vegetated and water colors match the area summary, mapped coverage is explicit, and unmapped ground remains unknown.
+- Tools → Map layers: toggle mapped cycleways in WebGL and Canvas. Confirm the highlight follows only dedicated cycleway links, unmatched-end markers align with the summary, and the OSM coverage/safety caveat remains visible.
+- Tools → Map layers: toggle terrain-only runoff concentration in WebGL and Canvas. Confirm flow cells appear only after enabling the layer, the 25 mm gross volume is about 13,249 m³, the rainfall slider scales it linearly, and the terrain/drainage limitations remain visible.
+- Start on Tools in WebGL and Canvas: public-realm points should stay unloaded until enabled; confirm the 107 mapped amenities, 381 pedestrian crossings and 3,328 parking spaces appear with counts. Crossing and parking details should reduce at broad views; retain the inferred bay-dimension caveat.
+- Tools → Place inspector: search a street by name and a building by OSM ID in both renderers; confirm the map highlight, source/unknown tags, map-pick mode and Sun/Wind location handoff.
+- Tools → Place inspector: use ArrowDown/ArrowUp/Home/End and Enter from search results, Escape to dismiss results, and verify duplicate names or missing IDs can be distinguished by ID and mapped centre.
+- Start on Tools without opening Place inspector: confirm search-feature indexing is deferred; then focus search and pick mode to confirm the index builds once and both workflows remain responsive.
 - Inspect all five evidence cards: method, dates/unknown dates, units, limits and use supported by the result. The lower-bound wind caveat stays visible.
 - Heat: change date/time/metric rapidly under network throttling. Only the newest settings should appear. Check the empty fixture and failed-source states.
 - Sun: generate shadows; then run ground/building sun hours, cancel, resize and retry. Verify result settings and units; never label this a certified daylight assessment.

@@ -88,6 +88,23 @@
       "festoonInstallations": 8,
       "bytes": 2428788,
       "cache_key": "9da89dc42c7b2f47"
+    },
+    "public_realm": {
+      "features": 107,
+      "classes": {
+        "bench": 24,
+        "bicycleParking": 6,
+        "bollard": 15,
+        "busStop": 48,
+        "fountain": 2,
+        "publicToilet": 7,
+        "streetClock": 2,
+        "wasteBasket": 3
+      },
+      "crossings": 381,
+      "parking_spaces": 3328,
+      "bytes": 1990133,
+      "cache_key": "9f66cc3ebead611c"
     }
   },
   "assets": {
@@ -95,7 +112,8 @@
     "city_model": "city_model.json",
     "canopy": "canopy.json",
     "lighting": "lighting.json",
-    "roof_surface": "roof_surface.bin"
+    "roof_surface": "roof_surface.bin",
+    "public_realm": "public_realm.json"
   },
   "buildInputs": {
     "terrain": {

@@ -16,6 +16,8 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
@@ -262,14 +264,20 @@ def run_solweig(
     )
     if not all(path.is_file() for path in (dsm, dem, cdsm, land_cover)):
         raise RuntimeError("prepared SOLWEIG DSM, DEM, CDSM and land-cover rasters are required")
+    persistent_cache = cache_dir or (PRODUCT_ROOT / "solweig-cache")
+    persistent_cache.mkdir(parents=True, exist_ok=True)
     surface = solweig.SurfaceData.prepare(
         dsm=str(dsm), dem=str(dem), cdsm=str(cdsm), land_cover=str(land_cover),
-        cdsm_relative=False, working_dir=str(cache_dir or (work_dir / "solweig_cache")),
+        cdsm_relative=False, working_dir=str(persistent_cache),
     )
     location = solweig.Location(latitude=-33.925, longitude=18.424, utc_offset=2)
     with rasterio.open(land_cover) as source:
         cover = source.read(1)
         ground = (cover != 2) & (cover != source.nodata)
+    if surface.svf is None:
+        raise RuntimeError("SOLWEIG did not prepare sky-view-factor data")
+    if np.shape(surface.svf.svf) != ground.shape:
+        raise RuntimeError("SOLWEIG sky-view-factor grid does not match the land-cover grid")
     weather = []
     by_time = {item["valid_at"]: item for item in forcing_rows}
     for suews in rows:
@@ -301,6 +309,65 @@ def run_solweig(
         products.append({"tmrt": tmrt, "shadow": shadow, "transform": transform, "crs": crs,
                          "ground_mask": ground, "diagnostics": diagnostics})
     return products, {"name": "SOLWEIG", "version": getattr(solweig, "__version__", "unknown")}
+
+
+def _publish_sky_view_factor(svf: np.ndarray, ground: np.ndarray) -> Path:
+    """Atomically publish the static SOLWEIG SVF grid for the viewer/API."""
+    svf = np.asarray(svf, dtype=np.float32)
+    if svf.shape != ground.shape:
+        raise RuntimeError("SOLWEIG sky-view-factor grid does not match the land-cover grid")
+    svf_nodata = -32768
+    encoded_svf = np.full(svf.shape, svf_nodata, dtype="<i2")
+    svf_valid = ground & np.isfinite(svf)
+    if not svf_valid.any():
+        raise RuntimeError("SOLWEIG sky-view-factor grid has no valid ground cells")
+    encoded_svf[svf_valid] = np.rint(np.clip(svf[svf_valid], 0.0, 1.0) * 32767).astype(np.int16)
+    PRODUCT_ROOT.mkdir(parents=True, exist_ok=True)
+    svf_path = PRODUCT_ROOT / "sky_view_factor.bin"
+    svf_tmp = PRODUCT_ROOT / f".sky_view_factor.{os.getpid()}.tmp"
+    try:
+        svf_tmp.write_bytes(encoded_svf.tobytes(order="C"))
+        svf_tmp.chmod(0o644)
+        os.replace(svf_tmp, svf_path)
+    finally:
+        svf_tmp.unlink(missing_ok=True)
+    return svf_path
+
+
+def ensure_sky_view_factor() -> bool:
+    """Prepare/publish the static SVF product independently of weather feeds."""
+    paths = [SURFACE_ROOT / name for name in ("dsm.tif", "dem.tif", "cdsm.tif", "landcover.tif")]
+    if not all(path.is_file() for path in paths):
+        raise RuntimeError("prepared SOLWEIG DSM, DEM, CDSM and land-cover rasters are required")
+    grid = _load_json(SURFACE_ROOT / "grid.json")
+    expected_shape = (int(grid["height"]), int(grid["width"]))
+    expected_bytes = expected_shape[0] * expected_shape[1] * np.dtype("<i2").itemsize
+    output = PRODUCT_ROOT / "sky_view_factor.bin"
+    try:
+        if output.stat().st_size == expected_bytes and output.stat().st_mtime >= max(path.stat().st_mtime for path in paths):
+            return False
+    except OSError:
+        pass
+    try:
+        import rasterio
+        import solweig
+    except ImportError as error:
+        raise RuntimeError("solweig and rasterio are required to prepare sky-view-factor data") from error
+    with rasterio.open(paths[-1]) as source:
+        cover = source.read(1)
+        if cover.shape != expected_shape:
+            raise RuntimeError(f"land-cover grid {cover.shape} does not match the configured surface grid {expected_shape}")
+        ground = (cover != 2) & (cover != source.nodata)
+    persistent_cache = PRODUCT_ROOT / "solweig-cache"
+    persistent_cache.mkdir(parents=True, exist_ok=True)
+    surface = solweig.SurfaceData.prepare(
+        dsm=str(paths[0]), dem=str(paths[1]), cdsm=str(paths[2]), land_cover=str(paths[3]),
+        cdsm_relative=False, working_dir=str(persistent_cache),
+    )
+    if surface.svf is None:
+        raise RuntimeError("SOLWEIG did not prepare sky-view-factor data")
+    _publish_sky_view_factor(np.asarray(surface.svf.svf, dtype=np.float32), ground)
+    return True
 
 
 def calculate_utci(ta: float, tr: np.ndarray, wind_10m: np.ndarray, rh: float) -> np.ndarray:
@@ -353,6 +420,8 @@ def _status_phase() -> str:
 
 def publish_once() -> dict[str, Any]:
     started = time.monotonic()
+    _write_status("running", "static_surface")
+    ensure_sky_view_factor()
     _write_status("running", "wind_atlas_validation")
     atlas_manifest, atlas_paths = load_wind_atlas()
     _write_status("running", "suews_configuration")
@@ -473,36 +542,88 @@ def _prune_runs(keep: int) -> None:
     for path in runs[keep:]:
         if path.name != current:
             shutil.rmtree(path)
+    _prune_stale_staging()
 
 
-def next_refresh_at(now: float, interval: int, radiation_delay: int) -> float:
-    """Refresh periodically while leaving a full interval for each model run."""
-    step = min(radiation_delay, interval)
-    next_tick = (now // step + 1) * step
-    return max(next_tick, now + step)
+def _prune_stale_staging(now: float | None = None, max_age_seconds: int = 86400) -> int:
+    """Remove abandoned TemporaryDirectory outputs without touching recent work."""
+    if not PRODUCT_ROOT.is_dir():
+        return 0
+    cutoff = (time.time() if now is None else now) - max_age_seconds
+    removed = 0
+    for path in PRODUCT_ROOT.glob(".thermal_*"):
+        try:
+            if path.is_symlink() or not path.is_dir() or path.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(path)
+            removed += 1
+            LOGGER.info("removed stale thermal staging directory %s", path.name)
+        except OSError:
+            LOGGER.warning("could not remove stale thermal staging directory %s", path, exc_info=True)
+    return removed
+
+
+def next_refresh_at(now: float, interval: int, last_completed_at: float | None = None) -> float:
+    """Schedule the first run now, then wait a full interval after each success."""
+    if last_completed_at is None:
+        return now
+    return max(now, last_completed_at + interval)
+
+
+def _last_success_epoch() -> float | None:
+    """Read the last published completion time so a restart does not duplicate a run."""
+    try:
+        status = _load_json(STATUS_FILE)
+        value = status.get("last_success_at")
+        if not value:
+            return None
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError, TypeError):
+        return None
+
+
+def _run_forecast_subprocess() -> int:
+    """Run one expensive forecast in a child so its model memory is reclaimed."""
+    result = subprocess.run(
+        [sys.executable, "-m", "server.thermal_worker", "--once"],
+        check=False,
+    )
+    return int(result.returncode)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true", help="Run one refresh and exit")
     parser.add_argument("--interval-seconds", type=int, default=3600)
-    parser.add_argument(
-        "--radiation-refresh-minutes", type=int, default=10,
-        help="refresh this often within every forecast interval to pick up native satellite scans",
-    )
     args = parser.parse_args()
-    if args.interval_seconds < 300 or args.radiation_refresh_minutes < 1:
-        parser.error("interval must be at least 300 seconds and radiation refresh delay at least one minute")
+    if args.interval_seconds < 3600:
+        parser.error("interval must be at least one hour")
     logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+    _prune_stale_staging()
     interval = args.interval_seconds
-    followup_delay = min(interval, args.radiation_refresh_minutes * 60)
-    next_run = time.time()
+    now = time.time()
+    last_success = None if args.once else _last_success_epoch()
+    next_run = next_refresh_at(now, interval, last_success)
     while True:
         time.sleep(max(0.0, next_run - time.time()))
         try:
             _write_status("starting", "initializing")
-            manifest = publish_once()
-            LOGGER.info("published thermal run %s", manifest["run_id"])
+            if args.once:
+                manifest = publish_once()
+                LOGGER.info("published thermal run %s", manifest["run_id"])
+            else:
+                return_code = _run_forecast_subprocess()
+                if return_code:
+                    try:
+                        failed = _load_json(STATUS_FILE).get("state") == "failed"
+                    except (FileNotFoundError, json.JSONDecodeError, OSError):
+                        failed = False
+                    if not failed:
+                        _write_status(
+                            "failed", "worker_process", error_code="WorkerProcessError",
+                            error_message=f"forecast child exited with status {return_code}",
+                        )
+                    LOGGER.error("thermal forecast child exited with status %d", return_code)
         except Exception as error:
             # Keep the actionable exception in the worker-only status file.
             # The API deliberately exposes just the error class and phase.
@@ -515,9 +636,8 @@ def main() -> None:
                 raise
         if args.once:
             return
-        # Refresh native satellite radiation throughout every forecast
-        # interval; align retries to the UTC wall clock.
-        next_run = next_refresh_at(time.time(), interval, followup_delay)
+        completed_at = time.time()
+        next_run = next_refresh_at(completed_at, interval, completed_at)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from shapely.geometry import LineString, Point
 
 import server.walking_routes as walking
 from scripts.build_walking_network import _is_walkable
@@ -46,6 +47,37 @@ def test_network_keeps_pedestrian_edges_steps_and_marks_uncertain_access():
     assert not highways.intersection({"motorway", "motorway_link", "construction", "proposed", "raceway"})
     assert any(data["tags"].get("access_unknown") for *_, data in graph.edges(data=True))
     assert edge_tree is not None and edge_ids
+
+
+def test_route_street_context_reports_tag_coverage_and_nearby_crossings(monkeypatch):
+    monkeypatch.setattr(walking, "_municipal_crossing_inventory", lambda: (
+        True,
+        (
+            {"point": Point(5, 5), "raised": True},
+            {"point": Point(50, 16), "raised": False},
+        ),
+    ))
+    edges = [
+        {"length_m": 40, "tags": {"lit": "yes", "sidewalk": "both", "width": "2.0"}},
+        {"length_m": 20, "tags": {"lit": "no", "sidewalk": "no"}},
+        {"length_m": 40, "tags": {}},
+    ]
+
+    context = walking._route_street_context(LineString([(0, 0), (100, 0)]), edges)
+
+    assert context["crossings"] == {
+        "status": "available", "source": "City of Cape Town pedestrian-crossing point inventory",
+        "search_radius_m": 15.0, "nearby_point_count": 1, "nearby_raised_point_count": 1,
+    }
+    assert context["lighting"] == {
+        "source": "OpenStreetMap pedestrian-network way tags",
+        "tagged_lit_percent": 40.0, "tagged_unlit_percent": 20.0, "unknown_percent": 40.0,
+    }
+    assert context["sidewalk"]["tagged_percent"] == 60.0
+    assert context["sidewalk"]["tagged_no_percent"] == 20.0
+    assert context["sidewalk"]["unknown_percent"] == 40.0
+    assert context["width"]["tagged_percent"] == 40.0
+    assert context["width"]["unknown_percent"] == 60.0
 
 
 def test_builder_filters_prohibited_roads_and_respects_explicit_foot_access():

@@ -3,7 +3,8 @@ import * as THREE from './vendor/three.module.min.js';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFromDrag, panFromDrag } from './cameraControls.js';
-import { createTransportLayer } from './transportLayer.js?v=30';
+import { createTransportLayer } from './transportLayer.js?v=32';
+import { attachPlaceInspector } from './placeInspector.js?v=3';
 
 const COLORS = {
   background: 0x101719,
@@ -56,6 +57,18 @@ export async function startWebGLScene(canvas, status) {
   renderer.shadowMap.autoUpdate = false;
 
   const manifest = assertManifest(await fetch('/assets/manifest.json', { cache: 'no-store' }).then(response => response.json()));
+  let roofSurfaceBuffer = null;
+  let roofSurfacePromise = null;
+  const loadRoofSurface = () => {
+    if (!roofSurfacePromise) {
+      roofSurfacePromise = manifest.assets?.roof_surface
+        ? fetch(`/assets/${manifest.assets.roof_surface}?v=${manifest.layers?.roof_surface?.cache_key || manifest.layers?.roof_surface?.bytes || 0}`)
+          .then(response => response.ok ? response.arrayBuffer() : null)
+          .catch(error => { console.warn(`Detailed roof surface unavailable: ${error.message}`); return null; })
+        : Promise.resolve(null);
+    }
+    return roofSurfacePromise;
+  };
   const loadRendererScene = async () => {
     // The compact scene is intentionally the normal interactive asset. The
     // full semantic model and dense roof mesh remain available for analysis,
@@ -73,17 +86,15 @@ export async function startWebGLScene(canvas, status) {
     fallback.cityFurniture = [];
     return fallback;
   };
-  const [data, canopyAsset, roofSurfaceBuffer] = await Promise.all([
+  const [data, canopyAsset] = await Promise.all([
     loadRendererScene(),
     fetch(`/assets/canopy.json?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
-    manifest.assets?.roof_surface
-      ? fetch(`/assets/${manifest.assets.roof_surface}?v=${manifest.layers?.roof_surface?.cache_key || manifest.layers?.roof_surface?.bytes || 0}`)
-        .then(response => response.ok ? response.arrayBuffer() : null)
-        .catch(error => { console.warn(`Detailed roof surface unavailable: ${error.message}`); return null; })
-      : Promise.resolve(null),
   ]);
 
   const scene = new THREE.Scene();
+  const placeInspectorHighlight = new THREE.Group();
+  placeInspectorHighlight.name = 'place-inspector-highlight';
+  scene.add(placeInspectorHighlight);
   scene.background = new THREE.Color(COLORS.background);
   // Procedural atmospheric sky rendered on an inward-facing sphere. It follows
   // the camera position while retaining world orientation, so celestial bodies
@@ -401,14 +412,19 @@ export async function startWebGLScene(canvas, status) {
   let groundPickHandler = null;
   let clickCandidate = null;
   const scenePickHandlers = new Set();
+  let placeInspectorPickMode = false;
   const layerGroups = {
     terrain: new THREE.Group(),
+    groundcover: new THREE.Group(),
+    cycling: new THREE.Group(),
+    runoff: new THREE.Group(),
     water: new THREE.Group(),
     grass: new THREE.Group(),
     railways: new THREE.Group(),
     paths: new THREE.Group(),
     roads: new THREE.Group(),
     cityFurniture: new THREE.Group(),
+    publicRealm: new THREE.Group(),
     buildings: new THREE.Group(),
     trees: new THREE.Group(),
   };
@@ -418,7 +434,19 @@ export async function startWebGLScene(canvas, status) {
   const groundSurfaceMeshes = [];
   const pavementOverrideMeshes = [];
   const sunModeNeutralMeshes = [];
+  layerGroups.groundcover.visible = false;
+  layerGroups.cycling.visible = false;
+  layerGroups.runoff.visible = false;
+  layerGroups.cityFurniture.visible = false;
+  layerGroups.publicRealm.visible = false;
   Object.values(layerGroups).forEach(group => scene.add(group));
+  let groundcoverLoaded = false;
+  let groundcoverLoading = null;
+  let cyclingLoaded = false;
+  let runoffLoading = null;
+  let runoffLoaded = false;
+  let runoffMetadata = null;
+  let runoffRainfallDepthMm = 25;
 
   // Decorative and municipal lighting share the same solar switch. Street
   // lamp glows and ground pools are batched; only festoon fill lights use
@@ -513,7 +541,20 @@ export async function startWebGLScene(canvas, status) {
   // Roads are designed surfaces, so they should not inherit every small DTM
   // bump or seam. A local median rejects isolated spikes while retaining the
   // broader street slope and avoids twisting markings across the carriageway.
+  const roadTerrainHeightCache = new Map();
+  const roadTerrainHeightCacheKey = (x, z) => {
+    const qx = Math.round((x + 10000) * 1000);
+    const qz = Math.round((z + 10000) * 1000);
+    return qx >= 0 && qx <= 20000000 && qz >= 0 && qz <= 20000000
+      ? qx * 20000001 + qz
+      : null;
+  };
   function roadTerrainHeightAt(x, z) {
+    const key = roadTerrainHeightCacheKey(x, z);
+    if (key !== null) {
+      const cached = roadTerrainHeightCache.get(key);
+      if (cached !== undefined) return cached;
+    }
     const radius = 4;
     const samples = [
       terrainHeightAt(x, z),
@@ -522,10 +563,52 @@ export async function startWebGLScene(canvas, status) {
       terrainHeightAt(x - radius, z - radius), terrainHeightAt(x + radius, z - radius),
       terrainHeightAt(x - radius, z + radius), terrainHeightAt(x + radius, z + radius),
     ].sort((a, b) => a - b);
-    return samples[Math.floor(samples.length / 2)];
+    const height = samples[Math.floor(samples.length / 2)];
+    if (key !== null && roadTerrainHeightCache.size < 120000) roadTerrainHeightCache.set(key, height);
+    return height;
   }
 
   const roadSurfaceHeightAt = (x, z) => Math.max(roadTerrainHeightAt(x, z), terrainSurfaceHeightAt(x, z));
+
+  function clearPlaceInspectorHighlight() {
+    for (const child of [...placeInspectorHighlight.children]) {
+      placeInspectorHighlight.remove(child);
+      child.geometry?.dispose();
+      if (Array.isArray(child.material)) child.material.forEach(material => material.dispose());
+      else child.material?.dispose();
+    }
+  }
+
+  function focusPlaceInspector(feature, { focus = true } = {}) {
+    clearPlaceInspectorHighlight();
+    if (feature.kind === 'building') {
+      const top = Number(feature.value[0] || 0) + Math.max(1, Number(feature.value[5] || feature.value[1] || 1)) + 1.2;
+      const points = feature.ring.map(([x, z]) => new THREE.Vector3(x, top, z));
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const outline = new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({
+        color: 0xffd46b, transparent: true, opacity: 0.98, depthTest: false, depthWrite: false,
+      }));
+      outline.renderOrder = 1000;
+      placeInspectorHighlight.add(outline);
+    } else {
+      const points = feature.points.map(([x, z]) => new THREE.Vector3(x, roadTerrainHeightAt(x, z) + 1.8, z));
+      if (points.length >= 2) {
+        const curve = new THREE.CatmullRomCurve3(points);
+        const geometry = new THREE.TubeGeometry(curve, Math.max(12, Math.min(128, points.length * 4)), 1.15, 6, false);
+        const line = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+          color: 0xffd46b, transparent: true, opacity: 0.94, depthTest: false, depthWrite: false,
+        }));
+        line.renderOrder = 1000;
+        placeInspectorHighlight.add(line);
+      }
+    }
+    if (focus) {
+      cameraState.target.set(feature.x, terrainSurfaceHeightAt(feature.x, feature.z) + 12, feature.z);
+      cameraState.distance = Math.min(cameraState.distance, feature.kind === 'street' ? 700 : 550);
+      updateCamera();
+    }
+    requestRender();
+  }
 
   // terrainHeightAt clamps to the grid edge, so anything asked about a point
   // beyond the terrain gets the nearest edge height and appears to float over
@@ -677,9 +760,10 @@ export async function startWebGLScene(canvas, status) {
     return [rim, slab];
   }
 
-  function makeSurfaceTexture(kind) {
-    const size = 256;
-    const pixels = new Uint8Array(size * size * 4);
+  const surfaceTextureCache = new Map();
+  let sharedSurfaceNoiseFields = null;
+  function surfaceNoiseFields(size) {
+    if (sharedSurfaceNoiseFields) return sharedSurfaceNoiseFields;
     const fract = value => value - Math.floor(value);
     const hash = (x, y, cells, seed) => {
       const wrappedX = (x % cells + cells) % cells;
@@ -696,6 +780,33 @@ export async function startWebGLScene(canvas, status) {
       const bottom = hash(x0, y0 + 1, cells, seed) * (1 - sx) + hash(x0 + 1, y0 + 1, cells, seed) * sx;
       return top * (1 - sy) + bottom * sy;
     };
+    const count = size * size;
+    const fields = { broad: new Float64Array(count), medium: new Float64Array(count), fine: new Float64Array(count) };
+    for (let y = 0; y < size; y += 1) {
+      const v = y / size;
+      for (let x = 0; x < size; x += 1) {
+        const index = y * size + x, u = x / size;
+        fields.broad[index] = noise(u, v, 4, 17);
+        fields.medium[index] = noise(u, v, 13, 29);
+        fields.fine[index] = noise(u, v, 44, 41);
+      }
+    }
+    sharedSurfaceNoiseFields = fields;
+    return fields;
+  }
+
+  function makeSurfaceTexture(kind) {
+    if (surfaceTextureCache.has(kind)) return surfaceTextureCache.get(kind);
+    const size = 256;
+    const pixels = new Uint8Array(size * size * 4);
+    const { broad: broadField, medium: mediumField, fine: fineField } = surfaceNoiseFields(size);
+    const fract = value => value - Math.floor(value);
+    const hash = (x, y, cells, seed) => {
+      const wrappedX = (x % cells + cells) % cells;
+      const wrappedY = (y % cells + cells) % cells;
+      const value = Math.sin((wrappedX + seed * 13.1) * 127.1 + (wrappedY - seed * 3.7) * 311.7) * 43758.5453;
+      return fract(value);
+    };
     const smoothstep = (edge0, edge1, value) => {
       const amount = clamp((value - edge0) / (edge1 - edge0), 0, 1);
       return amount * amount * (3 - 2 * amount);
@@ -711,9 +822,10 @@ export async function startWebGLScene(canvas, status) {
     for (let y = 0; y < size; y += 1) {
       for (let x = 0; x < size; x += 1) {
         const u = x / size, v = y / size;
-        const broad = noise(u, v, 4, 17);
-        const medium = noise(u, v, 13, 29);
-        const fine = noise(u, v, 44, 41);
+        const index = y * size + x;
+        const broad = broadField[index];
+        const medium = mediumField[index];
+        const fine = fineField[index];
         if (kind === 'grass') {
           const dry = smoothstep(0.61, 0.86, broad * 0.7 + medium * 0.3);
           const variation = (broad - 0.5) * 17 + (medium - 0.5) * 12 + (fine - 0.5) * 7;
@@ -807,6 +919,7 @@ export async function startWebGLScene(canvas, status) {
     texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
+    surfaceTextureCache.set(kind, texture);
     return texture;
   }
 
@@ -814,6 +927,14 @@ export async function startWebGLScene(canvas, status) {
     const positions = [];
     const uvs = [];
     const indices = [];
+    const terrainMask = terrain.valid;
+    const cellValid = index => !terrainMask?.length || terrainMask[index] > 0;
+    const appendPartialTriangle = (ax, ay, az, bx, by, bz, cx, cy, cz) => {
+      const first = positions.length / 3;
+      positions.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+      uvs.push(ax / 32, az / 32, bx / 32, bz / 32, cx / 32, cz / 32);
+      indices.push(first, first + 1, first + 2);
+    };
     for (let row = 0; row < terrain.rows; row += 1) {
       for (let column = 0; column < terrain.columns; column += 1) {
         const x = left + terrainWidth * column / (terrain.columns - 1);
@@ -835,26 +956,19 @@ export async function startWebGLScene(canvas, status) {
         // Keep the regular terrain grid in the interior, but refine only cells
         // that cross the lidar footprint. This cuts the city edge to the survey
         // outline instead of extending whole coarse cells into the void.
-        const triangles = [
-          [[[x0, terrain.heights[a], z0], [x0, terrain.heights[c], z1], [x1, terrain.heights[b], z0]], [a, c, b]],
-          [[[x1, terrain.heights[b], z0], [x0, terrain.heights[c], z1], [x1, terrain.heights[d], z1]], [b, c, d]],
-        ];
-        for (const [triangle, baseIndices] of triangles) {
-          const flags = triangle.map(([x, , z]) => terrainValidAt(x, z));
-          const centerX = (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3;
-          const centerZ = (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3;
-          const centerValid = terrainValidAt(centerX, centerZ);
-          flags.push(centerValid);
-          if (flags.every(Boolean)) indices.push(...baseIndices);
-          else if (flags.some(Boolean) && centerValid) {
-            const first = positions.length / 3;
-            for (const [x, y, z] of triangle) {
-              positions.push(x, y, z);
-              uvs.push(x / 32, z / 32);
-            }
-            indices.push(first, first + 1, first + 2);
-          }
-        }
+        const validA = cellValid(a), validB = cellValid(b);
+        const validC = cellValid(c), validD = cellValid(d);
+        // The old centroid validity check rounds to the nearest terrain grid
+        // vertex: triangle A-C-B resolves to A, and B-C-D resolves to D.
+        // Reuse those exact mask values and retain the same partial-cell rule.
+        if (validA && validB && validC) indices.push(a, c, b);
+        else if (validA) appendPartialTriangle(
+          x0, terrain.heights[a], z0, x0, terrain.heights[c], z1, x1, terrain.heights[b], z0,
+        );
+        if (validB && validC && validD) indices.push(b, c, d);
+        else if (validD) appendPartialTriangle(
+          x1, terrain.heights[b], z0, x0, terrain.heights[c], z1, x1, terrain.heights[d], z1,
+        );
       }
     }
     const geometry = new THREE.BufferGeometry();
@@ -915,21 +1029,35 @@ export async function startWebGLScene(canvas, status) {
     return triangulateRings(ring).faces;
   }
 
+  const waterNoiseCache = new Map();
+  function waterNoiseTables(seed) {
+    if (waterNoiseCache.has(seed)) return waterNoiseCache.get(seed);
+    const tables = new Map();
+    for (const cells of [4, 12, 40]) {
+      const values = new Float64Array(cells * cells);
+      for (let y = 0; y < cells; y += 1) for (let x = 0; x < cells; x += 1) {
+        const value = Math.sin((x + seed * 13.1) * 127.1 + (y - seed * 3.7) * 311.7) * 43758.5453;
+        values[y * cells + x] = value - Math.floor(value);
+      }
+      tables.set(cells, values);
+    }
+    waterNoiseCache.set(seed, tables);
+    return tables;
+  }
+
   function makeWaterTexture(algaeStrength, seed) {
     const size = 256;
     const pixels = new Uint8Array(size * size * 4);
-    const hash = (x, y) => {
-      const value = Math.sin((x + seed * 13.1) * 127.1 + (y - seed * 3.7) * 311.7) * 43758.5453;
-      return value - Math.floor(value);
-    };
+    const tables = waterNoiseTables(seed);
     const noise = (u, v, cells) => {
       const x = u * cells, y = v * cells;
       const x0 = Math.floor(x), y0 = Math.floor(y);
       const fx = x - x0, fy = y - y0;
       const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+      const table = tables.get(cells);
       const wrap = value => (value % cells + cells) % cells;
-      const top = hash(wrap(x0), wrap(y0)) * (1 - sx) + hash(wrap(x0 + 1), wrap(y0)) * sx;
-      const bottom = hash(wrap(x0), wrap(y0 + 1)) * (1 - sx) + hash(wrap(x0 + 1), wrap(y0 + 1)) * sx;
+      const top = table[wrap(y0) * cells + wrap(x0)] * (1 - sx) + table[wrap(y0) * cells + wrap(x0 + 1)] * sx;
+      const bottom = table[wrap(y0 + 1) * cells + wrap(x0)] * (1 - sx) + table[wrap(y0 + 1) * cells + wrap(x0 + 1)] * sx;
       return top * (1 - sy) + bottom * sy;
     };
     const smoothstep = (edge0, edge1, value) => {
@@ -2452,32 +2580,300 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
+  async function loadGroundcoverInventory() {
+    const summary = document.querySelector('#groundcover-summary');
+    const status = document.querySelector('#groundcover-status');
+    const areas = document.querySelector('#groundcover-areas');
+    const caveat = document.querySelector('#groundcover-caveat');
+    if (summary) summary.hidden = false;
+    if (groundcoverLoaded) return;
+    if (groundcoverLoading) return groundcoverLoading;
+    groundcoverLoading = (async () => {
+      if (status) status.textContent = 'Loading mapped surface coverage…';
+      try {
+        const response = await fetch(`${windApi}/groundcover`, { requestKey: 'groundcover-inventory' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+        const palette = {
+          paved: { color: 0xe8ad61 }, vegetated: { color: 0x5ecb91 }, water: { color: 0x54c3e1 },
+        };
+        for (const category of payload.categories || []) {
+          const style = palette[category.category];
+          if (!style) continue;
+          const positions = [], indices = [];
+          let vertexCount = 0;
+          const appendTriangle = (a, b, c) => {
+            const edgeLength = Math.max(
+              Math.hypot(b[0] - a[0], b[1] - a[1]),
+              Math.hypot(c[0] - b[0], c[1] - b[1]),
+              Math.hypot(a[0] - c[0], a[1] - c[1]),
+            );
+            const divisions = clamp(Math.ceil(edgeLength / 8), 1, 48);
+            const rows = [];
+            for (let row = 0; row <= divisions; row += 1) {
+              const rowIndices = [];
+              for (let column = 0; column <= divisions - row; column += 1) {
+                const wb = column / divisions, wc = row / divisions, wa = 1 - wb - wc;
+                const x = a[0] * wa + b[0] * wb + c[0] * wc;
+                const z = a[1] * wa + b[1] * wb + c[1] * wc;
+                rowIndices.push(vertexCount++);
+                positions.push(x, terrainSurfaceHeightAt(x, z) + 0.62, z);
+              }
+              rows.push(rowIndices);
+            }
+            for (let row = 0; row < divisions; row += 1) {
+              for (let column = 0; column < divisions - row; column += 1) {
+                indices.push(rows[row][column], rows[row][column + 1], rows[row + 1][column]);
+                if (column + row < divisions - 1) {
+                  indices.push(rows[row][column + 1], rows[row + 1][column + 1], rows[row + 1][column]);
+                }
+              }
+            }
+          };
+          for (const polygon of category.polygons || []) {
+            const outer = polygon[0] || [];
+            if (outer.length < 3) continue;
+            let triangulated;
+            try { triangulated = triangulateRings(outer, polygon.slice(1)); }
+            catch { continue; }
+            for (const face of triangulated.faces) {
+              appendTriangle(triangulated.vertices[face[0]], triangulated.vertices[face[1]], triangulated.vertices[face[2]]);
+            }
+          }
+          if (!indices.length) continue;
+          const geometry = new THREE.BufferGeometry();
+          geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+          geometry.setIndex(indices);
+          geometry.computeVertexNormals();
+          const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+            color: style.color, transparent: true, opacity: 0.76,
+            roughness: 0.96, metalness: 0, side: THREE.DoubleSide,
+            depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3,
+          }));
+          mesh.renderOrder = 4;
+          mesh.name = `groundcover-${category.category}`;
+          layerGroups.groundcover.add(mesh);
+        }
+        if (status) status.textContent = `${Number(payload.coverage_percent || 0).toFixed(1)}% of the mapped terrain footprint has a classified polygon (${(Number(payload.mapped_area_m2 || 0) / 10000).toFixed(1)} ha).`;
+        if (areas) areas.replaceChildren(...(payload.categories || []).map(category => {
+          const row = document.createElement('div');
+          row.className = `groundcover-area ${category.category}`;
+          const name = document.createElement('span'); name.textContent = category.label;
+          const area = document.createElement('b'); area.textContent = `${(Number(category.area_m2 || 0) / 10000).toFixed(1)} ha`;
+          row.append(name, area); return row;
+        }));
+        if (caveat) caveat.textContent = `${payload.source}. ${payload.caveat}`;
+        groundcoverLoaded = true;
+      } catch (error) {
+        if (status) status.textContent = `Surface inventory unavailable · ${error.message || 'try again later'}`;
+      } finally {
+        groundcoverLoading = null;
+        requestRender();
+      }
+    })();
+    return groundcoverLoading;
+  }
+
+  function updateRunoffSummary() {
+    const rainfallOutput = document.querySelector('#runoff-rainfall-value');
+    const volume = document.querySelector('#runoff-volume');
+    if (rainfallOutput) rainfallOutput.textContent = `${runoffRainfallDepthMm} mm`;
+    if (!runoffMetadata || !volume) return;
+    const grossVolume = Number(runoffMetadata.mapped_paved_area_m2 || 0) * runoffRainfallDepthMm / 1000;
+    volume.textContent = `${grossVolume.toLocaleString('en-ZA', { maximumFractionDigits: 0 })} m³ gross rainfall on mapped pavement under the stated 100% runoff assumption.`;
+  }
+
+  async function loadRunoffScreening() {
+    const summary = document.querySelector('#runoff-summary');
+    const status = document.querySelector('#runoff-status');
+    const caveat = document.querySelector('#runoff-caveat');
+    if (summary) summary.hidden = false;
+    if (runoffLoaded) return;
+    if (runoffLoading) return runoffLoading;
+    runoffLoading = (async () => {
+      if (status) status.textContent = 'Loading mapped-pavement flow paths…';
+      try {
+        const response = await fetch(`${windApi}/runoff/screening`, { requestKey: 'runoff-screening' });
+        const metadata = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(metadata.detail || `HTTP ${response.status}`);
+        const assetResponse = await fetch(`${metadata.asset_url}?v=${metadata.asset_cache_key || metadata.asset_sha256}`);
+        if (!assetResponse.ok) throw new Error(`flow asset HTTP ${assetResponse.status}`);
+        const buffer = await assetResponse.arrayBuffer();
+        const headerSize = 36, recordSize = 8;
+        if (buffer.byteLength < headerSize || String.fromCharCode(...new Uint8Array(buffer, 0, 8)) !== 'CTFLOW01') {
+          throw new Error('flow asset header is invalid');
+        }
+        const header = new DataView(buffer, 0, headerSize);
+        const width = header.getUint32(8, true), height = header.getUint32(12, true);
+        const resolution = header.getFloat32(16, true);
+        const minX = header.getFloat32(20, true), minZ = header.getFloat32(24, true);
+        const threshold = header.getFloat32(28, true), count = header.getUint32(32, true);
+        if (headerSize + count * recordSize !== buffer.byteLength
+          || width !== Number(metadata.grid?.width) || height !== Number(metadata.grid?.height)
+          || count !== Number(metadata.record_count)) throw new Error('flow asset dimensions do not match its manifest');
+
+        const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 3);
+        const records = new DataView(buffer, headerSize);
+        let maximumArea = threshold;
+        for (let index = 0; index < count; index += 1) maximumArea = Math.max(maximumArea, records.getUint32(index * recordSize + 4, true));
+        const lowColor = new THREE.Color(0x2475e5);
+        const middleColor = new THREE.Color(0x27cbd1);
+        const highColor = new THREE.Color(0xff7958);
+        const color = new THREE.Color();
+        for (let index = 0; index < count; index += 1) {
+          const offset = index * recordSize;
+          const row = records.getUint16(offset, true), column = records.getUint16(offset + 2, true);
+          const area = records.getUint32(offset + 4, true);
+          const x = minX + (column + 0.5) * resolution;
+          const z = minZ + (row + 0.5) * resolution;
+          positions.set([x, terrainSurfaceHeightAt(x, z) + 0.82, z], index * 3);
+          const blend = clamp(Math.log(Math.max(1, area / threshold)) / Math.log(Math.max(1.01, maximumArea / threshold)), 0, 1);
+          if (blend < 0.58) color.copy(lowColor).lerp(middleColor, blend / 0.58);
+          else color.copy(middleColor).lerp(highColor, (blend - 0.58) / 0.42);
+          colors.set([color.r, color.g, color.b], index * 3);
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        const points = new THREE.Points(geometry, new THREE.PointsMaterial({
+          size: 5.5, sizeAttenuation: true, vertexColors: true, transparent: true,
+          opacity: 0.92, depthWrite: false,
+        }));
+        points.name = 'mapped-pavement-runoff-concentration';
+        points.renderOrder = 7;
+        layerGroups.runoff.add(points);
+        runoffMetadata = metadata;
+        runoffLoaded = true;
+        if (status) status.textContent = `${Number(metadata.record_count).toLocaleString()} flow cells · ${(Number(metadata.mapped_paved_area_m2) / 10000).toFixed(1)} ha mapped pavement · ${Number(metadata.mapped_paved_coverage_percent).toFixed(1)}% of valid terrain.`;
+        if (caveat) caveat.textContent = `${metadata.method} ${metadata.runoff_assumption} ${metadata.limitations}`;
+        updateRunoffSummary();
+      } catch (error) {
+        if (status) status.textContent = `Runoff screen unavailable · ${error.message || 'try again later'}`;
+      } finally {
+        runoffLoading = null;
+        requestRender();
+      }
+    })();
+    return runoffLoading;
+  }
+
+  function buildCyclingLayer() {
+    if (cyclingLoaded) return;
+    cyclingLoaded = true;
+    const ways = (data.roads || []).filter(record => record[1] === 'cycleway' && record[2]?.length >= 2)
+      .map(record => record[2]);
+    const parents = ways.map((_, index) => index);
+    const find = index => {
+      while (parents[index] !== index) {
+        parents[index] = parents[parents[index]];
+        index = parents[index];
+      }
+      return index;
+    };
+    const join = (a, b) => { parents[find(a)] = find(b); };
+    const distanceToSegment = (point, a, b) => {
+      const dx = b[0] - a[0], dz = b[1] - a[1];
+      const amount = clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / Math.max(dx * dx + dz * dz, 1e-6), 0, 1);
+      return Math.hypot(point[0] - a[0] - dx * amount, point[1] - a[1] - dz * amount);
+    };
+    let totalLength = 0, openEnds = 0;
+    const endpoints = [];
+    ways.forEach((points, index) => {
+      for (let point = 1; point < points.length; point += 1) {
+        totalLength += Math.hypot(points[point][0] - points[point - 1][0], points[point][1] - points[point - 1][1]);
+      }
+      endpoints.push([index, points[0]], [index, points[points.length - 1]]);
+    });
+    const openEndpointPositions = [];
+    for (const [wayIndex, endpoint] of endpoints) {
+      let linked = false;
+      for (let otherIndex = 0; otherIndex < ways.length; otherIndex += 1) {
+        if (otherIndex === wayIndex) continue;
+        const other = ways[otherIndex];
+        let nearest = Infinity;
+        for (let point = 1; point < other.length; point += 1) {
+          nearest = Math.min(nearest, distanceToSegment(endpoint, other[point - 1], other[point]));
+          if (nearest <= 8) break;
+        }
+        if (nearest <= 8) {
+          linked = true;
+          join(wayIndex, otherIndex);
+        }
+      }
+      if (!linked) {
+        openEnds += 1;
+        openEndpointPositions.push(endpoint);
+      }
+    }
+    const components = new Set(ways.map((_, index) => find(index))).size;
+    const dark = new THREE.MeshBasicMaterial({ color: 0x073842, transparent: true, opacity: 0.94, depthWrite: false });
+    const highlight = new THREE.MeshBasicMaterial({ color: 0x56e4ed, transparent: true, opacity: 0.98, depthWrite: false });
+    for (const points of ways) {
+      const pathPoints = points.map(([x, z]) => new THREE.Vector3(x, terrainSurfaceHeightAt(x, z) + 1.15, z));
+      const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal');
+      const divisions = Math.max(16, Math.ceil(curve.getLength() / 1.5));
+      const outer = new THREE.Mesh(new THREE.TubeGeometry(curve, divisions, 1.12, 6, false), dark);
+      const inner = new THREE.Mesh(new THREE.TubeGeometry(curve, divisions, 0.62, 6, false), highlight);
+      outer.renderOrder = inner.renderOrder = 8;
+      outer.name = 'mapped-cycleway-outline';
+      inner.name = 'mapped-cycleway-highlight';
+      layerGroups.cycling.add(outer, inner);
+    }
+    const endMarkerGeometry = new THREE.SphereGeometry(1.35, 10, 8);
+    const endMarkerMaterial = new THREE.MeshBasicMaterial({ color: 0xffc46b });
+    for (const [x, z] of openEndpointPositions) {
+      const marker = new THREE.Mesh(endMarkerGeometry, endMarkerMaterial);
+      marker.position.set(x, terrainSurfaceHeightAt(x, z) + 1.4, z);
+      marker.renderOrder = 9;
+      marker.name = 'unmatched-mapped-cycleway-end';
+      layerGroups.cycling.add(marker);
+    }
+    const status = document.querySelector('#cycling-status');
+    const caveat = document.querySelector('#cycling-caveat');
+    if (status) status.textContent = ways.length
+      ? `${ways.length} mapped links · ${(totalLength / 1000).toFixed(2)} km · ${components} connected groups · ${openEnds} unmatched ends.`
+      : 'No dedicated cycleway links are present in this map extract.';
+    if (caveat) caveat.textContent = 'OpenStreetMap dedicated cycleway features only; endpoints are unmatched when more than 8 m from another mapped cycleway. They may be intentional terminals. Other roads may allow cycling but are not counted here. This is not a safety or accessibility assessment.';
+  }
+
   function makeCanopies() {
     const canopies = canopyAsset.canopies || [];
     const positions = [];
     const uvs = [];
     const shades = [];
     const indices = [];
-    const vertexLookup = new Map();
+    let vertexLookup = new Map();
+    let canopyShade = 0;
+    let vertexOriginX = 0, vertexOriginY = 0, vertexOriginZ = 0;
     const hashHeight = (x, z, seed) => {
       const value = Math.sin(x * 12.9898 + z * 78.233 + seed * 0.000001) * 43758.5453;
       return value - Math.floor(value);
     };
-    const addVertex = (x, y, z, shade) => {
-      const key = `${x.toFixed(3)}:${y.toFixed(3)}:${z.toFixed(3)}:${shade.toFixed(3)}`;
+    const addVertex = (x, y, z) => {
+      const qx = Math.round((x - vertexOriginX) * 1000);
+      const qy = Math.round((y - vertexOriginY) * 1000);
+      const qz = Math.round((z - vertexOriginZ) * 1000);
+      // Crown-local millimetre coordinates fit into 17 bits per axis for
+      // ordinary trees. Pack them into an exact 51-bit integer Map key and
+      // keep the original string key as a safe fallback for oversized crowns.
+      const packed = qx >= 0 && qx < 131072 && qy >= 0 && qy < 131072 && qz >= 0 && qz < 131072;
+      const key = packed
+        ? (qx * 131072 + qy) * 131072 + qz
+        : `${Math.round(x * 1000)},${Math.round(y * 1000)},${Math.round(z * 1000)}`;
       if (vertexLookup.has(key)) return vertexLookup.get(key);
       const index = positions.length / 3;
       vertexLookup.set(key, index);
       positions.push(x, y, z);
       uvs.push(x / 10, z / 10);
-      shades.push(shade, shade, shade);
+      shades.push(canopyShade, canopyShade, canopyShade);
       return index;
     };
-    const addTriangle = (a, b, c, shade) => {
+    const addTriangle = (a, b, c) => {
       indices.push(
-        addVertex(a.x, a.y, a.z, shade),
-        addVertex(b.x, b.y, b.z, shade),
-        addVertex(c.x, c.y, c.z, shade),
+        addVertex(a.x, a.y, a.z),
+        addVertex(b.x, b.y, b.z),
+        addVertex(c.x, c.y, c.z),
       );
     };
     const smoothRing = (ring, iterations) => {
@@ -2497,10 +2893,13 @@ export async function startWebGLScene(canvas, status) {
       return points;
     };
     for (const [, , crownBase, crownTop, seed, sourceRings] of canopies) {
-      const shade = 0.86 + hashHeight(0, 0, seed) * 0.28;
+      canopyShade = 0.86 + hashHeight(0, 0, seed) * 0.28;
+      // Vertices are shared within one crown for smooth normals. Separate
+      // crowns intentionally keep their own normals and colour variation.
+      vertexLookup = new Map();
       const rings = sourceRings.map(sourceRing => {
         const ring = sourceRing.map(([x, z]) => new THREE.Vector2(x, z));
-        return smoothRing(ring, ring.length > 128 ? 1 : 2);
+        return smoothRing(ring, 1);
       });
       const contour = rings[0] || [];
       const holes = rings.slice(1);
@@ -2509,10 +2908,16 @@ export async function startWebGLScene(canvas, status) {
       const canopyHeight = Math.max(0.6, crownTop - crownBase);
       let centerX = 0;
       let centerZ = 0;
+      let minimumX = Infinity, minimumZ = Infinity;
       for (const point of contour) {
         centerX += point.x;
         centerZ += point.y;
+        minimumX = Math.min(minimumX, point.x);
+        minimumZ = Math.min(minimumZ, point.y);
       }
+      vertexOriginX = Math.floor(minimumX * 1000) / 1000;
+      vertexOriginY = Math.floor(crownBase * 1000) / 1000;
+      vertexOriginZ = Math.floor(minimumZ * 1000) / 1000;
       centerX /= contour.length;
       centerZ /= contour.length;
       const canopyRadius = Math.max(0.7, ...contour.map(point => Math.hypot(point.x - centerX, point.y - centerZ)));
@@ -2536,10 +2941,10 @@ export async function startWebGLScene(canvas, status) {
         const ab = midpoint(a, b);
         const bc = midpoint(b, c);
         const ca = midpoint(c, a);
-        addTriangle(a, ab, ca, shade);
-        addTriangle(ab, b, bc, shade);
-        addTriangle(ca, bc, c, shade);
-        addTriangle(ab, bc, ca, shade);
+        addTriangle(a, ab, ca);
+        addTriangle(ab, b, bc);
+        addTriangle(ca, bc, c);
+        addTriangle(ab, bc, ca);
       }
       for (const ring of rings) {
         for (let index = 0; index < ring.length; index += 1) {
@@ -2551,8 +2956,8 @@ export async function startWebGLScene(canvas, status) {
           const topB = { x: b.x, y: topY(b), z: b.y };
           const bottomA = { x: a.x, y: lowerA, z: a.y };
           const bottomB = { x: b.x, y: lowerB, z: b.y };
-          addTriangle(topA, topB, bottomB, shade);
-          addTriangle(topA, bottomB, bottomA, shade);
+          addTriangle(topA, topB, bottomB);
+          addTriangle(topA, bottomB, bottomA);
         }
       }
     }
@@ -2599,8 +3004,10 @@ export async function startWebGLScene(canvas, status) {
     return canopies.length;
   }
 
-  function makeStreetFurniture() {
-    const group = layerGroups.cityFurniture;
+  function makeStreetFurniture(furnitureRecords = data.cityFurniture || [], targetGroup = layerGroups.cityFurniture, featureLayers = {}) {
+    const group = targetGroup;
+    const crossings = featureLayers.crossings || data.crossings || [];
+    const parking = featureLayers.parking || data.parking || [];
     const matrix = new THREE.Matrix4();
     const makeInstances = (geometry, material, matrices, semanticClass) => {
       if (!matrices.length) return null;
@@ -2633,7 +3040,7 @@ export async function startWebGLScene(canvas, status) {
     // South African municipal lighting inventories commonly describe the
     // support rather than pole height. These conservative values are inferred
     // from support type and wattage and remain tagged as inferred, not survey.
-    const publicLights = (data.cityFurniture || []).filter(item => item.class === 'publicLight' && item.coordinates);
+    const publicLights = furnitureRecords.filter(item => item.class === 'publicLight' && item.coordinates);
     const poleMatrices = [], armMatrices = [], headMatrices = [], lampMatrices = [], lampGlowPositions = [], lampPoolMatrices = [];
     for (const item of publicLights) {
       const [x, z] = item.coordinates;
@@ -2863,7 +3270,7 @@ export async function startWebGLScene(canvas, status) {
     // between records that belong to the same row.
     const parkingMatrices = [];
     const parkingGroups = new Map();
-    for (const item of data.parking || []) {
+    for (const item of parking) {
       if (!item.coordinates) continue;
       const rawBearing = Number(item.attributes?.roadBearingDeg) || 0;
       const normalizedBearing = ((rawBearing + 90) % 180 + 180) % 180 - 90;
@@ -2938,7 +3345,7 @@ export async function startWebGLScene(canvas, status) {
     );
 
     const crossingItems = [];
-    for (const item of (data.crossings || []).filter(entry => entry.attributes?.crossingDesign !== 'coveredByDaisyInstallation')) {
+    for (const item of crossings.filter(entry => entry.attributes?.crossingDesign !== 'coveredByDaisyInstallation')) {
       if (item.attributes?.crossingDesign === 'daisy') {
         crossingItems.push(item);
         continue;
@@ -3095,7 +3502,7 @@ export async function startWebGLScene(canvas, status) {
     // dimensions or orientation. Repeated procedural models keep the draw
     // count low and visibly distinguish each useful street-level class while
     // the semantic model honestly records the dimensions as inferred.
-    const osmFurniture = data.cityFurniture || [];
+    const osmFurniture = furnitureRecords;
     const deterministicYaw = (x, z) => ((Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1) * Math.PI;
     const furnitureMaterial = new THREE.MeshLambertMaterial({ color: 0x667477 });
     const darkFurnitureMaterial = new THREE.MeshLambertMaterial({ color: 0x303a3d });
@@ -3191,7 +3598,7 @@ export async function startWebGLScene(canvas, status) {
 
     // Public toilets are point inventories, so use a recognizable compact
     // facility model while retaining LoD0 semantics and avoiding false detail.
-    const toilets = (data.cityFurniture || []).filter(item => item.class === 'publicToilet' && item.coordinates);
+    const toilets = furnitureRecords.filter(item => item.class === 'publicToilet' && item.coordinates);
     const toiletBodyMaterial = new THREE.MeshLambertMaterial({ color: 0x6f858b });
     const toiletRoofMaterial = new THREE.MeshLambertMaterial({ color: 0x39484d });
     const toiletDoorMaterial = new THREE.MeshLambertMaterial({ color: 0x243338 });
@@ -3225,8 +3632,8 @@ export async function startWebGLScene(canvas, status) {
 
     // Monuments deliberately remain semantic-only until object-specific 3D
     // models are supplied; no generic placeholder is rendered.
-    const pointObjects = [...publicLights, ...(data.crossings || []), ...(data.parking || []), ...toilets, ...osmFurniture];
-    const festoonItems = (data.cityFurniture || []).filter(entry => entry.class === 'festoonLighting' && entry.centerline);
+    const pointObjects = [...publicLights, ...crossings, ...parking, ...toilets, ...osmFurniture];
+    const festoonItems = furnitureRecords.filter(entry => entry.class === 'festoonLighting' && entry.centerline);
     const festoonChildStart = group.children.length;
     if (festoonItems.length) {
       const buildingFacades = (data.buildings || []).map(record => ({
@@ -3403,9 +3810,10 @@ export async function startWebGLScene(canvas, status) {
   status.textContent = 'Building GPU scene…';
   const { mesh: terrainMesh, shadowCatcher } = makeTerrain();
   makeWater();
-  const buildingMeshes = makeBuildings();
+  let buildingMeshes = makeBuildings();
   buildingMeshes.surface = makeDetailedRoofSurface();
   const buildingAppearance = document.querySelector('#building-appearance');
+  let buildingDrawTransparencyEnabled = false;
   function setBuildingAppearance(mode) {
     const coloured = mode === 'elevation';
     for (const mesh of [buildingMeshes.walls]) {
@@ -3426,6 +3834,7 @@ export async function startWebGLScene(canvas, status) {
     // camera angle, leaving nothing visible to aim at even though the road
     // is perfectly selectable underneath. Fade buildings while the closure
     // drawing tool is active so the user can see what they are drawing over.
+    buildingDrawTransparencyEnabled = enabled;
     for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
       mesh.material.transparent = enabled;
       mesh.material.opacity = enabled ? 0.22 : 1;
@@ -3440,7 +3849,79 @@ export async function startWebGLScene(canvas, status) {
   makeRoads();
   makeGroundSurfaces();
   const canopyCount = makeCanopies();
-  makeStreetFurniture();
+  let lightingInventoryLoaded = false;
+  let lightingInventoryPromise = null;
+  function ensureLightingInventory() {
+    if (lightingInventoryLoaded) return Promise.resolve(true);
+    if (lightingInventoryPromise) return lightingInventoryPromise;
+    const asset = manifest.assets?.lighting;
+    if (!asset) return Promise.resolve(false);
+    const version = manifest.layers?.lighting?.cache_key || manifest.layers?.lighting?.bytes || 0;
+    lightingInventoryPromise = fetch(`/assets/${asset}?v=${version}`)
+      .then(response => response.ok ? response.json() : Promise.reject(new Error(`lighting inventory HTTP ${response.status}`)))
+      .then(payload => {
+        const fixtures = Array.isArray(payload.cityFurniture) ? payload.cityFurniture : [];
+        lightingInventoryLoaded = true;
+        if (!fixtures.length) return false;
+        // The compact scene omits municipal fixtures. Load this small sidecar
+        // only when the user opens Sun, where the mapped fittings and their
+        // night glow add useful street-scale context.
+        makeStreetFurniture(fixtures, layerGroups.cityFurniture);
+        layerGroups.cityFurniture.visible = Boolean(shadowState.enabled);
+        updateSunStatus();
+        requestRender();
+        return true;
+      })
+      .catch(error => {
+        console.warn(`Mapped lighting unavailable: ${error.message}`);
+        return false;
+      })
+      .finally(() => { lightingInventoryPromise = null; });
+    return lightingInventoryPromise;
+  }
+  let publicRealmLoaded = false;
+  let publicRealmPromise = null;
+  async function ensurePublicRealm() {
+    const status = document.querySelector('#public-realm-status');
+    const summary = document.querySelector('#public-realm-summary');
+    if (summary) summary.hidden = false;
+    if (publicRealmLoaded) return;
+    if (publicRealmPromise) return publicRealmPromise;
+    const asset = manifest.assets?.public_realm;
+    if (!asset) {
+      if (status) status.textContent = 'Public-realm inventory is not available in this scene release.';
+      return;
+    }
+    const version = manifest.layers?.public_realm?.cache_key || manifest.layers?.public_realm?.bytes || 0;
+    publicRealmPromise = fetch(`/assets/${asset}?v=${version}`)
+      .then(response => response.ok ? response.json() : Promise.reject(new Error(`public-realm inventory HTTP ${response.status}`)))
+      .then(payload => {
+        const records = Array.isArray(payload.publicRealm) ? payload.publicRealm : [];
+        const crossings = Array.isArray(payload.crossings) ? payload.crossings : [];
+        const parking = Array.isArray(payload.parking) ? payload.parking : [];
+        if (records.length || crossings.length || parking.length) {
+          makeStreetFurniture(records, layerGroups.publicRealm, { crossings, parking });
+        }
+        const names = {
+          busStop: 'bus stops', bench: 'benches', publicToilet: 'public toilets',
+          bicycleParking: 'bike-parking points', fountain: 'fountains',
+          streetClock: 'street clocks', wasteBasket: 'waste baskets', bollard: 'bollards',
+        };
+        const counts = manifest.layers?.public_realm?.classes || {};
+        const breakdown = Object.entries(counts).filter(([, count]) => count > 0)
+          .map(([kind, count]) => `${count} ${names[kind] || kind}`).join(' · ');
+        const streetUse = `${crossings.length.toLocaleString()} pedestrian crossings · ${parking.length.toLocaleString()} parking spaces`;
+        if (status) status.textContent = `${records.length.toLocaleString()} mapped places${breakdown ? ` · ${breakdown}` : ''} · ${streetUse}.`;
+        publicRealmLoaded = true;
+        layerGroups.publicRealm.visible = Boolean(savedVisibility.publicRealm);
+        requestRender();
+      })
+      .catch(error => {
+        if (status) status.textContent = `Public-realm layer unavailable (${error.message}). Toggle it off and on to retry.`;
+      })
+      .finally(() => { publicRealmPromise = null; });
+    return publicRealmPromise;
+  }
 
   const heatGroup = new THREE.Group();
   const heatStreetGroup = new THREE.Group();
@@ -3890,6 +4371,7 @@ export async function startWebGLScene(canvas, status) {
   let heatSavedComparison = null;
   let analysisGroupMode = null;
   let heatLoadToken = 0;
+  let heatLoaded = false;
   let thermalManifest = null;
   let thermalClimatology = null;
   const thermalClimateFrameCache = new Map();
@@ -3965,31 +4447,42 @@ export async function startWebGLScene(canvas, status) {
     const analysisView = Boolean(shadowState.enabled || heatToggle?.checked || windToggle?.checked);
     for (const mesh of groundSurfaceMeshes) mesh.visible = !analysisView;
     for (const mesh of pavementOverrideMeshes) mesh.visible = !analysisView;
+    if (analysisView) layerGroups.groundcover.visible = false;
+    if (analysisView) layerGroups.cycling.visible = false;
+    if (analysisView) layerGroups.runoff.visible = false;
   }
 
   const sectionLayerProfiles = {
     analysis: {
       terrain: true, water: false, grass: false, railways: false,
-      paths: false, roads: false, cityFurniture: false, buildings: true, trees: true,
+      paths: false, roads: false, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
     traffic: {
       terrain: true, water: false, grass: false, railways: false,
-      paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
+      paths: false, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
     transport: {
       terrain: true, water: false, grass: false, railways: true,
-      paths: false, roads: true, cityFurniture: false, buildings: true, trees: true,
+      paths: false, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
   };
 
   function applySectionLayerProfile(name) {
-    if (name === 'tools') return;
+    if (name === 'tools') {
+      if (!shadowState.enabled && !heatToggle?.checked && !windToggle?.checked) {
+        layerGroups.groundcover.visible = Boolean(savedVisibility.groundcover);
+        layerGroups.cycling.visible = Boolean(savedVisibility.cycling);
+        layerGroups.runoff.visible = Boolean(savedVisibility.runoff);
+      }
+      return;
+    }
     const profile = ['heat', 'sun', 'wind'].includes(name)
       ? sectionLayerProfiles.analysis : sectionLayerProfiles[name];
     if (!profile) return;
     for (const [layerName, visible] of Object.entries(profile)) {
       layerGroups[layerName].visible = visible;
     }
+    if (name === 'sun' && lightingInventoryLoaded) layerGroups.cityFurniture.visible = true;
     syncLayerControls();
     refreshTransportVehicleLayers();
   }
@@ -4242,9 +4735,11 @@ export async function startWebGLScene(canvas, status) {
     // Fine street markings and furniture disappear at district scale. Apart
     // from reducing clutter this avoids spending GPU time on details smaller
     // than a pixel; they return automatically as the camera approaches.
-    for (const object of layerGroups.cityFurniture.children) {
-      const maxDistance = Number(object.userData?.maxDistance);
-      if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance;
+    for (const group of [layerGroups.cityFurniture, layerGroups.publicRealm]) {
+      for (const object of group.children) {
+        const maxDistance = Number(object.userData?.maxDistance);
+        if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance;
+      }
     }
     for (const object of layerGroups.railways.children) {
       const minDistance = Number(object.userData?.minDistance) || 0;
@@ -4567,6 +5062,7 @@ export async function startWebGLScene(canvas, status) {
 
   function setShadowMode(enabled) {
     shadowState.enabled = enabled;
+    if (enabled) void ensureLightingInventory();
     if (!enabled) {
       // A cumulative calculation may still be running when the user leaves
       // Sunlight. Invalidate it so its late response cannot replace Heat.
@@ -4580,6 +5076,8 @@ export async function startWebGLScene(canvas, status) {
       setHeatMode(false);
       heatGroup.visible = false;
       layerGroups.terrain.visible = true;
+      layerGroups.groundcover.visible = false;
+      layerGroups.cycling.visible = false;
       layerGroups.grass.visible = false;
       layerGroups.railways.visible = false;
       layerGroups.paths.visible = false;
@@ -4655,6 +5153,18 @@ export async function startWebGLScene(canvas, status) {
       input.checked = group.visible;
       document.querySelector(`[data-legend-layer="${input.dataset.layer}"]`)
         ?.classList.toggle('is-hidden', !group.visible);
+      if (input.dataset.layer === 'groundcover') {
+        const summary = document.querySelector('#groundcover-summary');
+        if (summary) summary.hidden = !group.visible;
+      }
+      if (input.dataset.layer === 'cycling') {
+        const summary = document.querySelector('#cycling-summary');
+        if (summary) summary.hidden = !group.visible;
+      }
+      if (input.dataset.layer === 'publicRealm') {
+        const summary = document.querySelector('#public-realm-summary');
+        if (summary) summary.hidden = !group.visible;
+      }
     });
   }
 
@@ -4921,12 +5431,14 @@ export async function startWebGLScene(canvas, status) {
 
   function syncHeatTemporalControls(metric = heatMetric?.value) {
     const forecast = ['utci_c', 'tmrt_c'].includes(metric);
+    const staticSurface = metric === 'sky_view_factor';
     const climate = forecast && heatPeriod?.value === 'climatology';
     const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
     if (heatLayerHelp) {
       const explanations = {
         utci_c: 'Outdoor heat stress combines air, humidity, wind and radiant temperature. Experimental model estimate, not a street observation.',
         tmrt_c: 'Mean radiant temperature estimates the combined radiant load from sun and surrounding surfaces; it is one UTCI input, not air temperature.',
+        sky_view_factor: 'SOLWEIG sky-view factor from the prepared 2 m city surface. Higher values indicate more open sky; lower values indicate greater obstruction from buildings, terrain and canopy.',
         pedestrian_priority_score: 'Screening rank: 70% fixed Summer 2025–26 surface-heat baseline + 30% shade deficit at the selected date and time. Not a health-risk score.',
         pedestrian_heat_exposure_c: 'Satellite-derived exposure proxy in °C. It is not UTCI, PET, air temperature or a measured pedestrian exposure.',
         shade_deficit_score: 'Relative lack of mapped shade at the selected date and time. It does not measure surface temperature or health risk.',
@@ -4935,16 +5447,17 @@ export async function startWebGLScene(canvas, status) {
       };
       heatLayerHelp.textContent = explanations[metric] || (forecast ? 'Outdoor comfort from air, humidity, wind and radiant heat.' : 'Satellite heat and mapped shade · separate from UTCI.');
     }
-    if (heatThermalControls) heatThermalControls.hidden = !forecast;
+    if (heatThermalControls) heatThermalControls.hidden = !forecast && !staticSurface;
+    if (heatThermalControls?.firstElementChild) heatThermalControls.firstElementChild.hidden = staticSurface;
     if (heatScreeningControls) heatScreeningControls.hidden = !temporal;
     if (heatDateControl) heatDateControl.hidden = !temporal;
     if (heatTimeControl) heatTimeControl.hidden = !temporal;
     if (heatPeriodControl) heatPeriodControl.hidden = !forecast;
-    if (heatForecastHint) heatForecastHint.hidden = !forecast || climate;
+    if (heatForecastHint) heatForecastHint.hidden = !forecast || climate || staticSurface;
     if (heatClimateControls) heatClimateControls.hidden = !climate;
     if (heatClimateSeasonControl) heatClimateSeasonControl.hidden = !climate || heatClimateAggregate?.value !== 'season';
     if (heatClimateMonth?.parentElement) heatClimateMonth.parentElement.hidden = !climate || heatClimateAggregate?.value !== 'month';
-    if (heatForecastControl) heatForecastControl.hidden = !forecast || climate;
+    if (heatForecastControl) heatForecastControl.hidden = !forecast || climate || staticSurface;
     if (heatScenarioControls) heatScenarioControls.hidden = !forecast || climate || metric !== 'utci_c';
   }
 
@@ -5115,7 +5628,9 @@ export async function startWebGLScene(canvas, status) {
       const value = cornerValue(row, column, fallback);
       const color = payload.climatology && metric === 'utci_c'
         ? heatColor(value, UTCI_COLOR_MIN, UTCI_COLOR_MAX, 'utci_absolute_c')
-        : heatColor(value, range.min, range.max, metric, range.percentiles);
+        : metric === 'sky_view_factor'
+          ? skyViewFactorColor(value / 100)
+          : heatColor(value, range.min, range.max, metric, range.percentiles);
       colors[offset] = color.r;
       colors[offset + 1] = color.g;
       colors[offset + 2] = color.b;
@@ -5129,6 +5644,22 @@ export async function startWebGLScene(canvas, status) {
       depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
     }));
     heatGroup.add(heatMesh);
+  }
+
+  function skyViewFactorColor(value) {
+    const t = clamp(value, 0, 1);
+    const stops = [
+      [0, 0.58, 0.20, 0.26],
+      [0.5, 0.92, 0.70, 0.30],
+      [1, 0.28, 0.70, 0.82],
+    ];
+    const upper = stops.findIndex(stop => stop[0] >= t);
+    const right = stops[Math.max(1, upper)];
+    const left = stops[Math.max(0, upper - 1)];
+    const blend = (t - left[0]) / Math.max(1e-6, right[0] - left[0]);
+    return new THREE.Color(left[1] + (right[1] - left[1]) * blend,
+      left[2] + (right[2] - left[2]) * blend,
+      left[3] + (right[3] - left[3]) * blend);
   }
 
   function climateFrame(month, hour) {
@@ -5310,7 +5841,14 @@ export async function startWebGLScene(canvas, status) {
 
   async function loadThermal(metric, loadToken) {
     if (loadToken !== heatLoadToken) return;
-    if (!thermalManifest) {
+    let staticSurfaceManifest = null;
+    if (metric === 'sky_view_factor') {
+      const manifestResponse = await fetch(`${windApi}/thermal/sky-view-factor/manifest`);
+      const payload = await manifestResponse.json().catch(() => ({}));
+      if (!manifestResponse.ok) throw new Error(payload.detail || `sky-view-factor manifest HTTP ${manifestResponse.status}`);
+      staticSurfaceManifest = payload;
+    }
+    if (metric !== 'sky_view_factor' && !thermalManifest) {
       let payload;
       while (loadToken === heatLoadToken) {
         const response = await fetch(`${windApi}/thermal/forecast`);
@@ -5345,8 +5883,62 @@ export async function startWebGLScene(canvas, status) {
       fetch(`${windApi}/thermal/energy?run_id=${encodeURIComponent(thermalManifest.run_id)}`)
         .then(response => response.ok ? response.json() : null).then(payload => { thermalEnergy = payload; }).catch(() => {});
     }
-    const frame = selectedThermalFrame();
-    if (!frame) throw new Error('forecast contains no frames');
+    const frame = metric === 'sky_view_factor' ? null : selectedThermalFrame();
+    if (metric !== 'sky_view_factor' && !frame) throw new Error('forecast contains no frames');
+    if (metric === 'sky_view_factor') {
+      const response = await fetch(`${windApi}/thermal/sky-view-factor`);
+      if (!response.ok) throw new Error(`sky-view-factor grid HTTP ${response.status}`);
+      const buffer = await response.arrayBuffer();
+      const expectedBytes = staticSurfaceManifest.grid.width * staticSurfaceManifest.grid.height * Int16Array.BYTES_PER_ELEMENT;
+      if (buffer.byteLength !== expectedBytes) {
+        throw new Error(`sky-view-factor grid is incomplete (${buffer.byteLength} of ${expectedBytes} bytes)`);
+      }
+      const values = new Int16Array(buffer);
+      const channel = staticSurfaceManifest.channels[0];
+      const manifest = staticSurfaceManifest;
+      if (loadToken !== heatLoadToken) return;
+      let sum = 0, validCells = 0, maximum = -Infinity, highVisibilityCells = 0;
+      const samples = [];
+      const sampleStride = Math.max(1, Math.floor(values.length / 100000));
+      for (let index = 0; index < values.length; index += 1) {
+        if (values[index] === manifest.nodata) continue;
+        const value = values[index] * channel.scale;
+        sum += value;
+        validCells += 1;
+        maximum = Math.max(maximum, value);
+        if (value >= 90) highVisibilityCells += 1;
+        if ((validCells - 1) % sampleStride === 0) samples.push(value);
+      }
+      if (!validCells || !samples.length) throw new Error('sky-view-factor grid has no valid ground cells');
+      samples.sort((a, b) => a - b);
+      const percentile = fraction => samples[Math.round((samples.length - 1) * fraction)];
+      const range = { min: 0, max: 100, percentiles: Array.from({ length: 81 }, (_, index) => percentile(0.1 + index / 100)) };
+      heatPayload = { thermal: true, manifest, values, metric, range };
+      thermalBaselinePayload = heatPayload;
+      thermalScenarioPayload = null;
+      thermalScenarioSummary = null;
+      if (heatScenarioDelta) heatScenarioDelta.disabled = true;
+      if (heatScenarioBaseline) heatScenarioBaseline.disabled = true;
+      if (heatScenarioSummary) heatScenarioSummary.hidden = true;
+      heatRange = range;
+      if (heatToggle?.checked && !shadowState.enabled) buildThermalMesh(heatPayload);
+      const mean = sum / validCells;
+      renderHeatSummary({ area_weighted_mean: mean, maximum,
+        hotspot_area_m2: highVisibilityCells * Number(manifest.grid.resolution_m) ** 2,
+        hotspot_area_pct: highVisibilityCells / validCells * 100 }, channel);
+      renderHeatExplorer(heatPayload, channel);
+      const legend = document.querySelector('.heat-gradient');
+      if (legend) legend.style.background = 'linear-gradient(90deg, #943440, #ebaf4d 50%, #47b3d1)';
+      heatLegendMin.textContent = '0% · obstructed';
+      heatLegendMax.textContent = '100% · open';
+      heatStatus.textContent = 'SOLWEIG sky-view factor · static surface model';
+      heatForecastLabel.textContent = 'Static surface';
+      if (heatProvenance) heatProvenance.textContent = `SOLWEIG sky-view factor · ${manifest.grid.resolution_m} m surface grid · higher values mean a larger visible sky hemisphere. Static geometry product reused by the hourly thermal runs.`;
+      if (heatAverageLabel) heatAverageLabel.textContent = 'Mean SVF';
+      if (heatMaximumLabel) heatMaximumLabel.textContent = 'Maximum SVF';
+      if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'SVF ≥ 90%';
+      return;
+    }
     let response;
     try {
       response = await fetch(`${windApi}/thermal/frames/${encodeURIComponent(thermalManifest.run_id)}/${encodeURIComponent(frame.id)}`);
@@ -5974,6 +6566,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   async function loadHeat(metric = heatMetric?.value || 'pedestrian_priority_score') {
+    heatLoaded = true;
     if (!heatStatus) return;
     const loadToken = ++heatLoadToken;
     selectedHeatStreet = '';
@@ -6015,8 +6608,8 @@ export async function startWebGLScene(canvas, status) {
     if (heatSummary) heatSummary.hidden = true;
     if (heatLoadingState) heatLoadingState.hidden = metric !== 'utci_c';
     try {
-      if (['utci_c', 'tmrt_c'].includes(metric)) {
-        if (heatPeriod?.value === 'climatology') await loadClimatology(metric, loadToken);
+      if (['utci_c', 'tmrt_c', 'sky_view_factor'].includes(metric)) {
+        if (metric !== 'sky_view_factor' && heatPeriod?.value === 'climatology') await loadClimatology(metric, loadToken);
         else await loadThermal(metric, loadToken);
         setHeatMode(Boolean(heatToggle?.checked));
         return;
@@ -6467,7 +7060,7 @@ export async function startWebGLScene(canvas, status) {
   const ambientTraffic = {
     group: null, fleets: [], speedByName: new Map(), parkedVehicles: [],
     movingVehicles: [], controllers: [], signalGroup: null, signalLensMeshes: null,
-    clock: performance.now(),
+    clock: performance.now(), initialized: false, setupPending: false,
   };
   const ambientCarPaint = [0x8a5547, 0x617a72, 0xc0a66f, 0x596776, 0xb2b0a3, 0x885f70, 0x687c91, 0x9b684c, 0x76816a, 0x545756];
   const ambientCarSpecs = [
@@ -6476,6 +7069,10 @@ export async function startWebGLScene(canvas, status) {
     { body: [1.94, 0.73, 4.65], cabin: [1.62, 0.72, 2.72], cabinZ: 0.08, wheelZ: 1.42 }, // minibus taxi
   ];
   const ambientMaxCars = 2400;
+  // Moving instances add useful street-level life but are visually negligible
+  // at the full-city overview. Keep the overview render-on-demand; resume the
+  // traffic animation when the camera is close enough to read individual cars.
+  const ambientTrafficAnimationDistance = 400;
   // A guideline-informed fixed-time fallback where no site timing plan is
   // mapped. SARTSM Vol 3 §§6.12–6.13 (May 2012) gives a 50–100 s typical
   // cycle range, a 3 s minimum yellow at <=60 km/h, and a 2 s minimum
@@ -7015,6 +7612,8 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function setupAmbientTraffic() {
+    if (ambientTraffic.initialized) return;
+    ambientTraffic.initialized = true;
     const corridors = ambientTrafficRoads.flatMap(road => visiblePolyline(road.points).map(points => {
       if (!points || points.length < 2) return null;
       const corridorRoad = { ...road, points };
@@ -7055,6 +7654,20 @@ export async function startWebGLScene(canvas, status) {
     ambientTraffic.parkedVehicles = makeParkedLotVehicles();
     rebuildAmbientTrafficFleet();
     buildMappedTrafficLights(ambientTraffic.controllers);
+  }
+
+  function scheduleAmbientTrafficSetup() {
+    if (ambientTraffic.initialized || ambientTraffic.setupPending
+      || cameraState.distance > 900 || !layerGroups.roads.visible) return;
+    ambientTraffic.setupPending = true;
+    const prepare = () => {
+      ambientTraffic.setupPending = false;
+      if (cameraState.distance > 900 || !layerGroups.roads.visible) return;
+      setupAmbientTraffic();
+      requestRender();
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(prepare, { timeout: 1200 });
+    else setTimeout(prepare, 160);
   }
 
   function trafficSignalQueueTargets() {
@@ -7458,9 +8071,13 @@ export async function startWebGLScene(canvas, status) {
     const group = ambientTraffic.group;
     if (!group) return;
     const activeTool = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
-    group.visible = activeTool !== 'transport';
+    // Ambient cars are a street-scale detail. Keep the fleet dormant at the
+    // full-city view, where individual cars cannot be read, and avoid posing
+    // thousands of instances on every map redraw while zoomed out.
+    group.visible = activeTool !== 'transport' && layerGroups.roads.visible
+      && cameraState.distance <= ambientTrafficAnimationDistance;
     if (ambientTraffic.signalGroup) ambientTraffic.signalGroup.visible = group.visible;
-    if (!group.visible || !layerGroups.roads.visible) {
+    if (!group.visible) {
       ambientTraffic.clock = now;
       return;
     }
@@ -8489,6 +9106,7 @@ export async function startWebGLScene(canvas, status) {
     const delay = Math.min(30000, 1500 * (2 ** Math.min(trafficState.roadsLoadAttempts, 4)));
     trafficState.roadsRetryTimer = setTimeout(() => {
       trafficState.roadsRetryTimer = null;
+      if (!trafficState.sceneActive) return;
       void loadTrafficRoads();
     }, delay);
   }
@@ -9744,23 +10362,34 @@ export async function startWebGLScene(canvas, status) {
     { direction_deg: 337.5, sector: 'nnw', label: 'NNW 337.5°', base: '/assets/cfd/cbd_337p5_full/' },
   ];
   let CFD_DESIGN_CASES = [];
-  fetch('/assets/cfd/design-cases.json', { cache: 'no-store' })
-    .then(response => response.ok ? response.json() : [])
-    .then(items => {
-      CFD_DESIGN_CASES = Array.isArray(items) ? items.filter(item => item?.base && Number.isFinite(item.direction_deg)) : [];
-      if (windDesignSelect) {
-        windDesignSelect.replaceChildren();
-        const cases = CFD_DESIGN_CASES.length ? CFD_DESIGN_CASES : [{ label: 'No solved proposals yet' }];
-        cases.forEach((item, index) => {
-          const option = document.createElement('option');
-          option.value = String(index);
-          option.textContent = item.label || item.case_id;
-          windDesignSelect.append(option);
-        });
-        windDesignSelect.disabled = !CFD_DESIGN_CASES.length;
-        if (windDesignLoad) windDesignLoad.disabled = !CFD_DESIGN_CASES.length;
-      }
-    }).catch(() => {});
+  let cfdDesignCasesLoaded = false;
+  let cfdDesignCasesPromise = null;
+  function ensureCfdDesignCasesLoaded() {
+    if (cfdDesignCasesLoaded) return Promise.resolve(CFD_DESIGN_CASES);
+    if (cfdDesignCasesPromise) return cfdDesignCasesPromise;
+    cfdDesignCasesPromise = fetch('/assets/cfd/design-cases.json', { cache: 'no-store' })
+      .then(response => response.ok ? response.json() : [])
+      .then(items => {
+        CFD_DESIGN_CASES = Array.isArray(items) ? items.filter(item => item?.base && Number.isFinite(item.direction_deg)) : [];
+        cfdDesignCasesLoaded = true;
+        if (windDesignSelect) {
+          windDesignSelect.replaceChildren();
+          const cases = CFD_DESIGN_CASES.length ? CFD_DESIGN_CASES : [{ label: 'No solved proposals yet' }];
+          cases.forEach((item, index) => {
+            const option = document.createElement('option');
+            option.value = String(index);
+            option.textContent = item.label || item.case_id;
+            windDesignSelect.append(option);
+          });
+          windDesignSelect.disabled = !CFD_DESIGN_CASES.length;
+          if (windDesignLoad) windDesignLoad.disabled = !CFD_DESIGN_CASES.length;
+        }
+        return CFD_DESIGN_CASES;
+      })
+      .catch(() => [])
+      .finally(() => { cfdDesignCasesPromise = null; });
+    return cfdDesignCasesPromise;
+  }
 
   function findCfdCase(directionDeg) {
     return CFD_CASES.find(item => item.direction_deg === directionDeg) || null;
@@ -12512,6 +13141,16 @@ export async function startWebGLScene(canvas, status) {
     drag = null;
     const isMapClick = clickCandidate
       && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < (event.pointerType === 'touch' ? 12 : 5);
+    if (isMapClick && placeInspectorPickMode) {
+      const point = pointerGround(event);
+      dispatchEvent(new CustomEvent('climate-place-inspector-picked', {
+        detail: point ? { x: point.x, z: point.z } : {},
+      }));
+      clickCandidate = null;
+      drag = null;
+      requestRender();
+      return;
+    }
     if (isMapClick && windInspectToggle?.getAttribute('aria-pressed') === 'true'
       && windState.enabled && windHeatMesh?.visible) {
       const point = pointerGround(event);
@@ -12613,9 +13252,34 @@ export async function startWebGLScene(canvas, status) {
         savedVisibility[event.target.dataset.layer] = group.visible;
       }
     }
+    if (event.target.dataset.layer === 'groundcover') {
+      const summary = document.querySelector('#groundcover-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) void loadGroundcoverInventory();
+    }
+    if (event.target.dataset.layer === 'cycling') {
+      const summary = document.querySelector('#cycling-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) buildCyclingLayer();
+    }
+    if (event.target.dataset.layer === 'runoff') {
+      const summary = document.querySelector('#runoff-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) void loadRunoffScreening();
+    }
+    if (event.target.dataset.layer === 'publicRealm') {
+      const summary = document.querySelector('#public-realm-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) void ensurePublicRealm();
+    }
     refreshTransportVehicleLayers();
     requestRender();
   }));
+
+  document.querySelector('#runoff-rainfall')?.addEventListener('input', event => {
+    runoffRainfallDepthMm = clamp(Number(event.target.value) || 25, 5, 100);
+    updateRunoffSummary();
+  });
 
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
   heatStreetMapToggle?.addEventListener('change', event => {
@@ -12646,6 +13310,19 @@ export async function startWebGLScene(canvas, status) {
       void (async () => {
         try {
           if (heatPayload?.thermal) {
+            if (heatMetric.value === 'sky_view_factor') {
+              const manifest = heatPayload.manifest;
+              const { width, height, resolution_m: resolution, bounds } = manifest.grid;
+              const [minX, minZ, maxX, maxZ] = bounds.map(Number);
+              if (x < minX || x >= maxX || z < minZ || z >= maxZ) throw new Error('That point is outside the sky-view-factor grid.');
+              const column = Math.floor((x - minX) / resolution), row = Math.floor((z - minZ) / resolution);
+              if (column < 0 || row < 0 || column >= width || row >= height) throw new Error('That point is outside the sky-view-factor grid.');
+              const raw = heatPayload.values[row * width + column];
+              if (raw === manifest.nodata) throw new Error('That surface cell has no calculated sky-view-factor value.');
+              const value = raw * heatPayload.manifest.channels[0].scale;
+              heatInspectResult.textContent = `Sky-view factor: ${value.toFixed(1)}% at ${x.toFixed(0)}, ${z.toFixed(0)} m. Static SOLWEIG geometry estimate.`;
+              return;
+            }
             if (heatPayload.climatology) {
               const manifest = heatPayload.manifest;
               const { width, height, resolution_m: resolution, bounds } = manifest.grid;
@@ -13014,6 +13691,7 @@ export async function startWebGLScene(canvas, status) {
   };
   addEventListener('climate-menu-change', event => {
     if (event.detail?.name !== 'sun') return;
+    void ensureLightingInventory();
     showCurrentSun();
   });
 
@@ -13584,6 +14262,7 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
+    if (name === 'wind') void ensureCfdDesignCasesLoaded();
     if (name !== 'wind' && windState.analysisMode === 'pollution') {
       pollutionState.playing = false;
       if (pollutionPlay && pollutionState.studyReady) pollutionPlay.textContent = 'Play plume';
@@ -13602,7 +14281,11 @@ export async function startWebGLScene(canvas, status) {
         canvas.style.cursor = '';
       }
     }
-    if (name === 'traffic' && !trafficState.networkEdges.length) void loadTrafficRoads();
+    if (name === 'traffic') {
+      if (!trafficState.networkEdges.length) void loadTrafficRoads();
+      void loadTrafficLive(false);
+      void loadTrafficCalibrationStatus();
+    }
     if (name === 'transport') void ensureTransportLayer();
     transportLayer?.setPanelActive(name === 'transport');
     // Tools is a utility panel, not its own exclusive visualization — switch
@@ -13623,9 +14306,12 @@ export async function startWebGLScene(canvas, status) {
         trafficToggle.checked = false;
         trafficToggle.dispatchEvent(new Event('change'));
       }
-      if (name === 'heat' && heatToggle && !heatToggle.checked) {
-        heatToggle.checked = true;
-        setHeatMode(true);
+      if (name === 'heat') {
+        if (heatToggle && !heatToggle.checked) {
+          heatToggle.checked = true;
+          setHeatMode(true);
+        }
+        if (!heatLoaded) void loadHeat(heatMetric?.value);
       } else if (name === 'sun' && !shadowState.enabled) {
         setShadowMode(true);
       } else if (name === 'wind' && windToggle && !windToggle.checked) {
@@ -13880,7 +14566,9 @@ export async function startWebGLScene(canvas, status) {
     renderer.clear();
     renderer.render(postScene, postCamera);
     renderRequested = false;
-    const ambientTrafficAnimating = Boolean(ambientTraffic.group?.visible && layerGroups.roads.visible);
+    scheduleAmbientTrafficSetup();
+    const ambientTrafficAnimating = Boolean(ambientTraffic.group?.visible && layerGroups.roads.visible
+      && cameraState.distance <= ambientTrafficAnimationDistance);
     const otherAnimatedLayerActive = (windState.enabled && windState.field && windPoints?.visible)
       || (windState.enabled && pollutionState.playing)
       || (trafficGroup.visible && trafficState.tracks.length)
@@ -13936,20 +14624,27 @@ export async function startWebGLScene(canvas, status) {
     if (tool === 'heat') void loadHeat();
     if (tool === 'sun') { if (shadowState.mode === 'hours') void generateSunHours(); else generateShadows(); }
     if (tool === 'wind') void simulateWind();
-    if (tool === 'traffic') { void loadTrafficRoads(); void loadTrafficLive(false); }
+    if (tool === 'traffic') {
+      void loadTrafficRoads();
+      void loadTrafficLive(false);
+      void loadTrafficCalibrationStatus();
+    }
     if (tool === 'transport') void ensureTransportLayer();
   });
   fitScene();
   setWindAnalysisMode(windState.analysisMode);
   updateWindBox();
   windGroup.visible = windState.enabled;
-  setupAmbientTraffic();
   syncTrafficSceneVisibility();
   const roofTriangles = roofSurfaceBuffer ? manifest.layers?.roof_surface?.triangles : 0;
-  status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
+  const roofStatus = roofTriangles ? `${roofTriangles.toLocaleString()} detailed roof triangles · `
+    : manifest.assets?.roof_surface ? 'detailed roof surfaces loading · ' : '';
+  status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${roofStatus}${canopyCount} canopy footprints`;
   updateSunStatus();
   if (document.querySelector('[data-menu-target="sun"]')?.classList.contains('active')) showCurrentSun();
-  loadHeat();
+  if (document.querySelector('[data-menu-target="heat"]')?.classList.contains('active')) {
+    void loadHeat(heatMetric?.value);
+  }
   setHeatMode(Boolean(heatToggle?.checked));
   applySectionLayerProfile(document.querySelector('[data-menu-target].active')?.dataset.menuTarget || 'tools');
   let thermalManifestPollInFlight = false;
@@ -13963,8 +14658,7 @@ export async function startWebGLScene(canvas, status) {
       if (!response.ok) return;
       const latest = await response.json();
       if (latest.available && latest.run_id !== thermalManifest.run_id) {
-        // A follow-up worker run can replace a forecast-only current hour
-        // with the delayed satellite-radiation estimate for that same hour.
+        // Reload only after the hourly worker publishes a complete new run.
         thermalManifest = null;
         thermalEnergy = null;
         void loadHeat(heatMetric.value);
@@ -13974,10 +14668,12 @@ export async function startWebGLScene(canvas, status) {
     } finally {
       thermalManifestPollInFlight = false;
     }
-  }, 120000);
-  loadTrafficRoads();
-  loadTrafficLive(false);
-  loadTrafficCalibrationStatus();
+  }, 300000);
+  if (trafficState.sceneActive) {
+    void loadTrafficRoads();
+    void loadTrafficLive(false);
+    void loadTrafficCalibrationStatus();
+  }
   async function ensureTransportLayer() {
     if (transportLayer) return transportLayer;
     if (transportLoading) return transportLoading;
@@ -13996,9 +14692,41 @@ export async function startWebGLScene(canvas, status) {
     }).finally(() => { transportLoading = null; });
     return transportLoading;
   }
-  if (document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport') await ensureTransportLayer();
+  const initialPanel = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
+  if (initialPanel === 'transport') await ensureTransportLayer();
+  if (initialPanel === 'wind') void ensureCfdDesignCasesLoaded();
+  if (initialPanel === 'sun') void ensureLightingInventory();
   sceneReadyToRender = true;
   requestRender();
+  addEventListener('climate-viewer-ready', () => {
+    const beginRoofLoad = () => {
+      void loadRoofSurface().then(buffer => {
+        if (!buffer || !buffer.byteLength) {
+          status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · detailed roof surfaces unavailable · ${canopyCount} canopy footprints`;
+          return;
+        }
+        roofSurfaceBuffer = buffer;
+        for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
+          layerGroups.buildings.remove(mesh);
+          mesh.geometry.dispose();
+          if (Array.isArray(mesh.material)) mesh.material.forEach(material => material.dispose());
+          else mesh.material.dispose();
+          mesh.userData.normalMaterial?.dispose();
+          mesh.userData.sunMaterial?.dispose();
+        }
+        buildingMeshes = makeBuildings();
+        buildingMeshes.surface = makeDetailedRoofSurface();
+        setBuildingAppearance(buildingAppearance?.value || 'neutral');
+        setBuildingDrawTransparency(buildingDrawTransparencyEnabled);
+        setSunMaterials(shadowState.enabled);
+        const triangles = manifest.layers?.roof_surface?.triangles || 0;
+        status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${triangles ? `${triangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
+        requestRender();
+      });
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(beginRoofLoad, { timeout: 1500 });
+    else setTimeout(beginRoofLoad, 250);
+  }, { once: true });
   void ensureTransportLayer().then(layer => layer?.setAmbientDisplay(true));
 
   window.__trafficDebug = {
@@ -14032,6 +14760,15 @@ export async function startWebGLScene(canvas, status) {
       }
       cameraState.target.set(point.x, terrainHeightAt(point.x, point.z), point.z);
       updateCamera();
+    },
+  });
+  attachPlaceInspector({
+    buildings: data.buildings,
+    roads: data.roads || [],
+    onSelect: focusPlaceInspector,
+    onPickMode: active => {
+      placeInspectorPickMode = active;
+      canvas.style.cursor = active ? 'crosshair' : '';
     },
   });
   return { renderer, scene, camera };

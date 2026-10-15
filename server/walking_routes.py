@@ -31,6 +31,7 @@ AGENT_SPEEDS_KMH = (4.0, 5.6)
 SAMPLE_SPACING_M = 15.0
 SHADE_TIME_STEP_MIN = 5
 UTCI_HEAT_THRESHOLD_C = 26.0
+ROUTE_CROSSING_NEAR_M = 15.0
 OBJECTIVE_LABELS = {
     "fastest": "Fastest",
     "least_sun": "Least direct sun",
@@ -72,6 +73,86 @@ def _network() -> tuple[nx.MultiDiGraph, dict[str, Any], STRtree, list[tuple[str
 
 def clear_walking_network_cache() -> None:
     _network.cache_clear()
+    _municipal_crossing_inventory.cache_clear()
+
+
+@lru_cache(maxsize=1)
+def _municipal_crossing_inventory() -> tuple[bool, tuple[dict[str, Any], ...]]:
+    """Read crossing points bundled with the cached walking-network asset."""
+    try:
+        _, payload, _, _ = _network()
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError):
+        return False, ()
+    inventory = payload.get("crossing_inventory") or {}
+    if not inventory.get("available"):
+        return False, ()
+    crossings = []
+    for coordinates in payload.get("crossing_points") or []:
+        if not isinstance(coordinates, list) or len(coordinates) < 3:
+            continue
+        x, z, raised = coordinates[:3]
+        if not (math.isfinite(float(x)) and math.isfinite(float(z))):
+            continue
+        crossings.append({"point": Point(float(x), float(z)), "raised": bool(raised)})
+    return True, tuple(crossings)
+
+
+def _route_street_context(line: LineString, edges: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize mapped route evidence without assigning a safety score."""
+    total_length = sum(max(0.0, float(edge.get("length_m", 0.0))) for edge in edges)
+    lit_length = unlit_length = sidewalk_tagged_length = sidewalk_no_length = width_tagged_length = 0.0
+    for edge in edges:
+        length = max(0.0, float(edge.get("length_m", 0.0)))
+        tags = edge.get("tags") or {}
+        lighting = str(tags.get("lit") or "").strip().lower()
+        if lighting == "yes":
+            lit_length += length
+        elif lighting == "no":
+            unlit_length += length
+        sidewalk = str(tags.get("sidewalk") or "").strip().lower()
+        if sidewalk:
+            sidewalk_tagged_length += length
+            if sidewalk == "no":
+                sidewalk_no_length += length
+        if str(tags.get("width") or "").strip():
+            width_tagged_length += length
+
+    def percent(length: float) -> float | None:
+        return round(100.0 * length / total_length, 1) if total_length > 0 else None
+
+    inventory_available, crossings = _municipal_crossing_inventory()
+    nearby = [record for record in crossings if line.distance(record["point"]) <= ROUTE_CROSSING_NEAR_M]
+    lit_percent = percent(lit_length)
+    unlit_percent = percent(unlit_length)
+    sidewalk_tagged_percent = percent(sidewalk_tagged_length)
+    sidewalk_no_percent = percent(sidewalk_no_length)
+    width_tagged_percent = percent(width_tagged_length)
+    return {
+        "crossings": {
+            "status": "available" if inventory_available else "unavailable",
+            "source": "City of Cape Town pedestrian-crossing point inventory",
+            "search_radius_m": ROUTE_CROSSING_NEAR_M,
+            "nearby_point_count": len(nearby),
+            "nearby_raised_point_count": sum(record["raised"] for record in nearby),
+        },
+        "lighting": {
+            "source": "OpenStreetMap pedestrian-network way tags",
+            "tagged_lit_percent": lit_percent,
+            "tagged_unlit_percent": unlit_percent,
+            "unknown_percent": round(100.0 - lit_percent - unlit_percent, 1) if lit_percent is not None else None,
+        },
+        "sidewalk": {
+            "source": "OpenStreetMap pedestrian-network way tags",
+            "tagged_percent": sidewalk_tagged_percent,
+            "tagged_no_percent": sidewalk_no_percent,
+            "unknown_percent": round(100.0 - sidewalk_tagged_percent, 1) if sidewalk_tagged_percent is not None else None,
+        },
+        "width": {
+            "source": "OpenStreetMap pedestrian-network way tags",
+            "tagged_percent": width_tagged_percent,
+            "unknown_percent": round(100.0 - width_tagged_percent, 1) if width_tagged_percent is not None else None,
+        },
+    }
 
 
 def _local_datetime(value: str) -> datetime:
@@ -389,6 +470,7 @@ def _evaluate_paths(
             "snapped_destination": list(route["snapped_destination"]),
             "metrics": metrics,
             "street_names": route["street_names"],
+            "street_context": _route_street_context(line, route["edges"]),
             "agents": agents,
             "agent_summary": {
                 "count": len(agents), "seed": AGENT_SEED,
@@ -535,7 +617,7 @@ def walking_routes(
         "destination": {"requested": {"x": destination[0], "z": destination[1]}, "snapped": {"x": target_point[0], "z": target_point[1]}, "snap_distance_m": round(target_snap, 1)},
         "network": {key: manifest.get(key) for key in (
             "source", "source_sha256", "built_at", "node_count", "edge_count", "attribution", "crs",
-        )},
+        )} | {"crossing_inventory": manifest.get("crossing_inventory")},
         "conditions": {
             "sun": {"status": "available", "source": "building and mapped tree-canopy shadow geometry", "resolution": f"5-minute expected-traversal-time bins; route exposure sampled every {SAMPLE_SPACING_M:g} m"},
             "thermal": {

@@ -10,7 +10,7 @@ The route graph is generated from `data/osm_cbd.osm.xml`, which retains OSM foot
 .venv/bin/python scripts/build_walking_network.py
 ```
 
-The builder uses OSMnx to parse and clip the local extract, then writes `data/derived/walking_network.json.gz`. The API loads that artifact as a cached NetworkX directed multigraph. Explicitly prohibited pedestrian ways and motorways are filtered. Trunk roads, busways, and cycleways require mapped foot access or a sidewalk. Mapped steps remain in the graph. Segments without foot access, pedestrian-way, or sidewalk evidence remain marked uncertain; each route reports their share and its mapped steps distance. The data is © OpenStreetMap contributors and distributed under the ODbL.
+The builder uses OSMnx to parse and clip the local extract, then writes `data/derived/walking_network.json.gz`. It also bundles the scene-clipped municipal crossing points and their source hash so route requests do not need to parse the full city model. The API loads the artifact as a cached NetworkX directed multigraph. Explicitly prohibited pedestrian ways and motorways are filtered. Trunk roads, busways, and cycleways require mapped foot access or a sidewalk. Mapped steps remain in the graph. Segments without foot access, pedestrian-way, or sidewalk evidence remain marked uncertain; each route reports their share and its mapped steps distance. OSM data is © OpenStreetMap contributors and distributed under the ODbL.
 
 `POST /api/walking/routes` accepts viewer-local metre coordinates and a departure time. Naive date-times are interpreted in `Africa/Johannesburg`; the browser submits that local time. Each endpoint is projected onto its nearest directed walkable segment, and requests more than 50 m away are rejected. The route geometry starts and ends at those projected points.
 
@@ -23,6 +23,8 @@ The builder uses OSMnx to parse and clip the local extract, then writes `data/de
 ```
 
 The route response includes geometries, length and 4.8 km/h estimated walking time, per-layer coverage, network source hash, thermal forecast version, and route exposure metrics. It also includes `agent_job_id`; poll `GET /api/walking/agents/jobs/{job_id}` for the separate matched-walker result. The route objectives remain separate: walking time, direct-sun walking time, and cumulative UTCI degree-minutes above 26°C. Environmental graph costs use each edge's earliest estimated walking arrival from the chosen departure. This is an approximation for an alternative that takes longer than the fastest path. Route exposure summaries then sample the selected path every 15 m at its actual expected traversal time. Shade timestamps are grouped into nearest five-minute bins. UTCI and pedestrian wind use the nearest complete hourly frame within 30 minutes. Missing or stale thermal data removes the heat-ranked alternative but leaves the other routes available and marks the thermal layer unavailable.
+
+Each route also reports street evidence separately from its exposure objectives: City of Cape Town crossing points within 15 m of the route line, route-length-weighted OSM coverage for lighting, sidewalk and width tags, and mapped steps distance. Crossing proximity does not prove that a point is crossed by the selected path. Missing OSM tags remain unknown; width and kerb accessibility are not inferred. These indicators do not form a safety score.
 
 ## Matched walker comparison
 

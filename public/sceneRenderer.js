@@ -1,6 +1,7 @@
 import { scopedFetch as fetch, assertManifest } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { orbitFromDrag, panFromDrag } from './cameraControls.js';
+import { attachPlaceInspector } from './placeInspector.js?v=3';
 
 const COLORS = {
   background: '#1b2125',
@@ -203,7 +204,13 @@ export async function startScene(canvas, status) {
     fetch(`/assets/${manifest.assets?.canopy || 'canopy.json'}?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };
-  const visibility = { terrain: true, water: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true };
+  const visibility = { terrain: true, water: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true, groundcover: false, cycling: false, runoff: false, publicRealm: false };
+  const groundcoverState = { loaded: false, loading: false, features: [] };
+  const cyclingState = { loaded: false, ways: [], openEnds: [] };
+  const runoffState = { loaded: false, loading: false, points: [], metadata: null, rainfallDepthMm: 25 };
+  const publicRealmState = { loaded: false, loading: false, features: [], crossings: [], parking: [] };
+  let placeInspectorSelection = null;
+  let placeInspectorPickMode = false;
   const buildings = scene.buildings.map(value => {
     const [ground, height, ring] = value;
     const minHeight = Math.max(0, Number(value[10]) || 0);
@@ -368,6 +375,11 @@ export async function startScene(canvas, status) {
   };
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
+  const skyViewFactorOption = heatMetric?.querySelector('option[value="sky_view_factor"]');
+  if (skyViewFactorOption) {
+    skyViewFactorOption.disabled = true;
+    skyViewFactorOption.title = 'Sky-view factor raster display requires WebGL 2.';
+  }
   const heatDate = document.querySelector('#heat-date');
   const heatTime = document.querySelector('#heat-time');
   const heatDateControl = document.querySelector('#heat-date-control');
@@ -425,6 +437,8 @@ export async function startScene(canvas, status) {
   const heatSaveComparison = document.querySelector('#heat-save-comparison');
   const heatComparison = document.querySelector('#heat-comparison');
   let heatLoadToken = 0;
+  let heatLoaded = false;
+  let suppressHeatMetricReload = false;
   const streetViewState = { placing: false, point: null };
   const walkingRouteState = { routes: [], selectedId: 'fastest', pickRole: null, points: { origin: null, destination: null }, progress: null };
   const shadowState = {
@@ -452,6 +466,22 @@ export async function startScene(canvas, status) {
         input.title = waterDisabled ? 'Water is hidden while an analysis layer is active.' : 'OpenStreetMap water bodies';
       }
       input.checked = visibility[input.dataset.layer];
+      if (input.dataset.layer === 'groundcover') {
+        const summary = document.querySelector('#groundcover-summary');
+        if (summary) summary.hidden = !visibility.groundcover;
+      }
+      if (input.dataset.layer === 'cycling') {
+        const summary = document.querySelector('#cycling-summary');
+        if (summary) summary.hidden = !visibility.cycling;
+      }
+      if (input.dataset.layer === 'runoff') {
+        const summary = document.querySelector('#runoff-summary');
+        if (summary) summary.hidden = !visibility.runoff;
+      }
+      if (input.dataset.layer === 'publicRealm') {
+        const summary = document.querySelector('#public-realm-summary');
+        if (summary) summary.hidden = !visibility.publicRealm;
+      }
     });
   }
 
@@ -499,6 +529,8 @@ export async function startScene(canvas, status) {
       visibility.railways = false;
       visibility.paths = rooftopContext;
       visibility.roads = rooftopContext;
+      visibility.groundcover = false;
+      visibility.cycling = false;
       visibility.trees = true;
       visibility.buildings = true;
       windState.enabled = false;
@@ -531,6 +563,8 @@ export async function startScene(canvas, status) {
       visibility.railways = false;
       visibility.paths = false;
       visibility.roads = false;
+      visibility.groundcover = false;
+      visibility.cycling = false;
       visibility.buildings = true;
       visibility.trees = true;
     } else {
@@ -1036,18 +1070,24 @@ export async function startScene(canvas, status) {
   }
 
   async function loadHeat(metric = heatState.metric) {
+    heatLoaded = true;
     const loadToken = ++heatLoadToken;
     let thermalFallback = false;
-    if (['utci_c', 'tmrt_c'].includes(metric)) {
+    if (['utci_c', 'tmrt_c', 'sky_view_factor'].includes(metric)) {
+      const skyViewFallback = metric === 'sky_view_factor';
       thermalFallback = true;
       heatState.metric = 'pedestrian_priority_score';
       if (heatMetric) {
         heatMetric.value = heatState.metric;
+        suppressHeatMetricReload = true;
         heatMetric.dispatchEvent(new Event('change', { bubbles: true }));
+        suppressHeatMetricReload = false;
       }
       metric = heatState.metric;
       const status = document.querySelector('#heat-status');
-      if (status) status.textContent = 'Near-live thermal rasters require WebGL 2; showing the legacy screening layer.';
+      if (status) status.textContent = skyViewFallback
+        ? 'The SOLWEIG sky-view raster requires WebGL 2; showing the screening layer.'
+        : 'Near-live thermal rasters require WebGL 2; showing the legacy screening layer.';
     }
     const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
     if (heatDateControl) heatDateControl.hidden = !temporal;
@@ -1442,6 +1482,15 @@ export async function startScene(canvas, status) {
       terrainHeightAt(x - radius, z + radius), terrainHeightAt(x + radius, z + radius),
     ].sort((a, b) => a - b);
     return samples[Math.floor(samples.length / 2)];
+  }
+
+  function focusPlaceInspector(feature, { focus = true } = {}) {
+    placeInspectorSelection = feature;
+    if (focus) {
+      camera.target = [feature.x, terrainHeightAt(feature.x, feature.z) + 12, feature.z];
+      camera.distance = Math.min(camera.distance, feature.kind === 'street' ? 700 : 550);
+    }
+    requestRender();
   }
 
   function pointInTerrainFootprint(x, z) {
@@ -2022,20 +2071,53 @@ export async function startScene(canvas, status) {
     }
   }
 
-  function drawTerrain(projectPolygon) {
+  function drawTerrain(projectPolygon, simplified) {
     const [left, bottom, right, top] = manifest.bounds;
     const minZ = -top;
     const maxZ = -bottom;
     const point = (column, row, elevation) => [left + (right - left) * column / (terrain.columns - 1), elevation, minZ + (maxZ - minZ) * row / (terrain.rows - 1)];
     const edgePoint = (column, row) => point(column, row, terrain.heights[row * terrain.columns + column]);
+    let clippedToFootprint = false;
+    if (terrain.footprint?.length) {
+      const footprintPath = new Path2D();
+      for (const polygon of terrain.footprint) {
+        for (const ring of polygon) {
+          const projected = projectPolygon(ring.map(([x, z]) => [x, terrainHeightAt(x, z), z]));
+          if (projected.length < 3) continue;
+          footprintPath.moveTo(projected[0][0], projected[0][1]);
+          for (let index = 1; index < projected.length; index += 1) footprintPath.lineTo(projected[index][0], projected[index][1]);
+          footprintPath.closePath();
+        }
+      }
+      context.save();
+      context.clip(footprintPath, 'evenodd');
+      clippedToFootprint = true;
+    }
     context.fillStyle = shadowState.enabled ? '#ffffff' : COLORS.terrain;
     context.beginPath();
-    for (let row = 0; row < terrain.rows - 1; row += 1) {
-      for (let column = 0; column < terrain.columns - 1; column += 1) {
-        const centerX = left + (right - left) * (column + 0.5) / (terrain.columns - 1);
-        const centerZ = minZ + (maxZ - minZ) * (row + 0.5) / (terrain.rows - 1);
-        if (!pointInTerrainFootprint(centerX, centerZ)) continue;
-        const points = projectPolygon([edgePoint(column, row), edgePoint(column + 1, row), edgePoint(column + 1, row + 1), edgePoint(column, row + 1)]);
+    const validity = terrain.valid;
+    const columns = terrain.columns;
+    const stride = simplified ? 3 : camera.distance > 1000 ? 2 : 1;
+    for (let row = 0; row < terrain.rows - 1; row += stride) {
+      const nextRow = Math.min(terrain.rows - 1, row + stride);
+      for (let column = 0; column < terrain.columns - 1; column += stride) {
+        const nextColumn = Math.min(columns - 1, column + stride);
+        // Most cells sit well inside or outside the valid footprint. The
+        // sampled validity mask skips both cheaply; only boundary cells need
+        // the exact vector check against the 450-point footprint ring.
+        const cell = row * columns + column;
+        const nextCell = nextRow * columns + column;
+        const validCorners = validity
+          ? Number(Boolean(validity[cell])) + Number(Boolean(validity[cell + nextColumn - column]))
+            + Number(Boolean(validity[nextCell])) + Number(Boolean(validity[nextCell + nextColumn - column]))
+          : -1;
+        if (validCorners === 0) continue;
+        if ((validCorners > 0 && validCorners < 4) || validCorners < 0) {
+          const centerX = left + (right - left) * (column + (nextColumn - column) * 0.5) / (columns - 1);
+          const centerZ = minZ + (maxZ - minZ) * (row + (nextRow - row) * 0.5) / (terrain.rows - 1);
+          if (!pointInTerrainFootprint(centerX, centerZ)) continue;
+        }
+        const points = projectPolygon([edgePoint(column, row), edgePoint(nextColumn, row), edgePoint(nextColumn, nextRow), edgePoint(column, nextRow)]);
         if (points.length < 3) continue;
         context.moveTo(points[0][0], points[0][1]);
         for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
@@ -2047,6 +2129,7 @@ export async function startScene(canvas, status) {
       context.fillStyle = groundPattern;
       context.fill();
     }
+    if (clippedToFootprint) context.restore();
   }
 
   function drawTerrainSkirt(projectPolygon) {
@@ -2198,6 +2281,356 @@ export async function startScene(canvas, status) {
         }
       }
       context.restore();
+    }
+  }
+
+  function drawGroundcover(project, focal) {
+    if (!visibility.groundcover || !visibility.terrain || shadowState.enabled || heatState.enabled || windState.enabled) return;
+    const palette = { paved: '#e8ad61', vegetated: '#5ecb91', water: '#54c3e1' };
+    for (const feature of groundcoverState.features) {
+      if (!isInView(feature.x, terrainHeightAt(feature.x, feature.z) + 0.58, feature.z, feature.radius, project, focal)) continue;
+      const surfacePath = new Path2D();
+      let valid = true;
+      for (const ring of feature.rings) {
+        const points = ring.map(([x, z]) => project([x, roadTerrainHeightAt(x, z) + 0.58, z]));
+        if (points.length < 3 || points.some(point => !point)) { valid = false; break; }
+        surfacePath.moveTo(points[0][0], points[0][1]);
+        for (let index = 1; index < points.length; index += 1) surfacePath.lineTo(points[index][0], points[index][1]);
+        surfacePath.closePath();
+      }
+      if (!valid) continue;
+      context.fillStyle = palette[feature.category] || '#aaa';
+      context.globalAlpha = 0.76;
+      context.fill(surfacePath, 'evenodd');
+      context.globalAlpha = 0.92;
+      context.strokeStyle = 'rgba(24, 35, 31, .55)';
+      context.lineWidth = 0.65;
+      context.stroke(surfacePath);
+      context.globalAlpha = 1;
+    }
+  }
+
+  function drawCyclingNetwork(project, focal, simplified) {
+    if (!visibility.cycling || !visibility.terrain || shadowState.enabled || heatState.enabled || windState.enabled) return;
+    context.save();
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    const scale = focal / camera.distance;
+    for (const way of cyclingState.ways) {
+      if (!isInView(way.x, terrainHeightAt(way.x, way.z) + 1, way.z, way.radius, project, focal)) continue;
+      const projected = way.points.map(([x, z]) => project([x, roadTerrainHeightAt(x, z) + 1, z]));
+      if (projected.length < 2 || projected.some(point => !point)) continue;
+      context.beginPath(); context.moveTo(projected[0][0], projected[0][1]);
+      for (let index = 1; index < projected.length; index += 1) context.lineTo(projected[index][0], projected[index][1]);
+      context.strokeStyle = '#073842';
+      context.lineWidth = simplified ? 3 : clamp(4.8 * scale, 2.1, 6.5);
+      context.stroke();
+      context.strokeStyle = '#56e4ed';
+      context.lineWidth = simplified ? 1.5 : clamp(2.4 * scale, 1.25, 3.6);
+      context.stroke();
+    }
+    context.fillStyle = '#ffc46b';
+    context.strokeStyle = '#073842';
+    context.lineWidth = 1.5;
+    for (const [x, z] of cyclingState.openEnds) {
+      const point = project([x, roadTerrainHeightAt(x, z) + 1.5, z]);
+      if (!point) continue;
+      context.beginPath(); context.arc(point[0], point[1], clamp(3.2 * scale, 2.3, 5.5), 0, Math.PI * 2);
+      context.fill(); context.stroke();
+    }
+    context.restore();
+  }
+
+  function drawRunoffScreening(project, focal, simplified) {
+    if (!visibility.runoff || !visibility.terrain || shadowState.enabled || heatState.enabled || windState.enabled || !runoffState.loaded) return;
+    const scale = focal / camera.distance;
+    const minArea = simplified ? 3000 : camera.distance > 1400 ? 512 : 64;
+    context.save();
+    for (const [x, z, area] of runoffState.points) {
+      if (area < minArea || !isInView(x, terrainHeightAt(x, z) + 0.82, z, 5, project, focal)) continue;
+      const point = project([x, terrainHeightAt(x, z) + 0.82, z]);
+      if (!point) continue;
+      const blend = clamp(Math.log(Math.max(1, area / 64)) / Math.log(Math.max(1.01, runoffState.maximumArea / 64)), 0, 1);
+      const ramp = blend < 0.58
+        ? [[36, 117, 229], [39, 203, 209], blend / 0.58]
+        : [[39, 203, 209], [255, 121, 88], (blend - 0.58) / 0.42];
+      const rgb = ramp[0].map((component, index) => Math.round(component + (ramp[1][index] - component) * ramp[2]));
+      context.fillStyle = `rgb(${rgb.join(' ')})`;
+      context.globalAlpha = 0.82;
+      context.beginPath();
+      context.arc(point[0], point[1], clamp(2.7 * scale, 1.5, 4.2), 0, Math.PI * 2);
+      context.fill();
+    }
+    context.restore();
+  }
+
+  function drawPublicRealm(project, focal) {
+    if (!visibility.publicRealm || !publicRealmState.loaded || shadowState.enabled || heatState.enabled || windState.enabled) return;
+    const symbols = {
+      busStop: ['B', '#36c4d3'], publicToilet: ['WC', '#69aeea'], bench: ['b', '#d8a768'],
+      bicycleParking: ['P', '#79cf9a'], fountain: ['F', '#70c3df'], streetClock: ['C', '#e7d17d'],
+      wasteBasket: ['W', '#aeb8b8'], bollard: ['•', '#c9b59b'],
+    };
+    const radius = clamp(focal / camera.distance * 2.3, 3.2, 7.2);
+    context.save();
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    for (const feature of publicRealmState.features) {
+      const symbol = symbols[feature.class];
+      if (!symbol || !isInView(feature.x, terrainHeightAt(feature.x, feature.z) + 1.4, feature.z, 8, project, focal)) continue;
+      const point = project([feature.x, terrainHeightAt(feature.x, feature.z) + 1.4, feature.z]);
+      if (!point || point[0] < -radius || point[1] < -radius || point[0] > canvas.width + radius || point[1] > canvas.height + radius) continue;
+      context.fillStyle = 'rgba(20, 29, 31, .94)';
+      context.strokeStyle = symbol[1];
+      context.lineWidth = 1.6;
+      context.beginPath(); context.arc(point[0], point[1], radius, 0, Math.PI * 2); context.fill(); context.stroke();
+      context.fillStyle = symbol[1];
+      context.font = `bold ${Math.max(6, radius * 1.08)}px sans-serif`;
+      context.fillText(symbol[0], point[0], point[1] + 0.3);
+    }
+    if (camera.distance < 1500) {
+      context.strokeStyle = 'rgba(255, 231, 170, .9)';
+      context.lineWidth = 1.3;
+      for (const feature of publicRealmState.crossings) {
+        if (!isInView(feature.x, terrainHeightAt(feature.x, feature.z) + 0.65, feature.z, 8, project, focal)) continue;
+        const point = project([feature.x, terrainHeightAt(feature.x, feature.z) + 0.65, feature.z]);
+        if (!point || point[0] < -4 || point[1] < -4 || point[0] > canvas.width + 4 || point[1] > canvas.height + 4) continue;
+        context.beginPath(); context.moveTo(point[0] - 2.5, point[1] - 2.5); context.lineTo(point[0] + 2.5, point[1] + 2.5);
+        context.moveTo(point[0] + 2.5, point[1] - 2.5); context.lineTo(point[0] - 2.5, point[1] + 2.5); context.stroke();
+      }
+    }
+    if (camera.distance < 720) {
+      context.fillStyle = 'rgba(135, 196, 203, .8)';
+      for (const feature of publicRealmState.parking) {
+        if (!isInView(feature.x, terrainHeightAt(feature.x, feature.z) + 0.65, feature.z, 8, project, focal)) continue;
+        const point = project([feature.x, terrainHeightAt(feature.x, feature.z) + 0.65, feature.z]);
+        if (!point || point[0] < -2 || point[1] < -2 || point[0] > canvas.width + 2 || point[1] > canvas.height + 2) continue;
+        context.fillRect(point[0] - 1.2, point[1] - 0.7, 2.4, 1.4);
+      }
+    }
+    context.restore();
+  }
+
+  function drawPlaceInspectorHighlight(project) {
+    const feature = placeInspectorSelection;
+    if (!feature) return;
+    context.save();
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+    if (feature.kind === 'building') {
+      const base = Number(feature.value[0] || 0);
+      const top = base + Math.max(1, Number(feature.value[5] || feature.value[1] || 1)) + 1.2;
+      const points = feature.ring.map(([x, z]) => project([x, top, z]));
+      if (points.length >= 3 && points.every(Boolean)) {
+        context.beginPath(); context.moveTo(points[0][0], points[0][1]);
+        for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
+        context.closePath();
+        context.fillStyle = 'rgba(255, 205, 91, .12)';
+        context.fill();
+        context.strokeStyle = 'rgba(10, 18, 20, .9)'; context.lineWidth = 5; context.stroke();
+        context.strokeStyle = '#ffd46b'; context.lineWidth = 2.6; context.stroke();
+      }
+    } else {
+      const points = feature.points.map(([x, z]) => project([x, roadTerrainHeightAt(x, z) + 2, z]));
+      if (points.length >= 2 && points.every(Boolean)) {
+        context.beginPath(); context.moveTo(points[0][0], points[0][1]);
+        for (let index = 1; index < points.length; index += 1) context.lineTo(points[index][0], points[index][1]);
+        context.strokeStyle = 'rgba(10, 18, 20, .92)'; context.lineWidth = 8; context.stroke();
+        context.strokeStyle = '#ffd46b'; context.lineWidth = 5; context.stroke();
+      }
+    }
+    context.restore();
+  }
+
+  function loadCyclingNetwork() {
+    if (cyclingState.loaded) return;
+    cyclingState.loaded = true;
+    const ways = roads.filter(road => road.highway === 'cycleway' && road.points.length >= 2);
+    const parents = ways.map((_, index) => index);
+    const find = index => {
+      while (parents[index] !== index) {
+        parents[index] = parents[parents[index]];
+        index = parents[index];
+      }
+      return index;
+    };
+    const join = (a, b) => { parents[find(a)] = find(b); };
+    const distanceToSegment = (point, a, b) => {
+      const dx = b[0] - a[0], dz = b[1] - a[1];
+      const amount = clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / Math.max(dx * dx + dz * dz, 1e-6), 0, 1);
+      return Math.hypot(point[0] - a[0] - dx * amount, point[1] - a[1] - dz * amount);
+    };
+    let totalLength = 0, openEnds = 0;
+    for (let index = 0; index < ways.length; index += 1) {
+      const way = ways[index];
+      for (let point = 1; point < way.points.length; point += 1) {
+        totalLength += Math.hypot(way.points[point][0] - way.points[point - 1][0], way.points[point][1] - way.points[point - 1][1]);
+      }
+      for (const endpoint of [way.points[0], way.points[way.points.length - 1]]) {
+        let linked = false;
+        for (let otherIndex = 0; otherIndex < ways.length; otherIndex += 1) {
+          if (otherIndex === index) continue;
+          const other = ways[otherIndex];
+          let nearest = Infinity;
+          for (let point = 1; point < other.points.length; point += 1) {
+            nearest = Math.min(nearest, distanceToSegment(endpoint, other.points[point - 1], other.points[point]));
+            if (nearest <= 8) break;
+          }
+          if (nearest <= 8) { linked = true; join(index, otherIndex); }
+        }
+        if (!linked) {
+          openEnds += 1;
+          cyclingState.openEnds.push(endpoint);
+        }
+      }
+    }
+    cyclingState.ways = ways;
+    const components = new Set(ways.map((_, index) => find(index))).size;
+    const status = document.querySelector('#cycling-status');
+    const caveat = document.querySelector('#cycling-caveat');
+    if (status) status.textContent = ways.length
+      ? `${ways.length} mapped links · ${(totalLength / 1000).toFixed(2)} km · ${components} connected groups · ${openEnds} unmatched ends.`
+      : 'No dedicated cycleway links are present in this map extract.';
+    if (caveat) caveat.textContent = 'OpenStreetMap dedicated cycleway features only; endpoints are unmatched when more than 8 m from another mapped cycleway. They may be intentional terminals. Other roads may allow cycling but are not counted here. This is not a safety or accessibility assessment.';
+  }
+
+  function updateRunoffSummary() {
+    const output = document.querySelector('#runoff-rainfall-value');
+    const volume = document.querySelector('#runoff-volume');
+    if (output) output.textContent = `${runoffState.rainfallDepthMm} mm`;
+    if (!runoffState.metadata || !volume) return;
+    const grossVolume = Number(runoffState.metadata.mapped_paved_area_m2 || 0) * runoffState.rainfallDepthMm / 1000;
+    volume.textContent = `${grossVolume.toLocaleString('en-ZA', { maximumFractionDigits: 0 })} m³ gross rainfall on mapped pavement under the stated 100% runoff assumption.`;
+  }
+
+  async function loadRunoffScreening() {
+    const summary = document.querySelector('#runoff-summary');
+    const status = document.querySelector('#runoff-status');
+    const caveat = document.querySelector('#runoff-caveat');
+    if (summary) summary.hidden = false;
+    if (runoffState.loaded || runoffState.loading) return;
+    runoffState.loading = true;
+    if (status) status.textContent = 'Loading mapped-pavement flow paths…';
+    try {
+      const response = await fetch(`${windApi}/runoff/screening`);
+      const metadata = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(metadata.detail || `HTTP ${response.status}`);
+      const assetResponse = await fetch(`${metadata.asset_url}?v=${metadata.asset_cache_key || metadata.asset_sha256}`);
+      if (!assetResponse.ok) throw new Error(`flow asset HTTP ${assetResponse.status}`);
+      const buffer = await assetResponse.arrayBuffer();
+      const headerSize = 36, recordSize = 8;
+      if (buffer.byteLength < headerSize || String.fromCharCode(...new Uint8Array(buffer, 0, 8)) !== 'CTFLOW01') throw new Error('flow asset header is invalid');
+      const header = new DataView(buffer, 0, headerSize);
+      const width = header.getUint32(8, true), height = header.getUint32(12, true);
+      const resolution = header.getFloat32(16, true), minX = header.getFloat32(20, true), minZ = header.getFloat32(24, true);
+      const threshold = header.getFloat32(28, true), count = header.getUint32(32, true);
+      if (headerSize + count * recordSize !== buffer.byteLength || width !== Number(metadata.grid?.width)
+        || height !== Number(metadata.grid?.height) || count !== Number(metadata.record_count)) throw new Error('flow asset dimensions do not match its manifest');
+      const records = new DataView(buffer, headerSize);
+      let maximumArea = threshold;
+      runoffState.points = new Array(count);
+      for (let index = 0; index < count; index += 1) {
+        const offset = index * recordSize;
+        const row = records.getUint16(offset, true), column = records.getUint16(offset + 2, true);
+        const area = records.getUint32(offset + 4, true);
+        maximumArea = Math.max(maximumArea, area);
+        runoffState.points[index] = [minX + (column + 0.5) * resolution, minZ + (row + 0.5) * resolution, area];
+      }
+      runoffState.maximumArea = maximumArea;
+      runoffState.metadata = metadata;
+      runoffState.loaded = true;
+      if (status) status.textContent = `${count.toLocaleString()} flow cells · ${(Number(metadata.mapped_paved_area_m2) / 10000).toFixed(1)} ha mapped pavement · ${Number(metadata.mapped_paved_coverage_percent).toFixed(1)}% of valid terrain.`;
+      if (caveat) caveat.textContent = `${metadata.method} ${metadata.runoff_assumption} ${metadata.limitations}`;
+      updateRunoffSummary();
+    } catch (error) {
+      if (status) status.textContent = `Runoff screen unavailable · ${error.message || 'try again later'}`;
+    } finally {
+      runoffState.loading = false;
+      requestRender();
+    }
+  }
+
+  async function loadGroundcoverInventory() {
+    const summary = document.querySelector('#groundcover-summary');
+    const status = document.querySelector('#groundcover-status');
+    const areas = document.querySelector('#groundcover-areas');
+    const caveat = document.querySelector('#groundcover-caveat');
+    if (summary) summary.hidden = false;
+    if (groundcoverState.loaded) return;
+    if (groundcoverState.loading) return;
+    groundcoverState.loading = true;
+    if (status) status.textContent = 'Loading mapped surface coverage…';
+    try {
+      const response = await fetch(`${windApi}/groundcover`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      groundcoverState.features = [];
+      for (const category of payload.categories || []) {
+        for (const polygon of category.polygons || []) {
+          const outer = polygon[0] || [];
+          if (outer.length < 3) continue;
+          const xs = outer.map(point => point[0]), zs = outer.map(point => point[1]);
+          const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+          groundcoverState.features.push({
+            category: category.category, rings: polygon,
+            x: (minX + maxX) / 2, z: (minZ + maxZ) / 2,
+            radius: Math.hypot(maxX - minX, maxZ - minZ) / 2,
+          });
+        }
+      }
+      if (status) status.textContent = `${Number(payload.coverage_percent || 0).toFixed(1)}% of the mapped terrain footprint has a classified polygon (${(Number(payload.mapped_area_m2 || 0) / 10000).toFixed(1)} ha).`;
+      if (areas) areas.replaceChildren(...(payload.categories || []).map(category => {
+        const row = document.createElement('div'); row.className = `groundcover-area ${category.category}`;
+        const name = document.createElement('span'); name.textContent = category.label;
+        const area = document.createElement('b'); area.textContent = `${(Number(category.area_m2 || 0) / 10000).toFixed(1)} ha`;
+        row.append(name, area); return row;
+      }));
+      if (caveat) caveat.textContent = `${payload.source}. ${payload.caveat}`;
+      groundcoverState.loaded = true;
+    } catch (error) {
+      if (status) status.textContent = `Surface inventory unavailable · ${error.message || 'try again later'}`;
+    } finally {
+      groundcoverState.loading = false;
+      requestRender();
+    }
+  }
+
+  async function loadPublicRealm() {
+    const summary = document.querySelector('#public-realm-summary');
+    const status = document.querySelector('#public-realm-status');
+    if (summary) summary.hidden = false;
+    if (publicRealmState.loaded || publicRealmState.loading) return;
+    publicRealmState.loading = true;
+    if (status) status.textContent = 'Loading mapped public-realm points…';
+    try {
+      const asset = manifest.assets?.public_realm;
+      if (!asset) throw new Error('asset is not listed in this scene release');
+      const version = manifest.layers?.public_realm?.cache_key || manifest.layers?.public_realm?.bytes || 0;
+      const response = await fetch(`/assets/${asset}?v=${version}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      const parsePoints = items => (items || []).flatMap(item => {
+        const x = Number(item.coordinates?.[0]), z = Number(item.coordinates?.[1]);
+        return Number.isFinite(x) && Number.isFinite(z) ? [{ ...item, x, z }] : [];
+      });
+      publicRealmState.features = parsePoints(payload.publicRealm);
+      publicRealmState.crossings = parsePoints(payload.crossings);
+      publicRealmState.parking = parsePoints(payload.parking);
+      const names = {
+        busStop: 'bus stops', bench: 'benches', publicToilet: 'public toilets',
+        bicycleParking: 'bike-parking points', fountain: 'fountains',
+        streetClock: 'street clocks', wasteBasket: 'waste baskets', bollard: 'bollards',
+      };
+      const counts = manifest.layers?.public_realm?.classes || {};
+      const breakdown = Object.entries(counts).filter(([, count]) => count > 0)
+        .map(([kind, count]) => `${count} ${names[kind] || kind}`).join(' · ');
+      if (status) status.textContent = `${publicRealmState.features.length.toLocaleString()} mapped places${breakdown ? ` · ${breakdown}` : ''} · ${publicRealmState.crossings.length.toLocaleString()} pedestrian crossings · ${publicRealmState.parking.length.toLocaleString()} parking spaces.`;
+      publicRealmState.loaded = true;
+    } catch (error) {
+      if (status) status.textContent = `Public-realm layer unavailable · ${error.message || 'try again later'}`;
+    } finally {
+      publicRealmState.loading = false;
+      requestRender();
     }
   }
 
@@ -2398,7 +2831,7 @@ export async function startScene(canvas, status) {
       const simplified = Boolean(drag) || performance.now() < interactionUntil;
       if (visibility.terrain) {
         drawTerrainSkirt(projectPolygon);
-        drawTerrain(projectPolygon);
+        drawTerrain(projectPolygon, simplified);
       }
       const [left, bottom, right, top] = manifest.bounds;
       const boundary = [[left, terrainHeightAt(left, -top), -top], [right, terrainHeightAt(right, -top), -top], [right, terrainHeightAt(right, -bottom), -bottom], [left, terrainHeightAt(left, -bottom), -bottom]];
@@ -2413,6 +2846,9 @@ export async function startScene(canvas, status) {
         drawRoads(project, focal, simplified);
       }
       drawGroundSurfaces(project, projectPolygon, focal, simplified);
+      drawGroundcover(project, focal);
+      drawCyclingNetwork(project, focal, simplified);
+      drawRunoffScreening(project, focal, simplified);
       drawGeneratedShadows(project, focal, simplified);
       // Keep ground features inside the CBD footprint, but restore the canvas
       // before drawing vertical geometry. An edge building must remain whole
@@ -2447,10 +2883,12 @@ export async function startScene(canvas, status) {
         else drawBuildingsByDepth(visibleBuildings, project, visibleTrees);
       }
       drawCanopyFootprints(project, forward);
+      drawPublicRealm(project, focal);
       // Rooftop heat is painted last so the thermal surface remains visible
       // above the building roofs instead of being hidden by the massing pass.
       if (visibleHeatMetric === 'rooftop_temperature_c') drawHeatmap(project, projectPolygon);
       drawSunBuildingSurfaces(project, forward);
+      drawPlaceInspectorHighlight(project);
     } finally {
       context = mainContext;
     }
@@ -2736,6 +3174,16 @@ export async function startScene(canvas, status) {
         return;
       }
     }
+    const placeTap = drag && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < (event.pointerType === 'touch' ? 12 : 5);
+    if (placeInspectorPickMode && placeTap) {
+      const point = cameraProjection().screenToTerrain(event.clientX, event.clientY);
+      dispatchEvent(new CustomEvent('climate-place-inspector-picked', {
+        detail: point ? { x: point[0], z: point[1] } : {},
+      }));
+      drag = null;
+      requestRender();
+      return;
+    }
     const cameraTouchTap = event.pointerType === 'touch' && drag
       && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 12;
     if (cameraTouchTap && performance.now() - lastCameraTouchTap < 350) {
@@ -2787,9 +3235,33 @@ export async function startScene(canvas, status) {
   document.querySelectorAll('[data-layer]').forEach(input => input.addEventListener('change', event => {
     visibility[event.target.dataset.layer] = event.target.checked;
     if (event.target.dataset.layer === 'water' && !event.target.disabled) savedVisibility.water = event.target.checked;
+    if (event.target.dataset.layer === 'groundcover') {
+      const summary = document.querySelector('#groundcover-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) void loadGroundcoverInventory();
+    }
+    if (event.target.dataset.layer === 'cycling') {
+      const summary = document.querySelector('#cycling-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) loadCyclingNetwork();
+    }
+    if (event.target.dataset.layer === 'runoff') {
+      const summary = document.querySelector('#runoff-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) void loadRunoffScreening();
+    }
+    if (event.target.dataset.layer === 'publicRealm') {
+      const summary = document.querySelector('#public-realm-summary');
+      if (summary) summary.hidden = !event.target.checked;
+      if (event.target.checked) void loadPublicRealm();
+    }
     syncVisibilityControls();
     requestRender();
   }));
+  document.querySelector('#runoff-rainfall')?.addEventListener('input', event => {
+    runoffState.rainfallDepthMm = clamp(Number(event.target.value) || 25, 5, 100);
+    updateRunoffSummary();
+  });
 
   // This fallback renderer only ever runs the single screening-proxy
   // preview (no OpenFOAM, no comfort mode), unlike the WebGL/CFD panel this
@@ -2907,7 +3379,7 @@ export async function startScene(canvas, status) {
     setHeatMode(event.target.checked);
   });
   heatMetric?.addEventListener('change', event => {
-    loadHeat(event.target.value);
+    if (!suppressHeatMetricReload) loadHeat(event.target.value);
   });
   heatSaveComparison?.addEventListener('click', () => {
     if (!heatCurrentSummary) {
@@ -2979,9 +3451,12 @@ export async function startScene(canvas, status) {
       windToggle.checked = false;
       windToggle.dispatchEvent(new Event('change'));
     }
-    if (name === 'heat' && heatToggle && !heatToggle.checked) {
-      heatToggle.checked = true;
-      setHeatMode(true);
+    if (name === 'heat') {
+      if (heatToggle && !heatToggle.checked) {
+        heatToggle.checked = true;
+        setHeatMode(true);
+      }
+      if (!heatLoaded) void loadHeat(heatMetric?.value || heatState.metric);
     } else if (name === 'sun' && !shadowState.enabled) {
       setShadowMode(true);
     } else if (name === 'wind' && windToggle && !windToggle.checked) {
@@ -3111,7 +3586,9 @@ export async function startScene(canvas, status) {
   requestRender();
   setHeatMode(heatState.enabled);
   updateSunStatus();
-  loadHeat();
+  if (document.querySelector('[data-menu-target="heat"]')?.classList.contains('active')) {
+    void loadHeat(heatMetric?.value || heatState.metric);
+  }
   attachSceneExperience({
     canvas, requestRender, fitScene,
     readCamera: () => ({ azimuth: camera.azimuth, elevation: camera.elevation, distance: camera.distance,
@@ -3124,6 +3601,15 @@ export async function startScene(canvas, status) {
       state.center = [point.x, point.z];
       camera.target = [point.x, terrainHeightAt(point.x, point.z), point.z];
       requestRender();
+    },
+  });
+  attachPlaceInspector({
+    buildings,
+    roads,
+    onSelect: focusPlaceInspector,
+    onPickMode: active => {
+      placeInspectorPickMode = active;
+      canvas.style.cursor = active ? 'crosshair' : streetViewState.placing ? 'crosshair' : 'grab';
     },
   });
 }

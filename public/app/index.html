@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=83">
+    <link rel="stylesheet" href="/style.css?v=89">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -52,6 +52,10 @@
         <span data-legend-layer="roads"><i class="legend-road"></i>Roads</span>
         <span data-legend-layer="grass"><i class="legend-green"></i>Green space</span>
         <span data-legend-layer="water"><i class="legend-water"></i>Water</span>
+        <span data-legend-layer="groundcover"><i class="legend-groundcover"></i>Mapped cover</span>
+        <span data-legend-layer="cycling"><i class="legend-cycling"></i>Mapped cycleways</span>
+        <span data-legend-layer="runoff"><i class="legend-runoff"></i>Runoff concentration</span>
+        <span data-legend-layer="publicRealm"><i class="legend-public-realm"></i>Public realm</span>
       </div>
     </div>
     <div class="map-controls" role="group" aria-label="Map camera controls">
@@ -129,8 +133,27 @@
             <button id="current-refresh" class="secondary" type="button">Refresh</button>
           </div>
         </section>
+        <details class="tool-disclosure place-inspector-disclosure">
+          <summary>Place inspector <span>Search mapped buildings and streets</span></summary>
+          <section class="tool-section place-inspector-panel">
+            <label class="place-search-label" for="place-search">Search a street, building name or OSM ID</label>
+            <input id="place-search" type="search" autocomplete="off" spellcheck="false" aria-autocomplete="list" aria-controls="place-search-results" aria-expanded="false" placeholder="e.g. Adderley Street or 6301806">
+            <div id="place-search-results" class="place-search-results" role="list" aria-label="Matching mapped places" hidden></div>
+            <p id="place-inspector-status" class="place-inspector-status" role="status" aria-live="polite">Search mapped buildings and streets, or pick a location from the map.</p>
+            <button id="place-inspector-pick" class="secondary" type="button" aria-pressed="false">Pick a place on the map</button>
+            <section id="place-inspector-card" class="place-inspector-card" aria-live="polite" hidden>
+              <div class="place-inspector-heading"><b id="place-inspector-name"></b><span id="place-inspector-type"></span></div>
+              <dl id="place-inspector-details" class="place-inspector-details"></dl>
+              <div class="place-inspector-actions">
+                <button type="button" data-place-use="sun">Use as Sun centre</button>
+                <button type="button" data-place-use="wind">Use as Wind centre</button>
+              </div>
+              <p class="method-note">The selected point is passed to the chosen tool; that tool checks its own data coverage. Unknown tags and dates stay unknown.</p>
+            </section>
+          </section>
+        </details>
         <details class="tool-disclosure">
-          <summary>Map layers <span>8 layers · display options</span></summary>
+          <summary>Map layers <span>12 layers · display options</span></summary>
           <section class="tool-section">
             <div class="controls tool-layer-grid">
               <label><input type="checkbox" data-layer="terrain" checked> Ground</label>
@@ -141,6 +164,10 @@
               <label><input type="checkbox" data-layer="roads" checked> Roads</label>
               <label><input type="checkbox" data-layer="buildings" checked> Buildings</label>
               <label><input type="checkbox" data-layer="trees" checked> Trees</label>
+              <label><input type="checkbox" data-layer="groundcover"> Mapped surface inventory</label>
+              <label><input type="checkbox" data-layer="cycling"> Mapped cycleways</label>
+              <label><input type="checkbox" data-layer="runoff"> Runoff concentration</label>
+              <label><input type="checkbox" data-layer="publicRealm"> Public realm details</label>
               <label class="building-appearance-control">Building colors
                 <select id="building-appearance">
                   <option value="neutral" selected>Subtle height</option>
@@ -148,6 +175,31 @@
                 </select>
               </label>
             </div>
+            <section id="groundcover-summary" class="groundcover-summary" aria-live="polite" hidden>
+              <b>Mapped surface inventory</b>
+              <p id="groundcover-status">Loading mapped surface coverage…</p>
+              <div id="groundcover-areas" class="groundcover-areas"></div>
+              <p id="groundcover-caveat" class="method-note"></p>
+            </section>
+            <section id="cycling-summary" class="groundcover-summary cycling-summary" aria-live="polite" hidden>
+              <b>Mapped cycling network</b>
+              <p id="cycling-status">Loading mapped cycleways…</p>
+              <p id="cycling-caveat" class="method-note"></p>
+            </section>
+            <section id="runoff-summary" class="groundcover-summary runoff-summary" aria-live="polite" hidden>
+              <b>Terrain-only runoff screen</b>
+              <p id="runoff-status">Loading the mapped-pavement flow screen…</p>
+              <label class="runoff-rainfall-control">Illustrative rainfall depth <output id="runoff-rainfall-value" for="runoff-rainfall">25 mm</output>
+                <input id="runoff-rainfall" type="range" min="5" max="100" step="5" value="25">
+              </label>
+              <p id="runoff-volume" class="runoff-volume"></p>
+              <p id="runoff-caveat" class="method-note"></p>
+            </section>
+            <section id="public-realm-summary" class="groundcover-summary" aria-live="polite" hidden>
+              <b>Mapped public realm and street use</b>
+              <p id="public-realm-status">Loading mapped amenities…</p>
+              <p class="method-note">Amenities and crossings follow mapped records. Parking bays are simplified from mapped points with inferred 5.2 × 2.4 m dimensions; these markings are illustrative, not surveyed. An unmapped place is not confirmed absent.</p>
+            </section>
             <p class="method-note">Illustrative traffic follows TomTom speeds when available. Cars queue on slow streets and occupy mapped surface parking lots; totals are not traffic counts.</p>
           </section>
         </details>
@@ -188,6 +240,7 @@
               <optgroup label="Thermal comfort">
                 <option value="utci_c" selected>UTCI</option>
                 <option value="tmrt_c">Radiant temperature (Tmrt)</option>
+                <option value="sky_view_factor">Sky-view factor (SVF)</option>
               </optgroup>
               <optgroup label="Satellite heat screening">
                 <option value="heat_model_lst_c" title="Modelled land-surface temperature informed by the satellite-era summer baseline">Land-surface temperature</option>
@@ -412,6 +465,7 @@
         <button id="sun-generate" type="button">Generate shadows</button>
         <progress id="sun-progress" class="sun-progress" max="100" hidden aria-label="Sun-hours calculation progress"></progress>
         <p id="sun-status" class="sun-status">Loading current Cape Town shadows…</p>
+        <p class="sun-help">Mapped lamp positions use municipal records; pole heights are inferred from support type and wattage, not measured.</p>
         <div id="sun-hours-legend" class="sun-hours-legend" hidden>
           <div class="sun-energy-gradient"></div>
           <div class="heat-legend-labels"><span id="sun-hours-min">Least sun</span><span id="sun-hours-max">Most sun</span></div>
@@ -995,6 +1049,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-62"></script>
+    <script type="module" src="/app.js?v=experience-87"></script>
 </body>
 </html>

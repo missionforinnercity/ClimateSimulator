@@ -41,6 +41,8 @@ from .field import (
     request_from_payload,
 )
 from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, heat_zones
+from .groundcover import mapped_groundcover
+from .runoff import runoff_screening_manifest
 from .sunlight import (
     SunlightAnalysisCancelled,
     building_surface_sunlight,
@@ -56,6 +58,8 @@ from .thermal_products import (
     product_health,
     forecast_status as thermal_forecast_status,
     sample_point as sample_thermal_point,
+    sky_view_factor_manifest,
+    sky_view_factor_path,
 )
 from .thermal_climatology import (
     ThermalClimatologyUnavailable,
@@ -106,10 +110,11 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-Request-ID", "Retry-After", "X-Thermal-Scenario"],
 )
-# The traffic preview returns long arrays of rounded numbers, which
-# compress by roughly 5x. Worth it even on localhost for the multi-megabyte
-# vehicle-trajectory responses.
-app.add_middleware(GZipMiddleware, minimum_size=8192)
+# Large renderer and simulation responses benefit from gzip. Level 1 keeps
+# nearly the same size for the large float32 CFD fields while avoiding the
+# much higher CPU cost of the default level 9; JSON remains compressed without
+# delaying scene and result delivery for maximum byte savings.
+app.add_middleware(GZipMiddleware, minimum_size=8192, compresslevel=1)
 
 LOGGER = logging.getLogger("conditions.requests")
 HEAVY_PATH_LIMITS = {
@@ -484,6 +489,23 @@ def thermal_frame(run_id: str, frame_id: str):
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@app.get("/api/thermal/sky-view-factor")
+def thermal_sky_view_factor():
+    try:
+        path = sky_view_factor_path()
+        return FileResponse(path, media_type="application/octet-stream", filename=path.name)
+    except ThermalProductUnavailable as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/thermal/sky-view-factor/manifest")
+def thermal_sky_view_factor_manifest():
+    try:
+        return sky_view_factor_manifest()
+    except ThermalProductUnavailable as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @app.get("/api/thermal/point")
 def thermal_point(x: float, z: float, frame_id: str, run_id: str | None = None) -> dict[str, Any]:
     try:
@@ -634,6 +656,28 @@ def heat_preview(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         raise HTTPException(status_code=503, detail=f"heat data unavailable: {error}") from error
+
+
+@app.get("/api/groundcover")
+def groundcover_inventory() -> dict[str, Any]:
+    try:
+        return mapped_groundcover()
+    except (OSError, ValueError, KeyError) as error:
+        raise HTTPException(status_code=503, detail="Mapped ground-cover inventory is unavailable") from error
+
+
+@app.get("/api/runoff/screening")
+def runoff_screening() -> dict[str, Any]:
+    try:
+        return runoff_screening_manifest()
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=503, detail="Runoff screening asset is unavailable") from error
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        LOGGER.exception("Runoff screening metadata is invalid")
+        raise HTTPException(status_code=503, detail="Runoff screening asset is unavailable") from error
+    except Exception as error:
+        LOGGER.exception("Mapped ground-cover inventory failed")
+        raise HTTPException(status_code=503, detail="Mapped ground-cover inventory is unavailable") from error
 
 
 @app.get("/api/sunlight/building-surfaces")

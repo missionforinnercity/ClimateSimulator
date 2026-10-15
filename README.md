@@ -15,8 +15,13 @@ closures.
 
 ## Application overview
 
-- **Tools:** Explore the 3D city, inspect current modelled weather, change
-  building appearance, and open a map location in Street View.
+- **Tools:** Explore the 3D city, inspect current modelled weather, compare
+  mapped paved, vegetated and water coverage, change building appearance, and
+  open a map location in Street View. The surface inventory reports mapped
+  coverage only; unmapped ground and infiltration remain unknown.
+  A separate mapped-cycleway layer highlights dedicated OpenStreetMap links
+  and reports network proximity groups; it does not rate cycling safety or
+  imply that other roads are unavailable to cyclists.
 - **Urban heat:** Compare experimental near-live UTCI/Tmrt estimates, an
   historical ERA5 climate profile, and separate satellite-based screening
   layers. The panel includes map summaries, provenance and local inspection.
@@ -59,7 +64,11 @@ clearly at both city and street scales.
 python scripts/build_hybrid_dem.py
 python scripts/build_hybrid_buildings.py
 python scripts/build_scene.py
+python scripts/build_runoff_screening.py
 ```
+
+The optional terrain-only stormwater screen is documented in
+[`docs/RUNOFF_SCREENING.md`](docs/RUNOFF_SCREENING.md).
 
 `build_hybrid_dem.py` retains every valid 2025 LiDAR cell, then fills only the
 Company's Garden supplement with locally calibrated 30 m SRTM. The supplement
@@ -237,6 +246,17 @@ radiation audit; the worker checks their material-code version before
 publishing. The worker publishes its first forecast before those layers can display data.
 For a containerized run, `docker compose up --build` starts the API and thermal
 worker together.
+The worker publishes one full thermal forecast per hour, waiting an hour after
+each run attempt. SOLWEIG's prepared surface cache persists in the thermal
+product volume, so sky-view factor and geometry preprocessing are reused
+between runs. The worker prepares or refreshes the static SVF grid before it
+requests live weather, so an upstream forecast outage does not hide a valid
+geometry product. Select **Sky-view factor (SVF)** in Urban heat to inspect the
+cached surface result; it is a static geometry layer, not an hourly weather
+forecast. A restarted worker respects the last successful publish time, and
+scheduled model runs execute in a one-shot child process so solver memory is
+released after each refresh. Abandoned temporary run folders older than a day
+are removed automatically.
 
 The Compose web container binds to `127.0.0.1:18081` on the VM by default.
 If a host reverse proxy routes to this app, point its upstream at port `18081`.
@@ -252,9 +272,9 @@ For a no-fieldwork check of weather inputs against FACT METAR, satellite
 radiation and ERA5, run
 `.venv/bin/python scripts/backtest_thermal_forcing.py --days 30`; interpret
 station and reanalysis comparisons as context, not CBD street-level validation.
-The worker refreshes at least every ten minutes to pick up the satellite API's native
-10-minute radiation estimates; each map frame shows the radiation interval and
-the separate air/wind forecast time. See
+Each hourly run uses the latest available native satellite radiation estimate;
+each map frame shows its radiation interval and the separate air/wind forecast
+time. See
 [docs/THERMAL_RADIATION_AUDIT_2026-09-23.md](docs/THERMAL_RADIATION_AUDIT_2026-09-23.md)
 for the matched before/after results and model limits.
 
