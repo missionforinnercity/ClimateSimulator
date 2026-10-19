@@ -174,7 +174,14 @@ before rendering, and all markings sit above the highest road ribbon. Parking
 points form straight curbside runs with shared edges and dividers instead of
 overlapping boxes; their paint is deliberately muted and semi-transparent.
 Parking, crossings, and fine street furniture are distance-culled at district
-scale and return automatically when zooming toward street level.
+scale and return automatically when zooming toward street level. A stable 28%
+sample of mapped curb bays also holds illustrative parked cars; surface lots
+use their own simplified parking layouts. Neither sample represents observed
+occupancy.
+Municipal pole assemblies use instanced meshes without shadow casting and are
+loaded during idle time; street glow and road washes are deferred until Sun is
+opened. Parking-aisle service roads render above their mapped lot surfaces so
+their circulation lanes remain visible.
 
 Mapped OpenStreetMap point amenities round out the public realm with
 lightweight procedural fountains, benches, litter bins, bicycle stands,

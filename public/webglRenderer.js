@@ -437,7 +437,7 @@ export async function startWebGLScene(canvas, status) {
   layerGroups.groundcover.visible = false;
   layerGroups.cycling.visible = false;
   layerGroups.runoff.visible = false;
-  layerGroups.cityFurniture.visible = false;
+  layerGroups.cityFurniture.visible = true;
   layerGroups.publicRealm.visible = false;
   Object.values(layerGroups).forEach(group => scene.add(group));
   let groundcoverLoaded = false;
@@ -1753,7 +1753,10 @@ export async function startWebGLScene(canvas, status) {
           width: parkingAisle ? clamp(Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : 3.1, 2.7, 3.5)
             : clamp(Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : Number(mappedWidth) || 4, baseStyle >= 3 ? 0.8 : 2.5, 18),
           verticalOffset,
-          surfaceOffset: ROAD_CLASS_OFFSETS[baseStyle] ?? ROAD_CLASS_OFFSETS[0],
+          // Parking service aisles run over mapped parking polygons. Keep
+          // their asphalt ribbon slightly above those ground surfaces so it
+          // remains visible through the ground layer at Riebeek Square.
+          surfaceOffset: parkingAisle ? 0.50 : (ROAD_CLASS_OFFSETS[baseStyle] ?? ROAD_CLASS_OFFSETS[0]),
           highway,
           styleIndex,
           baseStyle,
@@ -1879,7 +1882,8 @@ export async function startWebGLScene(canvas, status) {
       const mesh = new THREE.Mesh(geometry, material);
       // Stay below mapped parking/crossing paint (orders 6 and 8) while still
       // preserving fine-grained ordering among the four network tiers.
-      mesh.renderOrder = 2.1 + priority * 0.2;
+      const parkingAisleLayer = roads.some(road => road.attributes?.service === 'parking_aisle');
+      mesh.renderOrder = parkingAisleLayer ? 4.2 : 2.1 + priority * 0.2;
       mesh.receiveShadow = true;
       if (styleIndex === 9) pavementOverrideMeshes.push(mesh);
       return mesh;
@@ -3004,23 +3008,26 @@ export async function startWebGLScene(canvas, status) {
     return canopies.length;
   }
 
-  function makeStreetFurniture(furnitureRecords = data.cityFurniture || [], targetGroup = layerGroups.cityFurniture, featureLayers = {}) {
+  function makeStreetFurniture(furnitureRecords = data.cityFurniture || [], targetGroup = layerGroups.cityFurniture, featureLayers = {}, options = {}) {
     const group = targetGroup;
     const crossings = featureLayers.crossings || data.crossings || [];
     const parking = featureLayers.parking || data.parking || [];
+    const lightingEffects = options.lightingEffects === true;
+    const lightingEffectsOnly = options.lightingEffectsOnly === true;
     const matrix = new THREE.Matrix4();
     const makeInstances = (geometry, material, matrices, semanticClass) => {
       if (!matrices.length) return null;
       const mesh = new THREE.InstancedMesh(geometry, material, matrices.length);
       matrices.forEach((instanceMatrix, index) => mesh.setMatrixAt(index, instanceMatrix));
       mesh.instanceMatrix.needsUpdate = true;
-      mesh.castShadow = !['parkingSpace', 'pedestrianCrossing'].includes(semanticClass);
-      mesh.receiveShadow = true;
+      const isStreetLight = semanticClass.startsWith('publicLight');
+      mesh.castShadow = !isStreetLight && !['parkingSpace', 'pedestrianCrossing'].includes(semanticClass);
+      mesh.receiveShadow = !isStreetLight;
       mesh.userData.semanticClass = semanticClass;
       mesh.userData.maxDistance = ['parkingSpace', 'pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands', 'publicLightPool'].includes(semanticClass)
         ? 720
         : semanticClass === 'publicLightGlow' ? 2200
-          : semanticClass.startsWith('publicLight') ? 2400
+          : semanticClass.startsWith('publicLight') ? 1050
           : ['fountain', 'bench', 'wasteBasket', 'bicycleParking', 'streetClock', 'bollard', 'busStop'].some(value => semanticClass.startsWith(value)) ? 850 : null;
       if (semanticClass === 'parkingSpace') mesh.renderOrder = 6;
       if (['pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)) mesh.renderOrder = 8;
@@ -3056,11 +3063,13 @@ export async function startWebGLScene(canvas, status) {
       if (postTop) height = Math.min(height, 8);
       const yaw = THREE.MathUtils.degToRad(Number(item.attributes?.roadFacingDeg) || 0);
       const directions = doubleFixture ? [yaw, yaw + Math.PI] : [yaw];
-      poleMatrices.push(composeMatrix(
-        new THREE.Vector3(x, baseY + height * 0.5, z),
-        new THREE.Quaternion(),
-        new THREE.Vector3(highMast ? 1.55 : 1, height, highMast ? 1.55 : 1),
-      ));
+      if (!lightingEffectsOnly) {
+        poleMatrices.push(composeMatrix(
+          new THREE.Vector3(x, baseY + height * 0.5, z),
+          new THREE.Quaternion(),
+          new THREE.Vector3(highMast ? 1.55 : 1, height, highMast ? 1.55 : 1),
+        ));
+      }
       for (const direction of directions) {
         const outward = new THREE.Vector3(Math.cos(direction), 0, Math.sin(direction));
         const top = new THREE.Vector3(x, baseY + height, z);
@@ -3071,40 +3080,46 @@ export async function startWebGLScene(canvas, status) {
           const outreach = highMast ? 2.3 : support.includes('whip') ? 1.8 : 1.25;
           const shoulder = top.clone().add(outward.clone().multiplyScalar(outreach * 0.45)).add(new THREE.Vector3(0, support.includes('whip') ? 0.55 : 0.12, 0));
           lampPosition = top.clone().add(outward.clone().multiplyScalar(outreach)).add(new THREE.Vector3(0, support.includes('whip') ? 0.38 : 0.04, 0));
-          armMatrices.push(segmentMatrix(top, shoulder), segmentMatrix(shoulder, lampPosition));
+          if (!lightingEffectsOnly) armMatrices.push(segmentMatrix(top, shoulder), segmentMatrix(shoulder, lampPosition));
         }
         const headQuaternion = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -direction);
-        headMatrices.push(composeMatrix(
-          lampPosition.clone().add(new THREE.Vector3(0, -0.05, 0)),
-          headQuaternion,
-          postTop ? new THREE.Vector3(0.34, 0.5, 0.34) : flood ? new THREE.Vector3(0.48, 0.22, 0.62) : new THREE.Vector3(0.62, 0.17, 0.28),
-        ));
+        if (!lightingEffectsOnly) {
+          headMatrices.push(composeMatrix(
+            lampPosition.clone().add(new THREE.Vector3(0, -0.05, 0)),
+            headQuaternion,
+            postTop ? new THREE.Vector3(0.34, 0.5, 0.34) : flood ? new THREE.Vector3(0.48, 0.22, 0.62) : new THREE.Vector3(0.62, 0.17, 0.28),
+          ));
+        }
         const bulbPosition = lampPosition.clone().add(new THREE.Vector3(0, -0.16, 0));
-        lampMatrices.push(composeMatrix(bulbPosition, headQuaternion));
-        lampGlowPositions.push(bulbPosition);
+        if (!lightingEffectsOnly) lampMatrices.push(composeMatrix(bulbPosition, headQuaternion));
+        if (lightingEffects) lampGlowPositions.push(bulbPosition);
 
         // A soft, low-profile road wash follows the direction the fixture
         // faces. This single instanced pass gives the same readable night cue
         // as a light map without creating thousands of expensive PointLights.
-        const roadWidth = clamp(Number(item.attributes?.roadWidthM) || 8, 5, 18);
-        const poolCenter = new THREE.Vector3(x, terrainHeightAt(x, z) + 0.52, z)
-          .add(outward.clone().multiplyScalar(Math.max(3.2, roadWidth * 0.35)));
-        const groundOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
-        const roadOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), direction);
-        const poolOrientation = roadOrientation.multiply(groundOrientation);
-        lampPoolMatrices.push(composeMatrix(
-          poolCenter,
-          poolOrientation,
-          new THREE.Vector3(clamp(roadWidth * 0.72, 4.5, 11), clamp(roadWidth * 1.05, 8, 17), 1),
-        ));
+        if (lightingEffects) {
+          const roadWidth = clamp(Number(item.attributes?.roadWidthM) || 8, 5, 18);
+          const poolCenter = new THREE.Vector3(x, baseY + 0.34, z)
+            .add(outward.clone().multiplyScalar(Math.max(3.2, roadWidth * 0.35)));
+          const groundOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+          const roadOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), direction);
+          const poolOrientation = roadOrientation.multiply(groundOrientation);
+          lampPoolMatrices.push(composeMatrix(
+            poolCenter,
+            poolOrientation,
+            new THREE.Vector3(clamp(roadWidth * 0.72, 4.5, 11), clamp(roadWidth * 1.05, 8, 17), 1),
+          ));
+        }
       }
     }
-    const galvanized = new THREE.MeshLambertMaterial({ color: 0x8c9698 });
-    makeInstances(new THREE.CylinderGeometry(0.065, 0.14, 1, 8), galvanized, poleMatrices, 'publicLightPole');
-    makeInstances(new THREE.CylinderGeometry(0.045, 0.055, 1, 7), galvanized, armMatrices, 'publicLightArm');
-    makeInstances(new THREE.SphereGeometry(0.5, 10, 6), new THREE.MeshLambertMaterial({ color: 0x596164 }), headMatrices, 'publicLightFixture');
-    nightLighting.streetBulbMaterial = new THREE.MeshBasicMaterial({ color: 0x393b37 });
-    makeInstances(new THREE.SphereGeometry(0.09, 8, 6), nightLighting.streetBulbMaterial, lampMatrices, 'publicLightLamp');
+    if (!lightingEffectsOnly) {
+      const galvanized = new THREE.MeshLambertMaterial({ color: 0x8c9698 });
+      makeInstances(new THREE.CylinderGeometry(0.065, 0.14, 1, 8), galvanized, poleMatrices, 'publicLightPole');
+      makeInstances(new THREE.CylinderGeometry(0.045, 0.055, 1, 7), galvanized, armMatrices, 'publicLightArm');
+      makeInstances(new THREE.SphereGeometry(0.5, 10, 6), new THREE.MeshLambertMaterial({ color: 0x596164 }), headMatrices, 'publicLightFixture');
+      nightLighting.streetBulbMaterial = new THREE.MeshBasicMaterial({ color: 0x393b37 });
+      makeInstances(new THREE.SphereGeometry(0.09, 8, 6), nightLighting.streetBulbMaterial, lampMatrices, 'publicLightLamp');
+    }
 
     if (lampPoolMatrices.length) {
       const poolCanvas = document.createElement('canvas');
@@ -3851,8 +3866,19 @@ export async function startWebGLScene(canvas, status) {
   const canopyCount = makeCanopies();
   let lightingInventoryLoaded = false;
   let lightingInventoryPromise = null;
-  function ensureLightingInventory() {
-    if (lightingInventoryLoaded) return Promise.resolve(true);
+  let lightingEffectsLoaded = false;
+  let lightingEffectsRequested = false;
+  let lightingFixtures = [];
+  function ensureLightingInventory(withNightEffects = false) {
+    if (withNightEffects) lightingEffectsRequested = true;
+    if (lightingInventoryLoaded) {
+      if (withNightEffects && !lightingEffectsLoaded && lightingFixtures.length) {
+        makeStreetFurniture(lightingFixtures, layerGroups.cityFurniture, {}, { lightingEffects: true, lightingEffectsOnly: true });
+        lightingEffectsLoaded = true;
+        requestRender();
+      }
+      return Promise.resolve(true);
+    }
     if (lightingInventoryPromise) return lightingInventoryPromise;
     const asset = manifest.assets?.lighting;
     if (!asset) return Promise.resolve(false);
@@ -3861,13 +3887,16 @@ export async function startWebGLScene(canvas, status) {
       .then(response => response.ok ? response.json() : Promise.reject(new Error(`lighting inventory HTTP ${response.status}`)))
       .then(payload => {
         const fixtures = Array.isArray(payload.cityFurniture) ? payload.cityFurniture : [];
+        lightingFixtures = fixtures;
         lightingInventoryLoaded = true;
         if (!fixtures.length) return false;
-        // The compact scene omits municipal fixtures. Load this small sidecar
-        // only when the user opens Sun, where the mapped fittings and their
-        // night glow add useful street-scale context.
-        makeStreetFurniture(fixtures, layerGroups.cityFurniture);
-        layerGroups.cityFurniture.visible = Boolean(shadowState.enabled);
+        // Posts are batched into a few instanced meshes and loaded while the
+        // first scene frame is idle. Night-only glow and road washes are built
+        // when Sun opens so the default scene stays light.
+        const includeEffects = withNightEffects || lightingEffectsRequested;
+        makeStreetFurniture(fixtures, layerGroups.cityFurniture, {}, { lightingEffects: includeEffects });
+        lightingEffectsLoaded = includeEffects;
+        layerGroups.cityFurniture.visible = Boolean(savedVisibility.cityFurniture);
         updateSunStatus();
         requestRender();
         return true;
@@ -5062,7 +5091,7 @@ export async function startWebGLScene(canvas, status) {
 
   function setShadowMode(enabled) {
     shadowState.enabled = enabled;
-    if (enabled) void ensureLightingInventory();
+    if (enabled) void ensureLightingInventory(true);
     if (!enabled) {
       // A cumulative calculation may still be running when the user leaves
       // Sunlight. Invalidate it so its late response cannot replace Heat.
@@ -7488,6 +7517,60 @@ export async function startWebGLScene(canvas, status) {
     return vehicles;
   }
 
+  function makeMappedParkedVehicles(parking = []) {
+    const vehicles = [];
+    for (const [index, bay] of parking.entries()) {
+      if (!bay.coordinates || !terrainValidAt(bay.coordinates[0], bay.coordinates[1])) continue;
+      const identifier = String(bay.identifier || index);
+      let seed = 2166136261;
+      for (let charIndex = 0; charIndex < identifier.length; charIndex += 1) {
+        seed = Math.imul(seed ^ identifier.charCodeAt(charIndex), 16777619);
+      }
+      seed >>>= 0;
+      // A stable 28% illustrative occupancy keeps curb rows lived-in without
+      // filling every mapped bay. The identifier seed makes each visit match.
+      if (seed % 100 >= 28) continue;
+      const bearing = THREE.MathUtils.degToRad(Number(bay.attributes?.roadBearingDeg) || 0);
+      const heading = Math.atan2(Math.cos(bearing), Math.sin(bearing));
+      const model = seed % ambientCarSpecs.length;
+      const scale = 0.82 + ((seed >>> 4) % 5) * 0.035;
+      vehicles.push({
+        parked: true,
+        mappedBay: true,
+        x: bay.coordinates[0],
+        z: bay.coordinates[1],
+        heading,
+        y: terrainSurfaceHeightAt(bay.coordinates[0], bay.coordinates[1]) + 0.44,
+        model,
+        color: ambientCarPaint[(seed >>> 8) % ambientCarPaint.length],
+        scale,
+        lane: 0,
+        speed: 0,
+      });
+    }
+    return vehicles;
+  }
+
+  let mappedParkingLoaded = false;
+  let mappedParkingPromise = null;
+  function ensureMappedParkingVehicles() {
+    if (mappedParkingLoaded || mappedParkingPromise) return mappedParkingPromise || Promise.resolve();
+    const asset = manifest.assets?.public_realm;
+    if (!asset) return Promise.resolve();
+    const version = manifest.layers?.public_realm?.cache_key || manifest.layers?.public_realm?.bytes || 0;
+    mappedParkingPromise = fetch(`/assets/${asset}?v=${version}`)
+      .then(response => response.ok ? response.json() : Promise.reject(new Error(`parking inventory HTTP ${response.status}`)))
+      .then(payload => {
+        const parked = makeMappedParkedVehicles(Array.isArray(payload.parking) ? payload.parking : []);
+        ambientTraffic.parkedVehicles.push(...parked);
+        mappedParkingLoaded = true;
+        if (ambientTraffic.initialized) rebuildAmbientTrafficFleet();
+      })
+      .catch(error => console.warn(`Mapped parked cars unavailable: ${error.message}`))
+      .finally(() => { mappedParkingPromise = null; });
+    return mappedParkingPromise;
+  }
+
   function rebuildAmbientTrafficFleet() {
     if (!ambientTraffic.corridors?.length) return;
     if (ambientTraffic.group) {
@@ -7562,6 +7645,7 @@ export async function startWebGLScene(canvas, status) {
     for (const corridor of ambientTraffic.corridors) {
       corridor.vehicles = corridor.vehicles.filter(vehicle => !vehicle.disabled);
     }
+    for (const vehicle of ambientTraffic.parkedVehicles) vehicle.rendered = false;
     vehicles.push(...ambientTraffic.parkedVehicles);
 
     const group = new THREE.Group();
@@ -7653,6 +7737,7 @@ export async function startWebGLScene(canvas, status) {
     }
     ambientTraffic.parkedVehicles = makeParkedLotVehicles();
     rebuildAmbientTrafficFleet();
+    void ensureMappedParkingVehicles();
     buildMappedTrafficLights(ambientTraffic.controllers);
   }
 
@@ -8093,6 +8178,11 @@ export async function startWebGLScene(canvas, status) {
       let instance = 0;
       let wheelInstance = 0;
       for (const vehicle of fleet.vehicles) {
+        if (vehicle.parked && vehicle.rendered) {
+          instance += 1;
+          wheelInstance += 4;
+          continue;
+        }
         let x, z, y, heading, dx, dz;
         if (vehicle.parked) {
           x = vehicle.x; z = vehicle.z; y = vehicle.y; heading = vehicle.heading;
@@ -8154,6 +8244,7 @@ export async function startWebGLScene(canvas, status) {
         fleet.body.setMatrixAt(instance, carMatrix);
         fleet.cabin.setMatrixAt(instance, carMatrix);
         instance += 1;
+        if (vehicle.parked && !vehicle.arrival) vehicle.rendered = true;
       }
       fleet.body.count = instance;
       fleet.cabin.count = instance;
@@ -13691,7 +13782,7 @@ export async function startWebGLScene(canvas, status) {
   };
   addEventListener('climate-menu-change', event => {
     if (event.detail?.name !== 'sun') return;
-    void ensureLightingInventory();
+    void ensureLightingInventory(true);
     showCurrentSun();
   });
 
@@ -13790,7 +13881,7 @@ export async function startWebGLScene(canvas, status) {
       ? 'Weights solved OpenFOAM directions by ERA5 wind-rose frequency. Unsolved directions are excluded, not assumed calm.'
       : mode === 'pollution'
         ? 'Choose a wind direction and run the plume scenario.'
-        : 'Pick a solved wind direction, then load its OpenFOAM result.';
+        : 'The SE 135° OpenFOAM result loads when Wind opens. Select another solved direction to inspect it.';
     requestRender();
   }
 
@@ -14238,6 +14329,18 @@ export async function startWebGLScene(canvas, status) {
     syncTrafficSceneVisibility();
     requestRender();
   });
+  function openWindWithDefaultCase() {
+    const defaultDirection = 135;
+    if (windState.analysisMode !== 'direction') setWindAnalysisMode('direction');
+    windState.direction = defaultDirection;
+    if (windDirection) windDirection.value = String(defaultDirection);
+    windDirectionPresets.forEach(button => {
+      button.classList.toggle('active', Number(button.dataset.windDirection) === defaultDirection);
+    });
+    if (Math.round(windState.cfd?.manifest.direction_deg_from) !== defaultDirection) {
+      void loadCfdWind(defaultDirection);
+    }
+  }
   addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     if (groundPickHandler) {
@@ -14262,7 +14365,10 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
-    if (name === 'wind') void ensureCfdDesignCasesLoaded();
+    if (name === 'wind') {
+      void ensureCfdDesignCasesLoaded();
+      openWindWithDefaultCase();
+    }
     if (name !== 'wind' && windState.analysisMode === 'pollution') {
       pollutionState.playing = false;
       if (pollutionPlay && pollutionState.studyReady) pollutionPlay.textContent = 'Play plume';
@@ -14694,10 +14800,15 @@ export async function startWebGLScene(canvas, status) {
   }
   const initialPanel = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
   if (initialPanel === 'transport') await ensureTransportLayer();
-  if (initialPanel === 'wind') void ensureCfdDesignCasesLoaded();
-  if (initialPanel === 'sun') void ensureLightingInventory();
+  if (initialPanel === 'wind') {
+    void ensureCfdDesignCasesLoaded();
+    openWindWithDefaultCase();
+  }
   sceneReadyToRender = true;
   requestRender();
+  const loadMappedLightPosts = () => { void ensureLightingInventory(initialPanel === 'sun'); };
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(loadMappedLightPosts, { timeout: 1800 });
+  else setTimeout(loadMappedLightPosts, 250);
   addEventListener('climate-viewer-ready', () => {
     const beginRoofLoad = () => {
       void loadRoofSurface().then(buffer => {
