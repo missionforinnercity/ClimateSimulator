@@ -602,7 +602,7 @@ export async function createTransportLayer({
     enabled: elements['transport-toggle'].checked, playing: true,
     minute: clamp(now.getHours() * 60 + now.getMinutes(), 0, 1439), serviceDate: now,
     lastFrame: performance.now(), mode: 'both', picking: false,
-    ambientDisplay: false, panelActive: false, movingVehicles: 0,
+    ambientDisplay: false, panelActive: false, sceneVisible: true, movingVehicles: 0,
     eventRouteIds: new Set(), eventRailIds: new Set(),
     servedStopIds: new Set(), venue: null, analysis: null,
     busPool: [], trainPool: [],
@@ -1458,7 +1458,7 @@ export async function createTransportLayer({
   rebuildMap();
   function syncVisibility() {
     const showLayer = state.enabled && (state.panelActive || state.ambientDisplay);
-    group.visible = showLayer;
+    group.visible = showLayer && state.sceneVisible;
     routeGroup.visible = state.enabled && state.panelActive;
     stopGroup.visible = state.enabled && state.panelActive;
     eventGroup.visible = state.enabled && state.panelActive;
@@ -1466,6 +1466,11 @@ export async function createTransportLayer({
   }
   return {
     active: () => state.enabled && group.visible,
+    setSceneVisible(visible) {
+      state.sceneVisible = Boolean(visible);
+      syncVisibility();
+      requestRender();
+    },
     setPanelActive(active) {
       state.panelActive = Boolean(active);
       syncVisibility();

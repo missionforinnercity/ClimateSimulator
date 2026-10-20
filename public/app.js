@@ -18,7 +18,7 @@ function setupMenuNavigation() {
   const panelBody = document.querySelector('#explorer-panel-body');
   if (!tabs.length || !panels.length) return;
 
-  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', walking: 'WALK ROUTES', sun: 'SUNLIGHT', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
+  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', walking: 'WALK ROUTES', sun: 'SUNLIGHT', viewshed: '3D VIEWSHED', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
   const selectedLabel = selector => document.querySelector(`${selector} option:checked`)?.textContent.trim() || '';
   const inputValue = selector => document.querySelector(selector)?.value?.trim() || '';
   const textValue = selector => document.querySelector(selector)?.textContent.trim() || '';
@@ -66,6 +66,10 @@ function setupMenuNavigation() {
       context = `${selectedLabel('#transport-service-day') || 'Weekday'} · ${textValue('#transport-time-value') || 'Service timetable'}`;
     } else if (name === 'walking') {
       context = `Walking routes · ${inputValue('#walking-date') || 'Select date'} · ${inputValue('#walking-time') || 'Select time'}`;
+    } else if (name === 'viewshed') {
+      const shape = document.querySelector('#viewshed-shape')?.selectedOptions[0]?.textContent || '3D cone';
+      const heading = inputValue('#viewshed-heading') || '0';
+      context = `${shape} · ${heading}° heading · ${inputValue('#viewshed-radius') || 500} m range`;
     }
     panelContextValue.textContent = context;
   };
@@ -85,6 +89,11 @@ function setupMenuNavigation() {
     }
     if (name === 'walking') {
       sceneModeDetail.textContent = 'Pedestrian routes · pick two map points';
+      document.querySelector('.scene-mode')?.classList.add('is-active');
+      return;
+    }
+    if (name === 'viewshed') {
+      sceneModeDetail.textContent = 'Click terrain · map buildings + ridges block view';
       document.querySelector('.scene-mode')?.classList.add('is-active');
       return;
     }
@@ -376,7 +385,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=244');
+    const module = await import('./webglRenderer.js?v=255');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {

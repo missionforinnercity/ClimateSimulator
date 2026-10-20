@@ -302,20 +302,19 @@ def local_ground_surfaces(extract, clip, building_records, origin_x, origin_y):
             for part in parts:
                 if part.geom_type != "Polygon" or part.area < 4:
                     continue
-                part = part.simplify(0.15, preserve_topology=True)
-                rings = []
-                for ring in [part.exterior, *part.interiors]:
-                    points = [[round(x - origin_x, 2), round(-(y - origin_y), 2)] for x, y in list(ring.coords)[:-1]]
-                    if len(points) >= 3:
-                        rings.append(points)
-                if rings:
-                    candidates.append({
-                        "osmId": str(source_id), "source": f"osm:{source_kind}",
-                        "name": name, "material": material, "special": special,
-                        "amenity": tags.get("amenity"), "parking": tags.get("parking"),
-                        "access": tags.get("access"),
-                        "rings": rings,
-                    })
+                # OSM often maps a square as one broad polygon and then maps
+                # its parking bays or paved islands as separate polygons.
+                # Keep their source geometry until all candidates are known
+                # so those more specific surfaces can replace the square
+                # instead of z-fighting with it in the renderer.
+                priority = 4 if special else 3 if tags.get("amenity") == "parking" else 1 if tags.get("place") == "square" else 2
+                candidates.append({
+                    "osmId": str(source_id), "source": f"osm:{source_kind}",
+                    "name": name, "material": material, "special": special,
+                    "amenity": tags.get("amenity"), "parking": tags.get("parking"),
+                    "access": tags.get("access"),
+                    "_priority": priority, "_geometry": part,
+                })
 
     for way in extract.ways.values():
         tags = way.tags
@@ -340,9 +339,39 @@ def local_ground_surfaces(extract, clip, building_records, origin_x, origin_y):
             continue
         add_source("relation", relation.identifier, tags, extract.relation_polygons(relation))
 
-    # General OSM pavement areas sit below named, photo-checked site finishes.
-    candidates.sort(key=lambda record: record["special"])
-    return candidates
+    # Resolve mapped area overlaps once, in semantic priority order. This
+    # prevents coplanar meshes from competing in the depth buffer, while a
+    # broad square remains visible anywhere no more specific finish exists.
+    candidates.sort(key=lambda record: -record["_priority"])
+    claimed = None
+    resolved = []
+    for candidate in candidates:
+        geometry = candidate.pop("_geometry")
+        candidate.pop("_priority")
+        visible_geometry = geometry if claimed is None else geometry.difference(claimed)
+        parts = visible_geometry.geoms if visible_geometry.geom_type == "MultiPolygon" else (visible_geometry,)
+        for part in parts:
+            if part.geom_type != "Polygon" or part.area < 4:
+                continue
+            part = part.simplify(0.15, preserve_topology=True)
+            # Simplifying can move a boundary slightly back into an area that
+            # was already claimed. Re-cut against emitted geometry to keep
+            # the final surfaces strictly disjoint after simplification.
+            if claimed is not None:
+                part = part.difference(claimed)
+            output_parts = part.geoms if part.geom_type == "MultiPolygon" else (part,)
+            for output_part in output_parts:
+                if output_part.geom_type != "Polygon" or output_part.area < 4:
+                    continue
+                rings = []
+                for ring in [output_part.exterior, *output_part.interiors]:
+                    points = [[round(x - origin_x, 2), round(-(y - origin_y), 2)] for x, y in list(ring.coords)[:-1]]
+                    if len(points) >= 3:
+                        rings.append(points)
+                if rings:
+                    resolved.append({**candidate, "rings": rings})
+                    claimed = output_part if claimed is None else unary_union((claimed, output_part))
+    return resolved
 
 
 def local_traffic_signals(extract, clip, origin_x, origin_y):

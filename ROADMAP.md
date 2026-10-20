@@ -1,74 +1,50 @@
-# Conditions roadmap: resilience and placemaking
+# Conditions roadmap: open work
 
-This roadmap evaluates the proposed community, water, cycling, and civic layers
-against the current Conditions code and checked-in data. It favours small
-extensions to existing scene assets and analysis workflows. Outputs must retain
-their source, coverage, assumptions, and evidence status; screening views must
-not be presented as validated engineering or safety results.
+This file tracks work that is still open. Start with small, inspectable studies
+on the current Cape Town CBD scene. Record source dates, coverage, assumptions,
+model versions and uncertainty. Synthetic behaviour and screening outputs must
+not be presented as observed activity, measured exposure or validated benefits.
 
-## Completed low-effort layer
+## Next implementable slices
 
-**Mapped surface inventory:** the optional 3D layer now displays mapped paved,
-vegetated and water polygons, reports area and footprint coverage, and leaves
-unmapped ground visibly unclassified. It does not estimate infiltration or
-runoff. The layer loads only when enabled.
-
-**Mapped cycleways:** the optional layer highlights dedicated OSM cycleway
-features, reports mapped length, components linked within 8 m and unmatched
-mapped ends. The small extract is not a complete cycling network and does not
-support safety or access claims.
-
-**Walking route street evidence:** each route now reports nearby municipal
-crossing points and route-length-weighted OSM lighting, sidewalk and width tag
-coverage. Unknown tags stay unknown, crossing proximity is not treated as a
-crossing on the path, and the indicators do not produce a safety score.
-
-## Completed terrain-only screen
-
-**Stormwater runoff concentration:** the optional layer routes mapped paved
-cells over the 2 m hybrid terrain using Priority-Flood depression filling and
-single-direction D8 accumulation. It displays relative mapped contributing
-area and a rainfall-depth slider that scales gross rainfall volume. It is a
-terrain-only screen with explicit source and coverage assumptions; it does not
-predict flood depth or model drainage. The validation dependencies below
-remain open.
-
-## Recommended next work
-
-| Order | Work item | Fit and first useful scope | Effort / dependencies |
+| Order | Work item | First useful version | Done when / boundary |
 | --- | --- | --- | --- |
-| — | **Drainage-aware runoff validation** | Add documented rainfall events, infiltration and drainage assets, then compare with observed ponding or an authoritative drainage study before expanding claims. | **High.** Requires local engineering inputs, drainage connectivity and independent validation. |
+| 1 | **Trace plume activity back to source roads** | Preserve each traffic parcel's SUMO edge ID and sum its emission-weighted near-ground residence inside a user-selected receiving area. List contributing roads and their shares for one fixed traffic and wind run. Add a shared numeric scale for paired plume comparisons; the current bands are recalculated within each run. | Repeated seeds show whether the leading roads are stable; the source totals reconcile with the selected area's total. Label the result relative tracer residence, never ambient concentration or personal dose. Rerun traffic when a proposed change alters routing. |
+| 2 | **Test missing walking connections** | Add a small, reviewed set of candidate crossings, opened passages or repaired links to a copy of the existing walking graph. Compare reachable destinations, detour distance and travel time across multiple origins and time windows. | Each candidate has a field-checked location, access rules and uncertainty. Results distinguish a modelled link from an existing one and make no wheelchair-accessibility or safety claim without surveyed evidence. |
+| 3 | **Plan a focused measurement campaign** | For one variable, rank a short list of candidate sensor sites by coverage of different street conditions, model disagreement, public use and practical mounting constraints. State what each site would test and reserve separate sites or periods for validation. | Produce an inspectable site shortlist and measurement protocol. Deployment, instrument checks and any before/after intervention study require real equipment, permissions and observations. |
 
-## Evaluation of the suggestions
+## Scoped pilots after their inputs are available
 
-| Suggestion | Decision | Reason |
+| Pilot | Smallest credible scope | Required inputs and limits |
 | --- | --- | --- |
-| Permeable surface audits | **Added as a mapped inventory.** | `data/osm_cbd_groundcover.geojson` distinguishes mapped paved, vegetated and water features. The layer reports source coverage only; it does not infer permeability or treat absence of a polygon as vegetation. |
-| Flood risk and runoff visualization | **Terrain-only concentration screen added.** | High-value use of existing terrain. This first view makes mapped pavement inputs visible but cannot estimate flood depth; a credible drainage model needs rainfall design events, soil/infiltration parameters, drainage assets and validation. |
-| Paint bioswales/rain gardens and calculate runoff reduction | **Defer beyond MVP.** | The current intervention editor was removed and there is no drainage model or locally calibrated runoff coefficient set. Later, add proposed polygons and compare scenarios only after the runoff method and assumptions can be reviewed. |
-| Day/night footfall heatmaps | **Defer; data-gated.** | There is no pedestrian count or cellular dataset. Synthetic walkers in the route tool are route exposure agents, not observed footfall. Do not invent density values. |
-| Acoustic comfort propagation | **Defer; model/data-gated.** | SUMO reports relative edge-noise emissions, not sound pressure or propagation. A useful map needs a documented acoustic model plus traffic volumes, speeds, fleet mix and building/reflection assumptions. Existing edge-noise results can remain clearly labelled traffic context. |
-| Retail activation / dwell-time correlation | **Defer; data-gated.** | No storefront activity, land-use, footfall or dwell-time observations exist. Shade and traffic can be compared now, but a correlation or economic benefit claim would be unsupported. |
-| Cycling corridors and network gaps | **Added as a mapped-link screen.** | OSM cycleway geometry is highlighted and nearby endpoints are grouped. The extract is sparse; high-stress ratings and a citywide gap claim require better facility, speed, volume and junction data. |
-| 5/10-minute micromobility isochrones | **Defer.** | Technically feasible as graph reachability, but there are no bike-share/scooter hubs or dedicated cycling-cost network. Revisit after the cycling layer and hub data are available. |
-| Route safety scoring | **Limited context view added; scoring remains deferred.** | Walking routes show municipal crossing proximity and OSM lighting, sidewalk and width tag coverage with explicit unknowns. Pavement width and complete crossing/stress attributes remain incomplete; the indicators do not support a safety ranking. |
-| Citizen feedback pins | **Defer; product and operations decision.** | A public-facing submission flow needs persistent storage, moderation, abuse controls, retention rules and an operator workflow. A private local annotation prototype could be considered separately, but it is not a citywide civic feedback service. |
-| Public Before/After voting | **Defer; product and operations decision.** | Current snapshots are local to one tab and share settings rather than complete results; there is no public hosting, identity, vote integrity or moderation system. First improve reproducible scenario packages before collecting votes. |
-| Month-by-month construction phasing | **Defer; scenario model extension.** | Current closures compare paired traffic runs and do not model a construction schedule or changing pedestrian routes over time. Could later build on traffic scenarios once project phases, work-zone rules and pedestrian detours are supplied. |
+| **Pedestrian activity and dwell scenarios** | One square or a few blocks; agents walk to a destination, wait, queue, sit or leave under explicit opening-hour, crossing-delay and seating rules. Compare plausible scenarios with manually observed counts and dwell times. | Obtain destination/activity and footfall observations first. The existing matched walkers are independent route-exposure samples, not a crowd model. Investigate JuPedSim only if close interactions or queue spillover require it; do not infer that a design causes a particular footfall gain. |
+| **Time-based kerb allocation** | One commercial street; assign each kerb segment a daily loading, pickup, parking or seating schedule and model arrivals, dwell times, capacity and spillover. Report waiting, search distance, obstruction and space gained. | Survey stopping activity, bay dimensions, legal rules and local access demand. Existing parking geometry and illustrative parked cars are not occupancy or demand data. Connect the pilot to SUMO only after its local-demand assumptions can be checked. |
+| **Physical pedestrian lighting** | One audited block; compare existing lights, selected outages and one redesign using pavement/crossing illuminance, dark gaps and energy use. | Measure pole height, aim, operating status and luminaire photometry; current rendered lights and inferred support heights cannot yield lux. A photometric workflow such as Radiance is a candidate to evaluate. Report lighting coverage, not crime risk or a general safety score. |
+| **Bounded intervention option search** | Search a small set of seating or shade placements in one public space under explicit space, access and cost constraints; show several trade-offs side by side. | Needs a versioned proposal layer, costs and a reproducible baseline from the intervention laboratory in [the broader feature roadmap](docs/FEATURE_ROADMAP.md). Re-solve geometry-dependent wind cases; use fast approximations only within a tested validity range. |
+| **C3 complaint-based inspection priorities** | If a suitable C3 dataset becomes available, model one weather-sensitive complaint category and suggest candidate inspection areas or a small route. Show expected reporting ranges, comparable past events and missing data. | Obtain dated, geocoded records with a usable category history and appropriate access rights, then test on future dates and whole storms withheld from training. The repo has no C3 pipeline or complaint dataset. A complaint forecast predicts reporting, not every physical failure or the benefit of drain clearing. |
 
-## Scope and acceptance notes
+## Other open work from the previous roadmap
 
-- Keep all new layers optional and preserve the existing static viewer where a
-  feature can be prepared as a scene asset.
-- Include source date/licence, spatial coverage, unknown areas, units and
-  assumptions in map legends and summaries.
-- Treat mapped absence as unknown unless the source explicitly establishes
-  absence. Keep synthetic, inferred and observed values distinct.
-- Do not combine climate, traffic, accessibility or economic measures into an
-  opaque city score. Prefer inspectable indicators and side-by-side trade-offs.
-- For runoff work, write a method note and validate against observed rainfall,
-  known ponding locations or an authoritative drainage study before making
-  flood-risk or intervention-benefit claims.
+| Work item | Next gate |
+| --- | --- |
+| **Drainage-aware runoff validation** | Add documented rainfall events, infiltration and drainage connectivity, then compare the terrain-only screen with observed ponding or an authoritative study before flood-depth or benefit claims. |
+| **Bioswale and rain-garden comparisons** | Revisit proposed polygons after a reviewable drainage method and local runoff parameters exist. The former intervention editor has been removed. |
+| **Acoustic comfort** | Acquire traffic and fleet observations, then document and validate a sound propagation method; relative SUMO edge-noise emissions alone are insufficient. |
+| **Cycling reachability** | Acquire a connected, checked cycling-cost network and actual bike-share or scooter hubs before 5/10-minute isochrones. Keep mapped cycleway gaps separate from a safety ranking. |
+| **Walking access audit** | Survey pavement widths, kerbs, crossings and barriers before making route accessibility claims. Keep the current route evidence separate from any safety score. |
+| **Retail activity analysis** | Obtain storefront, use, footfall and dwell observations before testing correlations or economic effects. Coordinate with the pedestrian activity pilot. |
+| **Citizen feedback and public voting** | Define hosting, persistence, moderation, privacy and operator workflows; make scenario packages reproducible before collecting votes. A local annotation prototype can be scoped separately. |
+| **Construction phasing** | Supply project stages, work-zone rules and pedestrian detours before linking month-by-month traffic and walking scenarios. |
 
-The broader evidence and validation roadmap remains in
-[`docs/FEATURE_ROADMAP.md`](docs/FEATURE_ROADMAP.md).
+## Shared acceptance rules
+
+- Show source dates, licences, coverage, unknown areas and missing tags; keep
+  observed, inferred and synthetic values distinct.
+- Use matched baselines, recorded seeds and consistent units/scales for scenario
+  comparisons. Preserve the input geometry, source hashes and model version.
+- Report separate outcomes and trade-offs rather than an opaque city score.
+- Require field checks or independent validation before making engineering,
+  safety, accessibility, exposure or intervention-benefit claims.
+
+The broader evidence and validation programme remains in
+[docs/FEATURE_ROADMAP.md](docs/FEATURE_ROADMAP.md).

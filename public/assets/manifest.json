@@ -48,12 +48,12 @@
       "railways": 100,
       "grass": 61,
       "groundSurfaces": 112,
+      "trafficSignals": 429,
       "municipalSurfaceSegments": 476,
       "municipalSurfaceMatches": 80,
-      "bytes": 2281289,
+      "bytes": 2281779,
       "water": 16,
-      "cache_key": "5b03f8c8b627413e",
-      "trafficSignals": 429
+      "cache_key": "53e92fa3463630c6"
     },
     "canopy": {
       "components": 2659,
@@ -79,8 +79,8 @@
         "PlantCover": 61,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 20083276,
-      "cache_key": "250788698f038d62"
+      "bytes": 20083766,
+      "cache_key": "451cbb62e5c328e0"
     },
     "lighting": {
       "objects": 3672,
@@ -112,8 +112,8 @@
     "city_model": "city_model.json",
     "canopy": "canopy.json",
     "lighting": "lighting.json",
-    "roof_surface": "roof_surface.bin",
-    "public_realm": "public_realm.json"
+    "public_realm": "public_realm.json",
+    "roof_surface": "roof_surface.bin"
   },
   "buildInputs": {
     "terrain": {

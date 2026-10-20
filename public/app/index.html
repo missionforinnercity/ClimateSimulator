@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=89">
+    <link rel="stylesheet" href="/style.css?v=93">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -103,6 +103,10 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M4.9 4.9 7 7m10 10 2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
             <span>Sun</span>
           </button>
+          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-viewshed" data-menu-target="viewshed" title="3D viewshed">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/><path d="M12 9.4V3m-2 2 2-2 2 2"/></svg>
+            <span>Viewshed</span>
+          </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-wind" data-menu-target="wind" title="Wind conditions">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h11.5a2.5 2.5 0 1 0-2.3-3.5M3 12h16a2 2 0 1 1-1.7 3M3 16h8"/></svg>
             <span>Wind</span>
@@ -113,7 +117,7 @@
           </button>
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-transport" data-menu-target="transport" title="Public transport">
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.5" width="14" height="15" rx="3"/><path d="M8 7h8M7.5 12.5h9M8 18.5l-1 2m9-2 1 2"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/></svg>
-            <span>Transport</span>
+            <span>Transit</span>
           </button>
         </nav>
       </header>
@@ -769,6 +773,31 @@
 
         <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for all mapped buildings. SE 135° and NW 315° are solved today; other directions will appear as their cases are meshed, solved and converted. Comfort weights each <em>solved</em> OpenFOAM direction's pedestrian-height field by its ERA5 wind-rose frequency and Weibull exceedance; directions without a solved case are excluded from the weighted sum rather than interpolated or assumed calm, so today's comfort result is a lower-bound estimate covering only the resolved sector(s), not a complete annual study. Neither mode has passed domain/mesh sensitivity or field validation and must not be used for certification.</p></details>
       </section>
+      <section id="menu-viewshed" class="viewshed-panel menu-section" data-menu-panel="viewshed" role="tabpanel" aria-label="3D viewshed controls" hidden>
+        <div class="viewshed-heading"><span>3D viewshed</span><span class="viewshed-badge">Line of sight</span></div>
+        <p class="viewshed-intro">Click terrain, a roof, or a building face to place the observer. Alt-click to pick ground beneath an elevated building. White roads and street details provide context; vehicles are hidden.</p>
+        <label class="viewshed-control">View shape
+          <select id="viewshed-shape"><option value="cone" selected>3D cone</option><option value="full">Full 360°</option></select>
+        </label>
+        <label class="viewshed-control">Heading <output id="viewshed-heading-value">0° · N</output>
+          <input id="viewshed-heading" type="range" min="0" max="355" step="5" value="0">
+        </label>
+        <label class="viewshed-control">Horizontal spread <output id="viewshed-spread-value">60°</output>
+          <input id="viewshed-spread" type="range" min="20" max="120" step="5" value="60">
+        </label>
+        <label class="viewshed-control">Observer height <output id="viewshed-height-value">1.7 m</output>
+          <input id="viewshed-height" type="range" min="1.7" max="80" step="0.3" value="1.7">
+        </label>
+        <label class="viewshed-control">View radius <output id="viewshed-radius-value">500 m</output>
+          <input id="viewshed-radius" type="range" min="150" max="1200" step="50" value="500">
+        </label>
+        <div class="viewshed-legend"><span><i class="viewshed-visible-swatch"></i>Visible ground</span><span><i class="viewshed-hidden-swatch"></i>Hidden ground</span></div>
+        <button id="viewshed-pick" type="button" aria-pressed="false">Pick viewpoint on map</button>
+        <button id="viewshed-person" class="secondary" type="button" aria-pressed="false" disabled>View from observer</button>
+        <button id="viewshed-clear" class="secondary" type="button">Clear viewshed</button>
+        <p id="viewshed-status" class="viewshed-status" role="status" aria-live="polite">Select Pick viewpoint, then click the map.</p>
+        <details class="viewshed-method"><summary>Method &amp; coverage</summary><p>Visibility follows the mapped terrain triangles and checks sightlines against terrain and each mapped building's base and top height. Green ground is visible; red ground is blocked. White trees provide context but do not block the calculation. View from observer places the camera at the selected eye height; use Heading to turn. Small structures, atmospheric refraction and sub-grid terrain are not modelled.</p></details>
+      </section>
       <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
         <div class="transport-heading">
           <div><span class="transport-kicker">MOVE CAPE TOWN</span><strong>Public transport</strong></div>
@@ -1049,6 +1078,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-87"></script>
+    <script type="module" src="/app.js?v=experience-95"></script>
 </body>
 </html>

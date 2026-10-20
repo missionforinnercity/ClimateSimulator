@@ -3,8 +3,9 @@ import * as THREE from './vendor/three.module.min.js';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFromDrag, panFromDrag } from './cameraControls.js';
-import { createTransportLayer } from './transportLayer.js?v=32';
+import { createTransportLayer } from './transportLayer.js?v=33';
 import { attachPlaceInspector } from './placeInspector.js?v=3';
+import { rayFootprintIntervals, addVerticalOccluder, blockedByVerticalOccluder, terrainRayDistances, viewshedRingDistances } from './viewshedMath.js';
 
 const COLORS = {
   background: 0x101719,
@@ -28,11 +29,44 @@ const COLORS = {
   plinthAccent: 0x666d6b,
 };
 
-// Surface height and draw priority are separate concerns. The small physical
-// offsets prevent z-fighting with the terrain; renderOrder below decides which
-// carriageway owns a junction instead of asking the depth buffer to arbitrate
-// between nearly coplanar road meshes.
-const ROAD_CLASS_OFFSETS = [0.26, 0.34, 0.30, 0.16, 0.18];
+// Shared scene-layer contract. Physical lift keeps draped surfaces off terrain;
+// draw order resolves only near-coplanar overlays. Neither should be used to
+// make a feature jump over a real 3D obstruction: depth testing stays enabled.
+const SCENE_LAYERS = Object.freeze({
+  terrain: { order: 0, lift: 0 },
+  terrainShadow: { order: 4, lift: 0 },
+  water: { order: 1, lift: 0.08 },
+  grass: { order: 2, lift: 0.14 },
+  path: { order: 3, lift: 0.16 },
+  road: { order: 4, lift: 0.26 },
+  roadPriorityStep: 0.12,
+  groundTexture: { order: 5, lift: 0.42 },
+  streetMarking: { order: 8, lift: 0.48 },
+  mappedCoverage: { order: 7, lift: 0.62 },
+  runoff: { order: 9, lift: 0.82 },
+  cycling: { order: 10, lift: 1.15 },
+  analysisSurface: { order: 20, lift: 0.68 },
+  analysisVolume: { order: 18, lift: 0 },
+  annotation: { order: 1000, lift: 0 },
+});
+
+function setSceneLayer(object, layerName, localOrder = 0) {
+  const layer = SCENE_LAYERS[layerName];
+  if (!layer) throw new Error(`Unknown scene layer: ${layerName}`);
+  object.userData.sceneLayer = layerName;
+  object.renderOrder = layer.order + localOrder;
+  return object;
+}
+
+// Keep at-grade road classes slightly separated at junctions while preserving
+// one shared surface lift for each renderer layer.
+const ROAD_CLASS_OFFSETS = [
+  SCENE_LAYERS.road.lift,
+  SCENE_LAYERS.road.lift + 0.08,
+  SCENE_LAYERS.road.lift + 0.04,
+  SCENE_LAYERS.path.lift,
+  SCENE_LAYERS.path.lift + 0.02,
+];
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
@@ -103,12 +137,14 @@ export async function startWebGLScene(canvas, status) {
     sunDirection: { value: new THREE.Vector3(0, 1, 0) },
     moonDirection: { value: new THREE.Vector3(0, 1, 0) },
     moonSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+    groundColor: { value: new THREE.Color('#b7c4c0') },
     cloudCover: { value: 0 },
     isDay: { value: 1 },
     isRainy: { value: 0 },
     sunStrength: { value: 0 },
     moonStrength: { value: 0 },
     twilight: { value: 0 },
+    cloudTime: { value: 0 },
   };
   const skyMaterial = new THREE.ShaderMaterial({
     uniforms: skyUniforms,
@@ -126,12 +162,14 @@ export async function startWebGLScene(canvas, status) {
       uniform vec3 sunDirection;
       uniform vec3 moonDirection;
       uniform vec3 moonSunDirection;
+      uniform vec3 groundColor;
       uniform float cloudCover;
       uniform float isDay;
       uniform float isRainy;
       uniform float sunStrength;
       uniform float moonStrength;
       uniform float twilight;
+      uniform float cloudTime;
       varying vec3 vSkyDirection;
       float hash31(vec3 p) {
         p = fract(p * 0.1031);
@@ -158,33 +196,54 @@ export async function startWebGLScene(canvas, status) {
       }
       void main() {
         vec3 direction = normalize(vSkyDirection);
-        float horizon = 1.0 - smoothstep(-0.08, 0.48, direction.y);
-        vec3 dayZenith = mix(vec3(0.20, 0.39, 0.62), vec3(0.38, 0.58, 0.77), isRainy);
-        vec3 dayHorizon = mix(vec3(0.77, 0.83, 0.84), vec3(0.53, 0.60, 0.64), isRainy);
-        dayHorizon = mix(dayHorizon, vec3(0.98, 0.46, 0.25), twilight * (1.0 - isRainy) * 0.92);
-        dayZenith = mix(dayZenith, vec3(0.50, 0.27, 0.40), twilight * (1.0 - isRainy) * 0.36);
-        vec3 dayColor = mix(dayZenith, dayHorizon, pow(horizon, 0.72));
-        vec3 nightZenith = vec3(0.018, 0.035, 0.085);
-        vec3 nightHorizon = vec3(0.11, 0.15, 0.23);
-        vec3 skyColor = mix(mix(nightZenith, nightHorizon, pow(horizon, 0.8)), dayColor, isDay);
-        vec3 twilightSky = mix(vec3(0.37, 0.24, 0.39), vec3(0.96, 0.39, 0.20), pow(horizon, 0.72));
-        skyColor = mix(skyColor, twilightSky, twilight * (1.0 - isRainy) * 0.82);
-        float stars = pow(hash31(floor(direction * 850.0)), 42.0) * (1.0 - isDay) * smoothstep(0.02, 0.42, direction.y);
-        skyColor += vec3(0.55, 0.68, 0.88) * stars * 0.8;
-        float cloudField = cloudNoise(direction * vec3(8.0, 5.0, 8.0) + vec3(0.0, 2.0, 0.0));
-        float cloudThreshold = 0.77 - cloudCover * 0.48;
-        float clouds = smoothstep(cloudThreshold, cloudThreshold + 0.12, cloudField) * smoothstep(-0.18, 0.16, direction.y);
-        vec3 cloudColor = mix(vec3(0.88, 0.91, 0.91), vec3(0.33, 0.39, 0.44), isRainy);
-        cloudColor = mix(cloudColor * 0.48, cloudColor, isDay);
-        skyColor = mix(skyColor, cloudColor, clouds * cloudCover * 0.92);
+        float horizon = 1.0 - smoothstep(0.0, 0.5, direction.y);
         float sunDot = dot(direction, normalize(sunDirection));
-        float disc = smoothstep(0.999985, 0.999995, sunDot) * sunStrength;
+        float sunFacing = smoothstep(-0.45, 0.9, dot(normalize(direction.xz + vec2(0.0001)), normalize(sunDirection.xz + vec2(0.0001))));
+        vec3 dayZenith = mix(vec3(0.11, 0.30, 0.57), vec3(0.31, 0.39, 0.47), isRainy);
+        vec3 dayHorizon = mix(vec3(0.68, 0.80, 0.87), vec3(0.53, 0.59, 0.63), isRainy);
+        float warmHorizon = twilight * (1.0 - isRainy) * sunFacing;
+        dayHorizon = mix(dayHorizon, vec3(1.0, 0.48, 0.24), warmHorizon * 0.84);
+        dayZenith = mix(dayZenith, vec3(0.35, 0.29, 0.43), twilight * (1.0 - isRainy) * 0.2);
+        vec3 dayColor = mix(dayZenith, dayHorizon, pow(horizon, 0.85));
+        dayColor += vec3(0.25, 0.20, 0.13) * pow(max(sunDot, 0.0), 12.0) * isDay * (1.0 - isRainy);
+        vec3 nightZenith = vec3(0.005, 0.012, 0.032);
+        vec3 nightHorizon = vec3(0.018, 0.035, 0.065);
+        vec3 skyColor = mix(mix(nightZenith, nightHorizon, pow(horizon, 0.8)), dayColor, isDay);
+        vec3 twilightSky = mix(vec3(0.23, 0.25, 0.43), vec3(0.93, 0.43, 0.24), pow(horizon, 1.3) * sunFacing);
+        skyColor = mix(skyColor, twilightSky, twilight * (1.0 - isRainy) * 0.68);
+        // The lower hemisphere is a distant ground backdrop. Blend it through
+        // the horizon on the same dome so there is no finite plane edge.
+        float groundBlend = 1.0 - smoothstep(-0.18, 0.06, direction.y);
+        skyColor = mix(skyColor, groundColor, groundBlend);
+        float starSeed = hash31(floor(direction * 700.0));
+        float stars = smoothstep(0.9995, 0.99995, starSeed) * (1.0 - isDay)
+          * smoothstep(0.02, 0.42, direction.y);
+        skyColor += vec3(0.55, 0.68, 0.88) * stars * 0.3;
+        // Sample clouds on a sphere so they stay continuous at the horizon
+        // and overhead instead of stretching into radial streaks near the pole.
+        // A small translation through the field gives them a slow wind drift.
+        vec3 cloudPoint = direction * vec3(13.0, 6.5, 13.0)
+          + vec3(cloudTime * 0.01, 0.0, cloudTime * 0.006);
+        float cloudField = cloudNoise(cloudPoint);
+        float coverage = max(cloudCover, isRainy * 0.82);
+        float cloudThreshold = 0.64 - coverage * 0.24;
+        float clouds = smoothstep(cloudThreshold - 0.08, cloudThreshold + 0.08, cloudField)
+          * smoothstep(-0.02, 0.06, direction.y);
+        float cloudShade = smoothstep(0.34, 0.72, cloudField);
+        vec3 cloudColor = mix(vec3(0.60, 0.68, 0.72), vec3(0.90, 0.92, 0.91), cloudShade);
+        cloudColor = mix(cloudColor, vec3(0.32, 0.38, 0.43), isRainy * 0.8);
+        cloudColor = mix(cloudColor * 0.08, cloudColor, isDay);
+        cloudColor += vec3(0.25, 0.19, 0.11) * pow(max(sunDot, 0.0), 12.0) * isDay * (1.0 - isRainy);
+        skyColor = mix(skyColor, cloudColor, clouds * 0.94);
+        float sunTransmission = 1.0 - clouds * 0.96;
+        float disc = smoothstep(0.999985, 0.999995, sunDot) * sunStrength * sunTransmission;
         float sunGlare = (pow(max(sunDot, 0.0), 110.0) * 1.8
           + pow(max(sunDot, 0.0), 28.0) * 0.42
           + pow(max(sunDot, 0.0), 8.0) * 0.055)
-          * sunStrength * (1.0 - clouds * cloudCover * 0.78);
-        skyColor += vec3(1.0, 0.74, 0.38) * sunGlare;
-        skyColor = mix(skyColor, vec3(4.0, 3.7, 2.8), disc);
+          * sunStrength * sunTransmission;
+        vec3 sunlightColor = mix(vec3(1.0, 0.67, 0.35), vec3(1.0, 0.94, 0.78), smoothstep(0.02, 0.35, sunDirection.y));
+        skyColor += sunlightColor * sunGlare;
+        skyColor = mix(skyColor, sunlightColor * 4.0, disc);
         vec3 moonRight = normalize(cross(moonDirection, vec3(0.0, 1.0, 0.0)) + vec3(0.0001, 0.0, 0.0001));
         vec3 moonUp = normalize(cross(moonRight, moonDirection));
         vec2 moonPoint = vec2(dot(direction, moonRight), dot(direction, moonUp)) / 0.0046;
@@ -195,7 +254,7 @@ export async function startWebGLScene(canvas, status) {
         vec2 moonLight = length(moonLightRaw) > 0.0001 ? normalize(moonLightRaw) : vec2(1.0, 0.0);
         float moonLightAngle = dot(vec2(moonPoint.x, moonFront), moonLight);
         float moonLit = smoothstep(-0.045, 0.045, moonLightAngle);
-        float moonDisc = (1.0 - smoothstep(0.94, 1.02, moonRadius)) * moonStrength;
+        float moonDisc = (1.0 - smoothstep(0.94, 1.02, moonRadius)) * moonStrength * (1.0 - clouds * 0.94);
         float maria = noise3(vec3(moonPoint * 5.5, moonFront * 3.0));
         float craterGrain = noise3(vec3(moonPoint * 17.0, moonFront * 11.0));
         float lunarSurface = smoothstep(0.30, 0.72, maria) * 0.22 + craterGrain * 0.09;
@@ -219,21 +278,24 @@ export async function startWebGLScene(canvas, status) {
   let skyWeather = null;
   function updateWeatherSky(weather = skyWeather, sun = null) {
     skyWeather = weather;
-    const skyActive = Boolean(shadowState.enabled && shadowState.mode === 'shadows');
-    // The analytical shadow view uses a neutral studio-white environment so
-    // pavement, sky and weather colours cannot compete with the shade result.
-    skySphere.visible = false;
-    scene.background.set(shadowState.enabled ? '#f7f7f7' : COLORS.background);
+    const skyActive = Boolean(shadowState.enabled && !viewshedState.active);
+    skySphere.visible = skyActive;
+    scene.background.set(shadowState.enabled || viewshedState.active ? '#f7f7f7' : COLORS.background);
     const day = sun ? sun.altitude > 0 : weather?.is_day !== false;
-    const clouds = clamp(Number(weather?.cloud_cover_pct) || 0, 0, 100) / 100;
+    const clouds = weather?.cloud_cover_pct == null ? 0.28 : clamp(Number(weather.cloud_cover_pct) || 0, 0, 100) / 100;
     const rainy = Number(weather?.precipitation_mm) > 0.1 || Number(weather?.weather_code) >= 51;
     skyUniforms.cloudCover.value = clouds;
     const daylight = sun ? clamp((sun.altitude + 0.15) / 0.24, 0, 1) : (day ? 1 : 0);
     skyUniforms.isDay.value = daylight;
     skyUniforms.isRainy.value = rainy ? 1 : 0;
-    const twilight = sun ? Math.exp(-Math.abs(sun.altitude) / 0.18) : 0;
+    const twilight = sun ? Math.exp(-Math.pow(sun.altitude / 0.18, 2)) : 0;
     skyUniforms.twilight.value = twilight;
-    if (scene.fog) scene.fog.color.set(shadowState.enabled ? '#f7f7f7' : COLORS.fog);
+    const horizonColor = new THREE.Color('#27364e').lerp(new THREE.Color(rainy ? '#b6c1c8' : '#d7e7f0'), daylight);
+    if (!rainy) horizonColor.lerp(new THREE.Color('#e4ab92'), twilight * 0.45);
+    if (scene.fog) scene.fog.color.copy(skyActive ? horizonColor : new THREE.Color(shadowState.enabled || viewshedState.active ? '#f7f7f7' : COLORS.fog));
+    const groundColor = new THREE.Color('#414b50').lerp(new THREE.Color(rainy ? '#a1adab' : '#b7c4c0'), daylight);
+    if (!rainy) groundColor.lerp(new THREE.Color('#bdada0'), twilight * 0.35);
+    skyUniforms.groundColor.value.copy(groundColor);
     const phaseDate = new Date(`${shadowState.date}T12:00:00+02:00`);
     const newMoonReference = Date.UTC(2000, 0, 6, 18, 14);
     const lunarDays = (phaseDate.getTime() - newMoonReference) / 86400000;
@@ -242,7 +304,7 @@ export async function startWebGLScene(canvas, status) {
     const moon = sun ? moonPosition(shadowState.date, shadowState.minutes) : null;
     const moonVisible = Boolean(moon && moon.altitude > -0.018
       && 0.5 - 0.5 * Math.cos(phase * Math.PI * 2) > 0.015);
-    skyUniforms.sunStrength.value = sunVisible ? Math.max(0.24, 1 - clouds * 0.64) : 0;
+    skyUniforms.sunStrength.value = sunVisible ? 1 : 0;
     skyUniforms.moonStrength.value = moonVisible ? 1 - clouds * 0.68 : 0;
     if (sun) {
       skyUniforms.sunDirection.value.copy(sun.vector);
@@ -413,6 +475,27 @@ export async function startWebGLScene(canvas, status) {
   let clickCandidate = null;
   const scenePickHandlers = new Set();
   let placeInspectorPickMode = false;
+  const viewshedState = {
+    active: false, pickMode: false, point: null, radius: 500, eyeHeight: 1.7,
+    shape: 'cone', heading: 0, spread: 60, verticalFov: 20, group: new THREE.Group(),
+  };
+  viewshedState.group.name = 'viewshed-analysis';
+  viewshedState.group.visible = false;
+  scene.add(viewshedState.group);
+  const viewshedStatus = document.querySelector('#viewshed-status');
+  const viewshedPickButton = document.querySelector('#viewshed-pick');
+  const viewshedShape = document.querySelector('#viewshed-shape');
+  const viewshedHeading = document.querySelector('#viewshed-heading');
+  const viewshedHeadingValue = document.querySelector('#viewshed-heading-value');
+  const viewshedSpread = document.querySelector('#viewshed-spread');
+  const viewshedSpreadValue = document.querySelector('#viewshed-spread-value');
+  const viewshedHeight = document.querySelector('#viewshed-height');
+  const viewshedHeightValue = document.querySelector('#viewshed-height-value');
+  const viewshedRadius = document.querySelector('#viewshed-radius');
+  const viewshedRadiusValue = document.querySelector('#viewshed-radius-value');
+  const viewshedPersonButton = document.querySelector('#viewshed-person');
+  let viewshedPersonCamera = null;
+  let viewshedBuildingIndex = null;
   const layerGroups = {
     terrain: new THREE.Group(),
     groundcover: new THREE.Group(),
@@ -506,7 +589,6 @@ export async function startWebGLScene(canvas, status) {
   }
   if (!Number.isFinite(shadowMinimumY)) shadowMinimumY = 0;
   if (!Number.isFinite(shadowMaximumY)) shadowMaximumY = shadowMinimumY + 100;
-
   function terrainHeightAt(x, z) {
     const u = clamp((x - left) / terrainWidth, 0, 1) * (terrain.columns - 1);
     const v = clamp((z - minZ) / terrainDepth, 0, 1) * (terrain.rows - 1);
@@ -635,6 +717,443 @@ export async function startWebGLScene(canvas, status) {
       if (intersects) inside = !inside;
     }
     return inside;
+  }
+
+  function getViewshedBuildingIndex() {
+    if (viewshedBuildingIndex) return viewshedBuildingIndex;
+    const cellSize = 64;
+    const cells = new Map();
+    for (const row of data.buildings) {
+      const [ground, height, outer, , , wallHeight = height, , , , , minHeight = 0, , , holes = []] = row;
+      if (!outer?.length) continue;
+      const bounds = [
+        Math.min(...outer.map(([x]) => x)), Math.min(...outer.map(([, z]) => z)),
+        Math.max(...outer.map(([x]) => x)), Math.max(...outer.map(([, z]) => z)),
+      ];
+      const building = { ground: ground + Math.max(0, Number(minHeight) || 0), top: ground + Math.max(Number(height) || 0, Number(wallHeight) || 0), outer, holes: Array.isArray(holes) ? holes : [], bounds };
+      for (let cx = Math.floor(bounds[0] / cellSize); cx <= Math.floor(bounds[2] / cellSize); cx += 1) {
+        for (let cz = Math.floor(bounds[1] / cellSize); cz <= Math.floor(bounds[3] / cellSize); cz += 1) {
+          const key = `${cx}:${cz}`;
+          if (!cells.has(key)) cells.set(key, []);
+          cells.get(key).push(building);
+        }
+      }
+    }
+    viewshedBuildingIndex = { cellSize, cells };
+    return viewshedBuildingIndex;
+  }
+
+  function viewshedBuildingsAt(x, z) {
+    const { cellSize, cells } = getViewshedBuildingIndex();
+    const candidates = cells.get(`${Math.floor(x / cellSize)}:${Math.floor(z / cellSize)}`) || [];
+    const matches = [];
+    for (const building of candidates) {
+      const [minX, minZ, maxX, maxZ] = building.bounds;
+      if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
+      if (pointInRing(x, z, building.outer) && !(building.holes || []).some(hole => pointInRing(x, z, hole))) matches.push(building);
+    }
+    return matches;
+  }
+
+  function viewshedRayObstacles(x, z, dx, dz, radius) {
+    const { cellSize, cells } = getViewshedBuildingIndex();
+    let cx = Math.floor(x / cellSize), cz = Math.floor(z / cellSize);
+    const stepX = Math.sign(dx), stepZ = Math.sign(dz);
+    const nextX = stepX > 0 ? (cx + 1) * cellSize : cx * cellSize;
+    const nextZ = stepZ > 0 ? (cz + 1) * cellSize : cz * cellSize;
+    let distanceX = stepX ? (nextX - x) / dx : Infinity;
+    let distanceZ = stepZ ? (nextZ - z) / dz : Infinity;
+    const deltaX = stepX ? cellSize / Math.abs(dx) : Infinity;
+    const deltaZ = stepZ ? cellSize / Math.abs(dz) : Infinity;
+    const candidates = new Set();
+    for (let travel = 0; travel <= radius;) {
+      for (const building of cells.get(`${cx}:${cz}`) || []) candidates.add(building);
+      if (distanceX < distanceZ) {
+        travel = distanceX;
+        distanceX += deltaX;
+        cx += stepX;
+      } else {
+        travel = distanceZ;
+        distanceZ += deltaZ;
+        cz += stepZ;
+      }
+    }
+    const obstacles = [];
+    for (const building of candidates) {
+      for (const [start, end] of rayFootprintIntervals(x, z, dx, dz, radius, building.outer, building.holes)) {
+        obstacles.push({ start, end, base: building.ground, top: building.top });
+      }
+    }
+    obstacles.sort((a, b) => a.start - b.start);
+    return obstacles;
+  }
+
+  function clearViewshedResult() {
+    if (viewshedPersonCamera) setViewshedPersonView(false);
+    viewshedState.group.traverse(object => {
+      if (object.geometry && object.geometry !== terrainMesh.geometry) object.geometry.dispose();
+      object.material?.uniforms?.visibilityMap?.value?.dispose();
+      if (Array.isArray(object.material)) object.material.forEach(material => material.dispose());
+      else object.material?.dispose();
+    });
+    viewshedState.group.clear();
+    viewshedState.point = null;
+    if (viewshedPersonButton) viewshedPersonButton.disabled = true;
+    viewshedState.group.visible = false;
+    if (viewshedStatus) viewshedStatus.textContent = viewshedState.active
+      ? 'Click the terrain, a roof, or a building face to place the observer.'
+      : 'Select Pick viewpoint, then click the map.';
+    requestRender();
+  }
+
+  function setViewshedPersonView(enabled) {
+    if (enabled && !viewshedState.point) return;
+    if (enabled && !viewshedPersonCamera) {
+      viewshedPersonCamera = {
+        azimuth: cameraState.azimuth, elevation: cameraState.elevation,
+        distance: cameraState.distance, target: cameraState.target.clone(), fov: camera.fov,
+      };
+    } else if (!enabled && viewshedPersonCamera) {
+      Object.assign(cameraState, {
+        azimuth: viewshedPersonCamera.azimuth, elevation: viewshedPersonCamera.elevation,
+        distance: viewshedPersonCamera.distance,
+      });
+      cameraState.target.copy(viewshedPersonCamera.target);
+      camera.fov = viewshedPersonCamera.fov;
+      camera.updateProjectionMatrix();
+      viewshedPersonCamera = null;
+    }
+    if (viewshedPersonButton) {
+      viewshedPersonButton.setAttribute('aria-pressed', String(Boolean(viewshedPersonCamera)));
+      viewshedPersonButton.textContent = viewshedPersonCamera ? 'Return to map view' : 'View from observer';
+    }
+    const marker = viewshedState.group.children.at(-1);
+    if (marker?.isGroup) marker.visible = !viewshedPersonCamera;
+    if (viewshedPersonCamera) {
+      camera.fov = 70;
+      camera.updateProjectionMatrix();
+    }
+    updateCamera();
+    requestRender();
+  }
+
+  function buildViewshed(x, z, placement = null) {
+    const radius = viewshedState.radius;
+    const eyeHeight = viewshedState.eyeHeight;
+    const onBuilding = placement?.kind === 'building';
+    if (!onBuilding && !terrainValidAt(x, z)) {
+      if (viewshedStatus) viewshedStatus.textContent = 'That point is outside the mapped terrain. Choose a point on the city ground.';
+      return false;
+    }
+    const wasPersonView = Boolean(viewshedPersonCamera);
+    clearViewshedResult();
+    const observerGround = terrainSurfaceHeightAt(x, z);
+    const wallPlacement = onBuilding && !placement.roof;
+    const normal = placement?.normal || [0, 1, 0];
+    const originX = x + (wallPlacement ? normal[0] * 1.2 : 0);
+    const originZ = z + (wallPlacement ? normal[2] * 1.2 : 0);
+    const observerY = onBuilding
+      ? (placement.roof ? placement.y + eyeHeight : placement.y)
+      : observerGround + eyeHeight;
+    if (wallPlacement && !placement.headingInitialized) {
+      viewshedState.heading = ((Math.round((Math.atan2(normal[0], -normal[2]) * 180 / Math.PI) / 5) * 5) % 360 + 360) % 360;
+      if (viewshedHeading) viewshedHeading.value = String(Math.min(355, viewshedState.heading));
+      if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${viewshedState.heading}° · ${compassLabel(viewshedState.heading)}`;
+    } else if (onBuilding && !placement.headingInitialized) {
+      const focusHeading = Math.atan2(cameraState.target.x - x, -(cameraState.target.z - z)) * 180 / Math.PI;
+      viewshedState.heading = (Math.round((focusHeading + 360) / 5) * 5) % 360;
+      if (viewshedHeading) viewshedHeading.value = String(Math.min(355, viewshedState.heading));
+      if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${viewshedState.heading}° · ${compassLabel(viewshedState.heading)}`;
+    }
+    const observerBuildings = viewshedBuildingsAt(x, z);
+    if (!onBuilding && observerBuildings.some(building => observerY >= building.ground && observerY < building.top)) {
+      if (viewshedStatus) viewshedStatus.textContent = 'That point is inside a mapped building at this height. Choose an open area or raise the observer height.';
+      return false;
+    }
+    // Keep polar cells close to street scale so open road corridors do not
+    // disappear between rays or radial rings. Bound the mesh for long ranges.
+    const ringDistances = viewshedRingDistances(radius);
+    const radialSegments = ringDistances.length - 1;
+    const isCone = viewshedState.shape === 'cone';
+    const fullCircle = !isCone;
+    const centerAngle = viewshedState.heading * Math.PI / 180 - Math.PI / 2;
+    // Sample only the selected sector. A full 360° trace is unnecessary for
+    // the default 60° view and used to block the main thread during changes.
+    const angleSpan = isCone ? viewshedState.spread * Math.PI / 180 : Math.PI * 2;
+    const angleSegments = clamp(Math.ceil(angleSpan * radius / 3), isCone ? 24 : 120, isCone ? 420 : 1200);
+    const meshAngleCount = fullCircle ? angleSegments : angleSegments + 1;
+    const meshAngles = fullCircle
+      ? Array.from({ length: angleSegments }, (_, index) => index * Math.PI * 2 / angleSegments)
+      : Array.from({ length: meshAngleCount }, (_, index) => centerAngle - viewshedState.spread * Math.PI / 360
+        + angleSpan * index / angleSegments);
+    const visibility = meshAngles.map(() => new Uint8Array(radialSegments + 1));
+    let validSamples = 0;
+    let visibleSamples = 0;
+    for (let angleIndex = 0; angleIndex < meshAngleCount; angleIndex += 1) {
+      const angle = meshAngles[angleIndex];
+      const dx = Math.cos(angle), dz = Math.sin(angle);
+      const obstacles = viewshedRayObstacles(originX, originZ, dx, dz, radius);
+      const sampleDistances = terrainRayDistances(originX, originZ, dx, dz, radius,
+        left, minZ, terrainWidth / (terrain.columns - 1), terrainDepth / (terrain.rows - 1), ringDistances);
+      const occludedAngles = [];
+      const activeObstacles = [];
+      let nextObstacle = 0;
+      let previousDistance = 0;
+      let horizon = -Math.PI / 2;
+      let nextRing = 1;
+      for (const d of sampleDistances) {
+        const sampleX = originX + dx * d, sampleZ = originZ + dz * d;
+        if (!terrainValidAt(sampleX, sampleZ)) break;
+        const ground = terrainSurfaceHeightAt(sampleX, sampleZ);
+        while (nextObstacle < obstacles.length && obstacles[nextObstacle].start <= d) {
+          activeObstacles.push(obstacles[nextObstacle]);
+          nextObstacle += 1;
+        }
+        for (let index = activeObstacles.length - 1; index >= 0; index -= 1) {
+          const obstacle = activeObstacles[index];
+          const from = Math.max(obstacle.start, previousDistance);
+          const to = Math.min(obstacle.end, d);
+          addVerticalOccluder(occludedAngles, obstacle.base, obstacle.top, observerY, from, to);
+          if (obstacle.end <= d) activeObstacles.splice(index, 1);
+        }
+        // Terrain is a horizon. Buildings occupy bounded angular intervals,
+        // allowing a low sightline through a real mapped underpass.
+        const targetAngle = Math.atan2(ground - observerY, d);
+        const visible = !blockedByVerticalOccluder(occludedAngles, targetAngle) && targetAngle >= horizon - 0.001;
+        while (nextRing <= radialSegments && d >= ringDistances[nextRing] - 0.001) {
+          visibility[angleIndex][nextRing] = visible ? 1 : 2;
+          validSamples += 1;
+          if (visible) visibleSamples += 1;
+          nextRing += 1;
+        }
+        horizon = Math.max(horizon, targetAngle);
+        previousDistance = d;
+        if (d >= radius) break;
+      }
+    }
+
+    // Render the classification on the terrain's own triangles. A separate
+    // polar ground mesh bridges slopes and appears to float or cut through
+    // the mapped surface even when its vertex heights were sampled correctly.
+    const texturePixels = new Uint8Array(meshAngleCount * (radialSegments + 1) * 4);
+    for (let ring = 0; ring <= radialSegments; ring += 1) {
+      for (let angleIndex = 0; angleIndex < meshAngleCount; angleIndex += 1) {
+        const value = ring === 0 ? 1 : visibility[angleIndex][ring];
+        const offset = (ring * meshAngleCount + angleIndex) * 4;
+        texturePixels[offset] = value === 1 ? 255 : 0;
+        texturePixels[offset + 3] = value ? 255 : 0;
+      }
+    }
+    const visibilityMap = new THREE.DataTexture(texturePixels, meshAngleCount, radialSegments + 1, THREE.RGBAFormat);
+    visibilityMap.magFilter = THREE.NearestFilter;
+    visibilityMap.minFilter = THREE.NearestFilter;
+    visibilityMap.generateMipmaps = false;
+    visibilityMap.needsUpdate = true;
+    const footprint = new THREE.Mesh(terrainMesh.geometry, new THREE.ShaderMaterial({
+      uniforms: {
+        visibilityMap: { value: visibilityMap },
+        origin: { value: new THREE.Vector2(originX, originZ) },
+        radius: { value: radius },
+        angleStart: { value: meshAngles[0] },
+        angleSpan: { value: angleSpan },
+        angleStep: { value: angleSpan / angleSegments },
+        angleCount: { value: meshAngleCount },
+        ringCount: { value: radialSegments + 1 },
+        fullCircle: { value: fullCircle },
+      },
+      vertexShader: `
+        varying vec2 groundXZ;
+        void main() {
+          groundXZ = position.xz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position.x, position.y + 0.08, position.z, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D visibilityMap;
+        uniform vec2 origin;
+        uniform float radius, angleStart, angleSpan, angleStep, angleCount, ringCount;
+        uniform bool fullCircle;
+        varying vec2 groundXZ;
+        void main() {
+          vec2 offset = groundXZ - origin;
+          float distanceToEye = length(offset);
+          if (distanceToEye > radius) discard;
+          float angle = atan(offset.y, offset.x);
+          float relative = mod(angle - angleStart + 12.56637061436, 6.28318530718);
+          if (!fullCircle && relative > angleSpan) discard;
+          float column = floor(relative / angleStep + 0.5);
+          column = fullCircle ? mod(column, angleCount) : clamp(column, 0.0, angleCount - 1.0);
+          float row = distanceToEye <= 30.0
+            ? floor(distanceToEye + 0.5)
+            : distanceToEye <= 100.0
+              ? 30.0 + floor((distanceToEye - 30.0) / 2.0 + 0.5)
+              : 65.0 + floor((distanceToEye - 100.0) / 4.0 + 0.5);
+          row = clamp(row, 0.0, ringCount - 1.0);
+          vec4 result = texture2D(visibilityMap, vec2((column + 0.5) / angleCount, (row + 0.5) / ringCount));
+          if (result.a < 0.5) discard;
+          vec3 color = result.r > 0.5 ? vec3(0.008, 0.48, 0.18) : vec3(0.78, 0.085, 0.105);
+          gl_FragColor = vec4(color, 0.76);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    }));
+    setSceneLayer(footprint, 'analysisSurface');
+    footprint.name = 'viewshed-footprint';
+    viewshedState.group.add(footprint);
+
+    const visibleColor = new THREE.Color(0x16b875);
+    const hiddenColor = new THREE.Color(0xe55158);
+    const positions = [];
+    const topPositions = [];
+    const colors = [];
+    const topColors = [];
+    const indices = [];
+    const validVertex = [];
+    for (let ring = 0; ring <= radialSegments; ring += 1) {
+      const distance = ringDistances[ring];
+      for (let meshAngleIndex = 0; meshAngleIndex < meshAngleCount; meshAngleIndex += 1) {
+        const angle = meshAngles[meshAngleIndex];
+        const px = originX + Math.cos(angle) * distance;
+        const pz = originZ + Math.sin(angle) * distance;
+        const valid = ring === 0 || terrainValidAt(px, pz);
+        const ground = valid ? terrainSurfaceHeightAt(px, pz) : observerGround;
+        // Sit above mapped ground textures, but let above-ground objects,
+        // buildings and ridges retain their normal depth in front of the tint.
+        const floorY = ground + SCENE_LAYERS.analysisSurface.lift;
+        const visible = ring === 0 || visibility[meshAngleIndex][ring] === 1;
+        const color = visible ? visibleColor : hiddenColor;
+        positions.push(px, floorY, pz);
+        colors.push(color.r, color.g, color.b);
+        topPositions.push(px, isCone ? observerY + Math.tan(viewshedState.verticalFov * Math.PI / 360) * distance : floorY, pz);
+        topColors.push(color.r, color.g, color.b);
+        validVertex.push(valid);
+      }
+    }
+    for (let ring = 0; ring < radialSegments; ring += 1) {
+      const sectorCount = fullCircle ? meshAngleCount : meshAngleCount - 1;
+      for (let meshAngleIndex = 0; meshAngleIndex < sectorCount; meshAngleIndex += 1) {
+        const nextAngle = (meshAngleIndex + 1) % meshAngleCount;
+        const a = ring * meshAngleCount + meshAngleIndex;
+        const b = ring * meshAngleCount + nextAngle;
+        const c = (ring + 1) * meshAngleCount + meshAngleIndex;
+        const d = (ring + 1) * meshAngleCount + nextAngle;
+        if (!validVertex[a] || !validVertex[b] || !validVertex[c] || !validVertex[d]) continue;
+        indices.push(a, c, b, b, c, d);
+      }
+    }
+    const marker = new THREE.Group();
+    const pin = new THREE.Mesh(new THREE.SphereGeometry(2.8, 18, 14), new THREE.MeshBasicMaterial({ color: 0xffbd68 }));
+    pin.position.set(originX, observerY, originZ);
+    marker.add(pin);
+    if (!wallPlacement) {
+      const stemHeight = Math.max(3.5, eyeHeight);
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.48, stemHeight, 10), new THREE.MeshBasicMaterial({ color: 0xffbd68 }));
+      stem.position.set(originX, (onBuilding ? placement.y : observerGround) + stemHeight * 0.5, originZ);
+      marker.add(stem);
+    } else {
+      const tick = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 2.5, 8), new THREE.MeshBasicMaterial({ color: 0xffbd68 }));
+      tick.position.set(x + normal[0] * 0.5, observerY, z + normal[2] * 0.5);
+      tick.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(normal[0], 0, normal[2]).normalize());
+      marker.add(tick);
+    }
+
+    if (isCone) {
+      const topGeometry = new THREE.BufferGeometry();
+      topGeometry.setAttribute('position', new THREE.Float32BufferAttribute(topPositions, 3));
+      topGeometry.setAttribute('color', new THREE.Float32BufferAttribute(topColors, 3));
+      topGeometry.setIndex(indices);
+      const canopy = new THREE.Mesh(topGeometry, new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0.025, depthWrite: false,
+        side: THREE.DoubleSide, toneMapped: false,
+      }));
+      setSceneLayer(canopy, 'analysisVolume');
+      canopy.name = 'viewshed-cone-canopy';
+      viewshedState.group.add(canopy);
+
+      const sidePositions = [];
+      const sideIndices = [];
+      const addSideQuad = (lowerA, upperA, lowerB, upperB) => {
+        const base = sidePositions.length / 3;
+        sidePositions.push(...lowerA, ...upperA, ...lowerB, ...upperB);
+        sideIndices.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
+      };
+      for (let ring = 0; ring < radialSegments; ring += 1) {
+        for (const sideAngleIndex of fullCircle ? [] : [0, meshAngleCount - 1]) {
+          const first = ring * meshAngleCount + sideAngleIndex;
+          const second = (ring + 1) * meshAngleCount + sideAngleIndex;
+          if (validVertex[first] && validVertex[second]) addSideQuad(
+            positions.slice(first * 3, first * 3 + 3), topPositions.slice(first * 3, first * 3 + 3),
+            positions.slice(second * 3, second * 3 + 3), topPositions.slice(second * 3, second * 3 + 3),
+          );
+        }
+      }
+      const farStart = radialSegments * meshAngleCount;
+      for (let meshAngleIndex = 0; meshAngleIndex < meshAngleCount - 1; meshAngleIndex += 1) {
+        const first = farStart + meshAngleIndex, second = first + 1;
+        if (validVertex[first] && validVertex[second]) addSideQuad(
+          positions.slice(first * 3, first * 3 + 3), topPositions.slice(first * 3, first * 3 + 3),
+          positions.slice(second * 3, second * 3 + 3), topPositions.slice(second * 3, second * 3 + 3),
+        );
+      }
+      const sideGeometry = new THREE.BufferGeometry();
+      sideGeometry.setAttribute('position', new THREE.Float32BufferAttribute(sidePositions, 3));
+      sideGeometry.setIndex(sideIndices);
+      const sides = new THREE.Mesh(sideGeometry, new THREE.MeshBasicMaterial({
+        color: 0x677887, transparent: true, opacity: 0.035, depthWrite: false,
+        side: THREE.DoubleSide, toneMapped: false,
+      }));
+      setSceneLayer(sides, 'analysisVolume');
+      sides.name = 'viewshed-cone-sides';
+      viewshedState.group.add(sides);
+
+      const outlinePoints = (useTop, indicesToTrace) => indicesToTrace.map(index => {
+        const offset = (farStart + index) * 3;
+        const source = useTop ? topPositions : positions;
+        return new THREE.Vector3(source[offset], source[offset + 1], source[offset + 2]);
+      });
+      const outlineMaterial = new THREE.LineBasicMaterial({ color: 0x526875, transparent: true, opacity: 0.65, depthTest: true, toneMapped: false });
+      const edgeIndices = Array.from({ length: meshAngleCount }, (_, index) => index);
+      marker.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(outlinePoints(false, edgeIndices)), outlineMaterial.clone()));
+      marker.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(outlinePoints(true, edgeIndices)), outlineMaterial.clone()));
+      for (const sideAngleIndex of [0, meshAngleCount - 1]) {
+        const endpoint = (farStart + sideAngleIndex) * 3;
+        marker.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(originX, observerY, originZ),
+          new THREE.Vector3(topPositions[endpoint], topPositions[endpoint + 1], topPositions[endpoint + 2]),
+        ]), outlineMaterial.clone()));
+        marker.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(originX, observerY, originZ),
+          new THREE.Vector3(positions[endpoint], positions[endpoint + 1], positions[endpoint + 2]),
+        ]), outlineMaterial.clone()));
+      }
+    } else {
+      const ringPoints = [];
+      for (let index = 0; index < 128; index += 1) {
+        const angle = index * Math.PI * 2 / 128;
+        const px = originX + Math.cos(angle) * radius;
+        const pz = originZ + Math.sin(angle) * radius;
+        ringPoints.push(new THREE.Vector3(px, terrainSurfaceHeightAt(px, pz) + SCENE_LAYERS.analysisSurface.lift, pz));
+      }
+      const rangeRing = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ringPoints), new THREE.LineBasicMaterial({ color: 0x8de9ec, transparent: true, opacity: 0.75, depthTest: true }));
+      setSceneLayer(rangeRing, 'analysisSurface', 1);
+      marker.add(rangeRing);
+    }
+    viewshedState.group.add(marker);
+    viewshedState.point = { x, z, placement: placement ? { ...placement, headingInitialized: true } : null, originX, originZ, observerY };
+    if (viewshedPersonButton) viewshedPersonButton.disabled = false;
+    viewshedState.group.visible = viewshedState.active;
+    if (wasPersonView) setViewshedPersonView(true);
+    if (viewshedStatus) {
+      const percent = validSamples ? Math.round(visibleSamples / validSamples * 100) : 0;
+      const shapeSummary = isCone ? `${viewshedState.heading}° heading · ${viewshedState.spread}° cone` : '360° view';
+      const sourceLabel = wallPlacement ? 'façade / window' : onBuilding ? 'roof' : 'ground';
+      viewshedStatus.textContent = `${percent}% of sampled ground visible · ${sourceLabel} · ${shapeSummary} · ${radius} m radius.`;
+    }
+    requestRender();
+    return true;
   }
 
   const waterMasks = (data.water || []).map(water => {
@@ -1013,6 +1532,8 @@ export async function startWebGLScene(canvas, status) {
       sunModeNeutralMeshes.push(plinth);
     }
     layerGroups.terrain.add(...plinthMeshes);
+    setSceneLayer(mesh, 'terrain');
+    setSceneLayer(shadowCatcher, 'terrainShadow');
     layerGroups.terrain.add(mesh, shadowCatcher);
     return { mesh, shadowCatcher };
   }
@@ -1152,7 +1673,7 @@ export async function startWebGLScene(canvas, status) {
       mesh.userData.sunMaterial = new THREE.MeshLambertMaterial({
         color: COLORS.terrainSun, emissive: 0x242424, emissiveIntensity: 0.24, side: THREE.DoubleSide,
       });
-      mesh.renderOrder = 2;
+    setSceneLayer(mesh, 'water');
       mesh.castShadow = false;
       mesh.receiveShadow = true;
       layerGroups.water.add(mesh);
@@ -1640,7 +2161,7 @@ export async function startWebGLScene(canvas, status) {
         const centerZ = (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3;
         if (pointInMappedWater(centerX, centerZ) || !terrainValidAt(centerX, centerZ)) continue;
         for (const [x, z] of triangle) {
-          positions.push(x, terrainSurfaceHeightAt(x, z) + 0.14, z);
+          positions.push(x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.grass.lift, z);
           uvs.push(x / 12, z / 12);
         }
       }
@@ -1683,7 +2204,7 @@ export async function startWebGLScene(canvas, status) {
       polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
     }));
     mesh.receiveShadow = true;
-    mesh.renderOrder = 1;
+    setSceneLayer(mesh, 'grass');
     layerGroups.grass.add(mesh);
   }
 
@@ -1880,10 +2401,11 @@ export async function startWebGLScene(canvas, status) {
         polygonOffsetUnits: -3,
       });
       const mesh = new THREE.Mesh(geometry, material);
-      // Stay below mapped parking/crossing paint (orders 6 and 8) while still
-      // preserving fine-grained ordering among the four network tiers.
+      // Keep street paint above carriageways while preserving the local
+      // hierarchy among road classes at junctions.
       const parkingAisleLayer = roads.some(road => road.attributes?.service === 'parking_aisle');
-      mesh.renderOrder = parkingAisleLayer ? 4.2 : 2.1 + priority * 0.2;
+      const sceneLayer = roads.every(road => road.baseStyle >= 3) ? 'path' : 'road';
+      setSceneLayer(mesh, sceneLayer, (parkingAisleLayer ? 0.08 : priority * SCENE_LAYERS.roadPriorityStep));
       mesh.receiveShadow = true;
       if (styleIndex === 9) pavementOverrideMeshes.push(mesh);
       return mesh;
@@ -2537,7 +3059,7 @@ export async function startWebGLScene(canvas, status) {
             if (vertex === undefined) {
               vertex = batch.vertices.length / 3;
               batch.vertexLookup.set(key, vertex);
-              batch.vertices.push(x, terrainSurfaceHeightAt(x, z) + 0.42, z);
+              batch.vertices.push(x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.groundTexture.lift, z);
               batch.uvs.push(x / batch.style.repeat, z / batch.style.repeat);
             }
             indices.push(vertex);
@@ -2576,7 +3098,7 @@ export async function startWebGLScene(canvas, status) {
         polygonOffsetUnits: -2,
       }));
       const materialPriority = ['asphalt', 'gravel', 'stone', 'brick', 'concrete', 'red_pavers', 'grand_parade'].indexOf(batch.style.texture);
-      mesh.renderOrder = 3.0 + Math.max(0, materialPriority) * 0.06 + (batch.special ? 0.48 : 0);
+      setSceneLayer(mesh, 'groundTexture', Math.max(0, materialPriority) * 0.06 + (batch.special ? 0.48 : 0));
       mesh.receiveShadow = true;
       mesh.name = batch.special ? 'image-checked-ground-surfaces' : `mapped-${batch.style.texture}-ground-surfaces`;
       layerGroups.terrain.add(mesh);
@@ -2621,7 +3143,7 @@ export async function startWebGLScene(canvas, status) {
                 const x = a[0] * wa + b[0] * wb + c[0] * wc;
                 const z = a[1] * wa + b[1] * wb + c[1] * wc;
                 rowIndices.push(vertexCount++);
-                positions.push(x, terrainSurfaceHeightAt(x, z) + 0.62, z);
+                positions.push(x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.mappedCoverage.lift, z);
               }
               rows.push(rowIndices);
             }
@@ -2654,7 +3176,7 @@ export async function startWebGLScene(canvas, status) {
             roughness: 0.96, metalness: 0, side: THREE.DoubleSide,
             depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3,
           }));
-          mesh.renderOrder = 4;
+          setSceneLayer(mesh, 'mappedCoverage');
           mesh.name = `groundcover-${category.category}`;
           layerGroups.groundcover.add(mesh);
         }
@@ -2731,7 +3253,7 @@ export async function startWebGLScene(canvas, status) {
           const area = records.getUint32(offset + 4, true);
           const x = minX + (column + 0.5) * resolution;
           const z = minZ + (row + 0.5) * resolution;
-          positions.set([x, terrainSurfaceHeightAt(x, z) + 0.82, z], index * 3);
+          positions.set([x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.runoff.lift, z], index * 3);
           const blend = clamp(Math.log(Math.max(1, area / threshold)) / Math.log(Math.max(1.01, maximumArea / threshold)), 0, 1);
           if (blend < 0.58) color.copy(lowColor).lerp(middleColor, blend / 0.58);
           else color.copy(middleColor).lerp(highColor, (blend - 0.58) / 0.42);
@@ -2745,7 +3267,7 @@ export async function startWebGLScene(canvas, status) {
           opacity: 0.92, depthWrite: false,
         }));
         points.name = 'mapped-pavement-runoff-concentration';
-        points.renderOrder = 7;
+        setSceneLayer(points, 'runoff');
         layerGroups.runoff.add(points);
         runoffMetadata = metadata;
         runoffLoaded = true;
@@ -2814,12 +3336,13 @@ export async function startWebGLScene(canvas, status) {
     const dark = new THREE.MeshBasicMaterial({ color: 0x073842, transparent: true, opacity: 0.94, depthWrite: false });
     const highlight = new THREE.MeshBasicMaterial({ color: 0x56e4ed, transparent: true, opacity: 0.98, depthWrite: false });
     for (const points of ways) {
-      const pathPoints = points.map(([x, z]) => new THREE.Vector3(x, terrainSurfaceHeightAt(x, z) + 1.15, z));
+      const pathPoints = points.map(([x, z]) => new THREE.Vector3(x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.cycling.lift, z));
       const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal');
       const divisions = Math.max(16, Math.ceil(curve.getLength() / 1.5));
       const outer = new THREE.Mesh(new THREE.TubeGeometry(curve, divisions, 1.12, 6, false), dark);
       const inner = new THREE.Mesh(new THREE.TubeGeometry(curve, divisions, 0.62, 6, false), highlight);
-      outer.renderOrder = inner.renderOrder = 8;
+      setSceneLayer(outer, 'cycling');
+      setSceneLayer(inner, 'cycling');
       outer.name = 'mapped-cycleway-outline';
       inner.name = 'mapped-cycleway-highlight';
       layerGroups.cycling.add(outer, inner);
@@ -2829,7 +3352,7 @@ export async function startWebGLScene(canvas, status) {
     for (const [x, z] of openEndpointPositions) {
       const marker = new THREE.Mesh(endMarkerGeometry, endMarkerMaterial);
       marker.position.set(x, terrainSurfaceHeightAt(x, z) + 1.4, z);
-      marker.renderOrder = 9;
+      setSceneLayer(marker, 'cycling', 1);
       marker.name = 'unmatched-mapped-cycleway-end';
       layerGroups.cycling.add(marker);
     }
@@ -2981,6 +3504,9 @@ export async function startWebGLScene(canvas, status) {
     crowns.userData.sunMaterial = new THREE.MeshLambertMaterial({
       color: 0x7da55d, vertexColors: true, side: THREE.DoubleSide,
     });
+    crowns.userData.viewshedMaterial = new THREE.MeshLambertMaterial({
+      color: 0xffffff, emissive: 0x202428, emissiveIntensity: 0.25, side: THREE.DoubleSide,
+    });
     crowns.castShadow = true;
     crowns.receiveShadow = true;
 
@@ -3029,8 +3555,10 @@ export async function startWebGLScene(canvas, status) {
         : semanticClass === 'publicLightGlow' ? 2200
           : semanticClass.startsWith('publicLight') ? 1050
           : ['fountain', 'bench', 'wasteBasket', 'bicycleParking', 'streetClock', 'bollard', 'busStop'].some(value => semanticClass.startsWith(value)) ? 850 : null;
-      if (semanticClass === 'parkingSpace') mesh.renderOrder = 6;
-      if (['pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)) mesh.renderOrder = 8;
+      if (semanticClass === 'parkingSpace') setSceneLayer(mesh, 'streetMarking');
+      if (['pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semanticClass)) {
+        setSceneLayer(mesh, 'streetMarking', 0.2);
+      }
       group.add(mesh);
       return mesh;
     };
@@ -3896,7 +4424,8 @@ export async function startWebGLScene(canvas, status) {
         const includeEffects = withNightEffects || lightingEffectsRequested;
         makeStreetFurniture(fixtures, layerGroups.cityFurniture, {}, { lightingEffects: includeEffects });
         lightingEffectsLoaded = includeEffects;
-        layerGroups.cityFurniture.visible = Boolean(savedVisibility.cityFurniture);
+        layerGroups.cityFurniture.visible = viewshedState.active || Boolean(savedVisibility.cityFurniture);
+        if (viewshedState.active) setViewshedContextMaterials(true);
         updateSunStatus();
         requestRender();
         return true;
@@ -3942,7 +4471,8 @@ export async function startWebGLScene(canvas, status) {
         const streetUse = `${crossings.length.toLocaleString()} pedestrian crossings · ${parking.length.toLocaleString()} parking spaces`;
         if (status) status.textContent = `${records.length.toLocaleString()} mapped places${breakdown ? ` · ${breakdown}` : ''} · ${streetUse}.`;
         publicRealmLoaded = true;
-        layerGroups.publicRealm.visible = Boolean(savedVisibility.publicRealm);
+        layerGroups.publicRealm.visible = viewshedState.active || Boolean(savedVisibility.publicRealm);
+        if (viewshedState.active) setViewshedContextMaterials(true);
         requestRender();
       })
       .catch(error => {
@@ -4473,12 +5003,66 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function syncGroundSurfaceMaterials() {
-    const analysisView = Boolean(shadowState.enabled || heatToggle?.checked || windToggle?.checked);
+    const analysisView = Boolean(shadowState.enabled || viewshedState.active || heatToggle?.checked || windToggle?.checked);
     for (const mesh of groundSurfaceMeshes) mesh.visible = !analysisView;
-    for (const mesh of pavementOverrideMeshes) mesh.visible = !analysisView;
+    for (const mesh of pavementOverrideMeshes) mesh.visible = !analysisView || viewshedState.active;
     if (analysisView) layerGroups.groundcover.visible = false;
     if (analysisView) layerGroups.cycling.visible = false;
     if (analysisView) layerGroups.runoff.visible = false;
+  }
+
+  function setViewshedContextMaterials(enabled) {
+    const contextualLayers = ['roads', 'paths', 'cityFurniture', 'publicRealm'];
+    const applyTo = (object, layerName) => {
+      if (object === ambientTraffic.group || object === ambientTraffic.signalGroup) return;
+      if ((layerName === 'cityFurniture' || layerName === 'publicRealm') && (object.isPoints || object.isPointLight)) {
+        if (enabled) {
+          if (object.userData.viewshedOriginalVisible === undefined) object.userData.viewshedOriginalVisible = object.visible;
+          object.visible = false;
+        } else if (object.userData.viewshedOriginalVisible !== undefined) {
+          object.visible = object.userData.viewshedOriginalVisible;
+          delete object.userData.viewshedOriginalVisible;
+        }
+      }
+      if (object.isMesh && object.material && !Array.isArray(object.material)) {
+        const semantic = object.userData.semanticClass || '';
+        if (semantic === 'publicLightPool' || semantic === 'publicLightGlow') {
+          if (enabled) {
+            if (object.userData.viewshedOriginalVisible === undefined) object.userData.viewshedOriginalVisible = object.visible;
+            object.visible = false;
+          } else if (object.userData.viewshedOriginalVisible !== undefined) {
+            object.visible = object.userData.viewshedOriginalVisible;
+            delete object.userData.viewshedOriginalVisible;
+          }
+        } else if (enabled) {
+          if (!object.userData.viewshedOriginalMaterial) object.userData.viewshedOriginalMaterial = object.material;
+          if (!object.userData.viewshedMaterial) {
+            const material = object.material.clone();
+            if ('map' in material) material.map = null;
+            if ('vertexColors' in material) material.vertexColors = false;
+            if (material.color) {
+              const isMarking = object.name.startsWith('faded-')
+                || ['parkingSpace', 'pedestrianCrossing', 'daisyPetals', 'daisyCentres', 'daisyZebraBands'].includes(semantic);
+              material.color.setHex(isMarking ? 0xd8dcda
+                : layerName === 'roads' ? 0xe4e8e6
+                  : layerName === 'paths' ? 0xf2f3f1 : 0xf3f4f2);
+            }
+            if (material.emissive) material.emissive.setHex(0x0a0a0a);
+            object.userData.viewshedMaterial = material;
+          }
+          object.material = object.userData.viewshedMaterial;
+          if (object.name.startsWith('faded-') || ['parkingSpace', 'pedestrianCrossing'].includes(semantic)) {
+            if (object.userData.viewshedOriginalRenderOrder === undefined) object.userData.viewshedOriginalRenderOrder = object.renderOrder;
+            object.renderOrder = SCENE_LAYERS.analysisSurface.order + 1;
+          }
+        } else if (object.userData.viewshedOriginalMaterial) {
+          object.material = object.userData.viewshedOriginalMaterial;
+          if (object.userData.viewshedOriginalRenderOrder !== undefined) object.renderOrder = object.userData.viewshedOriginalRenderOrder;
+        }
+      }
+      for (const child of object.children) applyTo(child, layerName);
+    };
+    for (const layerName of contextualLayers) applyTo(layerGroups[layerName], layerName);
   }
 
   const sectionLayerProfiles = {
@@ -4494,11 +5078,15 @@ export async function startWebGLScene(canvas, status) {
       terrain: true, water: false, grass: false, railways: true,
       paths: false, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
+    viewshed: {
+      terrain: true, water: false, grass: false, railways: false,
+      paths: true, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: true, publicRealm: true, buildings: true, trees: true,
+    },
   };
 
   function applySectionLayerProfile(name) {
     if (name === 'tools') {
-      if (!shadowState.enabled && !heatToggle?.checked && !windToggle?.checked) {
+      if (!shadowState.enabled && !heatToggle?.checked && !windToggle?.checked && !viewshedState.active) {
         layerGroups.groundcover.visible = Boolean(savedVisibility.groundcover);
         layerGroups.cycling.visible = Boolean(savedVisibility.cycling);
         layerGroups.runoff.visible = Boolean(savedVisibility.runoff);
@@ -4512,6 +5100,7 @@ export async function startWebGLScene(canvas, status) {
       layerGroups[layerName].visible = visible;
     }
     if (name === 'sun' && lightingInventoryLoaded) layerGroups.cityFurniture.visible = true;
+    if (name === 'viewshed') syncGroundSurfaceMaterials();
     syncLayerControls();
     refreshTransportVehicleLayers();
   }
@@ -4739,6 +5328,15 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function updateCamera() {
+    if (viewshedPersonCamera && viewshedState.point) {
+      const { originX, originZ, observerY } = viewshedState.point;
+      const heading = viewshedState.heading * Math.PI / 180;
+      camera.position.set(originX, observerY, originZ);
+      camera.lookAt(originX + Math.sin(heading) * 30, observerY, originZ - Math.cos(heading) * 30);
+      scene.fog.near = 1900;
+      scene.fog.far = 4600;
+      return;
+    }
     cameraState.distance = clamp(cameraState.distance, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
     cameraState.elevation = clamp(cameraState.elevation, CAMERA_MIN_ELEVATION, 1.35);
     const horizontal = Math.cos(cameraState.elevation) * cameraState.distance;
@@ -4767,7 +5365,9 @@ export async function startWebGLScene(canvas, status) {
     for (const group of [layerGroups.cityFurniture, layerGroups.publicRealm]) {
       for (const object of group.children) {
         const maxDistance = Number(object.userData?.maxDistance);
-        if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance;
+        if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance
+          && !(viewshedState.active && (object.isPoints || object.isPointLight
+            || ['publicLightPool', 'publicLightGlow'].includes(object.userData?.semanticClass)));
       }
     }
     for (const object of layerGroups.railways.children) {
@@ -5002,15 +5602,14 @@ export async function startWebGLScene(canvas, status) {
   function setSunMaterials(enabled) {
     // Keep the sun-hours city neutral white too, but reserve the direct light
     // and shadow map for the instantaneous shadow study.
-    const directShadowStudy = enabled && shadowState.mode === 'shadows';
+    const directShadowStudy = enabled && shadowState.enabled && shadowState.mode === 'shadows';
     sunLight.visible = directShadowStudy && shadowState.generated;
     shadowCatcher.visible = directShadowStudy && shadowState.generated;
     ambient.intensity = directShadowStudy ? 0.5 : 1.72;
     cityFill.color.setHex(enabled ? 0xffffff : 0xffe8c7);
     skyFill.color.setHex(enabled ? 0xffffff : 0xbfe3ef);
     sunLight.color.setHex(enabled ? 0xffffff : 0xfff3d6);
-    scene.background.set(enabled ? '#f7f7f7' : COLORS.background);
-    if (scene.fog) scene.fog.color.set(enabled ? '#f7f7f7' : COLORS.fog);
+    updateWeatherSky(skyWeather, sunPosition());
     terrainMesh.material.color.setHex(enabled ? terrainMesh.userData.sunColor : terrainMesh.userData.normalColor);
     // The single, non-indexed façade mesh is a receiver and caster for the
     // entire CBD. Receiving its own low-resolution city-wide shadow map creates
@@ -5018,7 +5617,9 @@ export async function startWebGLScene(canvas, status) {
     // lit by the sun direction and keep casting shadows onto terrain/roofs.
     if (buildingMeshes.walls) buildingMeshes.walls.receiveShadow = !directShadowStudy;
     for (const mesh of [...[buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean), ...sunModeNeutralMeshes]) {
-      mesh.material = enabled ? mesh.userData.sunMaterial : mesh.userData.normalMaterial;
+      mesh.material = enabled
+        ? (viewshedState.active && mesh.userData.viewshedMaterial) || mesh.userData.sunMaterial
+        : mesh.userData.normalMaterial;
     }
   }
 
@@ -7412,24 +8013,49 @@ export async function startWebGLScene(canvas, status) {
 
   function makeParkedLotVehicles() {
     const vehicles = [];
-    const occupied = new Set();
     const maxParkedCars = 800;
+    const parkedCarsOverlap = (x, z, heading, scale) => {
+      const halfWidth = 1.0 * scale + 0.12;
+      const halfLength = 2.15 * scale + 0.12;
+      const widthAxis = [Math.cos(heading), -Math.sin(heading)];
+      const lengthAxis = [Math.sin(heading), Math.cos(heading)];
+      for (const other of vehicles) {
+        const otherWidth = 1.0 * other.scale + 0.12;
+        const otherLength = 2.15 * other.scale + 0.12;
+        const dx = x - other.x, dz = z - other.z;
+        if (Math.hypot(dx, dz) > halfLength + halfWidth + otherLength + otherWidth) continue;
+        const otherWidthAxis = [Math.cos(other.heading), -Math.sin(other.heading)];
+        const otherLengthAxis = [Math.sin(other.heading), Math.cos(other.heading)];
+        const axes = [widthAxis, lengthAxis, otherWidthAxis, otherLengthAxis];
+        let separated = false;
+        for (const axis of axes) {
+          const distance = Math.abs(dx * axis[0] + dz * axis[1]);
+          const thisRadius = halfWidth * Math.abs(widthAxis[0] * axis[0] + widthAxis[1] * axis[1])
+            + halfLength * Math.abs(lengthAxis[0] * axis[0] + lengthAxis[1] * axis[1]);
+          const otherRadius = otherWidth * Math.abs(otherWidthAxis[0] * axis[0] + otherWidthAxis[1] * axis[1])
+            + otherLength * Math.abs(otherLengthAxis[0] * axis[0] + otherLengthAxis[1] * axis[1]);
+          if (distance >= thisRadius + otherRadius) { separated = true; break; }
+        }
+        if (!separated) return true;
+      }
+      return false;
+    };
+    const parkingSurfaceY = (x, z) => terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.groundTexture.lift + 0.05;
     const addSlot = (lot, x, z, heading, seed, arrival = null) => {
       if (vehicles.length >= maxParkedCars) return;
       const scale = 0.82 + (seed % 5) * 0.035;
       if (!parkingLotContains(lot, x, z) || !parkingSlotFits(lot, x, z, heading, scale)) return;
-      const key = `${Math.round(x / 2.5)}:${Math.round(z / 2.5)}`;
-      if (occupied.has(key) || seed % 100 >= 62) return;
-      occupied.add(key);
+      if (seed % 100 >= 62 || parkedCarsOverlap(x, z, heading, scale)) return;
+      const parkedY = parkingSurfaceY(x, z);
       vehicles.push({
         parked: true,
         x, z, heading,
-        y: terrainSurfaceHeightAt(x, z) + 0.44,
+        y: parkedY,
         arrival: arrival ? {
           ...arrival,
           startAt: performance.now() + ((seed * 137) % 45000),
           duration: 2800,
-          targetX: x, targetZ: z, targetY: terrainSurfaceHeightAt(x, z) + 0.44,
+          targetX: x, targetZ: z, targetY: parkedY,
           targetHeading: heading,
         } : null,
         model: seed % 3,
@@ -7743,11 +8369,11 @@ export async function startWebGLScene(canvas, status) {
 
   function scheduleAmbientTrafficSetup() {
     if (ambientTraffic.initialized || ambientTraffic.setupPending
-      || cameraState.distance > 900 || !layerGroups.roads.visible) return;
+      || viewshedState.active || cameraState.distance > 900 || !layerGroups.roads.visible) return;
     ambientTraffic.setupPending = true;
     const prepare = () => {
       ambientTraffic.setupPending = false;
-      if (cameraState.distance > 900 || !layerGroups.roads.visible) return;
+      if (viewshedState.active || cameraState.distance > 900 || !layerGroups.roads.visible) return;
       setupAmbientTraffic();
       requestRender();
     };
@@ -8159,7 +8785,7 @@ export async function startWebGLScene(canvas, status) {
     // Ambient cars are a street-scale detail. Keep the fleet dormant at the
     // full-city view, where individual cars cannot be read, and avoid posing
     // thousands of instances on every map redraw while zoomed out.
-    group.visible = activeTool !== 'transport' && layerGroups.roads.visible
+    group.visible = activeTool !== 'transport' && activeTool !== 'viewshed' && layerGroups.roads.visible
       && cameraState.distance <= ambientTrafficAnimationDistance;
     if (ambientTraffic.signalGroup) ambientTraffic.signalGroup.visible = group.visible;
     if (!group.visible) {
@@ -12894,6 +13520,24 @@ export async function startWebGLScene(canvas, status) {
     return raycaster;
   }
 
+  function pointerViewshedBuilding(event) {
+    if (!layerGroups.buildings.visible) return null;
+    const hit = pointerRaycaster(event).intersectObjects(layerGroups.buildings.children, true)
+      .find(candidate => candidate.object.isMesh && candidate.face && Number.isFinite(candidate.point.y));
+    if (!hit) return null;
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld);
+    const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+    const roof = normal.y > 0.55;
+    return {
+      kind: 'building',
+      x: hit.point.x,
+      y: hit.point.y,
+      z: hit.point.z,
+      roof,
+      normal: [normal.x, normal.y, normal.z],
+    };
+  }
+
   function requestGroundPick(handler) {
     groundPickHandler = handler;
     canvas.style.cursor = handler || windInspectToggle?.getAttribute('aria-pressed') === 'true' ? 'crosshair' : '';
@@ -13232,6 +13876,17 @@ export async function startWebGLScene(canvas, status) {
     drag = null;
     const isMapClick = clickCandidate
       && Math.hypot(event.clientX - clickCandidate.x, event.clientY - clickCandidate.y) < (event.pointerType === 'touch' ? 12 : 5);
+    if (isMapClick && viewshedState.active && viewshedState.pickMode) {
+      const buildingPlacement = event.altKey ? null : pointerViewshedBuilding(event);
+      const point = buildingPlacement ? null : pointerGround(event);
+      if (buildingPlacement) buildViewshed(buildingPlacement.x, buildingPlacement.z, buildingPlacement);
+      else if (point) buildViewshed(point.x, point.z, { kind: 'terrain' });
+      else if (viewshedStatus) viewshedStatus.textContent = 'Click the terrain, a roof, or a building face to place the observer.';
+      clickCandidate = null;
+      drag = null;
+      requestRender();
+      return;
+    }
     if (isMapClick && placeInspectorPickMode) {
       const point = pointerGround(event);
       dispatchEvent(new CustomEvent('climate-place-inspector-picked', {
@@ -14365,6 +15020,17 @@ export async function startWebGLScene(canvas, status) {
   });
   addEventListener('climate-menu-change', event => {
     const name = event.detail?.name;
+    if (name !== 'viewshed' && viewshedPersonCamera) setViewshedPersonView(false);
+    viewshedState.active = name === 'viewshed';
+    viewshedState.pickMode = viewshedState.active;
+    viewshedState.group.visible = viewshedState.active && Boolean(viewshedState.point);
+    viewshedPickButton?.setAttribute('aria-pressed', String(viewshedState.pickMode));
+    if (viewshedState.active) {
+      canvas.style.cursor = 'crosshair';
+      if (viewshedStatus && !viewshedState.point) viewshedStatus.textContent = 'Click the terrain, a roof, or a building face to place the observer.';
+    } else if (!placeInspectorPickMode && !groundPickHandler) canvas.style.cursor = '';
+    syncGroundSurfaceMaterials();
+    requestRender();
     if (name === 'wind') {
       void ensureCfdDesignCasesLoaded();
       openWindWithDefaultCase();
@@ -14393,6 +15059,7 @@ export async function startWebGLScene(canvas, status) {
       void loadTrafficCalibrationStatus();
     }
     if (name === 'transport') void ensureTransportLayer();
+    transportLayer?.setSceneVisible(name !== 'viewshed');
     transportLayer?.setPanelActive(name === 'transport');
     // Tools is a utility panel, not its own exclusive visualization — switch
     // away from whatever layer (heat/sun/wind/traffic) is active only when
@@ -14433,7 +15100,18 @@ export async function startWebGLScene(canvas, status) {
       clearTrafficSelection();
     }
     syncTrafficSceneVisibility();
+    if (name !== 'viewshed' && document.body.classList.contains('viewshed-mode')) restoreNormalVisibility();
     applySectionLayerProfile(name);
+    if (name === 'viewshed') {
+      setViewshedContextMaterials(true);
+      void ensurePublicRealm();
+      setSunMaterials(true);
+      document.body.classList.add('viewshed-mode');
+    } else if (document.body.classList.contains('viewshed-mode')) {
+      setViewshedContextMaterials(false);
+      setSunMaterials(shadowState.enabled);
+      document.body.classList.remove('viewshed-mode');
+    }
     syncLayerControls();
     if (name === 'wind' && windState.analysisMode === 'pollution') {
       layerGroups.roads.visible = true;
@@ -14641,8 +15319,9 @@ export async function startWebGLScene(canvas, status) {
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
     resize();
     resizePostProcessing();
-    skySphere.visible = shadowState.enabled && shadowState.mode === 'shadows';
+    skySphere.visible = shadowState.enabled && !viewshedState.active;
     skySphere.position.copy(camera.position);
+    skyUniforms.cloudTime.value = now * 0.001;
     updateWindParticles(now);
     updatePollutionVisuals(now);
     updateTrafficCars(now);
@@ -14691,6 +15370,13 @@ export async function startWebGLScene(canvas, status) {
       } else {
         animationFrame = requestAnimationFrame(render);
       }
+    } else if (!reducedMotion && skySphere.visible && skyUniforms.cloudCover.value > 0.03
+      && cameraState.elevation < THREE.MathUtils.degToRad(camera.fov * 0.5) + 0.08) {
+      // Only animate clouds while a portion of the real upper sky is in view.
+      animationTimer = window.setTimeout(() => {
+        animationTimer = 0;
+        if (sceneReadyToRender && !document.hidden && !animationFrame) animationFrame = requestAnimationFrame(render);
+      }, 1000 / 8);
     } else if (!reducedMotion && transportLayer?.needsIdleTick()) {
       animationTimer = window.setTimeout(() => {
         animationTimer = 0;
@@ -14789,6 +15475,7 @@ export async function startWebGLScene(canvas, status) {
       layerVisible: name => Boolean(layerGroups[name]?.visible),
     }).then(layer => {
       transportLayer = layer;
+      layer.setSceneVisible(!viewshedState.active);
       layer.setPanelActive(document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport');
       requestRender();
       return layer;
@@ -14799,6 +15486,18 @@ export async function startWebGLScene(canvas, status) {
     return transportLoading;
   }
   const initialPanel = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
+  if (initialPanel === 'viewshed') {
+    viewshedState.active = true;
+    viewshedState.pickMode = true;
+    viewshedPickButton?.setAttribute('aria-pressed', 'true');
+    if (viewshedStatus) viewshedStatus.textContent = 'Click the terrain, a roof, or a building face to place the observer.';
+    canvas.style.cursor = 'crosshair';
+    applySectionLayerProfile('viewshed');
+    setViewshedContextMaterials(true);
+    void ensurePublicRealm();
+    setSunMaterials(true);
+    document.body.classList.add('viewshed-mode');
+  }
   if (initialPanel === 'transport') await ensureTransportLayer();
   if (initialPanel === 'wind') {
     void ensureCfdDesignCasesLoaded();
@@ -14829,7 +15528,7 @@ export async function startWebGLScene(canvas, status) {
         buildingMeshes.surface = makeDetailedRoofSurface();
         setBuildingAppearance(buildingAppearance?.value || 'neutral');
         setBuildingDrawTransparency(buildingDrawTransparencyEnabled);
-        setSunMaterials(shadowState.enabled);
+        setSunMaterials(shadowState.enabled || viewshedState.active);
         const triangles = manifest.layers?.roof_surface?.triangles || 0;
         status.textContent = `${data.buildings.length} buildings · ${railwayCount} railway lines · ${triangles ? `${triangles.toLocaleString()} detailed roof triangles · ` : ''}${canopyCount} canopy footprints`;
         requestRender();
@@ -14853,6 +15552,64 @@ export async function startWebGLScene(canvas, status) {
       };
     },
   };
+  let viewshedRefreshTimer = 0;
+  const refreshViewshed = () => {
+    window.clearTimeout(viewshedRefreshTimer);
+    viewshedRefreshTimer = window.setTimeout(() => {
+      viewshedRefreshTimer = 0;
+      if (viewshedState.point) buildViewshed(viewshedState.point.x, viewshedState.point.z, viewshedState.point.placement);
+    }, 120);
+  };
+  viewshedRadius?.addEventListener('input', () => {
+    viewshedState.radius = Number(viewshedRadius.value) || 500;
+    if (viewshedRadiusValue) viewshedRadiusValue.textContent = `${viewshedState.radius} m`;
+    refreshViewshed();
+  });
+  const compassLabel = bearing => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(bearing / 45) % 8];
+  viewshedShape?.addEventListener('change', () => {
+    viewshedState.shape = viewshedShape.value === 'full' ? 'full' : 'cone';
+    refreshViewshed();
+  });
+  viewshedHeading?.addEventListener('input', () => {
+    viewshedState.heading = Number(viewshedHeading.value) || 0;
+    if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${viewshedState.heading}° · ${compassLabel(viewshedState.heading)}`;
+    if (viewshedPersonCamera) {
+      updateCamera();
+      requestRender();
+    }
+    refreshViewshed();
+  });
+  viewshedSpread?.addEventListener('input', () => {
+    viewshedState.spread = Number(viewshedSpread.value) || 60;
+    if (viewshedSpreadValue) viewshedSpreadValue.textContent = `${viewshedState.spread}°`;
+    refreshViewshed();
+  });
+  viewshedHeight?.addEventListener('input', () => {
+    viewshedState.eyeHeight = Number(viewshedHeight.value) || 1.7;
+    if (viewshedHeightValue) viewshedHeightValue.textContent = `${viewshedState.eyeHeight.toFixed(1)} m`;
+    refreshViewshed();
+  });
+  viewshedPickButton?.addEventListener('click', () => {
+    viewshedState.active = true;
+    viewshedState.pickMode = true;
+    canvas.style.cursor = 'crosshair';
+    viewshedPickButton.setAttribute('aria-pressed', 'true');
+    if (viewshedStatus) viewshedStatus.textContent = viewshedState.point
+      ? 'Click the map to move the observer and recalculate.'
+      : 'Click the terrain, a roof, or a building face to place the observer.';
+  });
+  viewshedPersonButton?.addEventListener('click', () => setViewshedPersonView(!viewshedPersonCamera));
+  document.querySelector('#viewshed-clear')?.addEventListener('click', clearViewshedResult);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !viewshedState.pickMode) return;
+    viewshedState.pickMode = false;
+    viewshedPickButton?.setAttribute('aria-pressed', 'false');
+    canvas.style.cursor = '';
+    if (viewshedStatus) viewshedStatus.textContent = viewshedState.point
+      ? 'Viewshed retained. Select Pick viewpoint to move the observer.'
+      : 'Pick mode cancelled.';
+  });
+
   attachSceneExperience({
     canvas, requestRender, fitScene,
     readCamera: () => ({ azimuth: cameraState.azimuth, elevation: cameraState.elevation, distance: cameraState.distance,
