@@ -2,11 +2,13 @@
 
 Run an application/static server first, then:
   .venv/bin/python scripts/smoke_explorer.py --url http://127.0.0.1:8011/app
-Requires the optional Playwright package and its Chromium installation.
+Requires Playwright and Chromium; set CHROME_BIN to use a system Chrome build.
 """
 import argparse
 import json
+import os
 from pathlib import Path
+import shutil
 from playwright.sync_api import sync_playwright
 
 
@@ -20,7 +22,8 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     results = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox", "--use-angle=swiftshader"])
+        executable = os.environ.get("CHROME_BIN") or shutil.which("google-chrome") or shutil.which("chromium")
+        browser = p.chromium.launch(headless=True, executable_path=executable, args=["--no-sandbox", "--use-angle=swiftshader"])
         for label, viewport, fallback in [
             ("desktop", {"width": 1440, "height": 900}, False),
             ("mobile", {"width": 390, "height": 844}, False),
@@ -68,7 +71,7 @@ def main():
                     violations = page.evaluate("async () => (await axe.run(document, {runOnly: {type: 'tag', values: ['wcag2a','wcag2aa','wcag21aa']}})).violations.map(v => ({id:v.id, impact:v.impact, nodes:v.nodes.map(n=>n.target)}))")
                     assert not [v for v in violations if v["impact"] in ["serious", "critical"]], (label, tool, violations)
 
-            page.locator("#menu-tools details").first.locator("summary").click()
+            page.locator("#menu-tools > details.tool-disclosure").nth(1).locator("summary").click()
             page.locator('[data-layer="cycling"]').check()
             page.wait_for_function("() => document.querySelector('#cycling-status')?.textContent.includes('mapped links')")
             assert "connected groups" in page.locator("#cycling-status").inner_text()
@@ -77,7 +80,6 @@ def main():
             page.wait_for_function("() => document.querySelector('#groundcover-status')?.textContent.includes('unavailable')")
             page.locator('[data-layer="groundcover"]').uncheck()
             page.locator('[data-layer="cycling"]').uncheck()
-
             def camera_state():
                 return page.evaluate("""() => new Promise(resolve => {
                   addEventListener('climate-scene-state', event => resolve(event.detail.camera), {once: true});
@@ -107,7 +109,7 @@ def main():
                 after_drag = camera_state()
                 assert after_drag["azimuth"] > before_drag["azimuth"], (label, before_drag, after_drag)
                 assert after_drag["elevation"] > before_drag["elevation"], (label, before_drag, after_drag)
-            page.locator('[data-menu-target="tools"]').focus()
+            page.evaluate("document.querySelector('[data-menu-target=tools]').focus()")
             page.keyboard.press("End")
             assert page.locator('[data-menu-target="transport"]').get_attribute("aria-selected") == "true"
             page.keyboard.press("Home")
@@ -134,6 +136,23 @@ def main():
             assert "transport-event-name" not in exported["settings"]["controls"]
             page.get_by_role("button", name="Restore Before", exact=True).click()
             assert page.locator("#sun-date").input_value() == exported["before"]["settings"]["controls"]["sun-date"]
+            page.get_by_role("button", name="Add map note", exact=True).click()
+            if label == "mobile":
+                # The overlaid tab rail covers the map centre at this viewport.
+                page.evaluate("dispatchEvent(new CustomEvent('climate-local-note-point', {detail: {x: 123.5, z: -45.25}}))")
+            else:
+                scene_box = page.locator("#scene").bounding_box()
+                page.locator("#scene").click(position={"x": scene_box["width"] / 2, "y": scene_box["height"] / 2})
+            page.locator(".local-note-form textarea").wait_for(state="visible")
+            page.locator(".local-note-form textarea").fill("Smoke-test local note")
+            page.get_by_role("button", name="Save note", exact=True).click()
+            assert "Smoke-test local note" in page.locator(".local-note-list").inner_text()
+            saved_notes = page.evaluate("JSON.parse(localStorage.getItem('conditions-local-notes-v1'))")
+            assert len(saved_notes) == 1 and isinstance(saved_notes[0]["x"], (float, int)) and isinstance(saved_notes[0]["z"], (float, int))
+            with page.expect_download() as notes_download:
+                page.get_by_role("button", name="Export scenario JSON").click()
+            notes_export = json.loads(Path(notes_download.value.path()).read_text())
+            assert "localNotes" not in notes_export and "Smoke-test local note" not in json.dumps(notes_export)
             if label == "desktop":
                 state = exported["after"]["settings"]
                 shared = page.evaluate("async s => (await import('/scenarioState.js')).scenarioURL(location.href, s)", state)
@@ -144,6 +163,10 @@ def main():
                 page.wait_for_function("() => !document.body.hasAttribute('aria-busy')", timeout=45000)
                 assert page.locator("#sun-date").input_value() == state["controls"]["sun-date"]
                 assert page.locator('[data-menu-target="sun"]').get_attribute("aria-selected") == "true"
+            page.reload(wait_until="domcontentloaded")
+            page.wait_for_function("() => !document.body.hasAttribute('aria-busy')", timeout=45000)
+            page.locator(".scenario-workspace > summary").click()
+            assert "Smoke-test local note" in page.locator(".local-note-list").inner_text()
             metrics = page.evaluate("""() => ({
               viewerReadyMs: performance.getEntriesByName('climate-viewer-ready')[0]?.startTime,
               navigationMs: performance.getEntriesByType('navigation')[0].duration,

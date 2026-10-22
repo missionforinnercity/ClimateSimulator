@@ -9,6 +9,10 @@ status. A successful script run with a small sample is diagnostic evidence only.
 
 ## Observation campaign
 
+For an initial **Tmrt-focused** CBD campaign, use the ranked candidate
+shortlist and siting checks in
+[TMRT_MEASUREMENT_CAMPAIGN.md](TMRT_MEASUREMENT_CAMPAIGN.md).
+
 Start with three simultaneous sites selected to span distinct street settings:
 
 1. an open, sun-exposed paved space;

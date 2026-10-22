@@ -1,0 +1,5 @@
+check_id,visited_at_local,status,endpoint_a_lon,endpoint_a_lat,endpoint_b_lon,endpoint_b_lat,exists_today,public_access,access_hours,permitted_directions,steps_or_level_change,barriers,road_crossing_controls,kerb_or_refuge,change_needed,evidence_reference,verified_by,uncertainty_notes
+W1,,,,,,,,,,,,,,,,,,
+W2,,,,,,,,,,,,,,,,,,
+W3,,,,,,,,,,,,,,,,,,
+W4,,,,,,,,,,,,,,,,,,

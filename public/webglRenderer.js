@@ -6,6 +6,7 @@ import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFr
 import { createTransportLayer } from './transportLayer.js?v=33';
 import { attachPlaceInspector } from './placeInspector.js?v=3';
 import { rayFootprintIntervals, addVerticalOccluder, blockedByVerticalOccluder, terrainRayDistances, viewshedRingDistances } from './viewshedMath.js';
+import { recordSourceResidence, summarizeSourceResidence } from './plumeAttribution.js';
 
 const COLORS = {
   background: 0x101719,
@@ -4392,50 +4393,83 @@ export async function startWebGLScene(canvas, status) {
   makeRoads();
   makeGroundSurfaces();
   const canopyCount = makeCanopies();
-  let lightingInventoryLoaded = false;
-  let lightingInventoryPromise = null;
-  let lightingEffectsLoaded = false;
   let lightingEffectsRequested = false;
-  let lightingFixtures = [];
-  function ensureLightingInventory(withNightEffects = false) {
-    if (withNightEffects) lightingEffectsRequested = true;
-    if (lightingInventoryLoaded) {
-      if (withNightEffects && !lightingEffectsLoaded && lightingFixtures.length) {
-        makeStreetFurniture(lightingFixtures, layerGroups.cityFurniture, {}, { lightingEffects: true, lightingEffectsOnly: true });
-        lightingEffectsLoaded = true;
-        requestRender();
+  let lightingAreaGroup = null;
+  let lightingAreaKey = null;
+  let lightingAreaGeneration = 0;
+  let lightingAreaTimer = 0;
+  let lightingAreaReady = false;
+  const LIGHTING_AREA_ZOOM_LIMIT = 900;
+  const LIGHTING_AREA_GRID_M = 250;
+
+  function scheduleLightingAreaLoad(immediate = false) {
+    const closeEnough = cameraState.distance <= LIGHTING_AREA_ZOOM_LIMIT;
+    const analysisNeedsLights = shadowState.enabled || viewshedState.active;
+    if (!closeEnough && !analysisNeedsLights) {
+      if (lightingAreaGroup) lightingAreaGroup.visible = false;
+      if (lightingAreaKey !== null) {
+        lightingAreaGeneration += 1;
+        lightingAreaKey = null;
+        clearTimeout(lightingAreaTimer);
       }
-      return Promise.resolve(true);
+      return;
     }
-    if (lightingInventoryPromise) return lightingInventoryPromise;
-    const asset = manifest.assets?.lighting;
-    if (!asset) return Promise.resolve(false);
-    const version = manifest.layers?.lighting?.cache_key || manifest.layers?.lighting?.bytes || 0;
-    lightingInventoryPromise = fetch(`/assets/${asset}?v=${version}`)
-      .then(response => response.ok ? response.json() : Promise.reject(new Error(`lighting inventory HTTP ${response.status}`)))
-      .then(payload => {
+    if (lightingAreaGroup) lightingAreaGroup.visible = true;
+
+    // Request a slightly padded, camera-centred rectangle and snap it to a
+    // 250 m grid. This keeps requests stable while the user makes small pans.
+    const metresPerPixel = cameraState.distance * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))
+      / Math.max(canvas.clientHeight, 1);
+    const halfWidth = clamp(canvas.clientWidth * metresPerPixel * 0.38, LIGHTING_AREA_GRID_M * 0.55, 800);
+    const halfDepth = clamp(canvas.clientHeight * metresPerPixel * 0.38, LIGHTING_AREA_GRID_M * 0.55, 800);
+    const minX = Math.floor((cameraState.target.x - halfWidth) / LIGHTING_AREA_GRID_M) * LIGHTING_AREA_GRID_M;
+    const maxX = Math.ceil((cameraState.target.x + halfWidth) / LIGHTING_AREA_GRID_M) * LIGHTING_AREA_GRID_M;
+    const minZ = Math.floor((cameraState.target.z - halfDepth) / LIGHTING_AREA_GRID_M) * LIGHTING_AREA_GRID_M;
+    const maxZ = Math.ceil((cameraState.target.z + halfDepth) / LIGHTING_AREA_GRID_M) * LIGHTING_AREA_GRID_M;
+    const key = `${minX}:${minZ}:${maxX}:${maxZ}:${lightingEffectsRequested ? 1 : 0}`;
+    if (key === lightingAreaKey) return;
+    lightingAreaKey = key;
+    const generation = ++lightingAreaGeneration;
+    clearTimeout(lightingAreaTimer);
+    const load = async () => {
+      const params = new URLSearchParams({
+        min_x: String(minX), min_z: String(minZ), max_x: String(maxX), max_z: String(maxZ),
+      });
+      try {
+        const response = await fetch(`/api/lighting/fixtures?${params}`);
+        if (!response.ok) throw new Error(`lighting area HTTP ${response.status}`);
+        const payload = await response.json();
+        if (generation !== lightingAreaGeneration) return;
         const fixtures = Array.isArray(payload.cityFurniture) ? payload.cityFurniture : [];
-        lightingFixtures = fixtures;
-        lightingInventoryLoaded = true;
-        if (!fixtures.length) return false;
-        // Posts are batched into a few instanced meshes and loaded while the
-        // first scene frame is idle. Night-only glow and road washes are built
-        // when Sun opens so the default scene stays light.
-        const includeEffects = withNightEffects || lightingEffectsRequested;
-        makeStreetFurniture(fixtures, layerGroups.cityFurniture, {}, { lightingEffects: includeEffects });
-        lightingEffectsLoaded = includeEffects;
-        layerGroups.cityFurniture.visible = viewshedState.active || Boolean(savedVisibility.cityFurniture);
+        const nextGroup = new THREE.Group();
+        nextGroup.name = 'nearby-street-lighting';
+        makeStreetFurniture(fixtures, nextGroup, {}, { lightingEffects: lightingEffectsRequested });
+        if (lightingAreaGroup) {
+          layerGroups.cityFurniture.remove(lightingAreaGroup);
+          disposeObject(lightingAreaGroup);
+        }
+        lightingAreaGroup = nextGroup;
+        layerGroups.cityFurniture.add(nextGroup);
+        lightingAreaReady = true;
+        if (shadowState.enabled) layerGroups.cityFurniture.visible = true;
         if (viewshedState.active) setViewshedContextMaterials(true);
         updateSunStatus();
         requestRender();
-        return true;
-      })
-      .catch(error => {
-        console.warn(`Mapped lighting unavailable: ${error.message}`);
-        return false;
-      })
-      .finally(() => { lightingInventoryPromise = null; });
-    return lightingInventoryPromise;
+      } catch (error) {
+        if (generation === lightingAreaGeneration) {
+          lightingAreaKey = null;
+          console.warn(`Mapped lighting unavailable: ${error.message}`);
+        }
+      }
+    };
+    if (immediate) void load();
+    else lightingAreaTimer = setTimeout(load, 140);
+  }
+
+  function ensureLightingInventory(withNightEffects = false) {
+    if (withNightEffects) lightingEffectsRequested = true;
+    scheduleLightingAreaLoad(true);
+    return Promise.resolve(lightingAreaReady);
   }
   let publicRealmLoaded = false;
   let publicRealmPromise = null;
@@ -4523,6 +4557,7 @@ export async function startWebGLScene(canvas, status) {
   trafficStatusGroup.add(permanentStatusGroup, liveClosureGroup, selectedRoadDirectionGroup, scenarioStatusGroup);
   const streetViewGroup = new THREE.Group();
   const walkingRouteGroup = new THREE.Group();
+  const localNotesGroup = new THREE.Group();
   const streetViewStem = new THREE.Mesh(
     new THREE.CylinderGeometry(0.9, 0.9, 10, 10),
     new THREE.MeshBasicMaterial({ color: 0x249ee9, depthTest: false }),
@@ -4536,7 +4571,7 @@ export async function startWebGLScene(canvas, status) {
   streetViewGroup.add(streetViewStem, streetViewHead);
   streetViewGroup.visible = false;
   streetViewGroup.renderOrder = 20;
-  scene.add(heatGroup, heatStreetGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup, walkingRouteGroup);
+  scene.add(heatGroup, heatStreetGroup, sunDomainGroup, windGroup, trafficStatusGroup, trafficDrawingGroup, trafficGroup, streetViewGroup, walkingRouteGroup, localNotesGroup);
 
   const heatToggle = document.querySelector('#heat-toggle');
   const heatMetric = document.querySelector('#heat-metric');
@@ -4715,6 +4750,7 @@ export async function startWebGLScene(canvas, status) {
   const pollutionPointControls = document.querySelector('#pollution-point-controls');
   const pollutionTrafficScenario = document.querySelector('#pollution-traffic-scenario');
   const pollutionTrafficLoad = document.querySelector('#pollution-traffic-load');
+  const pollutionTrafficSeed = document.querySelector('#pollution-traffic-seed');
   const pollutionClass = document.querySelector('#pollution-class');
   const pollutionHeight = document.querySelector('#pollution-height');
   const pollutionDisplay = document.querySelector('#pollution-display');
@@ -4730,6 +4766,8 @@ export async function startWebGLScene(canvas, status) {
   const pollutionContinuousLabels = document.querySelector('#pollution-continuous-labels');
   const pollutionTierLegend = document.querySelector('#pollution-tier-legend');
   const pollutionLegendNote = document.querySelector('#pollution-legend-note');
+  const pollutionScaleReference = document.querySelector('#pollution-scale-reference');
+  const pollutionAreaRadius = document.querySelector('#pollution-area-radius');
   const pollutionTimelineTitle = document.querySelector('#pollution-timeline-title');
   const pollutionTimeEndpoints = document.querySelector('#pollution-time-endpoints');
   const trafficToggle = document.querySelector('#traffic-toggle');
@@ -4868,8 +4906,11 @@ export async function startWebGLScene(canvas, status) {
     trajectories: [],
     deposits: [],
     exposureBins: [],
+    sourceResidenceByEdge: new Map(),
+    receivingArea: null,
     currentExposureSmooth: null,
     exposureThresholds: null,
+    runExposureThresholds: null,
     topExposureHotspots: [],
     groundDeposited: 0,
     buildingDeposited: 0,
@@ -4880,6 +4921,8 @@ export async function startWebGLScene(canvas, status) {
   };
   const POLLUTION_GRID_SIZE = 112;
   let pollutionStudyRevision = 0;
+  let pollutionComparisonScale = null;
+  const pollutionSeedHistory = new Map();
   const trafficState = {
     sceneActive: document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'traffic',
     enabled: Boolean(trafficToggle?.checked),
@@ -4951,6 +4994,7 @@ export async function startWebGLScene(canvas, status) {
   let windCfdSlice = null;
   let windFacadePressure = null;
   let pollutionSourceMarker = null;
+  let pollutionReceivingAreaMarker = null;
   let pollutionSurface = null;
   let pollutionSurfaceTexture = null;
   let pollutionTrails = null;
@@ -5099,7 +5143,7 @@ export async function startWebGLScene(canvas, status) {
     for (const [layerName, visible] of Object.entries(profile)) {
       layerGroups[layerName].visible = visible;
     }
-    if (name === 'sun' && lightingInventoryLoaded) layerGroups.cityFurniture.visible = true;
+    if (name === 'sun' && lightingAreaReady) layerGroups.cityFurniture.visible = true;
     if (name === 'viewshed') syncGroundSurfaceMaterials();
     syncLayerControls();
     refreshTransportVehicleLayers();
@@ -5388,6 +5432,7 @@ export async function startWebGLScene(canvas, status) {
         object.material.opacity = fade.opacity * visibility;
       }
     }
+    scheduleLightingAreaLoad();
     requestRender();
   }
 
@@ -11413,13 +11458,14 @@ export async function startWebGLScene(canvas, status) {
 
   function clearPollutantStudy(removeSource = false, invalidate = true) {
     if (invalidate) pollutionStudyRevision += 1;
-    for (const object of [pollutionSourceMarker, pollutionSurface, pollutionTrails, pollutionCloud, pollutionPuffCloud, pollutionDepositPoints, pollutionRoadEmissions]) {
+    for (const object of [pollutionSourceMarker, pollutionReceivingAreaMarker, pollutionSurface, pollutionTrails, pollutionCloud, pollutionPuffCloud, pollutionDepositPoints, pollutionRoadEmissions]) {
       if (!object) continue;
       pollutionGroup.remove(object);
       if (object === pollutionSourceMarker) object.children.filter(child => child.isSprite).forEach(child => child.material?.map?.dispose());
       disposeObject(object);
     }
     pollutionSourceMarker = null;
+    pollutionReceivingAreaMarker = null;
     pollutionSurface = null;
     pollutionSurfaceTexture?.dispose();
     pollutionSurfaceTexture = null;
@@ -11431,8 +11477,10 @@ export async function startWebGLScene(canvas, status) {
     pollutionState.trajectories = [];
     pollutionState.deposits = [];
     pollutionState.exposureBins = [];
+    pollutionState.sourceResidenceByEdge = new Map();
     pollutionState.currentExposureSmooth = null;
     pollutionState.exposureThresholds = null;
+    pollutionState.runExposureThresholds = null;
     pollutionState.topExposureHotspots = [];
     pollutionState.groundDeposited = 0;
     pollutionState.buildingDeposited = 0;
@@ -11468,6 +11516,7 @@ export async function startWebGLScene(canvas, status) {
     }
     if (pollutionLegend) pollutionLegend.hidden = windState.analysisMode !== 'pollution';
     if (pollutionInspectResult) pollutionInspectResult.hidden = true;
+    if (pollutionScaleReference) pollutionScaleReference.hidden = true;
     if (removeSource) pollutionSourceMarker = null;
   }
 
@@ -11609,6 +11658,29 @@ export async function startWebGLScene(canvas, status) {
     pollutionSourceMarker = marker;
   }
 
+  function buildPollutionReceivingAreaMarker() {
+    if (pollutionReceivingAreaMarker) {
+      pollutionGroup.remove(pollutionReceivingAreaMarker);
+      disposeObject(pollutionReceivingAreaMarker);
+      pollutionReceivingAreaMarker = null;
+    }
+    const area = pollutionState.receivingArea;
+    if (!pollutionState.studyReady || pollutionState.sourceMode !== 'traffic' || !area) return;
+    const points = [];
+    for (let step = 0; step < 72; step += 1) {
+      const angle = step * 2 * Math.PI / 72;
+      const x = area.x + Math.cos(angle) * area.radiusM;
+      const z = area.z + Math.sin(angle) * area.radiusM;
+      points.push(new THREE.Vector3(x, terrainHeightAt(x, z) + 2.2, z));
+    }
+    pollutionReceivingAreaMarker = new THREE.LineLoop(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }),
+    );
+    pollutionReceivingAreaMarker.renderOrder = 21;
+    pollutionGroup.add(pollutionReceivingAreaMarker);
+  }
+
   function pollutionRunActionLabel() {
     return pollutionState.sourceMode === 'traffic' ? 'Run traffic plume' : 'Run point-source plume';
   }
@@ -11624,6 +11696,7 @@ export async function startWebGLScene(canvas, status) {
     }
     if (pollutionTrafficOptions) pollutionTrafficOptions.hidden = !trafficMode;
     if (pollutionTrafficLoadControl) pollutionTrafficLoadControl.hidden = !trafficMode;
+    if (pollutionAreaRadius) pollutionAreaRadius.closest('.pollution-area-control').hidden = !trafficMode;
     if (pollutionPointControls) pollutionPointControls.hidden = trafficMode;
     if (!trafficMode && pollutionAdvanced) pollutionAdvanced.open = true;
     if (pollutionTimelineTitle) pollutionTimelineTitle.textContent = trafficMode ? 'Traffic plume timeline' : 'Release timeline';
@@ -11670,7 +11743,7 @@ export async function startWebGLScene(canvas, status) {
   }
 
   const POLLUTION_TIER_COLORS = [0x49b8d2, 0xf1d45b, 0xff923f, 0xe84d56];
-  const POLLUTION_TIER_NAMES = ['Lower half', 'Middle 30%', 'High · next 15%', 'Very high · top 5%'];
+  const POLLUTION_TIER_NAMES = ['Lower', 'Moderate', 'High', 'Very high'];
   const POLLUTION_EXPOSURE_PALETTE = [0x204750, ...POLLUTION_TIER_COLORS].map(color => new THREE.Color(color));
 
   function writePollutionExposureColor(value, thresholds, pixels, offset) {
@@ -11763,10 +11836,18 @@ export async function startWebGLScene(canvas, status) {
     const positive = [];
     for (const value of smooth) if (value > 0) positive.push(value);
     positive.sort((a, b) => a - b);
-    pollutionState.exposureThresholds = positive.length ? [
+    pollutionState.runExposureThresholds = positive.length ? [
       pollutionQuantile(positive, 0.5), pollutionQuantile(positive, 0.8),
       pollutionQuantile(positive, 0.95), pollutionQuantile(positive, 0.99),
     ] : null;
+    if (pollutionState.sourceMode === 'traffic' && pollutionState.runExposureThresholds) {
+      if (!pollutionComparisonScale || pollutionComparisonScale.pollutant !== pollutionState.particleClass) {
+        pollutionComparisonScale = { pollutant: pollutionState.particleClass, thresholds: [...pollutionState.runExposureThresholds] };
+      }
+      pollutionState.exposureThresholds = pollutionComparisonScale.thresholds;
+    } else {
+      pollutionState.exposureThresholds = pollutionState.runExposureThresholds;
+    }
     pollutionState.topExposureHotspots = [];
     if (!pollutionState.exposureThresholds || !trafficState.networkEdges.length) return;
 
@@ -11856,9 +11937,23 @@ export async function startWebGLScene(canvas, status) {
     if (pollutionGradientLegend) pollutionGradientLegend.hidden = tieredExposure;
     if (pollutionContinuousLabels) pollutionContinuousLabels.hidden = tieredExposure;
     if (pollutionTierLegend) pollutionTierLegend.hidden = !tieredExposure;
+    if (pollutionScaleReference) pollutionScaleReference.hidden = !pollutionState.studyReady || pollutionState.sourceMode !== 'traffic';
+    if (tieredExposure && pollutionTierLegend) {
+      const [half, eighty, ninetyFive] = pollutionState.exposureThresholds || [];
+      const format = value => Number(value).toPrecision(3);
+      const labels = pollutionState.exposureThresholds
+        ? [`Lower · <${format(half)}`, `Moderate · ${format(half)}–${format(eighty)}`,
+          `High · ${format(eighty)}–${format(ninetyFive)}`, `Very high · ≥${format(ninetyFive)}`]
+        : ['Lower', 'Moderate', 'High', 'Very high'];
+      pollutionTierLegend.querySelectorAll('span').forEach((item, index) => {
+        item.lastChild.textContent = labels[index];
+      });
+    }
     if (pollutionLegendNote) pollutionLegendNote.textContent = pollutionState.display === 'exposure'
       ? pollutionState.studyReady
-        ? 'Colours rank modelled exposure within this run. Blank areas may have no plume or only trace; they are not proof of clean air.'
+        ? pollutionState.sourceMode === 'traffic'
+          ? 'Shared scale from the first traffic run: emission-weighted parcel-seconds (g·s) per grid cell. Same pollutant uses the same numeric cutoffs until you reset the reference. Blank areas do not establish clean air; this is not concentration.'
+          : 'Colours rank modelled exposure within this run. Blank areas may have no plume or only trace; they are not proof of clean air.'
         : 'After running, colours rank relative exposure within this scenario. They are not measured concentrations.'
       : pollutionState.display === 'emissions'
         ? 'Relative SUMO source emissions by road; not measured traffic counts or ambient air quality.'
@@ -11940,7 +12035,10 @@ export async function startWebGLScene(canvas, status) {
       const maskRow = clamp(Math.floor(v * rows), 0, rows - 1);
       if (!validCells[maskRow * columns + maskColumn]) continue;
       const value = bilinearValue(sourceColumn, sourceRow);
-      if (!(value > maximum * 0.001)) continue;
+      const displayCutoff = pollutionState.display === 'exposure'
+        ? Math.max(1e-9, (pollutionState.exposureThresholds?.[0] || maximum) * 0.001)
+        : maximum * 0.001;
+      if (!(value > displayCutoff)) continue;
       if (pollutionState.display === 'exposure') {
         writePollutionExposureColor(value, pollutionState.exposureThresholds, pixels, offset);
         const lowReference = Math.max(1e-9, (pollutionState.exposureThresholds?.[0] || maximum) * 0.35);
@@ -12199,11 +12297,52 @@ export async function startWebGLScene(canvas, status) {
     const hotspotSummary = pollutionState.topExposureHotspots.length
       ? `<span class="pollution-summary-wide"><b>Highest relative plume pockets · full 15-minute run</b>${pollutionState.topExposureHotspots.map((hotspot, index) => `<i>${index + 1}. ${reportEscape(hotspot.road)} · ${POLLUTION_TIER_NAMES[hotspot.tier]}${hotspot.roadDistance < 80 ? '' : ` · ${Math.round(hotspot.roadDistance)} m from mapped road`}</i>`).join('')}</span>`
       : '<span class="pollution-summary-wide"><b>Relative plume pockets</b><i>No persistent near-ground hotspot was resolved in this run.</i></span>';
+    let receivingSummary = '';
+    if (trafficData && pollutionState.receivingArea && pollutionState.sourceResidenceByEdge.size) {
+      const totalCells = new Float64Array(POLLUTION_GRID_SIZE * POLLUTION_GRID_SIZE);
+      for (const bin of pollutionState.exposureBins) {
+        for (let cell = 0; cell < totalCells.length; cell += 1) totalCells[cell] += bin[cell];
+      }
+      const area = pollutionState.receivingArea;
+      const result = summarizeSourceResidence(pollutionState.sourceResidenceByEdge, totalCells, area,
+        { left, minZ, right, maxZ, columns: POLLUTION_GRID_SIZE, rows: POLLUTION_GRID_SIZE });
+      const historyKey = [pollutionState.particleClass, trafficData.scenario?.key || pollutionTrafficScenario?.value,
+        pollutionTrafficLoad?.value, windState.cfd.manifest.solver.case_id,
+        Math.round(area.x), Math.round(area.z), area.radiusM].join('|');
+      if (!pollutionSeedHistory.has(historyKey)) pollutionSeedHistory.set(historyKey, new Map());
+      const history = pollutionSeedHistory.get(historyKey);
+      history.set(Number(trafficData.seed), result.sources.slice(0, 3).map(source => source.edgeId));
+      const leading = new Set([...history.values()].flat());
+      const stableRoads = [...leading].map(edgeId => ({
+        edgeId, appearances: [...history.values()].filter(edges => edges.includes(edgeId)).length,
+      })).sort((a, b) => b.appearances - a.appearances || a.edgeId.localeCompare(b.edgeId));
+      const stability = history.size < 2
+        ? '<i>One seed so far. Run the other two seeds with this area, traffic period and wind field to check whether leading source links persist.</i>'
+        : `<i>Top-three source links across ${history.size} seeds: ${stableRoads.map(item => {
+          const road = trafficState.edgesById.get(item.edgeId);
+          return `${reportEscape(road?.name || 'Unnamed road')} (${reportEscape(item.edgeId)}) ${item.appearances}/${history.size}`;
+        }).join('; ')}. Counts show appearances, not statistical confidence.</i>`;
+      const nearRoad = nearestPollutionRoadName(area.x, area.z);
+      const rows = result.sources.slice(0, 8).map((source, index) => {
+        const road = trafficState.edgesById.get(source.edgeId);
+        return `<i>${index + 1}. ${reportEscape(road?.name || road?.road_name || 'Unnamed road')} · ${reportEscape(source.edgeId)} · ${(source.share * 100).toFixed(1)}% · ${source.residence.toPrecision(3)} g·s</i>`;
+      }).join('');
+      const other = result.sources.slice(8).reduce((sum, source) => sum + source.residence, 0);
+      receivingSummary = `<span class="pollution-summary-wide"><b>Sources reaching a ${area.radiusM} m area near ${reportEscape(nearRoad.name)}</b>
+        <i>Receiving centre ${area.x.toFixed(1)} m east, ${area.z.toFixed(1)} m south · full 15-minute run · ${result.areaTotal.toPrecision(4)} g·s unblurred near-ground residence across ${result.cellCount} cells · ${result.sources.length} source links · SUMO seed ${Number(trafficData.seed)}</i>
+        ${rows || '<i>No sampled parcel residence in this area.</i>'}
+        ${other > 0 ? `<i>Other ${result.sources.length - 8} links · ${(other / result.sourceTotal * 100).toFixed(1)}%</i>` : ''}
+        <i>${result.sourceTotal > 0 ? 'All source shares sum to 100%' : 'No source shares to report'}; source total ${result.sourceTotal.toPrecision(4)} g·s, accounting difference ${result.difference.toPrecision(2)} g·s (grid rounding).</i>
+        ${stability}
+        <i>Relative tracer residence only; this is neither ambient concentration nor personal dose. Re-run SUMO if a proposal changes traffic routes.</i>
+      </span>`;
+    }
     const trafficSummary = trafficData ? `
       <span><b>${Number(trafficData.emissions?.[massProperty] || 0).toFixed(2)} g</b>SUMO HBEFA3 ${massLabel} in this run</span>
       <span><b>${Number(trafficData.departed_vehicle_count || 0).toLocaleString()}</b>vehicles inserted across the CBD</span>
       <span class="pollution-summary-wide"><b>${trafficData.scenario?.label || 'Synthetic weekday traffic'}</b>${Number(trafficData.duration_min || 10)}-minute source window · ${trafficData.traffic_demand?.observed_count_calibration ? 'configured edge counts used' : 'synthetic demand'}</span>
       ${hotspotSummary}
+      ${receivingSummary}
       <span class="pollution-summary-wide"><b>Top emitting roads · ${massLabel}</b>${pollutionState.topEmissionRoads.slice(0, 5).map((road, index) => `<i>${index + 1}. ${reportEscape(road.name)} · ${road.value.toFixed(3)} g</i>`).join('') || '<i>No mapped road emissions in this run</i>'}</span>` : `
       <span><b>${pollutionState.trajectories.length.toLocaleString()}</b>released model particles</span>
       <span><b>${pollutionState.groundDeposited.toLocaleString()}</b>ground contacts</span>
@@ -12219,7 +12358,8 @@ export async function startWebGLScene(canvas, status) {
   async function loadCityTrafficEmissions(revision) {
     const scenario = pollutionTrafficScenario?.value || 'am_peak';
     const demandMultiplier = Number(pollutionTrafficLoad?.value) || 1;
-    const cacheKey = `${scenario}|${demandMultiplier}`;
+    const seed = Number(pollutionTrafficSeed?.value) || 240917;
+    const cacheKey = `${scenario}|${demandMultiplier}|${seed}`;
     if (pollutionState.trafficRunData?.cacheKey === cacheKey) return pollutionState.trafficRunData;
     windStatus.textContent = 'Loading SUMO road network…';
     if (!trafficState.networkEdges.length) await loadTrafficRoads();
@@ -12229,7 +12369,7 @@ export async function startWebGLScene(canvas, status) {
     const startResponse = await fetch(`${windApi}/traffic/emissions-preview/jobs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ duration_min: 10, scenario, demand_multiplier: demandMultiplier, seed: 240917 }),
+      body: JSON.stringify({ duration_min: 10, scenario, demand_multiplier: demandMultiplier, seed }),
     });
     const startPayload = await startResponse.json();
     if (!startResponse.ok) throw new Error(startPayload.detail || `SUMO job HTTP ${startResponse.status}`);
@@ -12304,10 +12444,11 @@ export async function startWebGLScene(canvas, status) {
     const segment = selected.segments.find(item => distance <= item.endAtM) || selected.segments.at(-1);
     const previousEnd = segment.endAtM - segment.lengthM;
     const along = clamp((distance - previousEnd) / segment.lengthM, 0, 1);
-    return [
-      segment.a[0] + (segment.b[0] - segment.a[0]) * along,
-      segment.a[1] + (segment.b[1] - segment.a[1]) * along,
-    ];
+    return {
+      x: segment.a[0] + (segment.b[0] - segment.a[0]) * along,
+      z: segment.a[1] + (segment.b[1] - segment.a[1]) * along,
+      edgeId: selected.item.edge_id,
+    };
   }
 
   function buildPollutionRoadEmissionBins(massProperty) {
@@ -12421,8 +12562,8 @@ export async function startWebGLScene(canvas, status) {
       + domain.spacing_foam_m[2] * (domain.dimensions[2] - 1);
     for (let particleIndex = 0; particleIndex < pollutionState.particleCount; particleIndex += 1) {
       const emittedAt = particleIndex / Math.max(1, pollutionState.particleCount - 1) * pollutionState.emissionWindowS;
-      const [sourceX, sourceZ] = sourceDistribution
-        ? sampleTrafficRoadSource(sourceDistribution, random) : pollutionState.source;
+      const release = sourceDistribution ? sampleTrafficRoadSource(sourceDistribution, random) : null;
+      const [sourceX, sourceZ] = release ? [release.x, release.z] : pollutionState.source;
       let x = sourceX, z = sourceZ;
       let y = terrainHeightAt(x, z) + pollutionState.sourceHeight;
       const positions = [x, y, z], times = [0];
@@ -12474,7 +12615,12 @@ export async function startWebGLScene(canvas, status) {
           x = nextX; y = nextY; z = nextZ;
           if (insideScene && nextY - ground <= 10 && !windPointInsideBuilding(nextX, nextZ, ground + 1.5)) {
             const cell = pollutionCell(nextX, nextZ);
-            if (cell && typeof cell === 'object') pollutionState.exposureBins[Math.min(180, Math.floor((emittedAt + age) / 5))][cell.index] += dt * pollutionState.parcelWeightG;
+            if (cell && typeof cell === 'object') {
+              const residence = dt * pollutionState.parcelWeightG;
+              pollutionState.exposureBins[Math.min(180, Math.floor((emittedAt + age) / 5))][cell.index] += residence;
+              if (release) recordSourceResidence(pollutionState.sourceResidenceByEdge, release.edgeId,
+                cell.index, residence, POLLUTION_GRID_SIZE * POLLUTION_GRID_SIZE);
+            }
           }
         }
         if (age % 3 === 0 || landedAt >= 0) {
@@ -12502,6 +12648,8 @@ export async function startWebGLScene(canvas, status) {
     pollutionState.timeS = 0;
     pollutionState.lastSurfaceBin = -1;
     pollutionState.studyReady = true;
+    syncPollutionLegend();
+    buildPollutionReceivingAreaMarker();
     pollutionState.playing = !matchMedia('(prefers-reduced-motion: reduce)').matches;
     pollutionState.lastTime = performance.now();
     if (pollutionPlay) {
@@ -14589,7 +14737,7 @@ export async function startWebGLScene(canvas, status) {
     requestRender();
   });
 
-  for (const control of [pollutionTrafficScenario, pollutionTrafficLoad]) {
+  for (const control of [pollutionTrafficScenario, pollutionTrafficLoad, pollutionTrafficSeed]) {
     control?.addEventListener('change', () => {
       pollutionState.trafficRunData = null;
       invalidatePollutionStudy('Traffic profile changed · run the citywide emissions scenario again.');
@@ -14678,14 +14826,19 @@ export async function startWebGLScene(canvas, status) {
           let seconds = 0;
           for (let bin = 0; bin <= Math.ceil(pollutionState.timeS / 5) - 1; bin += 1) seconds += pollutionState.exposureBins[bin]?.[cell.index] || 0;
           const smoothedValue = pollutionState.currentExposureSmooth?.[cell.index] || 0;
+          if (pollutionState.sourceMode === 'traffic') {
+            pollutionState.receivingArea = { x, z, radiusM: Number(pollutionAreaRadius?.value) || 100 };
+            buildPollutionReceivingAreaMarker();
+            updatePollutionResults();
+          }
           if (!(smoothedValue > 0)) {
-            pollutionInspectResult.textContent = 'No plume was recorded here at this timeline position. This sample cannot establish that the air is clean.';
+            pollutionInspectResult.textContent = 'No plume was recorded in this cell at this timeline position. The full-run source roads for the selected area are listed below, if any. This sample cannot establish that the air is clean.';
           } else {
             const tier = pollutionTier(smoothedValue);
             const location = pollutionState.sourceMode === 'traffic'
               ? nearestPollutionRoadName(x, z)
               : { name: `${Math.hypot(x - pollutionState.source[0], z - pollutionState.source[1]).toFixed(0)} m from the source`, distance: Infinity };
-            pollutionInspectResult.textContent = `${POLLUTION_TIER_NAMES[tier] || 'Lower half'} relative plume band · ${location.name}${Number.isFinite(location.distance) ? ` (${Math.round(location.distance)} m)` : ''}. Bands rank positive cells across the full run; this is not an ambient concentration. The unblurred cell total is ${seconds.toFixed(3)} relative emission-weighted particle-seconds.`;
+            pollutionInspectResult.textContent = `${POLLUTION_TIER_NAMES[tier] || 'Lower'} relative plume band · ${location.name}${Number.isFinite(location.distance) ? ` (${Math.round(location.distance)} m)` : ''}. The unblurred cell total is ${seconds.toFixed(3)} emission-weighted parcel-seconds. ${pollutionState.sourceMode === 'traffic' ? 'Source roads for the selected receiving area are listed below.' : 'Bands rank positive cells across this run.'} This is not an ambient concentration.`;
           }
         } else {
           const deposited = pollutionState.deposits.reduce((sum, item) => {
@@ -14699,6 +14852,26 @@ export async function startWebGLScene(canvas, status) {
       pollutionInspectResult.hidden = false;
       requestRender();
     });
+  });
+  pollutionScaleReference?.addEventListener('click', () => {
+    if (!pollutionState.studyReady || pollutionState.sourceMode !== 'traffic' || !pollutionState.runExposureThresholds) return;
+    pollutionComparisonScale = {
+      pollutant: pollutionState.particleClass,
+      thresholds: [...pollutionState.runExposureThresholds],
+    };
+    summarizePollutionExposure();
+    buildPollutionSurface();
+    updatePollutionResults();
+    requestRender();
+  });
+  pollutionAreaRadius?.addEventListener('change', () => {
+    if (!pollutionState.receivingArea) return;
+    pollutionState.receivingArea.radiusM = Number(pollutionAreaRadius.value) || 100;
+    if (pollutionState.studyReady) {
+      buildPollutionReceivingAreaMarker();
+      updatePollutionResults();
+      requestRender();
+    }
   });
 
   windDirectionPresets.forEach(button => button.addEventListener('click', () => {
@@ -15023,6 +15196,7 @@ export async function startWebGLScene(canvas, status) {
     if (name !== 'viewshed' && viewshedPersonCamera) setViewshedPersonView(false);
     viewshedState.active = name === 'viewshed';
     viewshedState.pickMode = viewshedState.active;
+    if (viewshedState.active) void ensureLightingInventory(false);
     viewshedState.group.visible = viewshedState.active && Boolean(viewshedState.point);
     viewshedPickButton?.setAttribute('aria-pressed', String(viewshedState.pickMode));
     if (viewshedState.active) {
@@ -15136,6 +15310,7 @@ export async function startWebGLScene(canvas, status) {
   let walkingRoutes = [];
   let selectedWalkingRoute = 'fastest';
   let walkingPoints = { origin: null, destination: null };
+  let localNotes = [];
   const walkingReplayMarker = new THREE.Mesh(
     new THREE.SphereGeometry(4.2, 16, 12),
     new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, depthWrite: false }),
@@ -15214,6 +15389,36 @@ export async function startWebGLScene(canvas, status) {
   addEventListener('climate-route-pick-request', event => {
     const role = event.detail?.role;
     requestGroundPick(role ? (x, z) => dispatchEvent(new CustomEvent('climate-route-point', { detail: { role, x, z } })) : null);
+  });
+  addEventListener('climate-local-note-pick-mode', event => {
+    requestGroundPick(event.detail?.enabled
+      ? (x, z) => dispatchEvent(new CustomEvent('climate-local-note-point', { detail: { x, z } }))
+      : null);
+  });
+  addEventListener('climate-local-notes', event => {
+    localNotes = Array.isArray(event.detail) ? event.detail : [];
+    for (const child of [...localNotesGroup.children]) {
+      localNotesGroup.remove(child);
+      disposeObject(child);
+    }
+    for (const note of localNotes) {
+      const marker = new THREE.Group();
+      const stem = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.75, 1, 11, 8),
+        new THREE.MeshBasicMaterial({ color: 0xffb900, depthTest: false, depthWrite: false }),
+      );
+      stem.position.y = 5.5;
+      const head = new THREE.Mesh(
+        new THREE.SphereGeometry(4.5, 12, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffd34e, depthTest: false, depthWrite: false }),
+      );
+      head.position.y = 13;
+      marker.add(stem, head);
+      marker.position.set(Number(note.x), terrainHeightAt(Number(note.x), Number(note.z)), Number(note.z));
+      marker.renderOrder = 1004;
+      localNotesGroup.add(marker);
+    }
+    requestRender();
   });
   addEventListener('climate-walking-routes', event => {
     walkingRoutes = event.detail?.routes || [];
@@ -15495,6 +15700,7 @@ export async function startWebGLScene(canvas, status) {
     applySectionLayerProfile('viewshed');
     setViewshedContextMaterials(true);
     void ensurePublicRealm();
+    void ensureLightingInventory(false);
     setSunMaterials(true);
     document.body.classList.add('viewshed-mode');
   }
@@ -15505,9 +15711,10 @@ export async function startWebGLScene(canvas, status) {
   }
   sceneReadyToRender = true;
   requestRender();
-  const loadMappedLightPosts = () => { void ensureLightingInventory(initialPanel === 'sun'); };
-  if (typeof requestIdleCallback === 'function') requestIdleCallback(loadMappedLightPosts, { timeout: 1800 });
-  else setTimeout(loadMappedLightPosts, 250);
+  // The municipal inventory contains thousands of records. The camera loads
+  // only its nearby area on close zoom; analysis views request their current
+  // area explicitly.
+  if (initialPanel === 'sun') void ensureLightingInventory(true);
   addEventListener('climate-viewer-ready', () => {
     const beginRoofLoad = () => {
       void loadRoofSurface().then(buffer => {

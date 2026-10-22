@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=93">
+    <link rel="stylesheet" href="/style.css?v=94">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -570,18 +570,26 @@
             <button id="pollution-play" class="secondary" type="button" disabled>Play plume</button>
             <button id="pollution-inspect-toggle" class="secondary" type="button" aria-pressed="false" disabled>Inspect an area</button>
           </div>
+          <label class="pollution-area-control">Receiving area radius
+            <select id="pollution-area-radius">
+              <option value="50">50 m</option>
+              <option value="100" selected>100 m</option>
+              <option value="200">200 m</option>
+            </select>
+          </label>
           <p id="pollution-inspect-result" class="pollution-inspect-result" role="status" hidden></p>
           <div id="pollution-legend" class="pollution-legend">
             <b id="pollution-legend-title">Near-ground fume exposure</b>
             <div id="pollution-gradient-legend" class="pollution-gradient" aria-hidden="true" hidden></div>
             <div id="pollution-continuous-labels" class="pollution-legend-labels" hidden><span>Lower emissions</span><span>Higher emissions</span></div>
-            <div id="pollution-tier-legend" class="pollution-tier-legend" aria-label="Relative plume severity bands within this run">
-              <span><i class="tier-lower"></i>Lower · bottom 50%</span>
-              <span><i class="tier-middle"></i>Moderate · 50–80%</span>
-              <span><i class="tier-high"></i>High · 80–95%</span>
-              <span><i class="tier-very-high"></i>Very high · top 5%</span>
+            <div id="pollution-tier-legend" class="pollution-tier-legend" aria-label="Relative plume residence bands">
+              <span><i class="tier-lower"></i>Lower</span>
+              <span><i class="tier-middle"></i>Moderate</span>
+              <span><i class="tier-high"></i>High</span>
+              <span><i class="tier-very-high"></i>Very high</span>
             </div>
             <p id="pollution-legend-note" class="pollution-legend-note">Colours rank exposure within this scenario. They are relative model values, not measured concentrations.</p>
+            <button id="pollution-scale-reference" class="secondary" type="button" hidden>Use this run as comparison scale</button>
           </div>
           <div id="pollution-results" class="pollution-results" hidden></div>
           <details id="pollution-advanced" class="pollution-advanced">
@@ -601,6 +609,13 @@
                 </select>
               </label>
               <p class="pollution-traffic-note">Traffic demand is synthetic unless observed counts are configured.</p>
+              <label>Random seed for road-source stability
+                <select id="pollution-traffic-seed">
+                  <option value="240917" selected>Seed 1 · 240917</option>
+                  <option value="240918">Seed 2 · 240918</option>
+                  <option value="240919">Seed 3 · 240919</option>
+                </select>
+              </label>
             </div>
             <div id="pollution-point-controls" class="pollution-point-controls" hidden>
               <button id="pollution-pick-source" class="secondary pollution-source-button" type="button">Place source on map</button>
@@ -623,7 +638,7 @@
           </details>
           <details class="pollution-method">
             <summary>How to read this · method and limits</summary>
-            <p>Traffic mode uses road-by-road SUMO HBEFA3 NOx as a gas-like fume tracer, then releases equal-mass parcels from those road links into one steady OpenFOAM wind field. The plume colours blend smoothly while percentile bands rank positive map cells within this run; they are not absolute pollution grades or µg/m³. Soft animated smoke puffs visualise parcel paths and are not a resolved concentration cloud. Blank areas may have no recorded plume or only trace below the display cutoff; neither establishes clean air. Demand is synthetic unless observed edge counts are configured. This exploratory screen does not predict health risk or the effect of planting trees.</p>
+            <p>Traffic mode uses road-by-road SUMO HBEFA3 NOx as a gas-like fume tracer, then releases equal-mass parcels from those road links into one steady OpenFOAM wind field. Click Inspect an area to choose a receiving area and see the originating SUMO road links and their shares of unblurred emission-weighted near-ground residence. The first traffic run sets numeric parcel-residence cutoffs that subsequent runs of the same pollutant share; use the comparison-scale button to replace that reference. These are not absolute pollution grades or µg/m³. Soft animated smoke puffs visualise parcel paths and are not a resolved concentration cloud. Blank areas may have no recorded plume or only trace below the display cutoff; neither establishes clean air. Demand is synthetic unless observed edge counts are configured. This exploratory screen does not predict health risk or the effect of planting trees.</p>
           </details>
         </section>
 
@@ -1078,6 +1093,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-95"></script>
+    <script type="module" src="/app.js?v=experience-96"></script>
 </body>
 </html>

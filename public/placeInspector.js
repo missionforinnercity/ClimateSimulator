@@ -7,7 +7,7 @@ const roadWidth = attributes => {
   return Number.isFinite(value) && value > 0 ? value : null;
 };
 
-function makeFeatures(buildingRecords, roadRecords) {
+export function buildPlaceFeatures(buildingRecords, roadRecords) {
   const features = [];
   for (const record of buildingRecords || []) {
     const value = record.value || record;
@@ -114,6 +114,30 @@ function distanceToFeature(feature, x, z) {
   return distance;
 }
 
+export function nearestPlaceFeature(features, x, z, maxDistance = 40) {
+  let nearest = null, nearestDistance = maxDistance;
+  for (const feature of features || []) {
+    const distance = distanceToFeature(feature, x, z);
+    if (distance < nearestDistance) { nearest = feature; nearestDistance = distance; }
+  }
+  return nearest;
+}
+
+export function isMappedPickPoint(point) {
+  return Number.isFinite(point?.x) && Number.isFinite(point?.z);
+}
+
+export function describePlaceSearchResult(feature) {
+  const sourceId = feature.osmId || (feature.kind === 'building' ? feature.value[3] : '');
+  return {
+    title: feature.name,
+    identity: feature.kind === 'building'
+      ? `Building · ${sourceId ? `ID ${sourceId}` : 'ID not recorded'}`
+      : `${feature.highway.replaceAll('_', ' ')} · ${sourceId ? `ID ${sourceId}` : 'ID not recorded'}`,
+    location: `Mapped centre · x ${feature.x.toFixed(0)} m, z ${feature.z.toFixed(0)} m`,
+  };
+}
+
 export function attachPlaceInspector({ buildings, roads, onSelect, onPickMode }) {
   const input = document.querySelector('#place-search');
   const results = document.querySelector('#place-search-results');
@@ -128,7 +152,7 @@ export function attachPlaceInspector({ buildings, roads, onSelect, onPickMode })
   const key = (x, z) => `${Math.floor(x / cellSize)}:${Math.floor(z / cellSize)}`;
   const ensureIndex = () => {
     if (features) return;
-    features = makeFeatures(buildings, roads);
+    features = buildPlaceFeatures(buildings, roads);
     grid = new Map();
     for (const feature of features) {
       const [minX, minZ, maxX, maxZ] = feature.bounds;
@@ -173,13 +197,11 @@ export function attachPlaceInspector({ buildings, roads, onSelect, onPickMode })
   const addResult = feature => {
     const item = document.createElement('div'); item.setAttribute('role', 'listitem');
     const button = document.createElement('button'); button.type = 'button'; button.className = 'place-search-result';
-    const title = document.createElement('span'); title.textContent = feature.name;
-    const sourceId = feature.osmId || (feature.kind === 'building' ? feature.value[3] : '');
-    const subtitle = document.createElement('small'); subtitle.textContent = feature.kind === 'building'
-      ? `Building · ${sourceId ? `ID ${sourceId}` : 'ID not recorded'}`
-      : `${feature.highway.replaceAll('_', ' ')} · ${sourceId ? `ID ${sourceId}` : 'ID not recorded'}`;
+    const description = describePlaceSearchResult(feature);
+    const title = document.createElement('span'); title.textContent = description.title;
+    const subtitle = document.createElement('small'); subtitle.textContent = description.identity;
     const location = document.createElement('small');
-    location.textContent = `Mapped centre · x ${feature.x.toFixed(0)} m, z ${feature.z.toFixed(0)} m`;
+    location.textContent = description.location;
     button.append(title, subtitle, location);
     button.addEventListener('click', event => select(feature, true, event.detail === 0));
     item.append(button); return item;
@@ -209,11 +231,7 @@ export function attachPlaceInspector({ buildings, roads, onSelect, onPickMode })
     for (let dx = -1; dx <= 1; dx += 1) for (let dz = -1; dz <= 1; dz += 1) {
       for (const feature of grid.get(`${column + dx}:${rowIndex + dz}`) || []) candidates.add(feature);
     }
-    let nearest = null, nearestDistance = 40;
-    for (const feature of candidates) {
-      const distance = distanceToFeature(feature, x, z);
-      if (distance < nearestDistance) { nearest = feature; nearestDistance = distance; }
-    }
+    const nearest = nearestPlaceFeature(candidates, x, z, 40);
     if (!nearest) {
       status.textContent = 'No mapped building or street within 40 m of that point.';
       return false;
@@ -263,7 +281,7 @@ export function attachPlaceInspector({ buildings, roads, onSelect, onPickMode })
   });
   pickButton.addEventListener('click', () => { ensureIndex(); setPickActive(!pickActive); });
   addEventListener('climate-place-inspector-picked', event => {
-    if (pickActive && Number.isFinite(event.detail?.x) && Number.isFinite(event.detail?.z)) selectAt(event.detail.x, event.detail.z);
+    if (pickActive && isMappedPickPoint(event.detail)) selectAt(event.detail.x, event.detail.z);
     else if (pickActive) status.textContent = 'That point is outside the mapped terrain. Try again inside the visible model.';
     setPickActive(false);
   });

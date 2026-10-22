@@ -95,9 +95,74 @@ export function setupExplorerExperience() {
   workspace.append(locationText);
   const feedback = el('p', '', 'experience-feedback'); feedback.setAttribute('role', 'status');
   const actions = el('div', undefined, 'experience-actions');
-  workspace.append(actions, feedback);
+  const notesPanel = el('section', undefined, 'local-notes');
+  notesPanel.setAttribute('aria-label', 'Local map notes');
+  notesPanel.append(el('h3', 'Map notes · this browser only'));
+  notesPanel.append(el('p', 'Notes stay in this browser and are not included in settings links or scenario exports. This is not public feedback or voting.'));
+  const notesForm = el('form', undefined, 'local-note-form');
+  const noteInput = el('textarea');
+  noteInput.maxLength = 500;
+  noteInput.rows = 3;
+  noteInput.required = true;
+  noteInput.setAttribute('aria-label', 'Map note');
+  noteInput.placeholder = 'Add a note for this location (up to 500 characters)';
+  const saveNote = el('button', 'Save note'); saveNote.type = 'submit';
+  notesForm.append(noteInput, saveNote);
+  notesForm.hidden = true;
+  const notesList = el('ul', undefined, 'local-note-list');
+  notesPanel.append(notesForm, notesList);
+  workspace.append(actions, feedback, notesPanel);
   root.prepend(workspace);
   const notify = text => { feedback.textContent = text; };
+  const NOTE_KEY = 'conditions-local-notes-v1';
+  const NOTE_LIMIT = 50;
+  let notes = [];
+  let pendingNoteLocation = null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(NOTE_KEY) || '[]');
+    if (Array.isArray(saved)) notes = saved.filter(note => note && typeof note.text === 'string'
+      && note.text.trim() && note.text.length <= 500 && Number.isFinite(note.x) && Number.isFinite(note.z)
+      && typeof note.id === 'string' && typeof note.createdAt === 'string').slice(-NOTE_LIMIT);
+  } catch { /* Local notes are optional when storage is unavailable. */ }
+  function persistNotes(previousNotes) {
+    try {
+      localStorage.setItem(NOTE_KEY, JSON.stringify(notes));
+      dispatchEvent(new CustomEvent('climate-local-notes', { detail: notes }));
+      renderNotes();
+      return true;
+    } catch {
+      notes = previousNotes;
+      renderNotes();
+      notify('Browser storage is unavailable; the note was not saved.');
+      return false;
+    }
+  }
+  function renderNotes() {
+    notesList.replaceChildren();
+    for (const note of notes) {
+      const item = el('li');
+      const content = el('span', `${note.text} · ${note.x.toFixed(0)} m east, ${note.z.toFixed(0)} m viewer z`);
+      const remove = button('Delete', () => {
+        const previous = notes;
+        notes = notes.filter(candidate => candidate.id !== note.id);
+        persistNotes(previous);
+      });
+      item.append(content, remove);
+      notesList.append(item);
+    }
+    dispatchEvent(new CustomEvent('climate-local-notes', { detail: notes }));
+  }
+  notesForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const text = noteInput.value.trim();
+    if (!pendingNoteLocation || !text) return;
+    if (notes.length >= NOTE_LIMIT) return notify(`This browser already has ${NOTE_LIMIT} notes. Delete one before adding another.`);
+    const previous = notes;
+    notes = [...notes, { id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString(), ...pendingNoteLocation, text }];
+    pendingNoteLocation = null; notesForm.hidden = true; noteInput.value = '';
+    if (persistNotes(previous)) notify('Map note saved in this browser.');
+  });
+  renderNotes();
 
   function capture() {
     dispatchEvent(new CustomEvent('climate-capture-view'));
@@ -181,6 +246,13 @@ export function setupExplorerExperience() {
     if (!ready) return notify('Wait for the scene to finish loading.');
     dispatchEvent(new CustomEvent('climate-streetview-mode', { detail: { enabled: true } }));
     notify('Click a mapped ground position. Press Esc to cancel.');
+  }));
+  actions.append(button('Add map note', () => {
+    if (!ready) return notify('Wait for the scene to finish loading.');
+    pendingNoteLocation = null;
+    notesForm.hidden = true;
+    dispatchEvent(new CustomEvent('climate-local-note-pick-mode', { detail: { enabled: true } }));
+    notify('Click a mapped ground position for the note. Press Esc to cancel.');
   }));
   for (const tool of ['sun', 'wind']) actions.append(button(`Use location in ${tool}`, () => {
     if (!picked) return notify('Pick a mapped location first.');
@@ -297,6 +369,14 @@ export function setupExplorerExperience() {
     const location = validateScenario({ version: 1, tool: activeTool(), location: event.detail }, {}).location;
     if (location) { picked = location; refresh(); notify('Mapped location selected. Choose sun or wind to use this analysis centre.'); }
   });
+  addEventListener('climate-local-note-point', event => {
+    const x = Number(event.detail?.x), z = Number(event.detail?.z);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+    pendingNoteLocation = { x, z };
+    notesForm.hidden = false;
+    noteInput.focus();
+    notify(`Location selected (${x.toFixed(0)} m east, ${z.toFixed(0)} m viewer z). Add a short local note.`);
+  });
   addEventListener('climate-request-status', event => {
     const d = event.detail;
     const state = $(`#request-state-${d.tool}`), cancel = $(`#request-cancel-${d.tool}`);
@@ -325,6 +405,7 @@ export function setupExplorerExperience() {
   });
   addEventListener('climate-viewer-ready', () => {
     ready = true;
+    dispatchEvent(new CustomEvent('climate-local-notes', { detail: notes }));
     const restored = readScenarioURL(location.search, rulesFromDOM());
     if (restored) { apply(restored); notify('Shared settings restored. Run analyses as needed. Data versions may differ from the sender’s; drawn closures are not included.'); }
     else if (new URLSearchParams(location.search).has('scenario')) notify('Invalid or unsupported scenario link ignored.');
@@ -333,6 +414,8 @@ export function setupExplorerExperience() {
   addEventListener('keydown', event => {
     if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
     dispatchEvent(new CustomEvent('climate-streetview-mode', { detail: { enabled: false } }));
+    dispatchEvent(new CustomEvent('climate-local-note-pick-mode', { detail: { enabled: false } }));
+    if (pendingNoteLocation) { pendingNoteLocation = null; notesForm.hidden = true; notify('Map note cancelled.'); }
     const close = $('#transport-results-close');
     if (!$('#transport-event-results')?.hidden) { close?.click(); $('#transport-event-analyse')?.focus(); }
   });

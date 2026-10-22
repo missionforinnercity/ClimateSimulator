@@ -8,6 +8,7 @@ node --test tests/scenarioState.test.mjs tests/requestClient.test.mjs
 .venv/bin/uvicorn server.app:app --host 127.0.0.1 --port 8011
 # In another terminal; optional Playwright + Chromium required:
 .venv/bin/python scripts/smoke_explorer.py --url http://127.0.0.1:8011/app
+.venv/bin/python scripts/smoke_place_inspector.py --url http://127.0.0.1:8011/app
 ```
 
 The browser smoke harness intercepts API requests and CFD downloads. It exercises failure handling without depending on live services, a database, SUMO simulations or a new CFD solve. It loads the real scene/transport assets. Screenshots go to `/tmp/conditions-smoke` by default. Its narrow viewport is an emulation, not a physical-phone performance measurement.
@@ -35,6 +36,7 @@ New Python HTTP tests use an in-process ASGI client without application lifespan
 - In WebGL, zoom to Riebeek Square: confirm the mapped asphalt parking and paved islands replace the broad square fill cleanly, with no crosshatched ground; confirm parking-aisle ribbons sit above those surfaces and cars remain in their bays.
 - Tools → Place inspector: search a street by name and a building by OSM ID in both renderers; confirm the map highlight, source/unknown tags, map-pick mode and Sun/Wind location handoff.
 - Tools → Place inspector: use ArrowDown/ArrowUp/Home/End and Enter from search results, Escape to dismiss results, and verify duplicate names or missing IDs can be distinguished by ID and mapped centre.
+- Run `scripts/smoke_place_inspector.py` to check keyboard search and empty/out-of-terrain picks in both WebGL and Canvas; run `node --test tests/placeInspector.test.mjs` for duplicate names, missing IDs and distant points.
 - Start on Tools without opening Place inspector: confirm search-feature indexing is deferred; then focus search and pick mode to confirm the index builds once and both workflows remain responsive.
 - Inspect all five evidence cards: method, dates/unknown dates, units, limits and use supported by the result. The lower-bound wind caveat stays visible.
 - Heat: change date/time/metric rapidly under network throttling. Only the newest settings should appear. Check the empty fixture and failed-source states.

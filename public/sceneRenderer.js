@@ -441,6 +441,7 @@ export async function startScene(canvas, status) {
   let suppressHeatMetricReload = false;
   const streetViewState = { placing: false, point: null };
   const walkingRouteState = { routes: [], selectedId: 'fastest', pickRole: null, points: { origin: null, destination: null }, progress: null };
+  const localNoteState = { picking: false, notes: [] };
   const shadowState = {
     enabled: Boolean(sunToggle?.checked),
     date: sunDate?.value || '2026-07-27',
@@ -2979,10 +2980,23 @@ export async function startScene(canvas, status) {
     drawPin(walkingRouteState.points.origin, '#77d89d');
     drawPin(walkingRouteState.points.destination, '#f39d73');
     drawPin(walkingRouteState.progress, '#ffffff', 5);
+    for (const note of localNoteState.notes) drawPin(note, '#ffd34e', 8);
   }
 
   canvas.addEventListener('contextmenu', event => event.preventDefault());
   canvas.addEventListener('pointerdown', event => {
+    if (localNoteState.picking && event.button === 0) {
+      const { screenToTerrain } = cameraProjection();
+      const ground = screenToTerrain(event.clientX, event.clientY);
+      if (ground) {
+        localNoteState.picking = false;
+        canvas.style.cursor = walkingRouteState.pickRole || streetViewState.placing ? 'crosshair' : 'grab';
+        dispatchEvent(new CustomEvent('climate-local-note-point', {
+          detail: { x: Number(ground[0].toFixed(3)), z: Number(ground[1].toFixed(3)) },
+        }));
+      }
+      return;
+    }
     if (walkingRouteState.pickRole && event.button === 0) {
       const { screenToTerrain } = cameraProjection();
       const ground = screenToTerrain(event.clientX, event.clientY);
@@ -3438,6 +3452,14 @@ export async function startScene(canvas, status) {
   addEventListener('climate-streetview-mode', event => {
     streetViewState.placing = Boolean(event.detail?.enabled);
     canvas.style.cursor = streetViewState.placing ? 'crosshair' : 'grab';
+    requestRender();
+  });
+  addEventListener('climate-local-note-pick-mode', event => {
+    localNoteState.picking = Boolean(event.detail?.enabled);
+    canvas.style.cursor = localNoteState.picking || walkingRouteState.pickRole || streetViewState.placing ? 'crosshair' : 'grab';
+  });
+  addEventListener('climate-local-notes', event => {
+    localNoteState.notes = Array.isArray(event.detail) ? event.detail : [];
     requestRender();
   });
   addEventListener('climate-menu-change', event => {

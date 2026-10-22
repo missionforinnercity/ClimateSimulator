@@ -43,6 +43,14 @@
 .scenario-comparison th, .scenario-comparison td { text-align: left; vertical-align: top; padding: 6px 4px; border-bottom: 1px solid var(--line-light); overflow-wrap: anywhere; }
 .scenario-comparison caption { text-align: left; color: var(--ink); padding: 8px 0; }
 .experience-feedback textarea { width: 100%; height: 90px; }
+.local-notes { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; }
+.local-notes h3 { color: var(--ink); font-size: 12px; margin: 4px 0; }
+.local-note-form { display: grid; gap: 6px; }
+.local-note-form textarea { width: 100%; min-height: 66px; resize: vertical; }
+.local-note-form button, .local-note-list button { width: auto; min-height: 36px; padding: 6px 9px; }
+.local-note-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.local-note-list li { display: flex; align-items: start; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding: 7px 0; }
+.local-note-list li span { min-width: 0; white-space: pre-wrap; }
 :focus-visible { outline: 3px solid #9bdded; outline-offset: 3px; }
 .panel .menu-tab { height: 52px; padding: 5px 2px; }
 .panel .menu-tab svg { width: 20px; height: 20px; }
@@ -57,7 +65,8 @@
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
 @media (pointer: coarse) {
-  .experience-actions button, .evidence-card button, .scenario-workspace summary, .evidence-card summary { min-height: 44px; }
+  .experience-actions button, .evidence-card button, .local-note-form button, .local-note-list button,
+  .scenario-workspace summary, .evidence-card summary { min-height: 44px; }
 }
 
 * { box-sizing: border-box; }
@@ -1086,6 +1095,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pollution-tier-legend .tier-high { background: #ff923f; color: #ff923f; }
 .pollution-tier-legend .tier-very-high { background: #e84d56; color: #e84d56; }
 .pollution-legend-note { margin: 1px 0 0; color: #9fb0a5; font-size: 8px; line-height: 1.5; }
+.pollution-legend #pollution-scale-reference { min-height: 27px; font-size: 8px; }
+.pollution-legend #pollution-scale-reference[hidden] { display: none; }
+.pollution-area-control { display: grid; gap: 4px; color: #aebfb5; font-size: 8px; }
+.pollution-area-control select { width: 100%; }
+.pollution-area-control[hidden] { display: none; }
 .pollution-method { padding-top: 8px; border-top: 1px solid #35413b; }
 .pollution-method summary { cursor: pointer; color: #afc2b6; font-size: 8px; }
 .pollution-method p { margin: 7px 0 1px; color: #9eaea4; font-size: 8px; line-height: 1.55; }

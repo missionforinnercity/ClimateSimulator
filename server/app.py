@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 import json
 import logging
 import math
@@ -441,6 +442,42 @@ def heat_metrics() -> dict[str, Any]:
             for key, label in HEAT_METRICS.items()
         ]
     }
+
+
+@lru_cache(maxsize=1)
+def _lighting_fixtures() -> tuple[dict[str, Any], ...]:
+    path = ASSET_ROOT / "lighting.json"
+    if not path.is_file():
+        return ()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(payload.get("cityFurniture") or ())
+
+
+@app.get("/api/lighting/fixtures")
+def lighting_fixtures(min_x: float, min_z: float, max_x: float, max_z: float) -> dict[str, Any]:
+    """Return only the mapped lights near the requested local scene bounds."""
+    bounds = (min_x, min_z, max_x, max_z)
+    if not all(math.isfinite(value) for value in bounds) or max_x <= min_x or max_z <= min_z:
+        raise HTTPException(status_code=422, detail="lighting bounds must be finite and have positive area")
+    if max_x - min_x > 2200 or max_z - min_z > 2200:
+        raise HTTPException(status_code=422, detail="lighting area is too large; zoom in to request local fixtures")
+    fixtures = []
+    for item in _lighting_fixtures():
+        coordinates = item.get("coordinates")
+        if coordinates and len(coordinates) >= 2:
+            points = [coordinates]
+        else:
+            points = item.get("centerline") or []
+        valid = [(float(point[0]), float(point[1])) for point in points if len(point) >= 2]
+        if not valid:
+            continue
+        item_min_x = min(point[0] for point in valid)
+        item_max_x = max(point[0] for point in valid)
+        item_min_z = min(point[1] for point in valid)
+        item_max_z = max(point[1] for point in valid)
+        if item_max_x >= min_x and item_min_x <= max_x and item_max_z >= min_z and item_min_z <= max_z:
+            fixtures.append(item)
+    return {"cityFurniture": fixtures, "count": len(fixtures)}
 
 
 @app.get("/api/weather/current")

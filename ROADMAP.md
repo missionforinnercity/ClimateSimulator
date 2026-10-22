@@ -9,9 +9,7 @@ not be presented as observed activity, measured exposure or validated benefits.
 
 | Order | Work item | First useful version | Done when / boundary |
 | --- | --- | --- | --- |
-| 1 | **Trace plume activity back to source roads** | Preserve each traffic parcel's SUMO edge ID and sum its emission-weighted near-ground residence inside a user-selected receiving area. List contributing roads and their shares for one fixed traffic and wind run. Add a shared numeric scale for paired plume comparisons; the current bands are recalculated within each run. | Repeated seeds show whether the leading roads are stable; the source totals reconcile with the selected area's total. Label the result relative tracer residence, never ambient concentration or personal dose. Rerun traffic when a proposed change alters routing. |
-| 2 | **Test missing walking connections** | Add a small, reviewed set of candidate crossings, opened passages or repaired links to a copy of the existing walking graph. Compare reachable destinations, detour distance and travel time across multiple origins and time windows. | Each candidate has a field-checked location, access rules and uncertainty. Results distinguish a modelled link from an existing one and make no wheelchair-accessibility or safety claim without surveyed evidence. |
-| 3 | **Plan a focused measurement campaign** | For one variable, rank a short list of candidate sensor sites by coverage of different street conditions, model disagreement, public use and practical mounting constraints. State what each site would test and reserve separate sites or periods for validation. | Produce an inspectable site shortlist and measurement protocol. Deployment, instrument checks and any before/after intervention study require real equipment, permissions and observations. |
+| 1 | **Test missing walking connections** | Field-check the mapped gap shortlist in [walking link field checks](docs/WALKING_LINK_FIELD_CHECKS.md), then add a small, reviewed set of candidate crossings, opened passages or repaired links to a copy of the existing walking graph. Compare reachable destinations, detour distance and travel time across multiple origins and time windows. | Each candidate has a field-checked location, access rules and uncertainty. Results distinguish a modelled link from an existing one and make no wheelchair-accessibility or safety claim without surveyed evidence. |
 
 ## Scoped pilots after their inputs are available
 
@@ -33,7 +31,7 @@ not be presented as observed activity, measured exposure or validated benefits.
 | **Cycling reachability** | Acquire a connected, checked cycling-cost network and actual bike-share or scooter hubs before 5/10-minute isochrones. Keep mapped cycleway gaps separate from a safety ranking. |
 | **Walking access audit** | Survey pavement widths, kerbs, crossings and barriers before making route accessibility claims. Keep the current route evidence separate from any safety score. |
 | **Retail activity analysis** | Obtain storefront, use, footfall and dwell observations before testing correlations or economic effects. Coordinate with the pedestrian activity pilot. |
-| **Citizen feedback and public voting** | Define hosting, persistence, moderation, privacy and operator workflows; make scenario packages reproducible before collecting votes. A local annotation prototype can be scoped separately. |
+| **Citizen feedback and public voting** | The browser-local map note prototype is available. Public feedback and voting remain open until hosting, persistence, moderation, privacy and operator workflows are defined and scenario packages are reproducible. |
 | **Construction phasing** | Supply project stages, work-zone rules and pedestrian detours before linking month-by-month traffic and walking scenarios. |
 
 ## Shared acceptance rules
@@ -48,3 +46,5 @@ not be presented as observed activity, measured exposure or validated benefits.
 
 The broader evidence and validation programme remains in
 [docs/FEATURE_ROADMAP.md](docs/FEATURE_ROADMAP.md).
+The [input checklist](docs/ROADMAP_INPUTS.md) specifies the data and field
+checks needed before each remaining pilot.

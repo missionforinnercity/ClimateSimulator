@@ -6,7 +6,7 @@ This is a proposed roadmap, not a claim that the current app is validated or sta
 
 | Priority | Feature | User value | Prerequisites / scale |
 | --- | --- | --- | --- |
-| 1 | Place and street inspector | Search and map picking are exercised in WebGL and Canvas; Wind handoff is exercised in WebGL. Finish keyboard, duplicate-name, missing-ID, and out-of-footprint QA. | Existing semantic IDs; indexed compact scene records. Medium |
+| 1 | Place and street inspector | Search, keyboard selection and empty/out-of-terrain pick handling are browser-checked in WebGL and Canvas. Regression fixtures cover duplicate names, missing source IDs and points outside the mapped feature radius. | Existing semantic IDs; indexed compact scene records. Initial release and QA complete; maintain coverage as scene records change. |
 | 2 | Reproducible scenario packages | Reopen a study with exact geometry, dates, model version, closure edges, evidence and report | Extend current settings snapshots into versioned immutable result packages. Medium |
 | 3 | Observation and validation workbench | Compare modelled wind/heat/traffic with time-aligned observations; inspect bias and coverage | Quality-controlled sensors/counts and a defensible matching method. High, data-gated |
 | 4 | Shade-aware walking alternatives | Compare shortest vs shaded routes for a chosen date/time; explain trade-offs | Connected walk graph, directional access, calibrated shade sampling and surveyed accessibility where claimed. High |
