@@ -1098,6 +1098,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pollution-legend #pollution-scale-reference { min-height: 27px; font-size: 8px; }
 .pollution-legend #pollution-scale-reference[hidden] { display: none; }
 .pollution-area-control { display: grid; gap: 4px; color: #aebfb5; font-size: 8px; }
+.pollution-layer-label { align-self: end; padding: 7px 9px; border: 1px solid #394a42; border-radius: 6px; color: #dce9e0; font-size: 9px; font-weight: 700; }
 .pollution-area-control select { width: 100%; }
 .pollution-area-control[hidden] { display: none; }
 .pollution-method { padding-top: 8px; border-top: 1px solid #35413b; }

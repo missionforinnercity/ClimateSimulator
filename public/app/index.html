@@ -481,7 +481,7 @@
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · COMFORT (PARTIAL)</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
-        <p class="wind-intro">Explore solved airflow, pedestrian comfort, and how a particle plume may travel through city streets.</p>
+        <p class="wind-intro">Explore solved airflow, pedestrian comfort, and an overall pollutant heat map across city streets.</p>
         <div class="wind-analysis-tabs" role="group" aria-label="Wind analysis mode">
           <button type="button" data-wind-lens="direction" aria-pressed="false">By direction</button>
           <button class="active" type="button" data-wind-lens="comfort" aria-pressed="true">Wind comfort</button>
@@ -553,21 +553,15 @@
                 <option value="315">NW · 315°</option><option value="337.5">NNW · 337.5°</option>
               </select>
             </label>
-            <label>Map layer
-              <select id="pollution-display">
-                <option value="exposure" selected>Near-ground fumes</option>
-                <option value="emissions">Road emissions</option>
-                <option value="deposition">Surface contacts</option>
-              </select>
-            </label>
+            <div class="pollution-layer-label">Overall pollutants</div>
           </div>
           <div class="pollution-time-control">
-            <div><b id="pollution-timeline-title">Plume timeline</b><span id="pollution-time-label">0 min</span></div>
+            <div><b id="pollution-timeline-title">Pollutant timeline</b><span id="pollution-time-label">0 min</span></div>
             <input id="pollution-time" type="range" min="0" max="900" step="5" value="0" aria-label="Pollutant release timeline" disabled>
-            <div id="pollution-time-endpoints" class="pollution-time-endpoints"><span>0 · release begins</span><span>6 · source ends</span><span>15 min · plume record</span></div>
+            <div id="pollution-time-endpoints" class="pollution-time-endpoints"><span>0 · release begins</span><span>6 · source ends</span><span>15 min · map record</span></div>
           </div>
           <div class="pollution-action-row">
-            <button id="pollution-play" class="secondary" type="button" disabled>Play plume</button>
+            <button id="pollution-play" class="secondary" type="button" disabled>Play timeline</button>
             <button id="pollution-inspect-toggle" class="secondary" type="button" aria-pressed="false" disabled>Inspect an area</button>
           </div>
           <label class="pollution-area-control">Receiving area radius
@@ -579,10 +573,10 @@
           </label>
           <p id="pollution-inspect-result" class="pollution-inspect-result" role="status" hidden></p>
           <div id="pollution-legend" class="pollution-legend">
-            <b id="pollution-legend-title">Near-ground fume exposure</b>
+            <b id="pollution-legend-title">Overall pollutant exposure</b>
             <div id="pollution-gradient-legend" class="pollution-gradient" aria-hidden="true" hidden></div>
             <div id="pollution-continuous-labels" class="pollution-legend-labels" hidden><span>Lower emissions</span><span>Higher emissions</span></div>
-            <div id="pollution-tier-legend" class="pollution-tier-legend" aria-label="Relative plume residence bands">
+            <div id="pollution-tier-legend" class="pollution-tier-legend" aria-label="Relative pollutant residence bands">
               <span><i class="tier-lower"></i>Lower</span>
               <span><i class="tier-middle"></i>Moderate</span>
               <span><i class="tier-high"></i>High</span>
@@ -628,17 +622,10 @@
                 </select>
               </label>
             </div>
-            <label>Pollutant
-              <select id="pollution-class">
-                <option value="nox" selected>Traffic fumes · NOx</option>
-                <option value="pm25">Fine particles · PM2.5 · point source</option>
-                <option value="pm10">Coarse particles · PM10 · point source</option>
-              </select>
-            </label>
           </details>
           <details class="pollution-method">
             <summary>How to read this · method and limits</summary>
-            <p>Traffic mode uses road-by-road SUMO HBEFA3 NOx as a gas-like fume tracer, then releases equal-mass parcels from those road links into one steady OpenFOAM wind field. Click Inspect an area to choose a receiving area and see the originating SUMO road links and their shares of unblurred emission-weighted near-ground residence. The first traffic run sets numeric parcel-residence cutoffs that subsequent runs of the same pollutant share; use the comparison-scale button to replace that reference. These are not absolute pollution grades or µg/m³. Soft animated smoke puffs visualise parcel paths and are not a resolved concentration cloud. Blank areas may have no recorded plume or only trace below the display cutoff; neither establishes clean air. Demand is synthetic unless observed edge counts are configured. This exploratory screen does not predict health risk or the effect of planting trees.</p>
+            <p>The overall pollutant screen combines modelled road NOx and exhaust PMx emissions as a single mass-weighted tracer, then maps relative near-ground residence through one steady OpenFOAM wind field. Its random walk assumes locally isotropic turbulence inferred from k and epsilon, with an isotropic Gaussian well-mixed correction; it does not use a full Reynolds-stress turbulence model and has not been validated against pollutant measurements. The heat map shows where the tracer persists in the model, not a resolved concentration or measured air quality. Blank areas may have no recorded pollutant residence or only trace below the display cutoff; neither establishes clean air. Demand is synthetic unless observed edge counts are configured. This exploratory screen does not predict health risk or the effect of planting trees.</p>
           </details>
         </section>
 

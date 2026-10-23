@@ -9,9 +9,12 @@ node --test tests/scenarioState.test.mjs tests/requestClient.test.mjs
 # In another terminal; optional Playwright + Chromium required:
 .venv/bin/python scripts/smoke_explorer.py --url http://127.0.0.1:8011/app
 .venv/bin/python scripts/smoke_place_inspector.py --url http://127.0.0.1:8011/app
+.venv/bin/python scripts/smoke_pollutant_dispersal.py --url http://127.0.0.1:8011/app
 ```
 
 The browser smoke harness intercepts API requests and CFD downloads. It exercises failure handling without depending on live services, a database, SUMO simulations or a new CFD solve. It loads the real scene/transport assets. Screenshots go to `/tmp/conditions-smoke` by default. Its narrow viewport is an emulation, not a physical-phone performance measurement.
+
+The pollutant smoke test uses real road geometry, building geometry and a real directional CFD volume while substituting a fixed traffic-emissions response. It checks road-source clipping at the CFD boundary, swept building collisions, and source-accounting metadata; it does not validate the emissions model or ambient concentration.
 
 New Python HTTP tests use an in-process ASGI client without application lifespan startup, so provider polling is not started. Existing domain tests remain authoritative for numerical behaviour. Do not weaken numerical tests to make UI changes pass.
 
