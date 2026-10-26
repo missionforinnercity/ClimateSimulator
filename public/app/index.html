@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=94">
+    <link rel="stylesheet" href="/style.css?v=95">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -481,7 +481,7 @@
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · COMFORT (PARTIAL)</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
-        <p class="wind-intro">Explore solved airflow, pedestrian comfort, and an overall pollutant heat map across city streets.</p>
+        <p class="wind-intro">Explore pedestrian wind and traffic pollution.</p>
         <div class="wind-analysis-tabs" role="group" aria-label="Wind analysis mode">
           <button type="button" data-wind-lens="direction" aria-pressed="false">By direction</button>
           <button class="active" type="button" data-wind-lens="comfort" aria-pressed="true">Wind comfort</button>
@@ -878,7 +878,7 @@
       </section>
       <section id="menu-walking" class="walking-panel menu-section" data-menu-panel="walking" role="tabpanel" aria-label="Climate-aware walking routes" hidden>
         <div class="walking-heading"><div><span class="walking-kicker">PEDESTRIAN ROUTING</span><strong>Walk the CBD</strong></div><span class="walking-network-badge">OSM network</span></div>
-        <p class="walking-intro">Choose two points on the map, then compare the fastest walk with routes that reduce direct sun or modelled heat at your departure time.</p>
+        <p class="walking-intro">Compare the fastest route with cooler, shadier options.</p>
         <div class="walking-endpoints">
           <div class="walking-endpoint"><span class="walking-endpoint-dot origin"></span><div><b>Start</b><small id="walking-origin-label">Not set</small></div><button id="walking-pick-origin" class="secondary" type="button">Pick</button></div>
           <div class="walking-endpoint"><span class="walking-endpoint-dot destination"></span><div><b>Destination</b><small id="walking-destination-label">Not set</small></div><button id="walking-pick-destination" class="secondary" type="button">Pick</button></div>

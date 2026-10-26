@@ -46,7 +46,7 @@ const EVIDENCE = {
   },
 };
 const GUIDE = [
-  ['Navigate the city', 'Mouse and one-finger drags orbit in the same direction. Shift, middle/right mouse, or two fingers pan; wheel or pinch zooms. Arrow keys, + / − and Home also work.'],
+  ['Navigate the city', 'Drag to orbit. Pinch or scroll to zoom; two fingers pan.'],
   ['Choose a lens', 'Choose Heat, Walk, Sun, Wind, Traffic or Transport. Each answers a different question using its own model and assumptions.'],
   ['Choose the scenario', 'Set the date, time and available controls. Sun, wind and traffic have explicit run actions. A picked map location can be passed to the sun or wind analysis area.'],
   ['Read the evidence', 'Read the units, evidence status and limitations before using a result. Save Before and After settings to compare assumptions, or share a settings link.'],

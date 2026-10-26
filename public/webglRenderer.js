@@ -83,7 +83,10 @@ export async function startWebGLScene(canvas, status) {
   });
   // A small amount of supersampling keeps roof silhouettes crisp on dense
   // displays without doubling the post-processing cost on high-DPI screens.
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+  // Keep edges crisp on high-DPI displays without paying for nearly three
+  // times as many fragments as a 1x render. The post pass and dense city
+  // geometry make that extra fill rate noticeable on integrated GPUs.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
   renderer.setClearColor(COLORS.background, 1);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -1874,13 +1877,41 @@ export async function startWebGLScene(canvas, status) {
     const indexOffset = heightOffset + vertexCount * 4;
     if (indexOffset + indexCount * 4 > roofSurfaceBuffer.byteLength) return null;
 
-    const positions = new Float32Array(roofSurfaceBuffer, positionOffset, vertexCount * 3);
+    const sourcePositions = new Float32Array(roofSurfaceBuffer, positionOffset, vertexCount * 3);
     const indices = new Uint32Array(roofSurfaceBuffer, indexOffset, indexCount);
-    detailedRoofGeometrySource = { positions, indices };
+    // Keep raw elevations for analysis and roof-mounted installations, while
+    // making a separate, gently regularized copy for display. LiDAR-derived
+    // meshes can contain isolated cell spikes that read as a crumpled roof at
+    // city scale. Triangle-neighbour averaging follows each roof's topology,
+    // so it cannot blur across gaps or between adjacent buildings.
+    detailedRoofGeometrySource = { positions: sourcePositions, indices };
+    const positions = new Float32Array(sourcePositions);
+    const vertexCountFromHeader = positions.length / 3;
+    const smoothRoofSurface = () => {
+      const sums = new Float64Array(vertexCountFromHeader);
+      const counts = new Uint16Array(vertexCountFromHeader);
+      for (let pass = 0; pass < 2; pass += 1) {
+        sums.fill(0);
+        counts.fill(0);
+        for (let index = 0; index < indices.length; index += 3) {
+          const a = indices[index], b = indices[index + 1], c = indices[index + 2];
+          const mean = (positions[a * 3 + 1] + positions[b * 3 + 1] + positions[c * 3 + 1]) / 3;
+          sums[a] += mean; sums[b] += mean; sums[c] += mean;
+          counts[a] += 1; counts[b] += 1; counts[c] += 1;
+        }
+        for (let vertex = 0; vertex < vertexCountFromHeader; vertex += 1) {
+          if (!counts[vertex]) continue;
+          const offset = vertex * 3 + 1;
+          const delta = (sums[vertex] / counts[vertex] - positions[offset]) * 0.58;
+          positions[offset] += clamp(delta, -0.55, 0.55);
+        }
+      }
+    };
+    smoothRoofSurface();
     for (let index = 0; index < vertexCount; index += 1) {
-      const x = positions[index * 3];
-      const y = positions[index * 3 + 1];
-      const z = positions[index * 3 + 2];
+      const x = sourcePositions[index * 3];
+      const y = sourcePositions[index * 3 + 1];
+      const z = sourcePositions[index * 3 + 2];
       const key = detailedRoofCellKey(Math.floor(x / detailedRoofHeightCellSize), Math.floor(z / detailedRoofHeightCellSize));
       if (!detailedRoofHeightGrid.has(key)) detailedRoofHeightGrid.set(key, []);
       detailedRoofHeightGrid.get(key).push([x, y, z]);
@@ -5461,7 +5492,9 @@ export async function startWebGLScene(canvas, status) {
     for (const group of [layerGroups.cityFurniture, layerGroups.publicRealm]) {
       for (const object of group.children) {
         const maxDistance = Number(object.userData?.maxDistance);
+        const isStreetLight = String(object.userData?.semanticClass || '').startsWith('publicLight');
         if (maxDistance > 0) object.visible = cameraState.distance <= maxDistance
+          && !(shadowState.enabled && isStreetLight)
           && !(viewshedState.active && (object.isPoints || object.isPointLight
             || ['publicLightPool', 'publicLightGlow'].includes(object.userData?.semanticClass)));
       }
@@ -11124,21 +11157,30 @@ export async function startWebGLScene(canvas, status) {
     return windState.cfdLocalRange?.[name] || windState.cfd?.manifest.ranges?.[name] || [0, 1];
   }
 
-  // A minimum span keeps colour contrast meaningful when a view happens to
-  // be almost uniformly calm (a near-zero span would blow tiny noise up into
-  // the full colour range) and floors speed at zero rather than the sampled
-  // minimum, since "no wind" is a real, meaningful value to show distinctly.
+  // Use the central 80% of the current view's samples for local colour bounds.
+  // Clipping the lowest and highest deciles keeps isolated extremes from
+  // washing out the spatial pattern while the full sample range remains in
+  // the underlying data and rankings.
   function computeLocalRange(field, values) {
     if (!values.length) return null;
     const minimumSpan = field === 'speed' ? 1.5 : field === 'p' ? 4 : 0.05;
-    let sampledMinimum = Infinity;
-    let maximum = -Infinity;
-    for (const value of values) {
-      if (value < sampledMinimum) sampledMinimum = value;
-      if (value > maximum) maximum = value;
+    const sorted = values.slice().sort((a, b) => a - b);
+    const quantile = fraction => {
+      const position = (sorted.length - 1) * fraction;
+      const lower = Math.floor(position), upper = Math.ceil(position);
+      return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+    };
+    let minimum = quantile(0.1);
+    let maximum = quantile(0.9);
+    if (maximum - minimum < minimumSpan) {
+      const midpoint = (minimum + maximum) * 0.5;
+      minimum = midpoint - minimumSpan * 0.5;
+      maximum = midpoint + minimumSpan * 0.5;
+      if (field === 'speed' && minimum < 0) {
+        minimum = 0;
+        maximum = minimumSpan;
+      }
     }
-    const minimum = field === 'speed' ? 0 : sampledMinimum;
-    if (maximum - minimum < minimumSpan) maximum = minimum + minimumSpan;
     return [minimum, maximum];
   }
 
@@ -11168,8 +11210,9 @@ export async function startWebGLScene(canvas, status) {
     const formatBound = value => speedField
       ? `${value.toFixed(2)} m/s · ${(value * 3.6).toFixed(1)} km/h`
       : `${value.toFixed(2)} m²/s²`;
-    windLegendLow.innerHTML = `<b>${formatBound(minimum)}</b> · low`;
-    windLegendHigh.innerHTML = `<b>${formatBound(maximum)}</b> · high`;
+    const localPercentileRange = Boolean(windState.cfdLocalRange?.[windState.cfdField]);
+    windLegendLow.innerHTML = `<b>${formatBound(minimum)}</b> · ${localPercentileRange ? 'P10 · low' : 'low'}`;
+    windLegendHigh.innerHTML = `<b>${formatBound(maximum)}</b> · ${localPercentileRange ? 'P90 · high' : 'high'}`;
     windGradient?.classList.remove('comfort');
     windGradient?.classList.toggle('pressure', windState.cfdField === 'p');
     windGradient?.classList.toggle('turbulence', windState.cfdField === 'k');

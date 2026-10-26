@@ -1,4 +1,4 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=3';
+import { setupExplorerExperience } from './explorerExperience.js?v=4';
 import { setupWalkingRoutes } from './walkingRoutes.js?v=3';
 import { scopedFetch as fetch } from './requestClient.js';
 

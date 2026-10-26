@@ -2999,3 +2999,214 @@ select, input[type="date"], input[type="number"] {
 .walking-traffic-context summary span { float: right; color: #aaa; font-size: 8px; font-weight: 400; }
 .walking-traffic-context p, .walking-method p { margin-top: 6px; }
 .walking-traffic-context button { width: 100%; min-height: 31px; margin: 6px 0; font-size: 8px; }
+
+/* Unified charcoal control skin, inspired by compact environmental tool panels. */
+:root {
+  --ink: #f0efed;
+  --muted: #c1bfbd;
+  --quiet: #969391;
+  --shell: #292929;
+  --shell-deep: #242424;
+  --control: #454545;
+  --control-hover: #535353;
+  --line: #3b3b3b;
+  --line-light: #555;
+  --accent: #a68fab;
+  --accent-dark: #514654;
+  --accent-pale: #e8ddeb;
+}
+
+html, body, #app { background: #171717; }
+.panel {
+  border-color: #414141;
+  border-radius: 8px;
+  background: var(--shell);
+  box-shadow: 0 18px 48px #0009;
+}
+.panel-header { border-bottom-color: #3c3c3c; background: #252525; }
+.panel-brand { padding: 11px 13px 9px; }
+.eyebrow { color: #e9e7e5; letter-spacing: .12em; }
+.place-name { color: #a8a5a3; }
+.menu-tabs { padding-inline: 7px; }
+.panel .menu-tab {
+  height: 54px;
+  border-radius: 5px 5px 0 0;
+  color: #a5a2a0;
+}
+.panel .menu-tab svg { width: 19px; height: 19px; }
+.panel .menu-tab span { color: inherit; font-size: 9px; letter-spacing: .01em; }
+.panel .menu-tab:hover { color: #f0efed; background: #ffffff08; }
+.panel .menu-tab.active,
+.panel .menu-tab.active:hover {
+  color: #f2eef3;
+  background: #39363a;
+  box-shadow: none;
+}
+.panel .menu-tab.active::after { right: 7px; left: 7px; height: 2px; background: #b39ab9; }
+.panel-context {
+  gap: 2px;
+  padding: 7px 13px 8px;
+  border-bottom-color: #3c3c3c;
+  background: #2c2c2c;
+}
+.panel-context > span { color: #9d9997; font-size: 7px; letter-spacing: .1em; }
+.panel-context > strong { color: #ddd9d6; font-size: 10px; font-weight: 550; }
+.panel-body { padding: 11px 12px; scrollbar-color: #5b5b5b transparent; }
+.panel .menu-section { color: #c5c2c0; }
+.panel .menu-section :is(h2, h3, b, strong, summary) { text-wrap: pretty; }
+.panel .menu-section :is(p, .method-note, .control-hint, .heat-legend-help, .sun-help, .wind-intro, .wind-mode-help, .wind-tool-status, .traffic-uncertainty, .transport-planner-hint, .current-status, .streetview-status) {
+  color: #aaa7a5;
+  font-size: 10px;
+  line-height: 1.42;
+}
+.panel .menu-section :is(select, input[type="date"], input[type="time"], input[type="text"], input[type="number"], textarea) {
+  border-color: #505050;
+  border-radius: 5px;
+  background: #383838;
+  color: #eee;
+}
+.panel .menu-section :is(input, select, textarea) { accent-color: #b39ab9; }
+.panel .menu-section :is(select, input, textarea):focus-visible {
+  border-color: #b39ab9;
+  outline-color: #d4c1d8;
+  box-shadow: 0 0 0 2px #b39ab944;
+}
+.panel .menu-section button {
+  border-color: #686467;
+  border-radius: 5px;
+  background: #4a4849;
+  color: #eee;
+  box-shadow: none;
+  font-weight: 650;
+}
+.panel .menu-section button:hover:not(:disabled) {
+  border-color: #8c828e;
+  background: #575357;
+}
+.panel .menu-section button.secondary,
+.panel .menu-section :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run, .current-actions button:first-child) {
+  border-color: #686467;
+  background: #4a4849;
+  color: #f0efed;
+}
+.panel .menu-section :is(button[aria-pressed="true"], button.active, .heat-view-groups button[aria-pressed="true"], .wind-analysis-tabs button.active, .wind-cfd-view-tabs button.active, .transport-mode-tabs button.active) {
+  border-color: #89798d;
+  background: #514a53;
+  color: #f4ecf5;
+  box-shadow: inset 0 0 0 1px #c7b6cb18;
+}
+.panel .menu-section :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run) {
+  border-color: #817286;
+  background: #5b515e;
+  color: #fff;
+}
+.panel .menu-section :is(.heat-actions button:hover, .wind-run-button:hover, .transport-analyse:hover, .transport-playback #transport-play:hover, #traffic-run:hover):not(:disabled) {
+  border-color: #a997af;
+  background: #6a5d6d;
+}
+.panel .menu-section :is(.tool-section, .compact-section, .traffic-card, .traffic-live-card, .traffic-output-card, .heat-context, .heat-summary span, .wind-data-banner, .wind-cfd-controls, .wind-tool-card, .wind-explorer, .walking-route-card, .walking-street-context, .transport-simulator, .transport-event-planner, .pollution-legend) {
+  border-color: #414141;
+  background-color: #303030;
+  box-shadow: none;
+}
+.panel .menu-section :is(details.tool-disclosure, .compact-about, .sun-advanced, .walking-method, .walking-traffic-context, .traffic-map-key, .pollution-method, .pollution-advanced) {
+  border-color: #414141;
+}
+.panel .menu-section details > summary { color: #e1dfdd; }
+.panel .menu-section :is(.heat-view-groups, .sun-segmented, .traffic-view-toggles, .wind-analysis-tabs, .wind-lenses) {
+  border-color: #4b4b4b;
+  border-radius: 6px;
+  background: #393939;
+}
+.panel .menu-section :is(.heat-view-groups button, .sun-segmented button, .traffic-view-toggles label, .wind-analysis-tabs button, .wind-lenses button) {
+  color: #cbc8c6;
+}
+.panel .menu-section :is(.heat-view-groups button[aria-pressed="true"], .sun-segmented button.active, .traffic-view-toggles label:has(input:checked), .wind-analysis-tabs button.active, .wind-lenses button.active) {
+  border-color: #89798d;
+  background: #514a53;
+  color: #f5eef6;
+}
+.panel .menu-section :is(.current-panel, .streetview-panel) {
+  border-color: #424242;
+  background: #303030;
+}
+.panel .menu-section :is(.freshness, .estimate-badge, .wind-mode-badge, .walking-network-badge) {
+  border-color: #585458;
+  background: #393639;
+  color: #d0c9d1;
+}
+.panel .menu-section :is(.current-metrics span, .heat-results span, .wind-results span, .transport-results span) {
+  border-color: #414141;
+  background: #363636;
+}
+.panel .menu-section .method-note { color: #969391; }
+.panel .explorer-guide {
+  border-color: #484848;
+  border-radius: 7px;
+  background: #303030;
+  color: #c5c2c0;
+  box-shadow: none;
+}
+.panel .explorer-guide h2 { color: #eee; }
+.panel .explorer-guide p { color: #b7b4b2; }
+.panel .explorer-guide button {
+  border-color: #5d5a5d;
+  background: #414041;
+  color: #efedeb;
+}
+#explorer-panel-body .menu-section .current-actions button:first-child {
+  border-color: #817286;
+  background: #5b515e;
+  color: #fff;
+}
+#explorer-panel-body .menu-section .current-actions button:first-child:hover:not(:disabled) {
+  border-color: #a997af;
+  background: #6a5d6d;
+}
+#explorer-panel-body .menu-section button {
+  border-radius: 5px;
+  background: #4a4849;
+  color: #efedeb;
+  box-shadow: none;
+}
+#explorer-panel-body .menu-section button:hover:not(:disabled) { border-color: #8c828e; background: #575357; }
+#explorer-panel-body .menu-section button.active,
+#explorer-panel-body .menu-section button[aria-pressed="true"] {
+  border-color: #89798d;
+  background: #514a53;
+  color: #f4ecf5;
+}
+#explorer-panel-body .menu-section :is(.wind-run-button, .transport-analyse, #traffic-run, .heat-actions button) {
+  border-color: #817286;
+  background: #5b515e;
+  color: #fff;
+}
+#explorer-panel-body .menu-section :is(.wind-run-button, .transport-analyse, #traffic-run, .heat-actions button):hover:not(:disabled) {
+  border-color: #a997af;
+  background: #6a5d6d;
+}
+.scene-hud :is(.north-widget, .scene-mode, .map-scale, .scene-legend) {
+  border-color: #4b4b4bd9;
+  border-radius: 7px;
+  background: #222222e8;
+  box-shadow: 0 8px 24px #0004;
+  backdrop-filter: blur(12px);
+}
+.scene-mode b { color: #f0efed; }
+.scene-mode small, .scene-legend span { color: #bebbb8; }
+.map-controls button {
+  border-color: #4b4b4b;
+  border-radius: 6px;
+  background: #242424e8;
+  color: #eee;
+}
+.map-controls button:last-child { color: #ddd5df; }
+.map-controls button:hover:not(:disabled) { border-color: #968899; background: #373238; }
+.traffic-draw-popup { border-color: #555; border-radius: 8px; background: #272727f5; color: #eee; }
+
+@media (max-width: 700px) {
+  .panel { width: min(360px, calc(100vw - 16px)); }
+}
+@media (max-width: 700px) and (orientation: portrait) {
+  .panel { width: auto; }
+}
