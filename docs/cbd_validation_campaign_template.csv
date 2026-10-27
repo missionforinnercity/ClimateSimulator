@@ -1,0 +1,1 @@
+id,site_name,observed_at,x,z,speed_mps,height_m,wind_direction_deg,reference_speed_mps,reference_direction_deg,reference_height_m,averaging_period_s,sensor_id,sensor_model,calibration_date,sensor_calibration,air_temp_2m_c,relative_humidity_pct,tmrt_c,wind_10m_mps,sensor_ids,split,split_group,stability,sector,measurement_notes

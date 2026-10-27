@@ -43,3 +43,22 @@ the result is not equal to the mean of UTCI values from every historical hour.
 The output remains an experimental, unvalidated model estimate until it has
 been compared with co-located CBD observations; see
 [the field validation procedure](THERMAL_VALIDATION.md).
+
+## Thermal comfort area-time KPIs
+
+In the historical UTCI view, the KPI panel classifies each valid ground cell
+in every monthly/local-hour composite using these UTCI bands: cold stress
+below 9°C, no thermal stress from 9°C to below 26°C, and heat stress from
+26°C upward. It weights each local-hour composite by the average number of
+calendar days in that month over the baseline and reports the area-time share
+and representative-period equivalent hours per mapped cell. The selected
+month, season or annual period controls the summary; the displayed map remains
+the selected local-hour view.
+
+These are **composite area-time estimates**, not measured historical hours,
+hour-by-hour exceedance probabilities, or person-level exposure. Classifying
+the mean condition for a month/hour cannot recover the distribution of actual
+historical UTCI values. The near-live forecast reports spatial area by UTCI
+band for its selected modelled hour only, rather than extrapolating one frame
+into a time-period KPI. The underlying UTCI map and temperatures remain
+available for inspection; the bands do not replace the physical values.

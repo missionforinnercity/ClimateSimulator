@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,12 +20,21 @@ class ThermalClimatologyUnavailable(RuntimeError):
 
 def manifest() -> dict[str, Any]:
     try:
-        payload = json.loads((PRODUCT_ROOT / "manifest.json").read_text(encoding="utf-8"))
+        manifest_path = PRODUCT_ROOT / "manifest.json"
+        manifest_bytes = manifest_path.read_bytes()
+        payload = json.loads(manifest_bytes)
     except (OSError, json.JSONDecodeError) as error:
         raise ThermalClimatologyUnavailable("historical UTCI climatology has not been built") from error
     if payload.get("schema") != "conditions-thermal-climatology/1":
         raise ThermalClimatologyUnavailable("historical UTCI climatology is incompatible")
+    payload["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
     return payload
+
+
+def source_manifest_path() -> Path:
+    """Return the checked-in product manifest whose bytes define its digest."""
+    manifest()
+    return PRODUCT_ROOT / "manifest.json"
 
 
 def frame_path(frame_id: str) -> Path:

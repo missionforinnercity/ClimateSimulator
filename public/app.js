@@ -1,4 +1,4 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=5';
+import { setupExplorerExperience } from './explorerExperience.js?v=23';
 import { setupWalkingRoutes } from './walkingRoutes.js?v=3';
 import { scopedFetch as fetch } from './requestClient.js';
 
@@ -390,7 +390,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=284');
+    const module = await import('./webglRenderer.js?v=293');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -798,6 +798,8 @@ function setupWindResults() {
   const validationButton = document.querySelector('#wind-validate-button');
   const fileInput = document.querySelector('#wind-observation-file');
   const observationsInput = document.querySelector('#wind-observation-json');
+  const validationTarget = document.querySelector('#wind-validation-target');
+  let windValidationInputSource = null;
   // Convert CSV values explicitly so numeric validation errors are readable.
   const csvObservations = source => {
     const lines = source.trim().split(/\r?\n/).filter(Boolean);
@@ -807,26 +809,65 @@ function setupWindResults() {
     return lines.map((line, rowIndex) => {
       const cells = split(line);
       const row = Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? '']));
-      const observation = { id: row.id || undefined, x: Number(row.x), z: Number(row.z), speed_mps: Number(row.speed_mps), height_m: Number(row.height_m || 2), observed_at: row.observed_at || undefined };
-      if (![observation.x, observation.z, observation.speed_mps, observation.height_m].every(Number.isFinite)) throw new Error(`CSV row ${rowIndex + 2} has a missing or invalid number.`);
+      const numeric = name => row[name] === '' || row[name] == null ? undefined : Number(row[name]);
+      const observation = {
+        id: row.id || undefined, site_name: row.site_name || undefined,
+        sensor_id: row.sensor_id || undefined, sensor_model: row.sensor_model || undefined,
+        calibration_date: row.calibration_date || undefined,
+        x: numeric('x'), z: numeric('z'), speed_mps: numeric('speed_mps'),
+        height_m: numeric('height_m'), observed_at: row.observed_at || undefined,
+        wind_direction_deg: numeric('wind_direction_deg'),
+        reference_speed_mps: numeric('reference_speed_mps'),
+        reference_direction_deg: numeric('reference_direction_deg'),
+        reference_height_m: numeric('reference_height_m'),
+        averaging_period_s: numeric('averaging_period_s'), split: row.split || undefined,
+        split_group: row.split_group || undefined,
+        sensor_calibration: row.sensor_calibration || [row.sensor_id, row.sensor_model, row.calibration_date].filter(Boolean).join(' · ') || undefined,
+        measurement_notes: row.measurement_notes || undefined,
+      };
+      if (![observation.x, observation.z, observation.speed_mps, observation.height_m,
+        observation.reference_speed_mps, observation.reference_direction_deg,
+        observation.reference_height_m, observation.averaging_period_s].every(Number.isFinite)) {
+        throw new Error(`CSV row ${rowIndex + 2} is missing a required coordinate, speed, sensor height, direction or averaging period.`);
+      }
+      if (!observation.observed_at || !/(Z|[+-]\d{2}:?\d{2})$/i.test(observation.observed_at)) {
+        throw new Error(`CSV row ${rowIndex + 2} needs observed_at with a timezone (UTC Z or an explicit offset).`);
+      }
+      if (!observation.split_group) throw new Error(`CSV row ${rowIndex + 2} needs a split_group for its complete site or period unit, such as site:church-square.`);
       return observation;
     });
   };
   fileInput?.addEventListener('change', async () => {
     const file = fileInput.files?.[0]; if (!file) return;
-    try { const observations = csvObservations(await file.text()); observationsInput.value = JSON.stringify(observations, null, 2); validationStatus.textContent = `${observations.length} observations loaded from ${file.name}.`; }
+    try {
+      if (file.size > 10_000_000) throw new Error('Observation file must be 10 MB or smaller.');
+      const sourceText = await file.text();
+      const observations = csvObservations(sourceText);
+      observationsInput.value = JSON.stringify(observations, null, 2);
+      windValidationInputSource = { filename: file.name, format: 'csv', text: sourceText };
+      validationStatus.textContent = `${observations.length} observations loaded from ${file.name}.`;
+    }
     catch (error) { validationStatus.textContent = error.message; }
   });
+  observationsInput?.addEventListener('input', () => { windValidationInputSource = null; });
   validationButton?.addEventListener('click', async () => {
     validationButton.disabled = true;
-    validationStatus.textContent = 'Comparing observations with the screening model…';
+    const target = validationTarget?.value || 'openfoam';
+    validationStatus.textContent = target === 'openfoam' ? 'Sampling the selected OpenFOAM pedestrian field…' : 'Comparing observations with the screening model…';
     validationResult.hidden = true;
     try {
-      const observations = observationsInput.value.trim().startsWith('[')
-        ? JSON.parse(observationsInput.value)
-        : csvObservations(observationsInput.value);
+      const rawInput = observationsInput.value.trim();
+      if (rawInput.length > 10_000_000) throw new Error('Observation input must be 10 MB or smaller.');
+      const observations = rawInput.startsWith('[')
+        ? JSON.parse(rawInput)
+        : csvObservations(rawInput);
+      const sourceInput = windValidationInputSource || {
+        filename: null, format: rawInput.startsWith('[') ? 'json' : 'csv', text: rawInput,
+      };
       if (!Array.isArray(observations) || observations.length < 3) throw new Error('Add at least three observations.');
-      const payload = {
+      const direction = Number(document.querySelector('#wind-validation-direction').value);
+      let endpoint = '/api/wind/validate';
+      let payload = {
         scenario: {
           center_local: [Number(document.querySelector('#wind-validation-center-x').value), Number(document.querySelector('#wind-validation-center-z').value)],
           size_m: Number(document.querySelector('#wind-validation-size').value),
@@ -838,7 +879,14 @@ function setupWindResults() {
           exceedance_threshold_mps: 6, forcing_mode: 'manual',
         }, observations,
       };
-      const response = await fetch('/api/wind/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      if (target === 'openfoam') {
+        const caseNames = { 0: 'cbd_n_full', 22.5: 'cbd_22p5_full', 45: 'cbd_ne_full', 67.5: 'cbd_67p5_full', 90: 'cbd_e_full', 112.5: 'cbd_112p5_full', 135: 'cbd_se_full', 157.5: 'cbd_157p5_full', 180: 'cbd_s_full', 202.5: 'cbd_202p5_full', 225: 'cbd_sw_full', 247.5: 'cbd_247p5_full', 270: 'cbd_w_full', 292.5: 'cbd_292p5_full', 315: 'cbd_nw_full', 337.5: 'cbd_337p5_full' };
+        const caseId = caseNames[direction];
+        if (!caseId) throw new Error('No OpenFOAM case is registered for this direction.');
+        endpoint = '/api/wind/validate-openfoam';
+        payload = { case_id: caseId, direction_tolerance_deg: 11.25, observations };
+      }
+      const response = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const body = await response.json();
       if (!response.ok) {
         const detail = Array.isArray(body.detail)
@@ -846,15 +894,104 @@ function setupWindResults() {
           : body.detail;
         throw new Error(detail || `Request failed (${response.status}).`);
       }
-      const validation = body.validation;
-      const distances = validation.distance_to_observation_m || [];
-      const within = distances.filter(distance => distance <= 25).length / Math.max(1, distances.length) * 100;
-      const samples = validation.samples.map(sample => `<tr><td>${windReportEscape(sample.id || '—')}</td><td>${Number(sample.predicted_speed_mps).toFixed(2)}</td><td>${Number(sample.height_adjusted_observed_speed_mps).toFixed(2)}</td><td>${Number(sample.error_mps) > 0 ? '+' : ''}${Number(sample.error_mps).toFixed(2)}</td></tr>`).join('');
-      validationResult.innerHTML = `<b>Benchmark only · screening model</b><div class="wind-validation-metrics"><span>Bias <strong>${validation.metrics.bias_mps.toFixed(2)} m/s</strong></span><span>MAE <strong>${validation.metrics.mae_mps.toFixed(2)} m/s</strong></span><span>RMSE <strong>${validation.metrics.rmse_mps.toFixed(2)} m/s</strong></span><span>Grid within 25 m of a sensor <strong>${within.toFixed(1)}%</strong></span></div><div class="wind-validation-table-wrap"><table><thead><tr><th>Sensor</th><th>Model</th><th>Observed*</th><th>Error</th></tr></thead><tbody>${samples}</tbody></table></div><small>*Observed speed adjusted to 2 m using the selected stability profile. Sparse coverage limits interpretation.</small>`;
+      const validation = target === 'openfoam' ? body : body.validation;
+      const samples = target === 'openfoam'
+        ? validation.pairs.map(sample => `<tr><td>${windReportEscape(sample.id)}</td><td>${windReportEscape(sample.split)}</td><td>${Number(sample.predicted_speed_mps).toFixed(2)}</td><td>${Number(sample.observed_speed_mps).toFixed(2)}</td><td>${Number(sample.speed_error_mps) > 0 ? '+' : ''}${Number(sample.speed_error_mps).toFixed(2)}</td></tr>`).join('')
+        : validation.samples.map(sample => `<tr><td>${windReportEscape(sample.id || '—')}</td><td>—</td><td>${Number(sample.predicted_speed_mps).toFixed(2)}</td><td>${Number(sample.height_adjusted_observed_speed_mps).toFixed(2)}</td><td>${Number(sample.error_mps) > 0 ? '+' : ''}${Number(sample.error_mps).toFixed(2)}</td></tr>`).join('');
+      if (target === 'openfoam') {
+        const holdout = validation.metrics.holdout;
+        const calibration = validation.metrics.calibration;
+        validationResult.innerHTML = `<b>OpenFOAM · ${windReportEscape(validation.status.replaceAll('_', ' '))}</b><div class="wind-validation-metrics"><span>Holdout n <strong>${holdout.n}</strong></span><span>Holdout bias <strong>${holdout.bias_mps == null ? '—' : `${holdout.bias_mps.toFixed(2)} m/s`}</strong></span><span>Holdout MAE <strong>${holdout.mae_mps == null ? '—' : `${holdout.mae_mps.toFixed(2)} m/s`}</strong></span><span>Holdout RMSE <strong>${holdout.rmse_mps == null ? '—' : `${holdout.rmse_mps.toFixed(2)} m/s`}</strong></span></div><p>Calibration: n=${calibration.n}, MAE ${calibration.mae_mps == null ? '—' : `${calibration.mae_mps.toFixed(2)} m/s`}. Holdout direction MAE: ${holdout.direction_mae_deg == null ? 'not recorded' : `${holdout.direction_mae_deg.toFixed(1)}°`}. ${validation.counts.excluded} rows excluded.</p><div class="wind-validation-table-wrap"><table><thead><tr><th>Sensor</th><th>Split</th><th>CFD m/s</th><th>Observed m/s</th><th>Error</th></tr></thead><tbody>${samples}</tbody></table></div><small>CFD speeds are scaled by each row’s simultaneous upstream reference speed. This is a holdout score for the sampled case and conditions, not a global validation or certification.</small>`;
+        dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind_validation', metadata: {
+          clientOnly: true,
+          description: `OpenFOAM observation score · ${validation.status.replaceAll('_', ' ')} · ${validation.counts.holdout} holdout rows · diagnostic, not validated.`,
+          validation_status: validation.status,
+          case_id: validation.case.case_id,
+          asset_hashes: validation.case.asset_hashes,
+          source_provenance: validation.case.supporting_asset_hashes,
+          validation: {
+            counts: validation.counts, metrics: validation.metrics,
+            metrics_by_split_group: validation.metrics_by_split_group,
+            provenance: validation.provenance, method: validation.method,
+          },
+          kpis: {
+            holdout_n: holdout.n, holdout_bias_mps: holdout.bias_mps,
+            holdout_mae_mps: holdout.mae_mps, holdout_rmse_mps: holdout.rmse_mps,
+          },
+          result_data: { ...validation, source_input: sourceInput },
+        } } }));
+      } else {
+        const distances = validation.distance_to_observation_m || [];
+        const within = distances.filter(distance => distance <= 25).length / Math.max(1, distances.length) * 100;
+        validationResult.innerHTML = `<b>Benchmark only · screening model</b><div class="wind-validation-metrics"><span>Bias <strong>${validation.metrics.bias_mps.toFixed(2)} m/s</strong></span><span>MAE <strong>${validation.metrics.mae_mps.toFixed(2)} m/s</strong></span><span>RMSE <strong>${validation.metrics.rmse_mps.toFixed(2)} m/s</strong></span><span>Grid within 25 m of a sensor <strong>${within.toFixed(1)}%</strong></span></div><div class="wind-validation-table-wrap"><table><thead><tr><th>Sensor</th><th>Split</th><th>Model</th><th>Observed*</th><th>Error</th></tr></thead><tbody>${samples}</tbody></table></div><small>*Observed speed adjusted to 2 m using the selected stability profile. Sparse coverage limits interpretation.</small>`;
+      }
       validationResult.hidden = false;
-      validationStatus.textContent = `${validation.observation_count} observations · ${validation.status.replaceAll('_', ' ')}.`;
+      validationStatus.textContent = target === 'openfoam'
+        ? `${validation.counts.paired} paired · ${validation.counts.holdout} holdout · ${validation.counts.excluded} excluded.`
+        : `${validation.observation_count} observations · ${validation.status.replaceAll('_', ' ')}.`;
     } catch (error) { validationStatus.textContent = error.message || 'Could not compare observations.'; }
     finally { validationButton.disabled = false; }
+  });
+
+  const thermalValidationAttach = document.querySelector('#thermal-validation-attach');
+  const thermalValidationStatus = document.querySelector('#thermal-validation-import-status');
+  thermalValidationAttach?.addEventListener('click', async () => {
+    thermalValidationAttach.disabled = true;
+    try {
+      const resultFile = document.querySelector('#thermal-validation-result-file')?.files?.[0];
+      const sourceFile = document.querySelector('#thermal-validation-source-file')?.files?.[0];
+      if (!resultFile || !sourceFile) throw new Error('Choose both the thermal validation JSON and the CSV it scored.');
+      if (resultFile.size > 20_000_000 || sourceFile.size > 10_000_000) throw new Error('Validation JSON must be ≤20 MB and observations CSV ≤10 MB.');
+      const validation = JSON.parse(await resultFile.text());
+      if (validation.schema !== 'conditions-thermal-observation-validation/1') throw new Error('This is not a supported thermal observation-validation report.');
+      if (!validation.run_id || !validation.provenance?.manifest_sha256 || !Array.isArray(validation.pairs) || !validation.pairs.length) {
+        throw new Error('The thermal report needs a run ID, manifest hash, and at least one paired row.');
+      }
+      const sourceBytes = await sourceFile.arrayBuffer();
+      const sourceHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', sourceBytes))]
+        .map(value => value.toString(16).padStart(2, '0')).join('');
+      if (sourceHash !== validation.provenance.observations_sha256) throw new Error('The selected CSV hash does not match the validation report.');
+      const frameHashes = validation.provenance.frame_sha256_by_id || {};
+      const frames = [...new Map(validation.pairs.map(pair => [pair.frame_id, {
+        id: pair.frame_id, valid_at: pair.frame_at, sha256: pair.frame_sha256 || frameHashes[pair.frame_id],
+      }])).values()];
+      if (frames.some(frame => !frame.id || !frame.sha256)) throw new Error('A paired model frame is missing its hash. Re-run validation with a current thermal report.');
+      const sourceBytesArray = new Uint8Array(sourceBytes);
+      const base64Chunks = [];
+      for (let index = 0; index < sourceBytesArray.length; index += 0x8000) {
+        base64Chunks.push(String.fromCharCode(...sourceBytesArray.subarray(index, index + 0x8000)));
+      }
+      const sourceInput = {
+        format: 'base64', filename: sourceFile.name, data: btoa(base64Chunks.join('')),
+        sha256: sourceHash,
+      };
+      const metrics = validation.metrics_by_split || {};
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'thermal_validation', metadata: {
+        clientOnly: true,
+        description: `Thermal observation score · ${validation.validation_status.replaceAll('_', ' ')} · ${validation.paired_count} paired rows · diagnostic, not validated.`,
+        run_id: validation.run_id,
+        validation_status: validation.validation_status,
+        provenance: validation.provenance,
+        validation: {
+          paired_count: validation.paired_count, excluded_count: validation.excluded_count,
+          counts_by_split: validation.counts_by_split, metrics_by_split: validation.metrics_by_split,
+          metrics_model_minus_observed: validation.metrics_model_minus_observed,
+        },
+        kpis: {
+          holdout_air_temp_mae_c: metrics.holdout?.air_temp_2m_c?.mae,
+          holdout_relative_humidity_mae_pct: metrics.holdout?.relative_humidity_pct?.mae,
+          holdout_tmrt_mae_c: metrics.holdout?.tmrt_c?.mae,
+          holdout_wind_mae_mps: metrics.holdout?.wind_10m_mps?.mae,
+          holdout_utci_mae_c: metrics.holdout?.utci_c?.mae,
+        },
+        result_data: { ...validation, source_input: sourceInput },
+      } } }));
+      thermalValidationStatus.textContent = `Attached ${validation.paired_count} paired rows from ${sourceFile.name} to the next climate report export.`;
+    } catch (error) {
+      thermalValidationStatus.textContent = error.message || 'Could not attach thermal validation report.';
+    } finally {
+      thermalValidationAttach.disabled = false;
+    }
   });
 
   const invalidate = () => {
@@ -920,7 +1057,7 @@ function setupWindResults() {
       const item = document.createElement('li'); item.textContent = 'Updating…'; list.replaceChildren(item);
     }
   });
-  ['wind-direction', 'wind-season', 'wind-stability', 'wind-size', 'wind-cfd-ground-height', 'wind-cfd-field']
+  ['wind-direction', 'wind-season', 'wind-stability', 'wind-comfort-criterion', 'wind-size', 'wind-cfd-ground-height', 'wind-cfd-field']
     .forEach(id => {
       document.querySelector(`#${id}`)?.addEventListener('input', invalidate);
       document.querySelector(`#${id}`)?.addEventListener('change', invalidate);
@@ -972,8 +1109,8 @@ function setupWindResults() {
       ...item,
       share: (counts.get(item.code) || 0) * 100 / totalCells,
     }));
-    const sittingStanding = categoryShares.filter(item => item.code <= 2).reduce((sum, item) => sum + item.share, 0);
-    const walkingOnly = categoryShares.filter(item => item.code >= 4).reduce((sum, item) => sum + item.share, 0);
+    const lowerSpeedActivityArea = categoryShares.slice(0, 2).reduce((sum, item) => sum + item.share, 0);
+    const highestWindClassesArea = categoryShares.slice(-2).reduce((sum, item) => sum + item.share, 0);
     const worstExceedance = Math.max(...probabilities, 0) * 100;
     const cellCount = (field.speed || []).length;
     const validCellCount = speeds.length;
@@ -982,6 +1119,7 @@ function setupWindResults() {
     const archiveCoverage = field.forcing_coverage
       ? `${(field.forcing_coverage.hourly_coverage_fraction * 100).toFixed(1)}% hourly coverage · ${Number(field.forcing_coverage.records).toLocaleString()} records`
       : 'Not reported';
+    const criterion = field.comfort_criterion || {};
     const comfortColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
     const breakdown = categoryShares.filter(item => item.share >= 0.05).map(item =>
       `<i style="flex:${item.share};background:${comfortColors[item.code]}" title="${windReportEscape(item.label)} · ${item.share.toFixed(1)}%"></i>`
@@ -992,12 +1130,15 @@ function setupWindResults() {
       ? `ERA5 ${field.era5_profile.sector.toUpperCase()} · ${(field.era5_profile.frequency_fraction * 100).toFixed(1)}% sampled group hours`
       : 'Manual mean forcing';
     results.innerHTML = `
-      <div class="wind-result-highlights"><span><b>${sittingStanding.toFixed(1)}%</b>sit or stand</span><span><b>${category?.label || '—'}</b>most common class</span></div>
+      <div class="wind-result-highlights"><span><b>${lowerSpeedActivityArea.toFixed(1)}%</b>lowest-speed activity classes</span><span><b>${category?.label || '—'}</b>most common class</span></div>
       <div class="wind-comfort-mini" aria-label="Comfort category distribution">${breakdown}</div>
       <details class="wind-result-evidence"><summary>Evidence, coverage &amp; assumptions</summary><div class="wind-result-facts">
         <span><b>${meanSpeed.toFixed(1)} m/s · ${(meanSpeed * 3.6).toFixed(1)} km/h</b>Mean speed at ${field.height_m.toFixed(1)} m</span>
         <span><b>${(meanExceedance * 100).toFixed(1)}%</b>Mean exceedance above ${field.exceedance.threshold_mps} m/s</span>
-        <span><b>${walkingOnly.toFixed(1)}%</b>Walking-only or uncomfortable</span>
+        <span><b>${highestWindClassesArea.toFixed(1)}%</b>Highest-speed activity classes</span>
+        <span><b>${windReportEscape(criterion.name || field.comfort_standard || 'Not reported')} · v${windReportEscape(criterion.version || '—')}</b>Selected comfort criterion</span>
+        <span><b>${windReportEscape(criterion.exceedance_probability == null ? '—' : `${Number(criterion.exceedance_probability) * 100}%`)}</b>Criterion exceedance limit</span>
+        <span><b>${windReportEscape(criterion.gust_treatment || 'Not reported')}</b>Gust treatment</span>
         <span><b>${worstExceedance.toFixed(1)}%</b>Worst-cell exceedance</span>
         <span><b>±${relative.toFixed(0)}%</b>Screening uncertainty</span>
         <span><b>${validCoverage.toFixed(1)}%</b>${validCellCount.toLocaleString()} of ${cellCount.toLocaleString()} model cells resolved</span>
@@ -1012,17 +1153,18 @@ function setupWindResults() {
   reportButton?.addEventListener('click', () => {
     if (!latestField || !reportDocument || !reportDialog) return;
     const field = latestField;
+    const isValidCell = index => !field.valid || Boolean(field.valid[index]);
     const speedScale = field.analysis_mode === 'comfort' && field.coverage_fraction > 0 ? 1 / field.coverage_fraction : 1;
-    const speeds = (field.speed || []).map(value => Number(value) * speedScale);
-    const probabilities = (field.exceedance?.probability || []).map(Number);
-    const totalCells = Math.max(field.comfort_category?.length || 0, 1);
+    const speeds = (field.speed || []).filter((_, index) => isValidCell(index)).map(value => Number(value) * speedScale);
+    const probabilities = (field.exceedance?.probability || []).filter((_, index) => isValidCell(index)).map(Number);
+    const totalCells = Math.max((field.comfort_category || []).reduce((count, _, index) => count + Number(isValidCell(index)), 0), 1);
     const comfort = field.comfort_categories.map(category => ({
       ...category,
-      count: field.comfort_category.filter(code => code === category.code).length,
+      count: field.comfort_category.filter((code, index) => isValidCell(index) && code === category.code).length,
     })).map(category => ({ ...category, percentage: category.count / totalCells * 100 }));
     const dominant = comfort.slice().sort((a, b) => b.count - a.count)[0];
-    const uncomfortable = comfort.filter(category => category.code === 5)[0]?.percentage || 0;
-    const restricted = comfort.filter(category => category.code >= 4).reduce((sum, category) => sum + category.percentage, 0);
+    const uncomfortable = comfort.at(-1)?.percentage || 0;
+    const restricted = comfort.slice(-2).reduce((sum, category) => sum + category.percentage, 0);
     const severity = uncomfortable > 10 ? 'poor' : uncomfortable > 1 || restricted > 20 ? 'caution' : 'good';
     const headline = severity === 'poor' ? 'Material pedestrian wind discomfort is indicated'
       : severity === 'caution' ? 'Local wind-comfort constraints require attention'
@@ -1033,7 +1175,8 @@ function setupWindResults() {
     const generated = new Intl.DateTimeFormat('en-ZA', {
       dateStyle: 'long', timeStyle: 'short', timeZone: 'Africa/Johannesburg',
     }).format(new Date());
-    const signature = `${field.version}|${field.direction_deg}|${field.season}|${field.height_m}|${field.origin?.join(',')}`;
+    const criterion = field.comfort_criterion || {};
+    const signature = `${field.version}|${criterion.id || field.comfort_standard}|${field.direction_deg}|${field.season}|${field.height_m}|${field.origin?.join(',')}`;
     const hash = [...signature].reduce((value, character) => ((value * 31 + character.charCodeAt(0)) >>> 0), 2166136261);
     const reference = `WND-${hash.toString(16).toUpperCase().padStart(8, '0')}`;
     const comfortColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
@@ -1059,10 +1202,11 @@ function setupWindResults() {
         <div><p class="report-kicker">Cape Town CBD Conditions</p><h1 id="wind-report-title">Pedestrian wind analysis report</h1></div>
         <div class="report-header-meta"><b>${reference}</b>Generated ${windReportEscape(generated)}<br>${windReportEscape(String(field.analysis_mode || 'preview').toUpperCase())} · screening assessment</div>
       </header>
-      <section class="report-verdict ${severity}"><div><h2>${windReportEscape(headline)}</h2><p>${windReportNumber(uncomfortable, 1, '%')} of the analysed grid is classified as uncomfortable and ${windReportNumber(restricted, 1, '%')} is limited to business walking or worse. The most common category is ${windReportEscape(dominant?.label || 'unknown')}.</p></div></section>
+      <section class="report-verdict ${severity}"><div><h2>${windReportEscape(headline)}</h2><p>${windReportNumber(uncomfortable, 1, '%')} of the analysed grid falls in the top ${windReportEscape(criterion.name || 'criterion')} class and ${windReportNumber(restricted, 1, '%')} in its two highest-wind classes. The most common class is ${windReportEscape(dominant?.label || 'unknown')}.</p></div></section>
       <section class="report-section"><div class="report-section-heading"><h2>Scenario definition</h2><span>Boundary conditions and domain</span></div><div class="report-scenario-grid">
         <div class="report-fact"><span>Wind direction</span><strong>${windReportEscape(directionDescription)}</strong></div>
         <div class="report-fact"><span>Season / stability</span><strong>${windReportEscape(field.season)} · ${windReportEscape(field.stability?.label || field.stability?.key)}</strong></div>
+        <div class="report-fact"><span>Comfort criterion</span><strong>${windReportEscape(criterion.name || field.comfort_standard || 'Not reported')} · v${windReportEscape(criterion.version || '—')}</strong></div>
         <div class="report-fact"><span>Result height</span><strong>${windReportNumber(field.height_m, 1, ' m')} pedestrian layer</strong></div>
         <div class="report-fact"><span>Analysis domain</span><strong>${windReportNumber(field.width * field.dx, 0, ' m')} × ${windReportNumber(field.height * field.dz, 0, ' m')}</strong></div>
         <div class="report-fact"><span>Forcing</span><strong>${forcingDescription}</strong></div>
@@ -1096,8 +1240,9 @@ function setupWindResults() {
         </ul></div>
       </section>
       <section class="report-section"><div class="report-section-heading"><h2>Method and interpretation</h2><span>Read before decision-making</span></div><div class="report-two-column">
-        <div class="report-note"><b>Method.</b> ERA5 or manual boundary forcing is adjusted to pedestrian height, then combined with the directional terrain field, building-resolved CBD field and available ventilation factors. ${isComfortStudy ? 'Sixteen directional exceedance fields are weighted by the selected period wind rose.' : 'The displayed exceedance is conditional on the selected direction.'} Comfort categories use five-percent-exceedance activity thresholds.</div>
-        <div class="report-note"><b>Limitations.</b> This is a preview screening result, not certified CFD, wind-tunnel evidence or a local measurement. ERA5 is regional-scale; the current attached archive is temporally incomplete. Building wakes, turbulence and façade effects require independent OpenFOAM/WindNinja benchmarks and pedestrian anemometer validation.</div>
+        <div class="report-note"><b>Method.</b> ${windReportEscape(criterion.wind_speed_basis || 'Wind categories use a declared screening method.')} ${windReportEscape(criterion.averaging_period || '')} Gust treatment: ${windReportEscape(criterion.gust_treatment || 'not reported')} ${isComfortStudy ? 'Solved directional exceedance fields are weighted by the selected period wind rose.' : 'The displayed exceedance is conditional on the selected direction.'}</div>
+        <div class="report-note"><b>Source.</b> ${windReportEscape(criterion.source?.citation || 'Criterion source not recorded.')}${criterion.source?.url ? ` <a href="${windReportEscape(criterion.source.url)}" rel="noreferrer">Source document</a>.` : ''}</div>
+        <div class="report-note"><b>Limitations.</b> This is an unvalidated screening result, not certified CFD, wind-tunnel evidence or a local measurement. ERA5 is regional reanalysis; its active 2021–2025 archive has complete hourly coverage but is not independent local validation. The selected criterion's gust and safety coverage is stated above. Building wakes and turbulence need independent benchmarks and pedestrian-anemometer validation.</div>
       </div></section>
       <footer class="report-footer">Cape Town CBD Conditions · ${reference} · ${windReportEscape(field.crs)} · Analysis mode: ${windReportEscape(field.analysis_mode)} · Source layer: ${windReportEscape(field.source_layer || 'generated field')}</footer>`;
     reportDocument.scrollTop = 0;

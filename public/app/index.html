@@ -328,6 +328,19 @@
             <span><b id="heat-priority-area">—</b><i>Priority area</i></span>
             <span><b id="heat-maximum">—</b><i id="heat-maximum-label">Maximum</i></span>
           </div>
+          <section id="heat-comfort-kpis" class="heat-comfort-kpis" aria-label="Thermal comfort area and time indicators" hidden>
+            <b>Thermal comfort KPIs</b>
+            <small id="heat-kpi-scope"></small>
+            <table class="heat-kpi-grid" aria-label="Area-time shares by UTCI stress band">
+              <thead><tr><th scope="col">UTCI band</th><th id="heat-kpi-share-heading" scope="col">Area-time share</th><th scope="col">Equivalent hours per mapped cell</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Cold stress · &lt; 9°C</th><td id="heat-kpi-cold-share">—</td><td id="heat-kpi-cold-hours">—</td></tr>
+                <tr><th scope="row">No thermal stress · 9–&lt;26°C</th><td id="heat-kpi-comfort-share">—</td><td id="heat-kpi-comfort-hours">—</td></tr>
+                <tr><th scope="row">Heat stress · ≥ 26°C</th><td id="heat-kpi-heat-share">—</td><td id="heat-kpi-heat-hours">—</td></tr>
+              </tbody>
+            </table>
+            <small id="heat-kpi-method"></small>
+          </section>
           <section id="heat-explorer" class="heat-explorer" aria-label="Heat distribution and street rankings">
             <div class="heat-explorer-heading"><b>Heat distribution</b><small id="heat-distribution-count">—</small></div>
             <div class="heat-rankings">
@@ -364,6 +377,14 @@
             <details id="heat-energy" class="compact-about" hidden><summary>Energy &amp; water balance</summary><p id="heat-energy-summary">—</p></details>
           </details>
         </div>
+        <details class="compact-about thermal-validation-import">
+          <summary>Attach thermal validation to report</summary>
+          <p>Import the JSON produced by <code>scripts/validate_thermal_observations.py</code> and the exact CSV it scored. The CSV hash must match. The report embeds the paired rows and the archive includes the referenced run frames when they are still available.</p>
+          <label>Thermal validation JSON <input id="thermal-validation-result-file" type="file" accept=".json,application/json"></label>
+          <label>Scored observation CSV <input id="thermal-validation-source-file" type="file" accept=".csv,text/csv"></label>
+          <button id="thermal-validation-attach" class="secondary" type="button">Attach to climate report</button>
+          <p id="thermal-validation-import-status" class="method-note" role="status">No thermal observation score attached.</p>
+        </details>
         <details class="compact-about"><summary>About</summary><p>UTCI and Tmrt are experimental model estimates, not observations. Satellite screening layers are separate from UTCI.</p></details>
       </section>
       <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
@@ -486,6 +507,22 @@
           <details id="scenario-design-editor" class="scenario-workspace scenario-design-editor">
             <summary>Try a design · updates live</summary>
             <p class="design-intro">Edit mapped buildings or place simple blocks. Sun shadows and Viewshed update as you edit. Recalculate Sun hours after changes.</p>
+            <details class="design-coupling">
+              <summary>What a design edit updates</summary>
+              <ul>
+                <li><b>Updates live:</b> proposed building geometry, current sun shadows, Viewshed, and the Heat shade overlay. These are geometry views; they do not recalculate heat or energy.</li>
+                <li><b>Screening overlay:</b> the wind wake shape uses the saved baseline field and edited footprints. It is a visual heuristic, not a new CFD solution or a numeric comfort KPI.</li>
+                <li><b>Matched comparison:</b> calculate before/after direct-sun hours for the edited layout. Compare the same date, time window and grid resolution.</li>
+                <li><b>Baseline until an offline solve:</b> UTCI/Tmrt, historical heat KPIs, annual wind comfort, pollutant dispersal, runoff, traffic and walking-route metrics do not recalculate from the proposal.</li>
+              </ul>
+              <p>Matched comparisons are available for direct-sun hours and a heat/shade screening score. The heat/shade score keeps the fixed summer surface-temperature baseline; neither comparison recalculates UTCI/Tmrt or CFD wind.</p>
+            </details>
+            <div class="massing-actions">
+              <button id="design-sunlight-compare" class="secondary" type="button" disabled>Compare design sunlight</button>
+              <button id="design-heat-compare" class="secondary" type="button" disabled>Compare heat/shade screening</button>
+            </div>
+            <p id="design-sunlight-status" class="design-export-status" role="status" aria-live="polite">Edit a building or add/remove a block to enable a matched sunlight comparison.</p>
+            <p id="design-heat-status" class="design-export-status" role="status" aria-live="polite">Edit a building or add/remove a block to enable matched heat/shade screening.</p>
             <label class="design-name-label">Scenario name<input id="design-name" type="text" maxlength="64" value="Cape Town design option"></label>
             <div class="design-pick-actions">
               <button id="massing-select-building" class="secondary" type="button">Select existing building</button>
@@ -550,7 +587,7 @@
             <button type="button" data-wind-direction="180">S</button><button type="button" data-wind-direction="225">SW</button>
             <button type="button" data-wind-direction="270">W</button><button type="button" data-wind-direction="315">NW</button>
           </div>
-          <p class="wind-cfd-hint">Comfort uses all 16 solved sectors. Direction and pollutant studies use one solved direction. Results are exploratory and unvalidated.</p>
+          <p class="wind-cfd-hint">Comfort weights the solved directional fields. Direct observation scoring is available in Check against measurements when you have matched pedestrian and upstream readings. Results remain exploratory until holdout and mesh-sensitivity gates pass.</p>
           <!-- Hidden in the normal WebGL/OpenFOAM path — the compass presets
                above replace this as the direction picker there. The Canvas
                fallback renderer (sceneRenderer.js, used only when WebGL2 is
@@ -769,6 +806,14 @@
               <option value="unstable">Unstable / convective</option><option value="neutral" selected>Neutral urban</option><option value="stable">Stable</option>
             </select>
           </label>
+          <label>Comfort criterion
+            <select id="wind-comfort-criterion">
+              <option value="lawson_lddc_style_screening_v1">Lawson-LDDC-style activity screen</option>
+              <option value="davenport_1972_mean_5pct_v1">Davenport 1972 · hourly mean</option>
+              <option value="lawson_lddc_2001_gem_v1" disabled title="Requires validated gust-equivalent wind and annual gust statistics.">Lawson LDDC 2001 · unavailable</option>
+            </select>
+          </label>
+          <p id="wind-criterion-provenance" class="wind-cfd-hint">Select a versioned criterion to see its speed basis, averaging period, gust handling and source.</p>
         </div>
 
         <button id="wind-simulate" class="wind-run-button" type="button">Run comfort assessment</button>
@@ -805,22 +850,23 @@
 
         <details class="wind-tool-card wind-validation-card">
           <summary>Check against measurements</summary>
-          <p>Compare at least three pedestrian observations with the screening model. Coordinates are viewer-local metres (x east, z south-positive); CSV columns: x, z, speed_mps, height_m, id, observed_at.</p>
+          <p>For a direct OpenFOAM score, record the timezone-aware measurement time, pedestrian and upstream sensor heights, averaging period, and simultaneous pedestrian/reference wind. Assign the entire held-out site or time block one split_group; a group cannot appear in both calibration and holdout. Coordinates are viewer-local metres (x east, z south-positive). The steady CFD inlet has no vertical profile, so it does not correct for different sensor heights.</p>
+          <label>Model to score <select id="wind-validation-target"><option value="openfoam">OpenFOAM pedestrian field</option><option value="screening">Screening proxy (diagnostic only)</option></select></label>
           <label>Observation CSV <input id="wind-observation-file" type="file" accept=".csv,text/csv"></label>
-          <label>Or paste observations <textarea id="wind-observation-json" rows="4" placeholder='[{"x":-40,"z":-20,"speed_mps":4.8,"height_m":2}]'></textarea></label>
+          <label>Or paste observations <textarea id="wind-observation-json" rows="4" placeholder='[{"id":"S1","site_name":"Church Square","x":-40,"z":-20,"speed_mps":4.8,"height_m":2,"reference_speed_mps":8,"reference_direction_deg":135,"reference_height_m":10,"averaging_period_s":600,"split":"holdout","split_group":"site:church-square"}]'></textarea></label>
           <div class="wind-validation-scenario">
-            <label>Reference wind <span><input id="wind-validation-speed" type="number" min="0" max="50" step="0.1" value="10"> m/s</span></label>
-            <label>Wind direction <select id="wind-validation-direction"><option value="135">SE · 135°</option><option value="150">Cape Doctor · 150°</option><option value="315">NW · 315°</option></select></label>
+            <label>Reference wind (screening only) <span><input id="wind-validation-speed" type="number" min="0" max="50" step="0.1" value="10"> m/s</span></label>
+            <label>Wind direction <select id="wind-validation-direction"><option value="0">N · 0°</option><option value="22.5">NNE · 22.5°</option><option value="45">NE · 45°</option><option value="67.5">ENE · 67.5°</option><option value="90">E · 90°</option><option value="112.5">ESE · 112.5°</option><option value="135" selected>SE · 135°</option><option value="157.5">SSE · 157.5°</option><option value="180">S · 180°</option><option value="202.5">SSW · 202.5°</option><option value="225">SW · 225°</option><option value="247.5">WSW · 247.5°</option><option value="270">W · 270°</option><option value="292.5">WNW · 292.5°</option><option value="315">NW · 315°</option><option value="337.5">NNW · 337.5°</option></select></label>
             <label>Domain width <span><input id="wind-validation-size" type="number" min="100" max="1200" step="50" value="500"> m</span></label>
             <label>Centre x <input id="wind-validation-center-x" type="number" step="10" value="0"></label>
             <label>Centre z <input id="wind-validation-center-z" type="number" step="10" value="0"></label>
           </div>
           <button id="wind-validate-button" class="secondary" type="button">Compare measurements</button>
-          <p id="wind-validation-status" class="wind-tool-status" role="status">This check uses the screening model; it does not validate the OpenFOAM result.</p>
+          <p id="wind-validation-status" class="wind-tool-status" role="status">OpenFOAM scoring requires per-row split, pedestrian height, and concurrent upstream speed and direction. Keep holdout sites or periods untouched.</p>
           <div id="wind-validation-result" class="wind-validation-result" hidden></div>
         </details>
 
-        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for all mapped buildings. SE 135° and NW 315° are solved today; other directions will appear as their cases are meshed, solved and converted. Comfort weights each <em>solved</em> OpenFOAM direction's pedestrian-height field by its ERA5 wind-rose frequency and Weibull exceedance; directions without a solved case are excluded from the weighted sum rather than interpolated or assumed calm, so today's comfort result is a lower-bound estimate covering only the resolved sector(s), not a complete annual study. Neither mode has passed domain/mesh sensitivity or field validation and must not be used for certification.</p></details>
+        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for mapped buildings. Comfort weights solved directions by the ERA5 wind rose and Weibull exceedance; unsolved directions are excluded, not interpolated or treated as calm. Check against measurements can sample the selected CFD volume directly, but only matched sectors and the recorded calibration/holdout locations are scored. Speed scaling uses concurrent upstream wind speed against the case inlet and does not simulate changing stability or transient turbulence. Neither mode has passed domain/mesh sensitivity or local field-validation gates and must not be used for certification.</p></details>
       </section>
       <section id="menu-viewshed" class="viewshed-panel menu-section" data-menu-panel="viewshed" role="tabpanel" aria-label="3D viewshed controls" hidden>
         <div class="viewshed-heading"><span>3D viewshed</span><span class="viewshed-badge">Line of sight</span></div>
@@ -1128,6 +1174,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-120"></script>
+    <script type="module" src="/app.js?v=experience-139"></script>
 </body>
 </html>

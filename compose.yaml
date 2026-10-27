@@ -14,6 +14,8 @@ services:
     volumes:
       - thermal-products:/var/lib/conditions-thermal:ro
       - ./data/thermal/climatology:/app/data/thermal/climatology:ro
+      # The API's measurement scorer samples the same offline CFD artifacts served by nginx.
+      - ./public/assets/cfd:/app/public/assets/cfd:ro
     restart: unless-stopped
 
   thermal-worker:

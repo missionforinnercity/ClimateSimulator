@@ -99,6 +99,15 @@ the target `public/assets/cfd/<name>/` directory with `volume.json`,
 `fields.f32` and `valid.u8`. This is a visualisation product, not a
 substitute for the native mesh in engineering analysis.
 
+The volume manifest includes SHA-256 hashes of `fields.f32` and `valid.u8`.
+These identify the exact converted pedestrian field referenced by client
+reports. Existing converted directories can be backfilled after pulling this
+change with:
+
+```bash
+.venv/bin/python scripts/update_openfoam_asset_hashes.py
+```
+
 ```json
 {
   "schema": "conditions-cfd-volume/1",

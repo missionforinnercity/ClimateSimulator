@@ -25,13 +25,13 @@ from shapely.strtree import STRtree
 
 from server.terrain_wind import sample_bilinear
 from server.wind_metrics import (
-    COMFORT_CATEGORIES,
     STABILITY_PROFILES,
     add_screening_metrics,
     comfort_codes_from_exceedance,
     weibull_exceedance,
 )
 from server.era5_wind import forcing_profile
+from server.wind_criteria import DEFAULT_CRITERION_ID, get_criterion
 
 LOCAL_CRS = "+proj=tmerc +lat_0=0 +lon_0=19 +k=1 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs"
 WEB_CRS = "EPSG:4326"
@@ -83,6 +83,7 @@ class PreviewRequest:
     stability: str
     exceedance_threshold_mps: float
     forcing_mode: str
+    comfort_criterion_id: str = DEFAULT_CRITERION_ID
 
 
 def database_url() -> str | None:
@@ -279,6 +280,8 @@ def request_from_payload(payload: dict[str, Any], config: dict[str, Any]) -> Pre
     forcing_mode = str(payload.get("forcing_mode", "manual")).lower()
     if forcing_mode not in {"manual", "era5_climatology"}:
         raise ValueError("forcing_mode must be manual or era5_climatology")
+    comfort_criterion_id = str(payload.get("comfort_criterion_id", DEFAULT_CRITERION_ID))
+    get_criterion(comfort_criterion_id)
     if bbox is None and center_local is None:
         center_local = (0.0, 0.0)
     return PreviewRequest(
@@ -294,6 +297,7 @@ def request_from_payload(payload: dict[str, Any], config: dict[str, Any]) -> Pre
         stability=stability,
         exceedance_threshold_mps=exceedance_threshold_mps,
         forcing_mode=forcing_mode,
+        comfort_criterion_id=comfort_criterion_id,
     )
 
 
@@ -495,6 +499,7 @@ def build_field(request: PreviewRequest, bounds: tuple[float, float, float, floa
         exceedance_threshold_mps=request.exceedance_threshold_mps,
         weibull_shape=era5_profile["weibull_shape"] if era5_profile else None,
         sector_frequency_fraction=era5_profile["frequency_fraction"] if era5_profile else None,
+        criterion_id=request.comfort_criterion_id,
     )
 
 
@@ -511,6 +516,8 @@ def build_comfort_field(
     classification silently influence the N, W, NW, ... fields.
     """
     direction_fields: list[tuple[float, dict[str, Any]]] = []
+    criterion = get_criterion(request.comfort_criterion_id)
+    categories = criterion["categories"]
     polygon_cache: dict[str, list[dict[str, Any]]] = {}
     for direction_deg in (index * 22.5 for index in range(16)):
         directional_request = replace(request, direction_deg=direction_deg, forcing_mode="era5_climatology")
@@ -529,7 +536,7 @@ def build_comfort_field(
     weighted_speed = np.zeros(cell_count, dtype=float)
     threshold_probabilities = {
         float(category["max_speed_mps"]): np.zeros(cell_count, dtype=float)
-        for category in COMFORT_CATEGORIES[:-1]
+        for category in categories[:-1]
     }
     selected_exceedance = np.zeros(cell_count, dtype=float)
     directional_summary = []
@@ -549,6 +556,12 @@ def build_comfort_field(
 
     dominant_index = int(np.argmax(weights))
     result = dict(direction_fields[dominant_index][1])
+    era5_coverage = result.get("era5_profile", {}).get("coverage", {})
+    frequency_quality = (
+        "complete_hourly_era5_reanalysis_not_independent_station_validation"
+        if era5_coverage.get("complete_hourly_climatology")
+        else "provisional_incomplete_hourly_archive"
+    )
     result.update({
         "analysis_mode": "comfort",
         "analysis_kind": "multi_direction_wind_rose_comfort_screening",
@@ -557,8 +570,14 @@ def build_comfort_field(
         "representative_direction_deg": direction_fields[dominant_index][1]["direction_deg"],
         "directional_summary": directional_summary,
         "speed": np.round(weighted_speed, 4).tolist(),
-        "comfort_standard": "Lawson-LDDC-style screening; wind-rose-weighted 5% exceedance activity thresholds",
-        "comfort_category": comfort_codes_from_exceedance(threshold_probabilities).tolist(),
+        "comfort_standard": criterion["name"],
+        "comfort_criterion": criterion,
+        "comfort_categories": categories,
+        "comfort_category": comfort_codes_from_exceedance(
+            threshold_probabilities,
+            accepted_probability=float(criterion["exceedance_probability"]),
+            categories=categories,
+        ).tolist(),
         "comfort_exceedance_probability": {
             str(threshold): np.round(probability, 6).tolist()
             for threshold, probability in threshold_probabilities.items()
@@ -567,7 +586,7 @@ def build_comfort_field(
             "threshold_mps": request.exceedance_threshold_mps,
             "basis": "wind_rose_weighted_all_direction_seasonal_probability",
             "probability": np.round(selected_exceedance, 6).tolist(),
-            "frequency_quality": "provisional_incomplete_hourly_archive",
+            "frequency_quality": frequency_quality,
         },
     })
     return result

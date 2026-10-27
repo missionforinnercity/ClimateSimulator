@@ -342,22 +342,28 @@ def design_shade_comparison(
     mean_priority_after = sum(area * value for area, value in zip(areas, priority_after) if value is not None) / scored_area if scored_area else 0.0
     zone_points = []
     for geometry, before_value, after_value, before_priority, after_priority, area in zip(geometries, before, after, priority_before, priority_after, areas):
+        # These geometry slivers round to zero at the exported 0.1 m² display
+        # precision and would create invalid-looking report rows.
+        if round(float(area), 1) <= 0:
+            continue
         point = geometry.representative_point()
         zone_points.append({
             "x": round(float(point.x), 2), "z": round(float(point.y), 2),
-            "area_m2": round(float(area), 1), "before": before_value, "after": after_value,
+            "area_m2": round(float(area), 3), "before": before_value, "after": after_value,
             "priority_before": before_priority, "priority_after": after_priority,
         })
     return {
-        "date": date_text, "minutes": minutes, "zone_count": len(geometries),
+        "date": date_text, "minutes": minutes, "zone_count": len(zone_points),
+        "source_zone_count": len(geometries),
+        "excluded_sub_0_05_m2_zone_count": len(geometries) - len(zone_points),
         "area_m2": round(total_area, 1), "mean_shade_deficit_before": round(mean_before, 2),
         "mean_shade_deficit_after": round(mean_after, 2),
         "change_mean_shade_deficit": round(mean_after - mean_before, 2),
         "mean_priority_score_before": round(mean_priority_before, 2),
         "mean_priority_score_after": round(mean_priority_after, 2),
         "change_mean_priority_score": round(mean_priority_after - mean_priority_before, 2),
-        "zones_improved": sum(a < b for a, b in zip(after, before)),
-        "zones_worsened": sum(a > b for a, b in zip(after, before)),
+        "zones_improved": sum(round(float(area), 1) > 0 and a < b for area, a, b in zip(areas, after, before)),
+        "zones_worsened": sum(round(float(area), 1) > 0 and a > b for area, a, b in zip(areas, after, before)),
         "zone_points": zone_points,
         "method": "Area-weighted mapped heat-zone shade deficit and the app's 70% fixed summer surface-temperature + 30% selected-time shade priority score. Proposed building shadows are recalculated; satellite surface temperature is held at baseline and is not rerun.",
     }

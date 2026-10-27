@@ -79,6 +79,7 @@ export async function startWebGLScene(canvas, status) {
     canvas,
     antialias: true,
     alpha: false,
+    preserveDrawingBuffer: true,
     powerPreference: 'high-performance',
     failIfMajorPerformanceCaveat: true,
   });
@@ -1819,6 +1820,10 @@ export async function startWebGLScene(canvas, status) {
   designSunlightImpactGroup.visible = false;
   scene.add(designSunlightImpactGroup);
   let designSunlightImpactSummary = '';
+  let designProposalGeometry = null;
+  let designSunlightCompareRevision = 0;
+  let designSunlightAnalysisId = null;
+  let designHeatCompareRevision = 0;
   function clearDesignSunlightImpact() {
     while (designSunlightImpactGroup.children.length) {
       const child = designSunlightImpactGroup.children[0];
@@ -1881,7 +1886,30 @@ export async function startWebGLScene(canvas, status) {
     syncDesignImpactLegend();
   }
   addEventListener('climate-design-sunlight-result', event => showDesignSunlightImpact(event.detail));
-  addEventListener('climate-design-geometry-change', clearDesignSunlightImpact);
+  addEventListener('climate-design-geometry-change', event => {
+    designProposalGeometry = event.detail || null;
+    designSunlightCompareRevision += 1;
+    if (designSunlightAnalysisId) {
+      const analysisId = designSunlightAnalysisId;
+      designSunlightAnalysisId = null;
+      fetch(`${windApi}/sunlight/cancel?${new URLSearchParams({ analysis_id: analysisId })}`, { method: 'POST' }).catch(() => {});
+    }
+    clearDesignSunlightImpact();
+    const button = document.querySelector('#design-sunlight-compare');
+    const status = document.querySelector('#design-sunlight-status');
+    const heatButton = document.querySelector('#design-heat-compare');
+    const heatStatus = document.querySelector('#design-heat-status');
+    const hasProposal = Boolean(designProposalGeometry?.add_buildings?.length || designProposalGeometry?.remove_building_indexes?.length);
+    if (button) button.disabled = !hasProposal;
+    designHeatCompareRevision += 1;
+    if (heatButton) heatButton.disabled = !hasProposal;
+    if (status) status.textContent = hasProposal
+      ? 'Proposal changed. Compare direct sunlight for the current geometry and selected Sun date/window.'
+      : 'Edit a building or add/remove a block to enable a matched sunlight comparison.';
+    if (heatStatus) heatStatus.textContent = hasProposal
+      ? 'Proposal changed. Recalculate the matched heat/shade screen for the current geometry and selected Heat date/time.'
+      : 'Edit a building or add/remove a block to enable matched heat/shade screening.';
+  });
   function syncDesignImpactLegend() {
     const legend = document.querySelector('#design-impact-legend');
     if (!legend) return;
@@ -5032,6 +5060,15 @@ export async function startWebGLScene(canvas, status) {
   const heatLegendMin = document.querySelector('#heat-legend-min');
   const heatLegendMax = document.querySelector('#heat-legend-max');
   const heatSummary = document.querySelector('#heat-summary');
+  const heatComfortKpis = document.querySelector('#heat-comfort-kpis');
+  const heatKpiScope = document.querySelector('#heat-kpi-scope');
+  const heatKpiMethod = document.querySelector('#heat-kpi-method');
+  const heatKpiShareHeading = document.querySelector('#heat-kpi-share-heading');
+  const heatKpiCells = {
+    cold: [document.querySelector('#heat-kpi-cold-share'), document.querySelector('#heat-kpi-cold-hours')],
+    comfort: [document.querySelector('#heat-kpi-comfort-share'), document.querySelector('#heat-kpi-comfort-hours')],
+    heat: [document.querySelector('#heat-kpi-heat-share'), document.querySelector('#heat-kpi-heat-hours')],
+  };
   const heatAverage = document.querySelector('#heat-average');
   const heatPriorityArea = document.querySelector('#heat-priority-area');
   const heatMaximum = document.querySelector('#heat-maximum');
@@ -5091,6 +5128,8 @@ export async function startWebGLScene(canvas, status) {
   const windDirection = document.querySelector('#wind-direction');
   const windSeason = document.querySelector('#wind-season');
   const windStability = document.querySelector('#wind-stability');
+  const windComfortCriterion = document.querySelector('#wind-comfort-criterion');
+  const windCriterionProvenance = document.querySelector('#wind-criterion-provenance');
   const windForcingMode = document.querySelector('#wind-forcing-mode');
   const windSpeed = document.querySelector('#wind-speed');
   const windSize = document.querySelector('#wind-size');
@@ -5242,6 +5281,7 @@ export async function startWebGLScene(canvas, status) {
     direction: Number(windDirection?.value) || 135,
     season: windSeason?.value || 'annual',
     stability: windStability?.value || 'neutral',
+    comfortCriterionId: windComfortCriterion?.value || 'lawson_lddc_style_screening_v1',
     height: 2,
     forcingMode: windForcingMode?.value || 'era5_climatology',
     analysisMode: 'comfort',
@@ -6884,6 +6924,24 @@ export async function startWebGLScene(canvas, status) {
     return thermalClimateFrameCache.get(frame.id);
   }
 
+  function renderThermalKpiBands(bands, scope, method, hoursAvailable = false) {
+    if (!heatComfortKpis) return;
+    const bandById = new Map((bands || []).map(item => [item.id, item]));
+    const ids = { cold: 'cold_stress', comfort: 'no_thermal_stress', heat: 'heat_stress' };
+    for (const [key, id] of Object.entries(ids)) {
+      const item = bandById.get(id);
+      const [shareNode, hoursNode] = heatKpiCells[key] || [];
+      if (shareNode) shareNode.textContent = item?.area_time_share_pct == null
+        ? '—' : `${Number(item.area_time_share_pct).toFixed(1)}%`;
+      if (hoursNode) hoursNode.textContent = hoursAvailable && item?.equivalent_hours_per_mapped_cell != null
+        ? `${Number(item.equivalent_hours_per_mapped_cell).toLocaleString()} h` : '—';
+    }
+    if (heatKpiScope) heatKpiScope.textContent = scope;
+    if (heatKpiMethod) heatKpiMethod.textContent = method;
+    if (heatKpiShareHeading) heatKpiShareHeading.textContent = hoursAvailable ? 'Area-time share' : 'Area at selected hour';
+    heatComfortKpis.hidden = false;
+  }
+
   async function loadClimatology(metric, loadToken) {
     if (!thermalClimatology) {
       const response = await fetch(`${windApi}/thermal/climatology`);
@@ -6963,6 +7021,26 @@ export async function startWebGLScene(canvas, status) {
     const localHour = `${hour.toString().padStart(2, '0')}:00`;
     const periodLabel = aggregate === 'annual' ? 'Annual composite' : aggregate === 'season'
       ? `${selectedSeason[0].toUpperCase()}${selectedSeason.slice(1)} mean` : sourceFrames[0].month_name;
+    if (metric === 'utci_c') {
+      const kpiParams = new URLSearchParams({ aggregate, month: String(month), season: selectedSeason });
+      try {
+        const kpiResponse = await fetch(`${windApi}/thermal/climatology/kpis?${kpiParams}`);
+        if (!kpiResponse.ok) throw new Error(`KPI HTTP ${kpiResponse.status}`);
+        const kpis = await kpiResponse.json();
+        if (loadToken === heatLoadToken) {
+          const baseline = kpis.baseline_years || [];
+          renderThermalKpiBands(
+            kpis.bands,
+            `${periodLabel} · representative year · ${Number(kpis.representative_period_hours).toLocaleString()} h · ${baseline[0]}–${baseline[1]}`,
+            kpis.method,
+            true,
+          );
+        }
+      } catch (error) {
+        if (heatComfortKpis) heatComfortKpis.hidden = true;
+        if (heatKpiMethod) heatKpiMethod.textContent = 'Historical category area-time summary is unavailable.';
+      }
+    } else if (heatComfortKpis) heatComfortKpis.hidden = true;
     heatStatus.textContent = `${metric === 'utci_c' ? 'UTCI' : 'Tmrt'} · ${periodLabel} · ${localHour} SAST · 2016–2025 climate composite`;
     renderHeatExplorer(heatPayload, channel);
     if (heatWeatherInputs) heatWeatherInputs.hidden = true;
@@ -6973,6 +7051,11 @@ export async function startWebGLScene(canvas, status) {
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
       description: `${periodLabel}, ${localHour} SAST · ERA5 ${thermalClimatology.baseline.start_year}–${thermalClimatology.baseline.end_year} climate composite`,
       metric, valid_at: sourceFrames[0].valid_at, validation_status: thermalClimatology.validation_status,
+      climatology: true, aggregate, month, season: selectedSeason, local_hour: hour,
+      manifest_generated_at: thermalClimatology.generated_at,
+      manifest_sha256: thermalClimatology.manifest_sha256, models: thermalClimatology.models,
+      grid: thermalClimatology.grid,
+      source_frames: sourceFrames.map(frame => ({ id: frame.id, valid_at: frame.valid_at, sha256: frame.sha256, bytes: frame.bytes })),
     } } }));
   }
 
@@ -7105,6 +7188,7 @@ export async function startWebGLScene(canvas, status) {
     const channel = thermalChannel(thermalManifest, metric);
     const sampleValues = [];
     let total = 0, validCells = 0, maximum = -Infinity, hotspotCells = 0;
+    let coldStressCells = 0, noStressCells = 0, heatStressCells = 0;
     const sampleStride = Math.max(1, Math.floor(thermalManifest.grid.width * thermalManifest.grid.height / 100000));
     for (let pixel = 0; pixel < thermalManifest.grid.width * thermalManifest.grid.height; pixel++) {
       const raw = values[pixel * thermalManifest.channels.length + channel.index];
@@ -7113,7 +7197,12 @@ export async function startWebGLScene(canvas, status) {
       total += value;
       validCells++;
       maximum = Math.max(maximum, value);
-      if (metric === 'utci_c' && value >= 32) hotspotCells++;
+      if (metric === 'utci_c') {
+        if (value < 9) coldStressCells++;
+        else if (value < 26) noStressCells++;
+        else heatStressCells++;
+        if (value >= 32) hotspotCells++;
+      }
       // Sample by valid-cell count, rather than fixed pixel positions. The
       // latter can miss every valid cell in sparse frames and falsely report
       // that an otherwise usable forecast frame is empty.
@@ -7143,6 +7232,14 @@ export async function startWebGLScene(canvas, status) {
       hotspot_area_m2: metric === 'utci_c' ? hotspotCells * Number(thermalManifest.grid.resolution_m) ** 2 : 0,
       hotspot_area_pct: metric === 'utci_c' ? hotspotCells / Math.max(1, validCells) * 100 : 0,
     }, channel);
+    if (metric === 'utci_c') {
+      renderThermalKpiBands([
+        { id: 'cold_stress', area_time_share_pct: coldStressCells / validCells * 100 },
+        { id: 'no_thermal_stress', area_time_share_pct: noStressCells / validCells * 100 },
+        { id: 'heat_stress', area_time_share_pct: heatStressCells / validCells * 100 },
+      ], `Selected forecast hour · ${new Date(frame.valid_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })} SAST`,
+      'Spatial area share for this modeled hour only; no period-hours estimate is inferred from the single frame.');
+    } else if (heatComfortKpis) heatComfortKpis.hidden = true;
     renderHeatExplorer(heatPayload, channel);
     if (metric === 'utci_c') {
       heatLegendMin.textContent = `P10 ${formatHeatValue(range.min, channel)}`;
@@ -7229,9 +7326,22 @@ export async function startWebGLScene(canvas, status) {
       if (energyRow) heatEnergySummary.textContent = `QN ${energyRow.QN.toFixed(0)}, QH ${energyRow.QH.toFixed(0)}, QE ${energyRow.QE.toFixed(0)}, QS ${energyRow.QS.toFixed(0)} W/m² · runoff ${energyRow.RO.toFixed(2)} mm`;
     }
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
-      description: `Experimental ${metric} forecast valid ${frame.valid_at}`, run_id: thermalManifest.run_id,
+      description: `Experimental ${metric} forecast valid ${frame.valid_at}`, run_id: thermalManifest.run_id, frame_id: frame.id,
       valid_at: frame.valid_at, validation_status: thermalManifest.validation_status, wind_sector: frame.wind_sector,
+      run_generated_at: thermalManifest.generated_at, manifest_sha256: thermalManifest.manifest_sha256,
+      frame_sha256: frame.sha256, model_versions: thermalManifest.models, worker: thermalManifest.worker || null,
+      grid: thermalManifest.grid, channels: thermalManifest.channels,
       weather_warnings: forcing.weather_warnings || [], weather_inputs: inputs,
+      kpis: {
+        metric, mean, maximum, valid_cell_count: validCells,
+        valid_area_m2: validCells * Number(thermalManifest.grid.resolution_m) ** 2,
+        utci_area_share_pct: metric === 'utci_c' ? {
+          cold_stress: coldStressCells / validCells * 100,
+          no_thermal_stress: noStressCells / validCells * 100,
+          heat_stress: heatStressCells / validCells * 100,
+        } : null,
+        hotspot_area_pct: metric === 'utci_c' ? hotspotCells / validCells * 100 : null,
+      },
     } } }));
   }
 
@@ -7851,7 +7961,8 @@ export async function startWebGLScene(canvas, status) {
     requestAnimationFrame(() => sunStatus.classList.add('is-updated'));
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'sun', metadata: {
       description: `${average.toFixed(1)} h average sampled direct sun; ${scenario.date}; ${clock(Number(scenario.start_minutes))}–${clock(Number(scenario.end_minutes))}; ${area} m area. Clear-sky model.`,
-      scenario, meanSunHours: average,
+      scenario, meanSunHours: average, analysis_id: payload.analysis_id || sunAnalysisId,
+      kpis: { mean_direct_sun_hours: average, analysis_width_m: area, ...(buildings?.count ? { building_cell_count: buildings.count } : {}) },
     } } }));
   }
 
@@ -7970,6 +8081,153 @@ export async function startWebGLScene(canvas, status) {
     const buildings = second.buildings ? { ...second.buildings, features: buildingFeatures, color_range: ground.color_range } : null;
     return { payload: ground, buildings, scenario: second.scenario, area: second.area, average: second.average - first.average };
   }
+
+  const designSunlightCompareButton = document.querySelector('#design-sunlight-compare');
+  const designSunlightCompareStatus = document.querySelector('#design-sunlight-status');
+  designSunlightCompareButton?.addEventListener('click', async () => {
+    const geometry = designProposalGeometry;
+    if (!geometry?.add_buildings?.length && !geometry?.remove_building_indexes?.length) {
+      if (designSunlightCompareStatus) designSunlightCompareStatus.textContent = 'Edit the proposal before comparing sunlight.';
+      return;
+    }
+    const revision = ++designSunlightCompareRevision;
+    const analysisId = createAnalysisId();
+    designSunlightAnalysisId = analysisId;
+    designSunlightCompareButton.disabled = true;
+    if (designSunlightCompareStatus) designSunlightCompareStatus.textContent = 'Calculating matched baseline and proposal sunlight…';
+    const scenario = {
+      date: sunAnalysisDate?.value || sunDate?.value || shadowState.date,
+      start_minutes: Number(sunStartTime?.value || 480),
+      end_minutes: Number(sunEndTime?.value || 1080),
+      step_minutes: Number(sunStepTime?.value || 60),
+      resolution_m: Number(sunSurfaceResolution?.value || 10),
+    };
+    try {
+      const response = await fetch(`${windApi}/sunlight/design-comparison`, {
+        method: 'POST', timeoutMs: 300000,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...geometry, ...scenario, surfaces: 'all', analysis_id: analysisId,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      if (revision !== designSunlightCompareRevision) return;
+      dispatchEvent(new CustomEvent('climate-design-sunlight-result', { detail: payload }));
+      const ground = payload.ground || {};
+      const local = ground.local_impact || {};
+      const before = Number(ground.paired_before_mean_sun_hours);
+      const after = Number(ground.paired_after_mean_sun_hours);
+      const change = Number(ground.paired_change_mean_sun_hours);
+      const localChange = Number(local.change_mean_sun_hours);
+      const dateLabel = scenario.date;
+      if (designSunlightCompareStatus) designSunlightCompareStatus.textContent =
+        `Matched ground cells · ${dateLabel}, ${Math.floor(scenario.start_minutes / 60).toString().padStart(2, '0')}:${String(scenario.start_minutes % 60).padStart(2, '0')}–${Math.floor(scenario.end_minutes / 60).toString().padStart(2, '0')}:${String(scenario.end_minutes % 60).padStart(2, '0')} · ${Number(ground.paired_cell_count || 0).toLocaleString()} cells at 20 m · `
+        + `${before.toFixed(2)} → ${after.toFixed(2)} h mean sun (${change > 0 ? '+' : ''}${change.toFixed(2)} h); local ${localChange > 0 ? '+' : ''}${localChange.toFixed(2)} h · clear-sky direct-sun comparison.`;
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: {
+        tool: 'sun', metadata: {
+          receivedAt: new Date().toISOString(), label: 'Matched design sunlight result',
+          requestId: payload.analysis_id || analysisId,
+          description: `Matched baseline/proposal direct-sun comparison · ${dateLabel} · ${scenario.start_minutes}–${scenario.end_minutes} local minutes · ${scenario.resolution_m} m building-surface resolution · ${Number(ground.paired_cell_count || 0)} paired 20 m ground cells · ground mean ${before.toFixed(2)} → ${after.toFixed(2)} h (${change > 0 ? '+' : ''}${change.toFixed(2)} h). Clear-sky direct sun only.`,
+          scenario: { ...scenario, design_geometry_hash: payload.proposal_geometry_hash || payload.geometry_hash,
+            proposal_geometry: geometry },
+          analysis_id: payload.analysis_id || analysisId,
+          pairedBeforeMeanSunHours: before, pairedAfterMeanSunHours: after,
+          pairedChangeMeanSunHours: change, localChangeMeanSunHours: localChange,
+          pairedGroundCellCount: Number(ground.paired_cell_count || 0),
+          kpis: {
+            paired_before_mean_sun_hours: before, paired_after_mean_sun_hours: after,
+            paired_change_mean_sun_hours: change, local_change_mean_sun_hours: localChange,
+            paired_ground_cell_count: Number(ground.paired_cell_count || 0),
+          },
+        },
+      } }));
+    } catch (error) {
+      if (revision !== designSunlightCompareRevision) return;
+      if (designSunlightCompareStatus) designSunlightCompareStatus.textContent = `Design sunlight comparison unavailable (${error.message}).`;
+    } finally {
+      if (revision === designSunlightCompareRevision) {
+        designSunlightAnalysisId = null;
+        designSunlightCompareButton.disabled = !designProposalGeometry?.add_buildings?.length
+          && !designProposalGeometry?.remove_building_indexes?.length;
+      }
+    }
+  });
+
+  const designHeatCompareButton = document.querySelector('#design-heat-compare');
+  const designHeatCompareStatus = document.querySelector('#design-heat-status');
+  designHeatCompareButton?.addEventListener('click', async () => {
+    const geometry = designProposalGeometry;
+    if (!geometry?.add_buildings?.length && !geometry?.remove_building_indexes?.length) {
+      if (designHeatCompareStatus) designHeatCompareStatus.textContent = 'Edit the proposal before comparing heat/shade screening.';
+      return;
+    }
+    const revision = ++designHeatCompareRevision;
+    const analysisId = createAnalysisId();
+    const date = heatDate?.value || '2026-01-15';
+    const minutes = Number(heatTime?.value || 720);
+    designHeatCompareButton.disabled = true;
+    if (designHeatCompareStatus) designHeatCompareStatus.textContent = 'Calculating matched baseline and proposal heat/shade screening…';
+    try {
+      const response = await fetch(`${windApi}/heat/design-comparison`, {
+        method: 'POST', timeoutMs: 300000,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...geometry, date, minutes, analysis_id: analysisId }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+      if (revision !== designHeatCompareRevision) return;
+      const shadeBefore = Number(payload.mean_shade_deficit_before);
+      const shadeAfter = Number(payload.mean_shade_deficit_after);
+      const shadeChange = Number(payload.change_mean_shade_deficit);
+      const scoreBefore = Number(payload.mean_priority_score_before);
+      const scoreAfter = Number(payload.mean_priority_score_after);
+      const scoreChange = Number(payload.change_mean_priority_score);
+      const signed = value => `${value > 0 ? '+' : ''}${value.toFixed(2)}`;
+      if (designHeatCompareStatus) designHeatCompareStatus.textContent =
+        `Matched heat-zone area · ${date} ${Math.floor(minutes / 60).toString().padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · `
+        + `mean shade deficit ${shadeBefore.toFixed(2)}% → ${shadeAfter.toFixed(2)}% (${signed(shadeChange)} pp); `
+        + `heat-priority screen ${scoreBefore.toFixed(2)} → ${scoreAfter.toFixed(2)}/100 (${signed(scoreChange)}). `
+        + 'Fixed summer surface temperature; shade recalculated. Not UTCI/Tmrt.';
+      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: {
+        tool: 'design_heat', metadata: {
+          receivedAt: new Date().toISOString(), label: 'Matched design heat/shade screening',
+          requestId: payload.analysis_id || analysisId,
+          description: `Matched baseline/proposal heat-zone shade deficit and heat-priority screening · ${date} ${minutes} local minutes · fixed summer surface-temperature baseline; proposal shade recalculated; not UTCI/Tmrt.`,
+          scenario: { date, minutes, proposal_id: geometry.proposal_id,
+            design_geometry_hash: payload.proposal_geometry_hash || payload.geometry_hash,
+            geometry_status: payload.scenario?.geometry_status, proposal_geometry: geometry },
+          analysis_id: payload.analysis_id || analysisId,
+          reference: { type: 'design-heat-shade-screen', analysis_id: payload.analysis_id || analysisId,
+            geometry_hash: payload.proposal_geometry_hash || payload.geometry_hash,
+            asset_hashes: payload.source_provenance?.asset_hashes || null,
+            result_embedded_in_report: true,
+            retention: 'Summary KPIs, per-zone before/after results and proposal geometry/settings are embedded in the report.' },
+          source_provenance: payload.source_provenance,
+          kpis: {
+            mean_shade_deficit_before_pct: shadeBefore, mean_shade_deficit_after_pct: shadeAfter,
+            change_mean_shade_deficit_percentage_points: shadeChange,
+            mean_heat_priority_score_before_0_100: scoreBefore,
+            mean_heat_priority_score_after_0_100: scoreAfter,
+            change_mean_heat_priority_score: scoreChange,
+            analysis_area_m2: Number(payload.area_m2 || 0), zone_count: Number(payload.zone_count || 0),
+            source_zone_count: Number(payload.source_zone_count || payload.zone_count || 0),
+            excluded_sub_0_05_m2_zone_count: Number(payload.excluded_sub_0_05_m2_zone_count || 0),
+          },
+          result_data: { zone_points: payload.zone_points || [], zone_count: Number(payload.zone_count || 0) },
+          caveat: payload.method,
+        },
+      } }));
+    } catch (error) {
+      if (revision !== designHeatCompareRevision) return;
+      if (designHeatCompareStatus) designHeatCompareStatus.textContent = `Design heat/shade comparison unavailable (${error.message}).`;
+    } finally {
+      if (revision === designHeatCompareRevision && designHeatCompareButton) {
+        designHeatCompareButton.disabled = !designProposalGeometry?.add_buildings?.length
+          && !designProposalGeometry?.remove_building_indexes?.length;
+      }
+    }
+  });
 
   function addBuildingSunMesh(payload, range, colorMetric = 'cumulative_sun_hours') {
     const positions = [];
@@ -11422,7 +11680,22 @@ export async function startWebGLScene(canvas, status) {
       buildTrafficResult(payload);
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'traffic', metadata: {
         description: 'Paired synthetic SUMO runs. Reliability gates and scenario assumptions are retained in the traffic report.',
-        requestId: completedResponse?.headers.get('X-Request-ID'),
+        requestId: completedResponse?.headers.get('X-Request-ID'), job_id: job.job_id,
+        source_provenance: job.source_provenance || null,
+        scenario: { ...requestBody, selected_edge_ids: [...trafficState.selectedEdgeIds] },
+        kpis: (() => {
+          const impact = payload.impact || {}, ensemble = impact.ensemble || {}, environment = impact.environment || {};
+          return {
+            journey_time_change_pct: ensemble.applied ? ensemble.journey_time_change_pct?.median : impact.mean_journey_time_change_pct,
+            mean_speed_change_pct: ensemble.applied ? ensemble.speed_change_pct?.median : impact.mean_speed_change_pct,
+            baseline_peak_queue: ensemble.applied ? ensemble.max_queue_baseline?.median : impact.max_queue_baseline,
+            closure_peak_queue: ensemble.applied ? ensemble.max_queue_closure?.median : impact.max_queue_closure,
+            baseline_completion_share: ensemble.applied ? ensemble.completed_trip_ratio_baseline?.median : impact.completed_trip_ratio_baseline,
+            closure_completion_share: ensemble.applied ? ensemble.completed_trip_ratio_closure?.median : impact.completed_trip_ratio_closure,
+            co2_change_pct: ensemble.applied ? ensemble.co2_change_pct?.median : environment.co2_kg?.change_pct,
+            assessment_ready: impact.assessment_ready !== false,
+          };
+        })(),
       } } }));
     } catch (error) {
       trafficStatus.textContent = `Closure preview unavailable (${error.message})`;
@@ -11603,7 +11876,8 @@ export async function startWebGLScene(canvas, status) {
     if (windLegendField) windLegendField.textContent = 'Comfort category';
     if (!windComfortChips) return;
     windComfortChips.hidden = false;
-    windComfortChips.innerHTML = COMFORT_CATEGORY_DEFS.map(category => `
+    const categories = windState.field?.comfort_categories || [];
+    windComfortChips.innerHTML = categories.map(category => `
       <span><i style="background:${COMFORT_CHIP_COLORS[category.code]}"></i>${category.label}${
         category.max_speed_mps ? ` ≤${category.max_speed_mps} m/s · ${(category.max_speed_mps * 3.6).toFixed(0)} km/h` : ''}</span>`).join('');
   }
@@ -11754,6 +12028,14 @@ export async function startWebGLScene(canvas, status) {
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind', metadata: {
         description: `${cfdCase.label} · ${coverageLabel} · ${manifest.validation_status || 'unvalidated'}. Native spacing ${manifest.spacing_foam_m.join(' × ')} m.`,
         solver, direction: manifest.direction_deg_from, validation: manifest.validation_status, spacing: manifest.spacing_foam_m,
+        case_id: manifest.solver.case_id, manifest_url: `${base}volume.json`,
+        asset_version: `${manifest.solver.case_id}-${manifest.result_time}-${manifest.dimensions.join('x')}`,
+        asset_hashes: manifest.asset_hashes || null,
+        kpis: {
+          case_direction_deg: manifest.direction_deg_from,
+          volume_cells: manifest.dimensions.reduce((product, value) => product * Number(value), 1),
+          building_domain_coverage_pct: Number.isFinite(Number(coverage?.fraction)) ? Number(coverage.fraction) * 100 : null,
+        },
       } } }));
       const half = windState.domainSize * 0.52;
       frameBounds([
@@ -13662,18 +13944,37 @@ export async function startWebGLScene(canvas, status) {
     return Math.exp(-Math.pow(thresholdMps / scale, shape));
   }
 
-  const COMFORT_THRESHOLDS_MPS = [2.5, 4, 6, 8, 10];
-  // Matches server/wind_metrics.py COMFORT_CATEGORIES so the inline results
-  // summary (setupWindResults in app.js) can read field.comfort_categories
-  // the same way it already does for the old screening comfort field.
-  const COMFORT_CATEGORY_DEFS = [
-    { code: 0, key: 'long_sitting', label: 'Long sitting', max_speed_mps: 2.5 },
-    { code: 1, key: 'short_sitting', label: 'Short sitting', max_speed_mps: 4.0 },
-    { code: 2, key: 'standing', label: 'Standing', max_speed_mps: 6.0 },
-    { code: 3, key: 'strolling', label: 'Strolling', max_speed_mps: 8.0 },
-    { code: 4, key: 'business_walking', label: 'Business walking', max_speed_mps: 10.0 },
-    { code: 5, key: 'uncomfortable', label: 'Uncomfortable', max_speed_mps: null },
-  ];
+  let windCriteriaCatalog = null;
+  async function loadWindCriteriaCatalog() {
+    if (!windCriteriaCatalog) {
+      const response = await fetch(`${windApi}/wind/criteria`);
+      if (!response.ok) throw new Error(`wind criteria catalog HTTP ${response.status}`);
+      windCriteriaCatalog = await response.json();
+    }
+    const criteria = windCriteriaCatalog.criteria || [];
+    if (windComfortCriterion && criteria.length) {
+      const selectedId = windComfortCriterion.value || windState.comfortCriterionId;
+      windComfortCriterion.replaceChildren(...criteria.map(criterion => {
+        const option = document.createElement('option');
+        option.value = criterion.id;
+        option.textContent = `${criterion.name} · v${criterion.version}${criterion.implemented ? '' : ' · unavailable'}`;
+        option.disabled = !criterion.implemented;
+        if (criterion.unavailable_reason) option.title = criterion.unavailable_reason;
+        return option;
+      }));
+      windComfortCriterion.value = criteria.some(item => item.id === selectedId && item.implemented)
+        ? selectedId : windCriteriaCatalog.default_criterion_id;
+      windState.comfortCriterionId = windComfortCriterion.value;
+    }
+    const criterion = criteria.find(item => item.id === windState.comfortCriterionId);
+    if (!criterion) throw new Error('selected wind comfort criterion is unavailable');
+    if (windCriterionProvenance) {
+      const source = criterion.source?.citation || 'No external source declared';
+      const sourceUrl = criterion.source?.url ? ` Source: ${criterion.source.url}${criterion.source.location ? ` (${criterion.source.location})` : ''}.` : '';
+      windCriterionProvenance.textContent = `${criterion.name} · v${criterion.version} · ${Number(criterion.exceedance_probability) * 100}% exceedance. ${criterion.wind_speed_basis} ${criterion.averaging_period} Gust treatment: ${criterion.gust_treatment} ${source}.${sourceUrl}`;
+    }
+    return criterion;
+  }
 
   // Comfort as "weighted screening across 16 directions" only made sense
   // while every direction shared one fast proxy solver. Now that Direction
@@ -13697,6 +13998,10 @@ export async function startWebGLScene(canvas, status) {
     windSimulate.textContent = 'Weighting OpenFOAM sectors…';
     windStatus.textContent = 'Loading ERA5 sector frequencies…';
     try {
+      const criterion = await loadWindCriteriaCatalog();
+      const categories = criterion.categories;
+      const comfortThresholds = categories.slice(0, -1).map(category => Number(category.max_speed_mps));
+      const acceptedProbability = Number(criterion.exceedance_probability);
       const params = new URLSearchParams({ season: windState.season, stability: windState.stability });
       const response = await fetch(`${windApi}/wind/climatology/sectors?${params}`);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -13734,7 +14039,7 @@ export async function startWebGLScene(canvas, status) {
       // which both drew as a false-comfortable colour and inflated the
       // comfort share stats.
       const valid = new Uint8Array(cellCount);
-      const exceedanceByThreshold = COMFORT_THRESHOLDS_MPS.map(() => new Array(cellCount).fill(0));
+      const exceedanceByThreshold = comfortThresholds.map(() => new Array(cellCount).fill(0));
       // Load and sample one case's volume at a time — every resolved
       // direction contributes its own weighted share to the same grid, never
       // interpolated with the others, only summed.
@@ -13758,39 +14063,40 @@ export async function startWebGLScene(canvas, status) {
             speed[index] += sample.speed * sector.frequency_fraction;
             u[index] += sample.u * sector.frequency_fraction;
             v[index] += sample.v * sector.frequency_fraction;
-            COMFORT_THRESHOLDS_MPS.forEach((threshold, thresholdIndex) => {
+            comfortThresholds.forEach((threshold, thresholdIndex) => {
               exceedanceByThreshold[thresholdIndex][index]
                 += weibullExceedance(sample.speed, threshold, sector.weibull_shape) * sector.frequency_fraction;
             });
           }
         }
       }
-      const comfortCategory = new Array(cellCount).fill(5);
+      const uncomfortableCode = Number(categories.at(-1).code);
+      const comfortCategory = new Array(cellCount).fill(uncomfortableCode);
       for (let index = 0; index < cellCount; index += 1) {
         if (!valid[index]) continue;
-        for (let thresholdIndex = 0; thresholdIndex < COMFORT_THRESHOLDS_MPS.length; thresholdIndex += 1) {
-          if (exceedanceByThreshold[thresholdIndex][index] <= 0.05) {
-            comfortCategory[index] = thresholdIndex;
+        for (let thresholdIndex = 0; thresholdIndex < comfortThresholds.length; thresholdIndex += 1) {
+          if (exceedanceByThreshold[thresholdIndex][index] <= acceptedProbability) {
+            comfortCategory[index] = Number(categories[thresholdIndex].code);
             break;
           }
         }
       }
-      // "Standing" (6 m/s) is the representative single-threshold exceedance
-      // reported in the inline summary below; the category breakdown above
-      // already covers all five activity thresholds at once.
-      const standingIndex = COMFORT_THRESHOLDS_MPS.indexOf(6);
+      // The second activity threshold is the representative exceedance shown
+      // in the compact report summary; the map retains every criterion class.
+      const representativeIndex = Math.min(1, comfortThresholds.length - 1);
       windState.field = {
         analysis_mode: 'comfort',
         cfd: true,
         version: 'cfd-comfort-v1',
         validation_status: windState.cfd?.manifest.validation_status || 'exploratory_unvalidated_pilot',
-        comfort_standard: 'Lawson-LDDC-style activity thresholds, OpenFOAM + ERA5 wind-rose weighted (resolved sectors only)',
+        comfort_standard: `${criterion.name} v${criterion.version}`,
+        comfort_criterion: criterion,
         season: windState.season,
         height_m: windState.cfdGroundHeight,
         origin: [originX, originZ], width, height, dx, dz,
         speed, u, v, valid, comfort_category: comfortCategory,
-        comfort_categories: COMFORT_CATEGORY_DEFS,
-        exceedance: { threshold_mps: 6, probability: exceedanceByThreshold[standingIndex] },
+        comfort_categories: categories,
+        exceedance: { threshold_mps: comfortThresholds[representativeIndex], probability: exceedanceByThreshold[representativeIndex] },
         uncertainty: { relative_fraction: 0.35 },
         direction_count: resolved.length,
         coverage_fraction: coverage,
@@ -15383,6 +15689,13 @@ export async function startWebGLScene(canvas, status) {
     windState.field = null;
     clearWindSimulation();
     windStatus.textContent = 'Stability changed · click Simulate wind.';
+  });
+  windComfortCriterion?.addEventListener('change', event => {
+    windState.comfortCriterionId = event.target.value;
+    windState.field = null;
+    clearWindSimulation();
+    windStatus.textContent = 'Comfort criterion changed · calculating its wind-rose categories.';
+    if (windState.enabled && windState.analysisMode === 'comfort') simulateWind();
   });
   windForcingMode?.addEventListener('change', event => {
     windState.forcingMode = event.target.value;

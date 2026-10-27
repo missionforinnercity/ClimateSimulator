@@ -42,7 +42,8 @@ from .field import (
     query_polygons,
     request_from_payload,
 )
-from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, design_shade_comparison, heat_zones
+from .heat import (CANOPY_ASSET_PATH, HEAT_METRICS, HEAT_METRIC_METADATA, HEAT_SOURCE_PATH,
+                   SCENE_PATH as HEAT_SCENE_PATH, design_shade_comparison, heat_zones)
 from .groundcover import mapped_groundcover
 from .runoff import runoff_screening_manifest
 from .sunlight import (
@@ -69,12 +70,16 @@ from .thermal_products import (
     sample_point as sample_thermal_point,
     sky_view_factor_manifest,
     sky_view_factor_path,
+    public_manifest as public_thermal_manifest,
+    source_manifest_path as thermal_source_manifest_path,
 )
 from .thermal_climatology import (
     ThermalClimatologyUnavailable,
     frame_path as thermal_climatology_frame_path,
     manifest as thermal_climatology_manifest,
+    source_manifest_path as thermal_climatology_source_manifest_path,
 )
+from .thermal_kpis import category_area_time as thermal_category_area_time
 from .thermal_scenario import shade_scenario
 from .walking_routes import NETWORK_PATH as WALKING_NETWORK_PATH
 from .walking_routes import walking_agent_comparison, walking_routes
@@ -91,6 +96,8 @@ from .traffic import (
     traffic_calibration_status,
 )
 from .wind_metrics import COMFORT_CATEGORIES, STABILITY_PROFILES, validate_against_observations
+from .cfd_validation import validate_openfoam_observations
+from .wind_criteria import DEFAULT_CRITERION_ID, criterion_catalog
 from .era5_wind import SECTORS, climatology_summary, forcing_profile
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -104,6 +111,34 @@ app = FastAPI(
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_ROOT = PROJECT_ROOT / "public"
 ASSET_ROOT = PUBLIC_ROOT / "assets"
+
+
+def runtime_source_identity() -> dict[str, Any]:
+    """Fingerprint the runtime code included in a report's health snapshot."""
+    candidates = [
+        *sorted((PROJECT_ROOT / "server").glob("*.py")),
+        *sorted(PUBLIC_ROOT.glob("*.js")),
+        PROJECT_ROOT / "scripts" / "validate_thermal_observations.py",
+        PROJECT_ROOT / "public" / "app" / "index.html",
+        PROJECT_ROOT / "public" / "style.css",
+        PROJECT_ROOT / "requirements.lock",
+        PROJECT_ROOT / "requirements-models.txt",
+        PROJECT_ROOT / "Dockerfile",
+        PROJECT_ROOT / "Dockerfile.thermal",
+    ]
+    files: dict[str, str] = {}
+    aggregate = hashlib.sha256()
+    for path in candidates:
+        if not path.is_file():
+            continue
+        relative = path.relative_to(PROJECT_ROOT).as_posix()
+        body = path.read_bytes()
+        digest = hashlib.sha256(body).hexdigest()
+        files[relative] = digest
+        aggregate.update(relative.encode("utf-8"))
+        aggregate.update(b"\0")
+        aggregate.update(bytes.fromhex(digest))
+    return {"sha256": aggregate.hexdigest(), "files": files}
 ALLOWED_ORIGINS = [
     item.strip()
     for item in os.getenv(
@@ -134,6 +169,7 @@ HEAVY_PATH_LIMITS = {
     "/api/wind/preview": int(os.getenv("WIND_CONCURRENCY", "2")),
     "/api/wind/comfort": int(os.getenv("WIND_COMFORT_CONCURRENCY", "1")),
     "/api/wind/validate": int(os.getenv("WIND_CONCURRENCY", "2")),
+    "/api/wind/validate-openfoam": int(os.getenv("WIND_VALIDATE_CFD_CONCURRENCY", "1")),
     "/api/traffic/closure-preview": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
     "/api/traffic/closure-preview/jobs": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
     "/api/traffic/emissions-preview/jobs": int(os.getenv("TRAFFIC_CONCURRENCY", "1")),
@@ -324,6 +360,7 @@ class PreviewPayload(BaseModel):
     stability: Literal["unstable", "neutral", "stable"] = "neutral"
     exceedance_threshold_mps: float = Field(default=6.0, ge=1.0, le=30.0)
     forcing_mode: Literal["manual", "era5_climatology"] = "manual"
+    comfort_criterion_id: str = Field(default=DEFAULT_CRITERION_ID, min_length=3, max_length=80)
 
 
 class WindObservation(BaseModel):
@@ -338,6 +375,34 @@ class WindObservation(BaseModel):
 class WindValidationPayload(BaseModel):
     scenario: PreviewPayload
     observations: list[WindObservation] = Field(min_length=3, max_length=500)
+
+
+class OpenFOAMWindObservation(BaseModel):
+    id: str | None = None
+    site_name: str | None = None
+    sensor_id: str | None = None
+    sensor_model: str | None = None
+    calibration_date: str | None = None
+    observed_at: str
+    x: float
+    z: float
+    speed_mps: float = Field(ge=0.0, le=80.0)
+    height_m: float = Field(gt=0.0, le=30.0)
+    reference_speed_mps: float = Field(gt=0.0, le=80.0)
+    reference_direction_deg: float = Field(ge=0.0, lt=360.0)
+    reference_height_m: float = Field(gt=0.0, le=100.0)
+    wind_direction_deg: float | None = Field(default=None, ge=0.0, lt=360.0)
+    averaging_period_s: float = Field(gt=0.0, le=86400.0)
+    split: Literal["calibration", "holdout"]
+    split_group: str = Field(min_length=1, max_length=160)
+    sensor_calibration: str | None = None
+    measurement_notes: str | None = None
+
+
+class OpenFOAMWindValidationPayload(BaseModel):
+    case_id: str = Field(min_length=1, max_length=80)
+    direction_tolerance_deg: float = Field(default=11.25, ge=0.0, le=45.0)
+    observations: list[OpenFOAMWindObservation] = Field(min_length=3, max_length=500)
 
 
 class TrafficClosurePayload(BaseModel):
@@ -395,6 +460,32 @@ class DesignHeatPayload(BaseModel):
     add_buildings: list[DesignBlockGeometry] = Field(default_factory=list, max_length=100)
     date: str = Field(default="2026-01-15", pattern=r"^\d{4}-\d{2}-\d{2}$")
     minutes: int = Field(default=720, ge=0, le=1439)
+    analysis_id: str = Field(min_length=1, max_length=100)
+
+
+def _proposal_geometry_hash(remove_building_indexes: list[int], blocks: list[DesignBlockGeometry]) -> str:
+    """Stable hash shared by the matched heat and sunlight design analyses."""
+    canonical_blocks = [{
+        "ground_m": float(block.ground_m), "base_offset_m": float(block.base_offset_m),
+        "height_m": float(block.height_m),
+        "ring": [[float(x), float(z)] for x, z in block.ring],
+        "holes": [[[float(x), float(z)] for x, z in hole] for hole in block.holes],
+    } for block in blocks]
+    canonical = json.dumps({
+        "remove_building_indexes": sorted(int(index) for index in remove_building_indexes),
+        "add_buildings": canonical_blocks,
+    }, separators=(",", ":"), sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class WalkingPoint(BaseModel):
@@ -464,6 +555,8 @@ def health() -> dict[str, Any]:
         "status": "ok" if required_ok else "degraded",
         "optional_degraded": [name for name, check in checks.items()
                               if not check["required"] and check["status"] not in {"ok", "optional_not_configured"}],
+        "application_version": app.version,
+        "runtime_source": runtime_source_identity(),
         "field_version": FIELD_VERSION,
         "checks": checks,
         "limits": {"heavy_concurrency": HEAVY_PATH_LIMITS, "rate_requests": RATE_LIMIT_REQUESTS, "rate_window_s": RATE_LIMIT_WINDOW_S,
@@ -533,10 +626,51 @@ def thermal_forecast() -> dict[str, Any]:
     return thermal_forecast_status()
 
 
+@app.get("/api/thermal/runs/{run_id}/manifest")
+def thermal_run_manifest(run_id: str) -> dict[str, Any]:
+    """Return provenance for a retained, explicitly identified thermal run."""
+    try:
+        return public_thermal_manifest(run_id)
+    except (ThermalProductUnavailable, ValueError) as error:
+        raise HTTPException(status_code=404, detail="thermal run manifest is unavailable") from error
+
+
+@app.get("/api/thermal/runs/{run_id}/source-manifest")
+def thermal_run_source_manifest(run_id: str):
+    try:
+        path = thermal_source_manifest_path(run_id)
+        return FileResponse(path, media_type="application/json", filename="manifest.json")
+    except (ThermalProductUnavailable, ValueError) as error:
+        raise HTTPException(status_code=404, detail="thermal run manifest is unavailable") from error
+
+
 @app.get("/api/thermal/climatology")
 def thermal_climatology() -> dict[str, Any]:
     try:
         return thermal_climatology_manifest()
+    except ThermalClimatologyUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/thermal/climatology/source-manifest")
+def thermal_climatology_source_manifest():
+    try:
+        path = thermal_climatology_source_manifest_path()
+        return FileResponse(path, media_type="application/json", filename="manifest.json")
+    except ThermalClimatologyUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/api/thermal/climatology/kpis")
+def thermal_climatology_kpis(
+    aggregate: Literal["month", "season", "annual"] = "annual",
+    month: int = 1,
+    season: Literal["summer", "autumn", "winter", "spring"] = "summer",
+) -> dict[str, Any]:
+    try:
+        return thermal_category_area_time(aggregate=aggregate, month=month, season=season)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except ThermalClimatologyUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
@@ -746,7 +880,31 @@ def heat_design_comparison(payload: DesignHeatPayload) -> dict[str, Any]:
                 raise ValueError("design block footprints and holes must form a valid polygon of at least 1 m²")
             additions.append({"ring": ring, "holes": holes,
                               "height_m": block.height_m + block.base_offset_m})
-        return design_shade_comparison(payload.date, payload.minutes, payload.remove_building_indexes, additions)
+        if not payload.remove_building_indexes and not additions:
+            raise ValueError("make at least one geometry edit before comparing heat/shade screening")
+        design_geometry = json.dumps({
+            "remove_building_indexes": payload.remove_building_indexes,
+            "add_buildings": additions,
+        }, separators=(",", ":"), sort_keys=True)
+        result = design_shade_comparison(payload.date, payload.minutes, payload.remove_building_indexes, additions)
+        source_provenance = {
+            "heat_zone_source": HEAT_SOURCE_PATH.name if HEAT_SOURCE_PATH.is_file() else "climate.heat_zones",
+            "asset_hashes": {
+                "heat_zones_sha256": _file_sha256(HEAT_SOURCE_PATH),
+                "scene_buildings_sha256": _file_sha256(HEAT_SCENE_PATH),
+                "canopy_sha256": _file_sha256(CANOPY_ASSET_PATH),
+            },
+        }
+        return {
+            **result,
+            "analysis_id": payload.analysis_id,
+            "geometry_hash": hashlib.sha256(design_geometry.encode("utf-8")).hexdigest(),
+            "proposal_geometry_hash": _proposal_geometry_hash(payload.remove_building_indexes, payload.add_buildings),
+            "source_provenance": source_provenance,
+            "scenario": {"date": payload.date, "minutes": payload.minutes,
+                         "geometry_status": "proposal_geometry_unreviewed"},
+            "validation_status": "screening_fixed_surface_temperature",
+        }
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
@@ -992,6 +1150,7 @@ def sunlight_design_comparison(payload: DesignSunlightPayload) -> dict[str, Any]
         return {
             "analysis_id": payload.analysis_id,
             "geometry_hash": hashlib.sha256(design_geometry.encode("utf-8")).hexdigest(),
+            "proposal_geometry_hash": _proposal_geometry_hash(payload.remove_building_indexes, payload.add_buildings),
             "scenario": {
                 "date": payload.date, "start_minutes": payload.start_minutes,
                 "end_minutes": payload.end_minutes, "step_minutes": payload.step_minutes,
@@ -1067,12 +1226,22 @@ def scenarios() -> dict[str, Any]:
         "seasons": ["annual", "summer", "autumn", "winter", "spring"],
         "stability_profiles": STABILITY_PROFILES,
         "comfort_categories": COMFORT_CATEGORIES,
+        "wind_criteria": criterion_catalog(),
         "available_modes": ["preview"],
         "validated_mode_reason": "No versioned CFD/measurement validation dataset is installed",
-        "frequency_status": "provisional_incomplete_era5_archive" if era5 else "conditional_only_no_climatology",
+        "frequency_status": (
+            "complete_hourly_era5_reanalysis_not_independent_station_validation"
+            if era5 and era5.get("coverage", {}).get("complete_hourly_climatology")
+            else "provisional_incomplete_era5_archive" if era5 else "conditional_only_no_climatology"
+        ),
         "era5_climatology": era5,
         "viewer": config,
     }
+
+
+@app.get("/api/wind/criteria")
+def wind_criteria() -> dict[str, Any]:
+    return criterion_catalog()
 
 
 @app.get("/api/wind/climatology/sectors")
@@ -1172,6 +1341,22 @@ def validate_wind(payload: WindValidationPayload) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=f"wind validation unavailable: {error}") from error
 
 
+@app.post("/api/wind/validate-openfoam")
+def validate_openfoam_wind(payload: OpenFOAMWindValidationPayload) -> dict[str, Any]:
+    """Score a named converted OpenFOAM field against split observations."""
+    try:
+        return validate_openfoam_observations(
+            payload.case_id,
+            [item.model_dump() for item in payload.observations],
+            direction_tolerance_deg=payload.direction_tolerance_deg,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        LOGGER.exception("OpenFOAM observation validation failed")
+        raise HTTPException(status_code=503, detail=f"OpenFOAM validation unavailable: {error}") from error
+
+
 @app.get("/api/traffic/live")
 def traffic_live(refresh: bool = False) -> dict[str, Any]:
     try:
@@ -1223,6 +1408,22 @@ def _expire_traffic_jobs_locked(now: float) -> None:
     ]
     for job_id in expired:
         TRAFFIC_JOBS.pop(job_id, None)
+
+
+@lru_cache(maxsize=1)
+def _traffic_network_identity() -> dict[str, Any]:
+    path = PROJECT_ROOT / "data" / "sumo" / "cbd.net.xml"
+    if not path.is_file():
+        return {"asset": "data/sumo/cbd.net.xml", "status": "missing"}
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {
+        "asset": "data/sumo/cbd.net.xml",
+        "sha256": digest.hexdigest(),
+        "bytes": path.stat().st_size,
+    }
 
 
 def _run_traffic_preview_job(job_id: str, payload: dict[str, Any]) -> None:
@@ -1288,9 +1489,13 @@ def start_traffic_closure_preview(payload: TrafficClosurePayload) -> dict[str, A
                 headers={"Retry-After": "5"},
             )
         job_id = secrets.token_urlsafe(18)
-        TRAFFIC_JOBS[job_id] = {"status": "queued", "created_at": now}
+        TRAFFIC_JOBS[job_id] = {
+            "status": "queued", "created_at": now,
+            "source_provenance": {"network": _traffic_network_identity(), "field_version": FIELD_VERSION},
+        }
         TRAFFIC_JOB_EXECUTOR.submit(_run_traffic_preview_job, job_id, payload.model_dump())
-    return {"job_id": job_id, "status": "queued", "poll_after_ms": 1000}
+        provenance = dict(TRAFFIC_JOBS[job_id]["source_provenance"])
+    return {"job_id": job_id, "status": "queued", "poll_after_ms": 1000, "source_provenance": provenance}
 
 
 @app.get("/api/traffic/closure-preview/jobs/{job_id}")

@@ -1228,6 +1228,7 @@ export async function createTransportLayer({
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'transport', metadata: {
       description: `${arrivals} scheduled arrivals, ${returns} scheduled returns; ${Math.round(coverage * 100)}% nominal capacity coverage. Not measured occupancy.`,
       arrivals, returns, coverage, date: elements['transport-event-date'].value, clientOnly: true,
+      kpis: { scheduled_arrivals: arrivals, scheduled_returns: returns, nominal_capacity_coverage_pct: coverage * 100 },
     } } }));
     elements['transport-event-areas'].textContent = String(connectedAreas.size);
     elements['transport-event-arrivals'].textContent = String(arrivals);

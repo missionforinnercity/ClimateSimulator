@@ -121,7 +121,7 @@ def main():
             page.locator('[data-menu-target="sun"]').click()
             page.locator("#sun-generate").click()
             page.wait_for_timeout(300)
-            page.locator(".scenario-workspace > summary").click()
+            page.get_by_text("Scenario · save, compare & share", exact=True).click()
             page.get_by_role("button", name="Save Before", exact=True).click()
             page.locator("#sun-date").fill("2026-09-01")
             page.locator("#sun-date").dispatch_event("change")
@@ -165,7 +165,7 @@ def main():
                 assert page.locator('[data-menu-target="sun"]').get_attribute("aria-selected") == "true"
             page.reload(wait_until="domcontentloaded")
             page.wait_for_function("() => !document.body.hasAttribute('aria-busy')", timeout=45000)
-            page.locator(".scenario-workspace > summary").click()
+            page.get_by_text("Scenario · save, compare & share", exact=True).click()
             assert "Smoke-test local note" in page.locator(".local-note-list").inner_text()
             metrics = page.evaluate("""() => ({
               viewerReadyMs: performance.getEntriesByName('climate-viewer-ready')[0]?.startTime,
@@ -196,7 +196,7 @@ def main():
 
         page.route("**/app/", legacy_shell)
         page.goto(f"{args.url.rstrip('/')}/", wait_until="domcontentloaded", timeout=60000)
-        page.locator(".scenario-workspace").wait_for(timeout=15000)
+        page.get_by_text("Scenario · save, compare & share", exact=True).wait_for(timeout=15000)
         assert not legacy_errors, legacy_errors
         results.append({"profile": "legacy-shell", "pageErrors": legacy_errors})
         context.close()

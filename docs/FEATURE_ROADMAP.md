@@ -7,8 +7,8 @@ This is a proposed roadmap, not a claim that the current app is validated or sta
 | Priority | Feature | User value | Prerequisites / scale |
 | --- | --- | --- | --- |
 | 1 | Place and street inspector | Search, keyboard selection and empty/out-of-terrain pick handling are browser-checked in WebGL and Canvas. Regression fixtures cover duplicate names, missing source IDs and points outside the mapped feature radius. | Existing semantic IDs; indexed compact scene records. Initial release and QA complete; maintain coverage as scene records change. |
-| 2 | Reproducible scenario packages | Reopen a study with exact geometry, dates, model version, closure edges, evidence and report | Extend current settings snapshots into versioned immutable result packages. Medium |
-| 3 | Observation and validation workbench | Compare modelled wind/heat/traffic with time-aligned observations; inspect bias and coverage | Quality-controlled sensors/counts and a defensible matching method. High, data-gated |
+| 2 | Reproducible scenario packages | Reopen a study with exact geometry, dates, model version, closure edges, evidence and report | Printable HTML + JSON records editable client/project metadata, settings, maps, KPIs, and typed result references; design heat/shade includes per-zone values, and `scripts/verify_climate_report.py` reconciles them with KPIs and geometry hashes. `scripts/archive_climate_report.py` packages retrievable thermal/OpenFOAM/traffic results plus matching local design heat/shade inputs. Still needs durable per-model result storage and replay execution for remaining analyses. Medium |
+| 3 | Observation and validation workbench | OpenFOAM pedestrian-wind scoring and thermal component/UTCI comparisons now have timestamp, height, averaging-period and grouped holdout handling. Traffic still needs its matched-observation scorer. | CBD wind/thermal scorers and combined field template are ready; real local campaign data and traffic counts remain prerequisites. High, data-gated |
 | 4 | Shade-aware walking alternatives | Compare shortest vs shaded routes for a chosen date/time; explain trade-offs | Connected walk graph, directional access, calibrated shade sampling and surveyed accessibility where claimed. High |
 | 5 | Intervention comparison laboratory | Compare a real proposed canopy, tree configuration or street design against a controlled baseline | Geometry editor with separate proposal layer, offline solve queue, matched forcing and validation gates. High |
 | 6 | Time-series and seasonal explorer | Show hourly/seasonal ranges and data gaps instead of one attractive snapshot | Versioned time-series, aggregation rules and coverage masks. Medium–high |
@@ -29,13 +29,13 @@ Done when a keyboard user can search, select and inspect a feature; selections r
 
 ### Reproducible scenario packages
 
-Extend the settings export added in this implementation. Persist the exact closure edge IDs and direction, analysis domains, model parameters, source hashes and validation status. Store completed result references separately from editable settings. Include a human-readable comparison and a machine-readable JSON schema. Detect unavailable/changed assets before attempting replay.
+Extend the new HTML + JSON climate report. Persist exact closure edge IDs and direction, analysis domains, model parameters, source hashes and validation status. Store completed result references separately from editable settings. Add durable results or clearly governed retention, per-result maps/KPIs, and replay checks that detect unavailable/changed assets before attempting comparison.
 
 Done when a clean checkout with the required data reproduces a deterministic fixture result; changing one input creates a new lineage record; mismatched data disables numerical comparison with a clear explanation. Start with local files. Multi-user accounts, cloud sharing and approval workflows require a separate product decision.
 
 ### Observation and validation workbench
 
-Begin with an administrator-supplied local observation file, not unrestricted public upload. Validate units, timestamps, sensor height, location/CRS, flags and calibration notes. Pair observations with model results over comparable conditions. Report sample size, bias, absolute error, spatial/temporal coverage and withheld validation data. Do not relabel a model “validated” based solely on a good aggregate metric.
+Wind and thermal observation comparison now use administrator-supplied local files. The OpenFOAM scorer samples the converted pedestrian CFD volume; it requires a timezone-aware timestamp, pedestrian and upstream sensor heights, averaging period and explicit `split_group`, and reports separate group metrics. The thermal scorer pairs to hourly frames and reports air-temperature, humidity, Tmrt, wind and UTCI errors by holdout group. Use [`cbd_validation_campaign_template.csv`](cbd_validation_campaign_template.csv) for synchronized CBD measurements. No CBD observations have been supplied, so neither model is validated. Traffic still needs an observed-count/travel-time comparison. Do not relabel any model “validated” based solely on a good aggregate metric.
 
 Done when known fixtures recover expected errors, poor coverage remains visible, withheld observations cannot leak into calibration, and a domain reviewer has signed off the interpretation rules. Sensor procurement, measurement campaigns and operator agreements are external work, not something a coding agent can invent.
 
@@ -56,6 +56,17 @@ Equity assessment should use aggregate data at a justified resolution, show miss
 - OGC SensorThings provides an observation/metadata model for heterogeneous sensors. Evaluate an adapter for a future sensor programme; using the standard is not evidence of calibrated or complete measurements. [OGC SensorThings overview](https://ogcapi-workshop.ogc.org/api-deep-dive/sensorthings/)
 
 These are candidate standards for new work, not reasons to rewrite the current renderer or backend immediately. The priority ordering and feature designs above are project-specific recommendations based on this repository, not claims made by those standards bodies.
+
+## Intervention comparison progress
+
+The Design panel runs matched clear-sky direct-sun comparison and a matched
+heat/shade screening pair. The latter recalculates proposal shade and the
+screening score while holding the summer surface-temperature baseline fixed;
+it is not a UTCI/Tmrt recalculation. Wind wake remains a visual screen.
+Proposed-geometry UTCI/Tmrt, multi-direction wind comfort, pollutant
+dispersion, runoff, traffic and route metrics still require their own
+recomputation or offline-solve paths. See [design coupling](DESIGN_COUPLING.md)
+for the current recalculation matrix.
 
 ## Features to continue excluding
 

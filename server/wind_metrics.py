@@ -11,20 +11,13 @@ import math
 from typing import Any
 
 import numpy as np
+from .wind_criteria import DEFAULT_CRITERION_ID, LAWSON_LDDC_SCREENING_V1, get_criterion
 
 
-# Lawson-LDDC-style activity thresholds at a 5% exceedance probability.  The
-# names and cut-offs are exposed in every response; this is a screening
-# implementation, not a claim of formal compliance with a particular project
-# brief or local authority standard.
-COMFORT_CATEGORIES = (
-    {"code": 0, "key": "long_sitting", "label": "Long sitting", "max_speed_mps": 2.5},
-    {"code": 1, "key": "short_sitting", "label": "Short sitting", "max_speed_mps": 4.0},
-    {"code": 2, "key": "standing", "label": "Standing", "max_speed_mps": 6.0},
-    {"code": 3, "key": "strolling", "label": "Strolling", "max_speed_mps": 8.0},
-    {"code": 4, "key": "business_walking", "label": "Business walking", "max_speed_mps": 10.0},
-    {"code": 5, "key": "uncomfortable", "label": "Uncomfortable", "max_speed_mps": None},
-)
+# Legacy default thresholds retained for backwards compatibility. The
+# selected, versioned criterion and its source/method metadata are returned with
+# each field. This default remains a screen, not formal compliance evidence.
+COMFORT_CATEGORIES = tuple(LAWSON_LDDC_SCREENING_V1["categories"])
 
 STABILITY_PROFILES = {
     "unstable": {"label": "Unstable / convective", "power_law_exponent": 0.20, "weibull_shape": 1.7},
@@ -58,15 +51,16 @@ def weibull_exceedance(mean_speed: np.ndarray, threshold_mps: float, shape: floa
     return np.where(mean_speed > 1e-9, probability, 0.0)
 
 
-def comfort_codes(speed_exceeded_5pct: np.ndarray) -> np.ndarray:
-    codes = np.full(speed_exceeded_5pct.shape, 5, dtype=np.uint8)
-    for category in reversed(COMFORT_CATEGORIES[:-1]):
+def comfort_codes(speed_exceeded_5pct: np.ndarray, categories: tuple[dict[str, Any], ...] | list[dict[str, Any]] = COMFORT_CATEGORIES) -> np.ndarray:
+    codes = np.full(speed_exceeded_5pct.shape, int(categories[-1]["code"]), dtype=np.uint8)
+    for category in reversed(categories[:-1]):
         codes = np.where(speed_exceeded_5pct <= category["max_speed_mps"], category["code"], codes)
     return codes
 
 
 def comfort_codes_from_exceedance(
     exceedance_by_threshold: dict[float, np.ndarray], *, accepted_probability: float = 0.05,
+    categories: tuple[dict[str, Any], ...] | list[dict[str, Any]] = COMFORT_CATEGORIES,
 ) -> np.ndarray:
     """Classify activity from wind-rose-weighted threshold exceedance.
 
@@ -75,19 +69,23 @@ def comfort_codes_from_exceedance(
     whose threshold is exceeded no more than five percent of the time wins.
     """
     first = next(iter(exceedance_by_threshold.values()))
-    codes = np.full(np.asarray(first).shape, 5, dtype=np.uint8)
-    for category in COMFORT_CATEGORIES[:-1]:
+    uncomfortable_code = int(categories[-1]["code"])
+    codes = np.full(np.asarray(first).shape, uncomfortable_code, dtype=np.uint8)
+    for category in categories[:-1]:
         probability = np.asarray(exceedance_by_threshold[float(category["max_speed_mps"])])
-        codes = np.where((codes == 5) & (probability <= accepted_probability), category["code"], codes)
+        codes = np.where((codes == uncomfortable_code) & (probability <= accepted_probability), category["code"], codes)
     return codes
 
 
 def add_screening_metrics(
     field: dict[str, Any], *, stability: str, exceedance_threshold_mps: float,
     weibull_shape: float | None = None, sector_frequency_fraction: float | None = None,
+    criterion_id: str = DEFAULT_CRITERION_ID,
 ) -> dict[str, Any]:
     """Attach comfort, exceedance, and epistemic uncertainty grids."""
     speed = np.asarray(field["speed"], dtype=float)
+    criterion = get_criterion(criterion_id)
+    categories = criterion["categories"]
     shape = weibull_shape or STABILITY_PROFILES[stability]["weibull_shape"]
     speed_exceeded_5pct = weibull_quantile(speed, 0.95, shape)
     exceedance = weibull_exceedance(speed, exceedance_threshold_mps, shape)
@@ -116,13 +114,15 @@ def add_screening_metrics(
         exceedance_payload.update({
             "sector_frequency_fraction": sector_frequency_fraction,
             "sector_contribution_probability": np.round(exceedance * sector_frequency_fraction, 6).tolist(),
-            "frequency_quality": "provisional_incomplete_hourly_archive",
+            "frequency_quality": "provisional_incomplete_hourly_archive" if incomplete_era5
+            else "complete_hourly_era5_reanalysis_not_independent_station_validation",
         })
     field.update({
         "analysis_mode": "preview",
-        "comfort_standard": "Lawson-LDDC-style screening; 5% exceedance activity thresholds",
-        "comfort_categories": list(COMFORT_CATEGORIES),
-        "comfort_category": comfort_codes(speed_exceeded_5pct).tolist(),
+        "comfort_standard": criterion["name"],
+        "comfort_criterion": criterion,
+        "comfort_categories": categories,
+        "comfort_category": comfort_codes(speed_exceeded_5pct, categories).tolist(),
         "speed_exceeded_5pct_mps": np.round(speed_exceeded_5pct, 4).tolist(),
         "exceedance": exceedance_payload,
         "uncertainty": {

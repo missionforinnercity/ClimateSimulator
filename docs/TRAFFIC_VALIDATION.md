@@ -186,8 +186,13 @@ sibling to close; the resolver reports this rather than fabricating a closure.
 
 Every report now prints the compass direction kept open, synthetic demand
 seed, generated and paired trip counts, baseline completion, and actual signal
-data source. Two direction reports should only be compared when their
-scenario, duration, demand multiplier, seed and generated-trip count match.
+data source. The climate report export also preserves the submitted edge IDs
+and closure settings, plus a SHA-256 digest of `data/sumo/cbd.net.xml` and the
+API field version. The job result itself remains in the API's in-memory cache
+(15-minute default TTL), so archive the downloaded report promptly; its job
+URL is not permanent storage. Two direction reports should only be compared
+when their scenario, duration, demand multiplier, seed and generated-trip
+count match.
 
 The technical drawing-sheet report's cross-section is illustrative only: it
 draws SUMO's default lane width, not a surveyed measurement, since the

@@ -92,5 +92,9 @@
     "flat roof envelopes; detailed roof_surface.bin is not yet exported",
     "uniform inlet pilot, not a validated atmospheric boundary layer",
     "trees are not yet represented as porous zones"
-  ]
+  ],
+  "asset_hashes": {
+    "fields_sha256": "70e4f522413b05a37615ee472e45448624973fb62e25a5abae8da8c1c49e9c3a",
+    "valid_mask_sha256": "ff34c30d6c98239ab89146a2c023c8aea782aeaf97c62a21af9e33cecb605c93"
+  }
 }

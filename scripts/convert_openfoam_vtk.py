@@ -10,6 +10,7 @@ downloading the complete unstructured mesh.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -18,6 +19,14 @@ import numpy as np
 
 CHANNELS = ("u_viewer_x", "w_up", "v_viewer_z", "speed", "p", "k", "epsilon")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def foam_velocity_to_viewer(velocity: np.ndarray, downwind: np.ndarray, crosswind: np.ndarray) -> np.ndarray:
@@ -144,6 +153,10 @@ def convert(vtk_path: Path, case_path: Path, output_dir: Path, spacing: tuple[fl
         "channels": list(CHANNELS),
         "fields": field_name,
         "valid_mask": mask_name,
+        "asset_hashes": {
+            "fields_sha256": _sha256(output_dir / field_name),
+            "valid_mask_sha256": _sha256(output_dir / mask_name),
+        },
         "ranges": ranges,
         "valid_fraction": float(mask.mean()),
         "building_coverage": coverage,

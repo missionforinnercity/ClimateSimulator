@@ -9,9 +9,15 @@ layers also work as a static-only viewer when their data assets are available.
 The app includes an introductory guide, evidence and provenance cards, keyboard
 map controls, and a **Scenario · save, compare & share** workspace. Save Before
 and After settings, compare changed assumptions, copy a settings link, or export
-JSON with source and manifest identifiers. Snapshots are local to the current
-tab. Settings links do not carry completed simulation arrays or drawn traffic
-closures.
+a printable HTML climate report plus machine-readable JSON with the visible map,
+saved Before/After map views, scene build-input hashes, result KPI summaries,
+saved Before/After KPI comparisons and per-snapshot run references. Some
+results are transient and the report states their retention limits; it is not a
+guarantee that every analysis can be replayed later. Optional client/project
+metadata (name, client, reference, preparer, location, reporting dates and notes)
+is saved in this browser and included in the exported report without changing
+simulation settings. Snapshots are local to the current tab. Settings links do
+not carry completed simulation arrays or drawn traffic closures.
 
 ## Application overview
 
@@ -25,9 +31,13 @@ closures.
   simplified building-wake estimate on the same grid. This is a screening
   approximation, not a new CFD result. Proposal geometry JSON can be downloaded
   and re-imported to reopen a draft. The Design
-  panel also compares before/after sunlight on nearby building surfaces and
-  20 m terrain cells using a local 40 m building-surface, two-hour screening study, and displays
-  mapped shade-deficit maps plus the app's fixed-temperature heat-priority
+  panel also runs a matched baseline/proposal clear-sky direct-sun comparison
+  for edited building geometry, reporting paired ground-cell means and a
+  difference map. Viewshed and current shadows update with edits; the wind
+  wake remains a visual screening overlay. UTCI/Tmrt, annual comfort, runoff,
+  traffic and route outputs remain on baseline geometry until recalculated or
+  solved for the proposal. See [docs/DESIGN_COUPLING.md](docs/DESIGN_COUPLING.md).
+  The panel also displays mapped shade-deficit maps plus the app's fixed-temperature heat-priority
   screen for nearby heat zones. Satellite surface
   temperature remains a fixed baseline, and traffic still uses its baseline
   geometry. The surface inventory reports
@@ -40,6 +50,10 @@ closures.
   layers. The panel includes map summaries, provenance and local inspection.
 - **Sunlight:** View date/time-specific shadows or run cumulative direct-sun
   studies for ground, roofs and façades.
+- **Design comparisons:** Compare proposal geometry against the mapped baseline
+  for clear-sky direct sun and heat/shade screening. The screening comparison
+  recalculates shade but holds its summer surface-temperature input fixed; it
+  does not claim proposal UTCI/Tmrt or CFD results.
 - **Wind:** Inspect solved OpenFOAM direction fields and a wind-rose-weighted
   Comfort view where solved data exists; the legacy screening proxy remains
   available for compatibility and its own reports.
@@ -62,6 +76,10 @@ documents linked below and in each feature section.
 
 Developer handoff: [architecture](docs/ARCHITECTURE.md),
 [QA checklist](docs/QA_CHECKLIST.md),
+[validation status and evidence needed](docs/VALIDATION_STATUS.md),
+[dataset-by-dataset validation checklist](docs/DATA_VALIDATION_CHECKLIST.md),
+[report reference verifier](scripts/verify_climate_report.py) and [result
+archiver](scripts/archive_climate_report.py),
 [VM update guide](docs/VM_UPDATE_GUIDE.md),
 [walking routes](docs/WALKING_ROUTES.md),
 [thermal deployment](docs/THERMAL_DEPLOYMENT.md), and
@@ -124,8 +142,8 @@ is unavailable.
 
 The Wind panel's Direction and Comfort lenses are both driven by full-CBD
 OpenFOAM volumes, not the older screening proxy — Direction loads whichever
-solved directional case you pick (SE 135° and NW 315° today; a compass preset
-lights up once a direction has a solved case) and shows resolved 3D
+solved directional case you pick (16 converted 22.5° sectors are registered;
+the compass enables a direction only when its assets are present) and shows resolved 3D
 flowlines, a movable/resizable flow box with an adjustable seed height,
 horizontal/vertical speed and turbulence slices you can drag directly in the
 scene, and pressure mapped onto building façades. Its pedestrian view is
@@ -139,6 +157,18 @@ screening proxy (mass-conserving terrain + building/canopy drag) still powers
 the Canvas 2D compatibility fallback, `/api/wind/preview`, and
 `/api/wind/validate`, but no longer drives the main WebGL wind panel. Both
 CFD cases are explicitly exploratory rather than validated planning evidence.
+Comfort offers versioned Lawson-LDDC-style screening and Davenport 1972 hourly-
+mean criteria, with thresholds, source, averaging basis and gust treatment
+carried into results. The formal Lawson LDDC gust-equivalent-mean/safety option
+is listed as unavailable until its gust inputs are supported. See
+[docs/WIND_VALIDATION.md](docs/WIND_VALIDATION.md) for criterion definitions
+and limits. **Check against measurements** can score the converted OpenFOAM
+pedestrian field when supplied with local observations, including a predeclared
+site/period holdout group; no local CBD campaign observations have been
+provided yet, so the fields remain unvalidated. A scored run can be retained in
+the climate report with its uploaded/pasted source, residuals and matched CFD,
+terrain and scene asset hashes, then packaged with
+`scripts/archive_climate_report.py`.
 Case generation, result refresh and validation requirements are documented in
 [docs/OPENFOAM.md](docs/OPENFOAM.md).
 
@@ -284,14 +314,21 @@ Set `WEB_HOST_PORT` in the deployment environment to choose another unused
 loopback port; the proxy upstream must use the same port.
 
 The UTCI/Tmrt forecast remains experimental until compared with co-located CBD
-measurements. A field-observation CSV template, three-site collection protocol,
-and script for paired input/result residuals are in
-[docs/THERMAL_VALIDATION.md](docs/THERMAL_VALIDATION.md). The thermal worker
-publishes local 10 m wind alongside pedestrian-height wind for that comparison.
+measurements. A combined wind/thermal field template, thermal-only CSV,
+three-site collection protocol, and script for paired input/result residuals
+are in [docs/THERMAL_VALIDATION.md](docs/THERMAL_VALIDATION.md). The thermal
+worker publishes local 10 m wind alongside pedestrian-height wind for that comparison.
+The resulting JSON and its exact input CSV can be attached in Heat and retained
+in the climate report, including hashes for the thermal frames it sampled.
 For a no-fieldwork check of weather inputs against FACT METAR, satellite
 radiation and ERA5, run
 `.venv/bin/python scripts/backtest_thermal_forcing.py --days 30`; interpret
 station and reanalysis comparisons as context, not CBD street-level validation.
+The SENSOTO NOAA ISD Molteno Reservoir station also provides historical hourly
+temperature and wind observations. Its 2021–2025 ERA5 comparison and exact
+paired rows are documented in [docs/THERMAL_VALIDATION.md](docs/THERMAL_VALIDATION.md)
+and [docs/VALIDATION_STATUS.md](docs/VALIDATION_STATUS.md); coverage is sparse,
+and it cannot validate pedestrian CFD, humidity, Tmrt or UTCI.
 Each hourly run uses the latest available native satellite radiation estimate;
 each map frame shows its radiation interval and the separate air/wind forecast
 time. See
@@ -303,6 +340,10 @@ profile across seasons, months and local hours. Its 2016–2025 ERA5 composite i
 a separate offline product; build and provision it as described in
 [docs/THERMAL_CLIMATOLOGY.md](docs/THERMAL_CLIMATOLOGY.md). The application host
 serves the prepared maps and does not run the historical simulations.
+The historical UTCI view reports cold/no-thermal-stress/heat-stress area-time
+shares and representative-year equivalent hours per mapped cell. These are
+classified composite estimates, not observed historical exceedance hours; the
+near-live view reports the category area for its selected hour only.
 UTCI results remain experimental model estimates until co-located CBD field
 observations support validation. Deployment artifact preparation and VM
 transfer steps are in [docs/THERMAL_DEPLOYMENT.md](docs/THERMAL_DEPLOYMENT.md).
@@ -485,10 +526,13 @@ conversion, Lawson-LDDC-style screening categories, conditional threshold
 exceedance, wind-rose-weighted seasonal/annual comfort, and model-form
 uncertainty bands. The API labels these outputs **Screening**; they are not
 the OpenFOAM Direction/Comfort lenses described above. The installed ERA5
-archive covers only 35.4% of possible hours, so its directional frequencies
-and comfort results remain provisional either way. See `docs/WIND_VALIDATION.md`
-for the calculation, benchmark workflow, observation schema, error maps, and
-promotion criteria for a future validated mode.
+wind profile now uses a complete 2021–2025 monthly archive (43,824 hourly
+records, all UTC hours). ERA5 frequency coverage is complete for that baseline,
+but remains reanalysis rather than independent local validation. The separate
+legacy `data/Era5data.grib` file is incomplete and is not the active profile's
+source. See `docs/WIND_VALIDATION.md` for the coverage evidence, benchmark
+workflow, observation schema, error maps, and promotion criteria for a future
+validated mode.
 
 `data/wind_climatology/cape_town_era5.json` backs both wind paths: the
 screening proxy's default forcing (conditional mean speed, Weibull

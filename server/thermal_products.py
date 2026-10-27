@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -57,8 +58,16 @@ def load_manifest(run_id: str | None = None) -> dict[str, Any]:
     return payload
 
 
-def public_manifest() -> dict[str, Any]:
-    payload = load_manifest()
+def source_manifest_path(run_id: str) -> Path:
+    """Return the immutable run manifest after validating its run identity."""
+    load_manifest(run_id)
+    return PRODUCT_ROOT / _safe_run_id(run_id) / "manifest.json"
+
+
+def public_manifest(run_id: str | None = None) -> dict[str, Any]:
+    payload = load_manifest(run_id)
+    manifest_bytes = (PRODUCT_ROOT / payload["run_id"] / "manifest.json").read_bytes()
+    payload["manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
     # The viewer builds its forecast slider from this list. Exclude missing or
     # truncated binaries so every advertised timestamp can be loaded.
     grid = payload.get("grid", {})

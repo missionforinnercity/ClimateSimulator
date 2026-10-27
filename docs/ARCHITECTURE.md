@@ -26,11 +26,78 @@
 
 CFD assets are offline solved volumes. WebGL comfort weights solved directions only; omitted sectors must not become calm or interpolated evidence. Canvas uses a different screening API and must say so. If that API fails, it now reports unavailable data instead of constructing a synthetic animated field.
 
+`GET /api/wind/criteria` publishes the versioned activity-threshold profiles
+used by WebGL comfort and screening responses. Each field and printable report
+retains the selected criterion, probability threshold, averaging basis, gust
+handling and source. Criteria requiring unavailable gust inputs are visible in
+the catalog as disabled and are rejected by calculation routes.
+
+Thermal forecast and historical climatology products publish manifests and
+masked binary rasters. Both products include per-frame SHA-256 values and
+report references include the source hashes and run/product manifest hash.
+`GET /api/thermal/runs/{run_id}/source-manifest` and
+`GET /api/thermal/climatology/source-manifest` return the exact manifest bytes
+whose SHA-256 appears in a report. The corresponding normal manifest routes
+add derived status/forcing metadata for the application.
+[`scripts/verify_climate_report.py`](../scripts/verify_climate_report.py) checks
+saved report references against available manifests and binary hashes before
+reuse; it reports expired jobs and settings-only analyses separately, without
+rerunning models. [`scripts/archive_climate_report.py`](../scripts/archive_climate_report.py)
+packages retrievable thermal frames, OpenFOAM assets and completed traffic
+results with SHA-256 records; unavailable or non-retained analyses stay marked
+as such. The archive preserves artifacts but does not rerun models or establish
+scientific accuracy. `GET /api/thermal/climatology/kpis` derives UTCI
+category area-time shares from the monthly/local-hour composite rasters; its
+equivalent hours are therefore composite estimates, not observed frequency
+counts. The forecast UI reports UTCI band area for its selected frame only.
+Both retain the physical UTCI values and expose the relevant validation status.
+The `/api/wind/validate-openfoam` endpoint scores site/period-split observations
+against a converted CFD volume, while
+`scripts/validate_thermal_observations.py` compares a measured CSV with retained
+hourly thermal frames. Their residuals remain diagnostic until independent
+holdout campaigns exist. Reports identify observation and model artifacts by
+hash; synthetic scorer tests verify this bookkeeping, not field accuracy.
+
+Design massing emits `climate-design-geometry-change` with removed building
+indexes and added proposal prisms. The viewer rebuilds geometry, current
+shadows/Viewshed, and a qualitative baseline-field wake overlay; these are not
+thermal or CFD recalculations. `POST /api/sunlight/design-comparison` runs
+matched baseline/proposal direct-sun studies and returns a geometry hash,
+settings, paired ground rasters and summaries. `POST /api/heat/design-comparison`
+returns matched shade-deficit and heat-priority screening summaries with a
+shared proposal geometry hash and heat-zone/building/canopy asset hashes; its
+satellite surface-temperature input remains fixed at the baseline. Neither
+endpoint recalculates proposal UTCI/Tmrt or CFD. See
+[design coupling](DESIGN_COUPLING.md).
+
+OpenFOAM measurement scores are emitted by `/api/wind/validate-openfoam` and
+can be captured in the client report with the original uploaded/pasted input,
+per-row predictions, holdout metrics and source hashes. The report archiver
+packages the matching CFD volume, terrain DEM and scene manifest from the
+checkout. Thermal observation scores are produced as JSON by
+`scripts/validate_thermal_observations.py`; they retain observation-file,
+frame, manifest, model and UTCI implementation provenance. Attach the JSON and
+exact input CSV in Heat before exporting and archiving to package the input and
+paired thermal frames with the client report.
+
 ## Scenario exchange
 
 Settings links carry an allow-listed `scenario` JSON query value and selected `tool`. Unknown fields, unsupported versions, invalid dates, out-of-range coordinates, disabled select choices and oversized input are ignored. Local x/z coordinates are viewer coordinates, not longitude/latitude.
 
-Before/After snapshots live only in the current browser tab. JSON export preserves the captured settings, timestamp, evidence metadata and manifest identifiers. Event names, arbitrary query strings, API keys and result arrays are excluded. This is a settings comparison, not a scenario solver or an intervention-benefit estimate. Drawn traffic closure geometry is not serialised/restored; traffic reports remain the complete record of a completed traffic comparison. A link uses the recipient's current asset release; use the exported manifest record to check reproducibility.
+Before/After snapshots live only in the current browser tab. `Export scenario JSON` preserves settings and evidence metadata. `Export climate report` downloads printable HTML plus a `conditions-climate-report/1` JSON package with current and saved Before/After map images, app health, scene manifest/build-input hashes, result KPI summaries, matching KPI deltas for saved Before/After snapshots, and typed references to retained thermal frames, deployed OpenFOAM volumes, sunlight analysis IDs, traffic jobs and design heat/shade screens. OpenFOAM references include case/time version and field/mask SHA-256 hashes; thermal references include run-manifest and frame SHA-256 hashes, model versions and grid metadata; traffic references include selected edge IDs, request settings, the SUMO network SHA-256 and API field version. Design heat/shade references include proposal geometry/settings and source-asset hashes, area-weighted KPIs and per-zone result values; the verifier checks report consistency, while `scripts/archive_climate_report.py` packages matching local source inputs. This is traceable result data, not replay or scientific validation. The report excludes arbitrary query strings, API keys and raw CFD/traffic arrays. Server-side immutable result storage and replay validation remain future work; settings links use the recipient's current release.
+
+The Scenario workspace also has optional client-report metadata fields for the
+project name, client, project reference, preparer, location, reporting dates and
+notes. Values persist in browser local storage and are copied into the HTML and
+JSON export; they do not alter model inputs. The report rejects an end date
+earlier than its start date.
+
+The `/api/health` snapshot also records the FastAPI application version and a
+runtime-source fingerprint. Its aggregate SHA-256 and per-file hashes cover the
+server Python modules, browser JavaScript, app shell/style, thermal observation
+scorer and container/dependency lock files. The report can therefore identify
+which code/configuration generated it; these hashes do not package that source
+or guarantee that its environment can still be installed.
 
 ## Browser events
 

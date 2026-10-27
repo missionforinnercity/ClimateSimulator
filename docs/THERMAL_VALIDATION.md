@@ -22,10 +22,23 @@ Start with three simultaneous sites selected to span distinct street settings:
 Record viewer-local `x,z` coordinates (metres; `z` is south-positive) for the
 sensor location, sensor IDs and calibration, timestamp with timezone, averaging
 period, air temperature at 2 m, relative humidity, mean radiant temperature,
-and wind at 10 m. Use co-located instruments and align each averaged sample to
-within 15 minutes of a model frame. Keep the actual measurement time and
-averaging window in field notes. Do not substitute the 1.5 m pedestrian-wind
-channel for the UTCI 10 m wind input.
+and wind at 10 m. Treat `observed_at` as the midpoint of the averaging window;
+also retain the actual start/end times in field notes. Use co-located
+instruments and align each sample midpoint to within 15 minutes of a model
+frame. Do not substitute the 1.5 m pedestrian-wind channel for the UTCI 10 m
+wind input.
+
+For one synchronized dataset that can feed both the wind and thermal
+comparisons, use
+[`cbd_validation_campaign_template.csv`](cbd_validation_campaign_template.csv).
+Its `speed_mps`/`height_m` fields are pedestrian-wind observations and its
+`reference_speed_mps`/`reference_direction_deg` fields are the simultaneous
+upstream reference; these are separate from `wind_10m_mps`, which is the wind
+input to UTCI. Give every calibration and holdout unit a shared `split` and
+`split_group` assignment; all rows in a site or period must stay in that group.
+Keep holdout units untouched during tuning. Retain the
+per-channel sensor IDs, calibration certificates, survey
+coordinates and full instrument log alongside the CSV.
 
 Measure Tmrt with a calibrated radiometer where available. If using a globe
 thermometer, retain globe diameter, emissivity, shield/aspiration details and
@@ -42,16 +55,26 @@ malfunctions.
 
 ## Prepare and run a comparison
 
-Copy [`thermal_observations_template.csv`](thermal_observations_template.csv)
-and add one row per site and time. The required fields are:
+Use [`cbd_validation_campaign_template.csv`](cbd_validation_campaign_template.csv)
+for a combined campaign, or copy
+[`thermal_observations_template.csv`](thermal_observations_template.csv) for
+thermal-only analysis. Add one row per site and synchronized time window. The
+required thermal fields are:
 
 - `id`, `observed_at` (ISO 8601 with timezone), `x`, `z`;
 - `air_temp_2m_c`, `relative_humidity_pct`, measured `tmrt_c`;
-- `wind_10m_mps`.
+- `wind_10m_mps`, positive `averaging_period_s`, `split`, and `split_group`
+  identifying the complete site or period evaluation unit.
 
-Keep `site_name`, `sensor_ids`, `averaging_period_s` and `measurement_notes`
-filled in for traceability. Do not put longitude/latitude in `x,z`; these are
-the viewer's local projected coordinates.
+Keep `site_name`, `sensor_ids`, `sensor_calibration`, and `measurement_notes`
+for traceability. Use
+`split=calibration` for observations available during diagnosis/tuning and
+`split=holdout` for an untouched site or period. Prefer holding out a whole
+site or complete set of days, not random rows from one sensor time series.
+Give every row in that unit the same `split_group`; the comparison rejects a
+group accidentally assigned to both splits and reports metrics by group. Do
+not put longitude/latitude in `x,z`; these are the viewer's local projected
+coordinates.
 
 Run the comparison soon after the observation while its thermal run is still
 retained by the worker (currently the latest three runs):
@@ -59,6 +82,15 @@ retained by the worker (currently the latest three runs):
 ```bash
 .venv/bin/python scripts/validate_thermal_observations.py /path/to/thermal_observations.csv
 ```
+
+Add `--output /path/to/thermal-validation.json` to save the machine-readable
+result. In Heat → **Attach thermal validation to report**, select that JSON
+and the exact original CSV; the browser verifies the CSV SHA-256 before
+embedding paired rows and holdout metrics in the next client report export.
+Archive the exported report while the referenced thermal run is retained:
+`scripts/archive_climate_report.py report.json`. The archive includes the
+original observation bytes, run manifest and every paired frame whose hash
+still matches. This preserves evidence; it does not rerun the model.
 
 To compare against a specific retained run, pass `--run-id thermal_...`.
 The script pairs each observation to the nearest published hourly frame, with
@@ -68,12 +100,36 @@ temperature, humidity, Tmrt and 10 m wind using the same UTCI implementation
 as the model. Measurements outside the standard UTCI input range are excluded
 rather than silently clipped.
 
+The comparison basis differs by variable: air temperature and humidity are
+compared with the run's spatially uniform weather forcing values, not with
+spatial SUEWS air-temperature or humidity outputs. Tmrt is sampled from the
+spatial SOLWEIG raster; 10 m wind is sampled from the OpenFOAM directional
+atlas scaled by 10 m weather forcing; UTCI is sampled from its spatial raster
+and compared with UTCI recalculated from measured inputs. The SUEWS T2/RH2
+energy-balance product is not independently scored by this workflow.
+
 The JSON report gives point-by-point model and measured inputs, residuals, and
-bias / MAE / RMSE for air temperature, humidity, Tmrt, 10 m wind and UTCI.
-Residual sign is model minus observed. Preserve the JSON output alongside the
-run ID, sensor calibration notes and original field file. The model run must
+bias / MAE / RMSE for air temperature, humidity, Tmrt, 10 m wind and UTCI. It
+reports all paired rows, calibration rows and holdout rows separately, with
+holdout summaries grouped by site and explicit split group. Residual sign is
+model minus observed. A
+`holdout_scored_not_validated` status means holdout rows were scored; it is not
+a quality threshold or validation claim. Preserve the JSON output alongside
+the run ID, sensor calibration notes and original field file. Provenance
+records the observation-file hash, manifest hash, frame hashes, model versions
+and UTCI package version. New thermal-run manifests also identify the worker
+source, thermal container configuration and model dependency lock by SHA-256;
+older runs may not have those fields. Paired rows retain sensor identifiers and any
+calibration notes supplied. The model run must
 contain `wind_10m_mps`; older runs predate that channel and cannot be used by
 this comparison. The thermal worker must publish a new run after it is updated.
+
+The Heat panel's comfort KPIs use the standard UTCI categories: cold stress
+below 9°C, no thermal stress from 9°C to below 26°C, and heat stress at or
+above 26°C. Those categories describe modelled UTCI values; they do not replace
+the numeric UTCI map or establish health outcomes. Historical area-time KPIs
+are explicitly composite estimates and are not counted observed hours. See
+[the climatology limits and KPI method](THERMAL_CLIMATOLOGY.md).
 
 ## Interpreting results
 
@@ -91,6 +147,54 @@ the JSON report. Longer historical campaigns will need a separate compact
 observation-time archive policy before old model frames are pruned.
 
 ## No-fieldwork forcing checks
+
+### SENSOTO Molteno Reservoir station cross-check
+
+SENSOTO's NOAA ISD device `688190-99999` resolves to Molteno Reservoir
+(18.417°E, 33.933°S). The live metadata exposes hourly mean air temperature,
+wind speed and wind direction, but no relative humidity, radiation, Tmrt,
+sensor elevation, sensor height or station-exposure assessment. A fresh API query on 2026-10-27 found no non-null hourly values for any of the
+three sensors from 2025-08-25 through 2026-10-26; the last returned observation
+was 2025-08-24 21:00 UTC. Treat this as delayed historical data, not live CBD
+weather. Its point is 313.9 m outside the mapped
+scene footprint. A [WMO station list](https://www.rnd.tmd.go.th/imo/doc/8.%20wmo_9-2012-A.pdf)
+lists Molteno Reservoir's site elevation as 97 m; this does not establish the
+measurement-instrument height or current exposure.
+
+The SENSOTO comparison script downloads exact-hour station observations and
+matches them to ERA5 at the requested station coordinates without temporal
+interpolation. ERA5 resolves those coordinates to a 0.25° grid point 21.7 km
+away. For 2021-01-01 through 2025-08-24, the station supplies 13,413 observed
+hours out of 40,728 possible (32.9%). ERA5-minus-station errors are:
+
+| Variable | n | Bias | MAE | RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| Air temperature | 13,384 | −1.12°C | 2.07°C | 2.77°C |
+| Wind speed | 13,385 | +2.22 m/s | 2.34 m/s | 2.80 m/s |
+| Wind direction | 11,067 | — | 55.1° circular MAE | — |
+
+Direction errors omit observations below 1 m/s. ERA5 assimilates surface
+observations and its coarse grid is spatially distant, so this is a regional
+forcing consistency check, not independent forecast validation or CBD street
+validation. Do not apply these aggregate residuals as correction factors.
+Humidity, radiation, Tmrt and UTCI still require other references or local
+instrumentation. The complete paired rows, coverage metadata and residuals are
+preserved in [`evidence/sensoto-noaa-isd-688190-2021-2025.json.gz`](evidence/sensoto-noaa-isd-688190-2021-2025.json.gz).
+
+To reproduce the report, set `SENSOTO_API_TOKEN` in the ignored local `.env`
+file, then run:
+
+```bash
+.venv/bin/python scripts/backtest_sensoto_station.py \
+  --start 2021-01-01 --end 2025-08-24 \
+  --output /tmp/sensoto-molteno-era5-backtest.json
+```
+
+The report uses public [NOAA ISD](https://www.ncei.noaa.gov/products/land-based-station/integrated-surface-database)
+observations delivered through SENSOTO. It records token-free source
+metadata, station and reanalysis coordinates, pairing rules, missing-hour
+coverage, per-row values and residuals. It does not send this station data to
+the runtime weather feed.
 
 When CBD instruments are unavailable, run the 30-day forcing backtest:
 

@@ -512,7 +512,12 @@ def publish_once() -> dict[str, Any]:
             "energy_file": "energy.json", "models": {"suews": suews_meta, "solweig": solweig_meta},
             "providers": forcing["providers"], "latest_observation_at": forcing["latest_observation_at"],
             "wind_atlas": {"schema": atlas_manifest["schema"], "required_sectors": 16, "available_sectors": 16},
-            "worker": {"duration_seconds": round(time.monotonic() - started, 1), "status": "complete"},
+            "worker": {
+                "duration_seconds": round(time.monotonic() - started, 1), "status": "complete",
+                "source_sha256": _sha256(Path(__file__).resolve()),
+                "container_config_sha256": _sha256(PROJECT_ROOT / "Dockerfile.thermal"),
+                "dependency_lock_sha256": _sha256(PROJECT_ROOT / "requirements-models.txt"),
+            },
         }
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         # TemporaryDirectory creates its root with mode 0700. The API container

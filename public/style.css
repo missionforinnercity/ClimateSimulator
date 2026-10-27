@@ -24,6 +24,11 @@
 .design-heading h2 { margin: 3px 0 0; color: var(--ink); font-size: 20px; letter-spacing: -.025em; }
 .design-kicker { color: #71d9ad; font-size: 9px; font-weight: 800; letter-spacing: .14em; }
 .design-intro, .design-method-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.design-coupling { padding: 8px 9px; border: 1px solid var(--line); border-radius: 6px; background: #202321; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.design-coupling > summary { color: var(--ink); cursor: pointer; font-size: 11px; font-weight: 700; }
+.design-coupling ul { display: grid; gap: 5px; margin: 8px 0; padding-left: 17px; }
+.design-coupling li b { color: #dce8e1; }
+.design-coupling p { margin: 7px 0 0; }
 .design-name-label, .design-solve-card > label { display: grid; gap: 6px; color: var(--ink); font-size: 11px; }
 .design-name-label input, .design-solve-card select { width: 100%; min-height: 36px; padding: 7px 8px; border: 1px solid var(--line-light); border-radius: 5px; background: #202724; color: var(--ink); }
 .design-pick-actions, .design-block-editor .massing-actions, .design-block-editor .massing-selection-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -97,6 +102,12 @@
 .scenario-workspace summary, .evidence-card summary, .experience-advanced summary {
   cursor: pointer; color: var(--ink); padding: 5px 0; font-weight: 650;
 }
+.report-metadata { margin: 10px 0; border-top: 1px solid var(--line-light); border-bottom: 1px solid var(--line-light); }
+.report-metadata-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px 0; }
+.report-metadata-grid label { display: grid; gap: 4px; min-width: 0; font-size: 12px; color: var(--muted); }
+.report-metadata-grid input, .report-metadata-grid textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.report-metadata-grid label:last-child { grid-column: 1 / -1; }
+@media (max-width: 520px) { .report-metadata-grid { grid-template-columns: minmax(0, 1fr); } .report-metadata-grid label:last-child { grid-column: auto; } }
 .explorer-guide { border-color: #4c8e78; background: #203029; }
 .explorer-guide h2 { color: #d5f5e8; font-size: 14px; margin: 0; }
 .explorer-guide p, .scenario-workspace p, .evidence-card p { margin: 7px 0; }
@@ -953,6 +964,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .heat-summary span:last-child { grid-column: 1 / -1; }
 .heat-summary b { display: block; margin-bottom: 2px; color: #eee; font-size: 13px; }
 .heat-summary i { font-style: normal; }
+.heat-comfort-kpis { display: grid; gap: 5px; margin-top: 8px; padding: 8px; border: 1px solid #343f3a; border-radius: 7px; background: #202724; color: #dce7e0; }
+.heat-comfort-kpis > b { font-size: 11px; }
+.heat-comfort-kpis > small { color: #9aa9a1; font-size: 9px; line-height: 1.35; }
+.heat-kpi-grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+.heat-kpi-grid th, .heat-kpi-grid td { padding: 4px 3px; border-bottom: 1px solid #343f3a; text-align: right; vertical-align: middle; }
+.heat-kpi-grid th:first-child { width: 45%; text-align: left; }
+.heat-kpi-grid thead th { color: #9aa9a1; font-size: 8px; }
+.heat-kpi-grid tbody th { font-weight: 500; }
+.heat-kpi-grid tbody td { font-size: 10px; }
 .heat-legend-help { margin: 0; color: #bbb; font-size: 10px; line-height: 1.45; }
 .heat-legend-help b { color: #e2e2df; }
 .heat-climate-profile-section { display: grid; gap: 4px; padding-top: 6px; border-top: 1px solid #444; }
