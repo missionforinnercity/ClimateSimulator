@@ -17,8 +17,21 @@ closures.
 
 - **Tools:** Explore the 3D city, inspect current modelled weather, compare
   mapped paved, vegetated and water coverage, change building appearance, and
-  open a map location in Street View. The surface inventory reports mapped
-  coverage only; unmapped ground and infiltration remain unknown.
+  open a map location in Street View. The separate Design scenario panel can
+  modify a mapped building's footprint and height while preserving its polygon,
+  demolish or replace buildings, and place, resize, move, and stack concept
+  blocks. Design edits are saved in the current browser. Save a pedestrian
+  wind field as the baseline in Wind, then Design can show an instant,
+  simplified building-wake estimate on the same grid. This is a screening
+  approximation, not a new CFD result. Proposal geometry JSON can be downloaded
+  and re-imported to reopen a draft. The Design
+  panel also compares before/after sunlight on nearby building surfaces and
+  20 m terrain cells using a local 40 m building-surface, two-hour screening study, and displays
+  mapped shade-deficit maps plus the app's fixed-temperature heat-priority
+  screen for nearby heat zones. Satellite surface
+  temperature remains a fixed baseline, and traffic still uses its baseline
+  geometry. The surface inventory reports
+  mapped coverage only; unmapped ground and infiltration remain unknown.
   A separate mapped-cycleway layer highlights dedicated OpenStreetMap links
   and reports network proximity groups; it does not rate cycling safety or
   imply that other roads are unavailable to cyclists.

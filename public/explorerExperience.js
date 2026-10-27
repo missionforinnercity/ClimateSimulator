@@ -347,6 +347,7 @@ export function setupExplorerExperience() {
   for (const node of document.querySelectorAll('[id$="status"], #status')) { node.setAttribute('role', 'status'); node.setAttribute('aria-live', 'polite'); }
   document.addEventListener('input', event => {
     const tool = event.target.closest('[data-menu-panel]')?.dataset.menuPanel;
+    if (event.target.id === 'wind-toggle') return;
     if (tool && !applying) { cancelRequests(tool); markDirty(tool); }
   }, true);
   document.addEventListener('click', event => {
@@ -356,10 +357,12 @@ export function setupExplorerExperience() {
   }, true);
   document.addEventListener('change', event => {
     const tool = event.target.closest('[data-menu-panel]')?.dataset.menuPanel;
+    if (event.target.id === 'wind-toggle') return;
     if (tool && !applying) cancelRequests(tool);
   }, true);
   document.addEventListener('change', event => {
     const tool = event.target.closest('[data-menu-panel]')?.dataset.menuPanel;
+    if (event.target.id === 'wind-toggle') return;
     if (tool) markDirty(tool); refresh();
   });
   addEventListener('climate-menu-change', refresh);

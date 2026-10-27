@@ -448,26 +448,29 @@ export async function createTransportLayer({
         : metric.length;
       return { points, metric, hubDistance, endpointReach };
     })
-    // Reject station-yard loops whose two endpoints stay beside the hub. A
-    // shared service approach must visibly lead away from Cape Town Station.
-    .filter(item => item.hubDistance < 90 && item.endpointReach > 150)
-    .sort((a, b) => b.endpointReach - a.endpointReach || b.metric.length - a.metric.length)
+    // Keep the through approaches and the sidings/platform roads around the
+    // station throat. Yard lines were omitted by the earlier endpoint reach
+    // test even though they are visible tracks that trains can use.
+    .filter(item => item.metric.length >= 70)
+    // Put station-adjacent platform tracks first. Timetable departures are
+    // allocated by line index, so ordering the fan from the hub prevents all
+    // scheduled trains from defaulting to the farthest/rightmost approaches.
+    .sort((a, b) => a.hubDistance - b.hubDistance || b.metric.length - a.metric.length)
     .map(item => item.points);
   const sharedRailLine = serviceApproaches[0] || null;
   const isVisibleServiceApproach = line => {
     if (!line?.length || !hubStation) return Boolean(line?.length);
     const metric = lineMetrics(line);
     const hubDistance = nearestFraction(metric, hubStation.point).distance;
-    const endpointReach = Math.max(
-      Math.hypot(line[0][0] - hubStation.point[0], line[0][1] - hubStation.point[1]),
-      Math.hypot(line.at(-1)[0] - hubStation.point[0], line.at(-1)[1] - hubStation.point[1]),
-    );
-    return hubDistance < 100 && endpointReach > 150;
+    // The timetable source breaks the station throat into multiple short
+    // platform and yard alignments. Keep those local tracks even when neither
+    // clipped endpoint reaches the edge of the scene.
+    return hubDistance < 700 && metric.length >= 70;
   };
   let unmappedCorridorIndex = 0;
   for (const rail of data.rail) {
-    // Use every through-running line that actually reaches the visible hub,
-    // excluding disconnected platform/yard loops carried in the source GIS.
+    // Keep service alignments and the local platform/yard roads around the
+    // visible station, where trains should be able to occupy each track.
     rail._movementLines = (rail.lines || []).filter(isVisibleServiceApproach);
     if (!rail._movementLines.length && serviceApproaches.length) {
       rail._movementLines = [serviceApproaches[unmappedCorridorIndex % serviceApproaches.length]];
@@ -476,12 +479,49 @@ export async function createTransportLayer({
     rail._metrics = rail._movementLines.map(lineMetrics);
     rail._metric = rail._metrics[0] || null;
     rail._departures = rail.departures || rail.trips.map(trip => trip[0]);
-    // A kilometre-scale CBD approach otherwise flashes past in under a minute.
-    // Four minutes retains the published departure time while keeping the
-    // timetable-derived train legible at normal playback speed.
+    // Retain the established timetable presentation speed on short CBD lines.
     rail._duration = rail._metric ? Math.max(4, rail._metric.length / RAIL_SPEED_M_PER_MIN) : 1;
     rail._label = `Rail · ${rail.name}`;
     rail._color = rail.color;
+  }
+
+  // Timetable geometry is simplified and can omit parallel platform tracks.
+  // Match it against the physical inventory, then add through tracks that are
+  // otherwise unused to their nearest visible corridor.
+  const lineGap = (left, right) => {
+    const leftMetric = left.metric || lineMetrics(left);
+    const rightMetric = right.metric || lineMetrics(right);
+    return [0.08, 0.3, 0.5, 0.7, 0.92].reduce((best, fraction) => {
+      const point = sampleLine(leftMetric, fraction);
+      return Math.min(best, nearestFraction(rightMetric, [point.x, point.z]).distance);
+    }, Infinity);
+  };
+  const visibleRailServices = data.rail.filter(rail => rail.inView && rail._movementLines?.length);
+  const usedPhysicalTracks = new Set();
+  for (const rail of visibleRailServices) {
+    for (const line of rail._movementLines) {
+      const trackIndex = serviceApproaches.findIndex(track => lineGap(track, line) < 1.5);
+      if (trackIndex >= 0) usedPhysicalTracks.add(trackIndex);
+    }
+  }
+  for (let trackIndex = 0; trackIndex < serviceApproaches.length; trackIndex += 1) {
+    if (usedPhysicalTracks.has(trackIndex) || !visibleRailServices.length) continue;
+    const track = serviceApproaches[trackIndex];
+    const closestRail = visibleRailServices.reduce((best, rail) => {
+      const gap = Math.min(...rail._movementLines.map(line => lineGap(track, line)));
+      return !best || gap < best.gap ? { rail, gap } : best;
+    }, null)?.rail || visibleRailServices[0];
+    closestRail._movementLines.push(track);
+  }
+  for (const rail of visibleRailServices) {
+    rail._movementLines.sort((left, right) => {
+      const leftMetric = lineMetrics(left), rightMetric = lineMetrics(right);
+      const leftDistance = hubStation ? nearestFraction(leftMetric, hubStation.point).distance : 0;
+      const rightDistance = hubStation ? nearestFraction(rightMetric, hubStation.point).distance : 0;
+      return leftDistance - rightDistance || rightMetric.length - leftMetric.length;
+    });
+    rail._metrics = rail._movementLines.map(lineMetrics);
+    rail._metric = rail._metrics[0] || null;
   }
 
   // Which route directions call at a given stop, for the stop info card.
@@ -776,10 +816,6 @@ export async function createTransportLayer({
   // Vehicles are pooled: a service shows one mesh per departure currently
   // inside the modelled view, so a 10-minute headway visibly differs from a
   // 40-minute one instead of every route showing exactly one crawling vehicle.
-  // Metrorail sets hold at the platform to load and unload before departing,
-  // rather than appearing already moving. Dwelling this long means several
-  // sets can be waiting or arriving on one corridor at once, which is why
-  // the pool below spreads them out sideways instead of stacking them.
   const PLATFORM_DWELL_MINUTES = 15;
   function activeProgress(service, minute, reverse = false, serviceTimes = service._departures, kind = 'bus', duration = service._duration) {
     const progress = [];
@@ -1504,9 +1540,8 @@ export async function createTransportLayer({
       state.lastFrame = now;
       if (state.playing) {
         // One model minute takes one real second per 1× of playback. The
-        // service geometry and the planning speeds are both expressed in
-        // real metres and minutes, so this keeps the vehicles at their
-        // intended 18 km/h bus and 40 km/h rail speeds at real-time playback.
+        // service geometry and planning speeds are both expressed in real
+        // metres and minutes, so 1× retains the model's established speed.
         state.minute = (state.minute + elapsed * Number(elements['transport-speed'].value || 1) / 60) % 1440;
         updateVehicles();
       }

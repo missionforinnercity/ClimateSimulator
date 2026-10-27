@@ -216,6 +216,153 @@ def _shade_deficits_for_geometries(
     return tuple(deficits)
 
 
+def design_shade_comparison(
+    date_text: str, minutes: int, remove_building_indexes: list[int],
+    add_buildings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare mapped and edited building shadows over the heat-zone footprint."""
+    data = _load_heat_zones()
+    geometries = tuple(shape(feature["geometry"]) for feature in data["features"])
+    if not geometries:
+        raise ValueError("heat-zone geometry is unavailable")
+    records = json.loads(SCENE_PATH.read_text(encoding="utf-8")).get("buildings", [])
+    if len(set(remove_building_indexes)) != len(remove_building_indexes):
+        raise ValueError("removed building indexes must be unique")
+    if any(index < 0 or index >= len(records) for index in remove_building_indexes):
+        raise ValueError(f"removed building indexes must be between 0 and {len(records) - 1}")
+
+    altitude, sun_x, sun_z = sun_position(date_text, minutes)
+    domain_bounds = (
+        min(item.bounds[0] for item in geometries), min(item.bounds[1] for item in geometries),
+        max(item.bounds[2] for item in geometries), max(item.bounds[3] for item in geometries),
+    )
+    domain = box(*domain_bounds)
+    baseline_blockers = _shadow_blockers()
+    removed = set(remove_building_indexes)
+    valid_building_indexes = []
+    for index, record in enumerate(records):
+        if len(record) >= 3 and len(record[2]) >= 3:
+            holes = record[13] if len(record) > 13 and isinstance(record[13], list) else []
+            footprint = Polygon(record[2], holes)
+            if footprint.is_valid and not footprint.is_empty:
+                valid_building_indexes.append(index)
+    removed_blocker_indexes = {
+        valid_building_indexes.index(index) for index in removed if index in valid_building_indexes
+    }
+    baseline_shapes = _shadow_surface(date_text, minutes, domain_bounds)
+    if altitude <= 0.008:
+        baseline_shape_blocker_indexes = []
+    else:
+        horizontal = math.hypot(sun_x, sun_z) or 1.0
+        baseline_shape_blocker_indexes = []
+        # _shadow_surface retains blocker order and skips casters outside the
+        # domain or empty projections. Recreate that index list so removals
+        # can exclude just the affected building shadows from each local zone.
+        for blocker_index, (footprint, height, swept) in enumerate(baseline_blockers):
+            distance = min(500.0, height / max(math.tan(altitude), 0.03))
+            dx, dz = -sun_x / horizontal * distance, -sun_z / horizontal * distance
+            min_x, min_z, max_x, max_z = footprint.bounds
+            bounds = (
+                min_x + (min(0.0, dx) if swept else dx), min_z + (min(0.0, dz) if swept else dz),
+                max_x + (max(0.0, dx) if swept else dx), max_z + (max(0.0, dz) if swept else dz),
+            )
+            if not box(*bounds).intersects(domain):
+                continue
+            projected = cast_shadow(footprint, height, altitude, sun_x, sun_z, swept=swept).intersection(domain)
+            if not projected.is_empty:
+                baseline_shape_blocker_indexes.append(blocker_index)
+
+    changed_shadows = []
+    if altitude > 0.008:
+        for index in removed:
+            record = records[index]
+            holes = record[13] if len(record) > 13 and isinstance(record[13], list) else []
+            footprint = Polygon(record[2], holes)
+            projected = cast_shadow(footprint, float(record[1]), altitude, sun_x, sun_z, swept=True).intersection(domain)
+            if not projected.is_empty:
+                changed_shadows.append(projected)
+        for item in add_buildings:
+            footprint = Polygon(item["ring"], item.get("holes", []))
+            projected = cast_shadow(footprint, float(item["height_m"]), altitude, sun_x, sun_z, swept=True).intersection(domain)
+            if not projected.is_empty:
+                changed_shadows.append(projected)
+
+    before = _dynamic_shade_deficits(date_text, minutes)
+    after = list(before)
+    if changed_shadows:
+        zone_tree = STRtree(geometries)
+        zone_indexes = sorted({
+            int(index)
+            for changed_shadow in changed_shadows
+            for index in zone_tree.query(changed_shadow, predicate="intersects")
+        })
+        shadow_tree = STRtree(baseline_shapes) if baseline_shapes else None
+        shape_blocker_indexes = baseline_shape_blocker_indexes[:len(baseline_shapes)]
+        additions = [
+            cast_shadow(Polygon(item["ring"], item.get("holes", [])), float(item["height_m"]), altitude, sun_x, sun_z, swept=True).intersection(domain)
+            for item in add_buildings
+        ]
+        additions = [shadow for shadow in additions if not shadow.is_empty]
+        for zone_index in zone_indexes:
+            geometry = geometries[zone_index]
+            shadow_indexes = shadow_tree.query(geometry, predicate="intersects") if shadow_tree else ()
+            candidates = [
+                baseline_shapes[int(shadow_index)] for shadow_index in shadow_indexes
+                if shape_blocker_indexes[int(shadow_index)] not in removed_blocker_indexes
+            ] + additions
+            covered = unary_union(candidates).intersection(geometry).area if candidates else 0.0
+            after[zone_index] = round((1.0 - min(1.0, max(0.0, covered / geometry.area))) * 100.0, 2) if geometry.area else 100.0
+    after = tuple(after)
+    areas = [geometry.area for geometry in geometries]
+    total_area = sum(areas)
+    mean_before = sum(value * area for value, area in zip(before, areas)) / total_area
+    mean_after = sum(value * area for value, area in zip(after, areas)) / total_area
+    # Match the app's existing 70% fixed summer LST + 30% selected-time shade
+    # screening score. Only shade changes for a design comparison; LST stays
+    # fixed and is named as such in the response and UI.
+    temperatures = [
+        float(feature["properties"]["heat_model_lst_c"])
+        for feature in data["features"]
+        if feature["properties"].get("heat_model_lst_c") is not None
+    ]
+    cool_temperature = _percentile(temperatures, 0.10) or 0.0
+    hot_temperature = _percentile(temperatures, 0.90) or cool_temperature + 1.0
+    priority_before, priority_after = [], []
+    for feature, shade_before, shade_after in zip(data["features"], before, after):
+        temperature = feature["properties"].get("heat_model_lst_c")
+        if temperature is None:
+            priority_before.append(None)
+            priority_after.append(None)
+            continue
+        thermal_score = min(1.0, max(0.0, (float(temperature) - cool_temperature) / max(hot_temperature - cool_temperature, 0.01)))
+        priority_before.append(round(70.0 * thermal_score + 30.0 * shade_before / 100.0, 2))
+        priority_after.append(round(70.0 * thermal_score + 30.0 * shade_after / 100.0, 2))
+    scored_area = sum(area for area, value in zip(areas, priority_before) if value is not None)
+    mean_priority_before = sum(area * value for area, value in zip(areas, priority_before) if value is not None) / scored_area if scored_area else 0.0
+    mean_priority_after = sum(area * value for area, value in zip(areas, priority_after) if value is not None) / scored_area if scored_area else 0.0
+    zone_points = []
+    for geometry, before_value, after_value, before_priority, after_priority, area in zip(geometries, before, after, priority_before, priority_after, areas):
+        point = geometry.representative_point()
+        zone_points.append({
+            "x": round(float(point.x), 2), "z": round(float(point.y), 2),
+            "area_m2": round(float(area), 1), "before": before_value, "after": after_value,
+            "priority_before": before_priority, "priority_after": after_priority,
+        })
+    return {
+        "date": date_text, "minutes": minutes, "zone_count": len(geometries),
+        "area_m2": round(total_area, 1), "mean_shade_deficit_before": round(mean_before, 2),
+        "mean_shade_deficit_after": round(mean_after, 2),
+        "change_mean_shade_deficit": round(mean_after - mean_before, 2),
+        "mean_priority_score_before": round(mean_priority_before, 2),
+        "mean_priority_score_after": round(mean_priority_after, 2),
+        "change_mean_priority_score": round(mean_priority_after - mean_priority_before, 2),
+        "zones_improved": sum(a < b for a, b in zip(after, before)),
+        "zones_worsened": sum(a > b for a, b in zip(after, before)),
+        "zone_points": zone_points,
+        "method": "Area-weighted mapped heat-zone shade deficit and the app's 70% fixed summer surface-temperature + 30% selected-time shade priority score. Proposed building shadows are recalculated; satellite surface temperature is held at baseline and is not rerun.",
+    }
+
+
 @functools.lru_cache(maxsize=8)
 def _cumulative_sun_hours(date_text: str, start_minutes: int, end_minutes: int, step_minutes: int) -> tuple[float, ...]:
     """Accumulate direct-sun duration on every heat-zone analysis surface."""

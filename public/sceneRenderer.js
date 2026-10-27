@@ -98,6 +98,13 @@ export async function startScene(canvas, status) {
     const messageElement = document.getElementById(statusId);
     if (messageElement) messageElement.textContent = message;
   }
+  const designPanel = document.querySelector('#menu-design');
+  designPanel?.querySelectorAll('button, input, select')?.forEach(control => {
+    control.disabled = true;
+    control.title = 'Unavailable in Canvas compatibility mode';
+  });
+  const massingStatus = document.querySelector('#massing-status');
+  if (massingStatus) massingStatus.textContent = 'Design scenarios require WebGL. Reload with hardware acceleration enabled to edit buildings and blocks.';
   const transportSource = document.getElementById('transport-data-source');
   if (transportSource) transportSource.textContent = 'Compatibility mode · WebGL required';
   // The city/roads/buildings/trees layer only changes with the camera or a
@@ -204,7 +211,7 @@ export async function startScene(canvas, status) {
     fetch(`/assets/${manifest.assets?.canopy || 'canopy.json'}?v=${manifest.layers?.canopy?.cache_key || manifest.layers?.canopy?.bytes || 0}`).then(response => response.ok ? response.json() : { canopies: [] }).catch(() => ({ canopies: [] })),
   ]);
   const camera = { azimuth: 0.75, elevation: 0.68, distance: 1600, target: [0, 20, 0] };
-  const visibility = { terrain: true, water: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true, groundcover: false, cycling: false, runoff: false, publicRealm: false };
+  const visibility = { terrain: true, water: true, grass: true, railways: true, paths: true, roads: true, buildings: true, trees: true, groundcover: false, cycling: false, runoff: false, publicRealm: true };
   const groundcoverState = { loaded: false, loading: false, features: [] };
   const cyclingState = { loaded: false, ways: [], openEnds: [] };
   const runoffState = { loaded: false, loading: false, points: [], metadata: null, rainfallDepthMm: 25 };
@@ -2759,75 +2766,10 @@ export async function startScene(canvas, status) {
   function renderStatic() {
     context = sceneContext;
     try {
-      const cloudCover = clamp(Number(skyWeather?.cloud_cover_pct) || 0, 0, 100) / 100;
-      const sun = sunPosition();
-      const twilight = Math.exp(-Math.abs(sun.altitude) / 0.2);
-      const night = sun.altitude < -0.12;
-      const rainy = Number(skyWeather?.precipitation_mm) > 0.1 || Number(skyWeather?.weather_code) >= 51;
-      const sky = context.createLinearGradient(0, 0, 0, canvas.height);
-      if (shadowState.enabled) {
-        sky.addColorStop(0, '#f7f7f7');
-        sky.addColorStop(0.58, '#f7f7f7');
-        sky.addColorStop(0.76, '#f7f7f7');
-        sky.addColorStop(1, '#f7f7f7');
-      } else {
-        sky.addColorStop(0, night ? '#101a30' : rainy ? '#53616b' : `hsl(${204 - cloudCover * 8} 48% ${68 - cloudCover * 28}%)`);
-        sky.addColorStop(0.58, !rainy && twilight > 0.08 ? '#cf795f' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
-        sky.addColorStop(0.76, !rainy && twilight > 0.08 ? '#f0a16a' : night ? '#344258' : rainy ? '#82909a' : `hsl(${198 - cloudCover * 8} 58% ${84 - cloudCover * 25}%)`);
-        sky.addColorStop(1, COLORS.background);
-      }
-      context.fillStyle = sky;
+      // Keep the normal city view's open space dark so the model stays the
+      // focus. The analytical shadow view keeps its established light canvas.
+      context.fillStyle = shadowState.enabled ? '#f7f7f7' : COLORS.background;
       context.fillRect(0, 0, canvas.width, canvas.height);
-      if (!shadowState.enabled && sun.altitude > -0.018) {
-        const x = clamp(canvas.width * (0.5 - Math.sin(sun.azimuth) * 0.34), 24, canvas.width - 24);
-        const y = clamp(canvas.height * (0.48 - Math.sin(sun.altitude) * 0.38), 24, canvas.height * 0.48);
-        context.save();
-        context.globalAlpha = Math.max(0.18, 1 - cloudCover * 0.72);
-        const glow = context.createRadialGradient(x, y, 3, x, y, 34);
-        glow.addColorStop(0, 'rgba(255,229,158,.9)');
-        glow.addColorStop(1, 'rgba(255,198,93,0)');
-        context.fillStyle = glow;
-        context.beginPath(); context.arc(x, y, 34, 0, Math.PI * 2); context.fill();
-        context.fillStyle = '#fff0b7';
-        context.beginPath(); context.arc(x, y, 8, 0, Math.PI * 2); context.fill();
-        context.font = '12px sans-serif';
-        context.textAlign = 'center';
-        const timeLabel = `${String(Math.floor(shadowState.minutes / 60)).padStart(2, '0')}:${String(shadowState.minutes % 60).padStart(2, '0')} SAST`;
-        const labelWidth = context.measureText(timeLabel).width + 14;
-        const labelX = clamp(x - labelWidth / 2, 4, canvas.width - labelWidth - 4);
-        const labelY = Math.min(y + 22, canvas.height * 0.48);
-        context.fillStyle = 'rgba(16,25,31,.72)';
-        context.beginPath(); context.roundRect(labelX, labelY, labelWidth, 20, 8); context.fill();
-        context.fillStyle = '#fff5d4';
-        context.textBaseline = 'middle';
-        context.fillText(timeLabel, labelX + labelWidth / 2, labelY + 10);
-        context.restore();
-      }
-      const lunarDate = new Date(`${shadowState.date}T12:00:00+02:00`);
-      const lunarAge = (lunarDate.getTime() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
-      const moonPhase = ((lunarAge / 29.530588853) % 1 + 1) % 1;
-      const moonIllumination = 0.5 - 0.5 * Math.cos(moonPhase * Math.PI * 2);
-      if (!shadowState.enabled && sun.altitude < 0.12 && moonIllumination > 0.045) {
-        const moonAngle = moonPhase * Math.PI * 2 + shadowState.minutes / 1440 * Math.PI * 2;
-        const x = canvas.width * (0.68 + Math.sin(moonAngle) * 0.055);
-        const y = canvas.height * (0.19 + Math.cos(moonAngle) * 0.025);
-        const radius = Math.max(10, Math.min(canvas.width, canvas.height) * 0.018);
-        context.save();
-        context.globalAlpha = (1 - cloudCover * 0.7) * 0.92;
-        context.fillStyle = '#f2e9c9';
-        context.beginPath(); context.arc(x, y, radius, 0, Math.PI * 2); context.fill();
-        const shadowOffset = (moonPhase < 0.5 ? 1 : -1) * (1 - moonIllumination) * radius * 1.8;
-        context.fillStyle = '#26344d';
-        context.beginPath(); context.arc(x + shadowOffset, y, radius, 0, Math.PI * 2); context.fill();
-        const timeLabel = `${String(Math.floor(shadowState.minutes / 60)).padStart(2, '0')}:${String(shadowState.minutes % 60).padStart(2, '0')} SAST`;
-        context.font = '12px sans-serif'; context.textAlign = 'center';
-        const labelWidth = context.measureText(timeLabel).width + 14;
-        context.fillStyle = 'rgba(16,25,31,.72)';
-        context.beginPath(); context.roundRect(x - labelWidth / 2, y + radius + 5, labelWidth, 20, 8); context.fill();
-        context.fillStyle = '#fff5d4'; context.textBaseline = 'middle';
-        context.fillText(timeLabel, x, y + radius + 15);
-        context.restore();
-      }
       const { forward, project, projectPolygon, focal } = cameraProjection();
       const simplified = Boolean(drag) || performance.now() < interactionUntil;
       if (visibility.terrain) {
@@ -3606,6 +3548,12 @@ export async function startScene(canvas, status) {
     ? 'Choose Move / resize domain to position the orange box.'
     : 'Wind display hidden.';
   requestRender();
+  syncVisibilityControls();
+  if (visibility.publicRealm) {
+    const loadPublicRealmWhenIdle = () => { if (visibility.publicRealm) void loadPublicRealm(); };
+    if ('requestIdleCallback' in window) window.requestIdleCallback(loadPublicRealmWhenIdle, { timeout: 1800 });
+    else setTimeout(loadPublicRealmWhenIdle, 400);
+  }
   setHeatMode(heatState.enabled);
   updateSunStatus();
   if (document.querySelector('[data-menu-target="heat"]')?.classList.contains('active')) {

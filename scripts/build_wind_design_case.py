@@ -32,7 +32,14 @@ def main() -> None:
     parser.add_argument("--slug", help="stable identifier used for generated case assets")
     parser.add_argument("--direction-deg", type=float, help="override proposal direction")
     parser.add_argument("--solve", action="store_true", help="mesh, run OpenFOAM, convert and register result")
-    parser.add_argument("--base-cell-m", type=float, default=12)
+    # Keep proposal meshes on the same grid and refinement extent as the
+    # checked-in directional baseline atlas (generate_openfoam_atlas_cases.py).
+    # A finer candidate mesh would make a visual difference map confound
+    # geometry impact with resolution changes.
+    parser.add_argument("--analysis-size-m", type=float, default=2600)
+    parser.add_argument("--base-cell-m", type=float, default=24)
+    parser.add_argument("--terrain-spacing-m", type=float, default=12)
+    parser.add_argument("--top-m", type=float, default=220)
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args()
     proposal = json.loads(args.proposal.read_text(encoding="utf-8"))
@@ -51,7 +58,13 @@ def main() -> None:
     for record in additions:
         if len(record) < 3 or len(record[2]) < 3 or float(record[1]) <= 0:
             parser.error("each added building needs [ground_m, positive_height_m, ring_of_at_least_3_xz_points]")
-        scene["buildings"].append(record)
+        ground, height, ring = record[:3]
+        holes = record[3] if len(record) > 3 else []
+        scene["buildings"].append([ground, height, ring, None, None, height, False, None, None, None, 0, None, None, holes])
+
+    proposal_id = proposal.get("proposal_id")
+    if proposal_id is not None and (not isinstance(proposal_id, str) or not re.fullmatch(r"[\w-]{1,80}", proposal_id)):
+        parser.error("proposal_id must contain 1 to 80 letters, numbers, underscores, or hyphens")
 
     proposal_dir = ROOT / "data/openfoam/proposals" / slug
     proposal_dir.mkdir(parents=True, exist_ok=True)
@@ -59,6 +72,7 @@ def main() -> None:
     scene_path.write_text(json.dumps(scene, separators=(",", ":")) + "\n", encoding="utf-8")
     metadata = {
         "name": proposal.get("name", slug), "slug": slug,
+        "proposal_id": proposal_id,
         "direction_deg": direction, "removed_buildings": len(removals),
         "added_buildings": len(additions), "source_buildings": original_count,
         "candidate_buildings": len(scene["buildings"]), "scene": str(scene_path.relative_to(ROOT)),
@@ -76,7 +90,8 @@ def main() -> None:
     subprocess.run([
         sys.executable, str(ROOT / "scripts/export_openfoam_case.py"), "--scene", str(scene_path),
         "--output", str(case_dir), "--direction-deg", str(direction), "--full-scene",
-        "--base-cell-m", str(args.base_cell_m),
+        "--analysis-size-m", str(args.analysis_size_m), "--base-cell-m", str(args.base_cell_m),
+        "--terrain-spacing-m", str(args.terrain_spacing_m), "--top-m", str(args.top_m),
     ], check=True, cwd=ROOT)
     (case_dir / "Allmesh").chmod(0o755)
     (case_dir / "Allrun").chmod(0o755)
@@ -96,6 +111,7 @@ def main() -> None:
     item = {
         "case_id": case_id, "label": metadata["name"], "direction_deg": direction,
         "base": f"/assets/cfd/{case_id}/", "design_comparison": True,
+        "proposal_id": metadata["proposal_id"],
     }
     cases = [existing for existing in cases if existing.get("case_id") != case_id]
     cases.append(item)

@@ -1,0 +1,12 @@
+{
+  "name": "Cape Town design option",
+  "slug": "design-wind-verify-2026-10-26",
+  "proposal_id": "9f6e25d7-1377-4d8b-8be1-0b0e19a24f31",
+  "direction_deg": 135.0,
+  "removed_buildings": 0,
+  "added_buildings": 1,
+  "source_buildings": 1891,
+  "candidate_buildings": 1892,
+  "scene": "data/openfoam/proposals/design-wind-verify-2026-10-26/scene.json",
+  "geometry_status": "proposal_geometry_unreviewed"
+}

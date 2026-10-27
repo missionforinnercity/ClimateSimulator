@@ -33,7 +33,9 @@ def test_pedestrian_priority_is_surface_temperature_plus_shade_and_is_continuous
     assert payload["count"] == surface["count"]
     forbidden = {"google_address", "google_place_id", "google_latitude", "google_longitude", "google_primary_type"}
     assert all(not forbidden.intersection(feature) for feature in payload["features"])
-    assert all(set(feature) == {"geometry", "value", "area_m2"} for feature in payload["features"])
+    assert all(set(feature) == {
+        "geometry", "value", "area_m2", "nearest_road_name", "surface_type",
+    } for feature in payload["features"])
 
 
 def test_score_summary_uses_unit_neutral_fields():

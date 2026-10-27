@@ -6,6 +6,7 @@ import asyncio
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+import hashlib
 import json
 import logging
 import math
@@ -25,7 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
-from shapely.geometry import box, mapping, shape
+from shapely.geometry import Point, Polygon, box, mapping, shape
 
 from .field import (
     FIELD_VERSION,
@@ -41,15 +42,22 @@ from .field import (
     query_polygons,
     request_from_payload,
 )
-from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, heat_zones
+from .heat import HEAT_METRICS, HEAT_METRIC_METADATA, design_shade_comparison, heat_zones
 from .groundcover import mapped_groundcover
 from .runoff import runoff_screening_manifest
 from .sunlight import (
     SunlightAnalysisCancelled,
+    _analysis_cancelled,
+    _ground_cells,
+    _scene_geometry,
+    _scene_geometry_with_design,
+    _sun_hours_for_cells,
+    _terrain_grid,
     building_surface_sunlight,
     cancel_sunlight_analysis,
     finish_sunlight_analysis,
 )
+from .solar import sun_position
 from .location import streetview_location
 from .weather import current_weather
 from .thermal_products import (
@@ -120,7 +128,9 @@ app.add_middleware(GZipMiddleware, minimum_size=8192, compresslevel=1)
 LOGGER = logging.getLogger("conditions.requests")
 HEAVY_PATH_LIMITS = {
     "/api/heat/zones": int(os.getenv("HEAT_CONCURRENCY", "2")),
+    "/api/heat/design-comparison": int(os.getenv("HEAT_DESIGN_CONCURRENCY", "1")),
     "/api/sunlight/building-surfaces": int(os.getenv("SUNLIGHT_CONCURRENCY", "2")),
+    "/api/sunlight/design-comparison": int(os.getenv("SUNLIGHT_CONCURRENCY", "1")),
     "/api/wind/preview": int(os.getenv("WIND_CONCURRENCY", "2")),
     "/api/wind/comfort": int(os.getenv("WIND_COMFORT_CONCURRENCY", "1")),
     "/api/wind/validate": int(os.getenv("WIND_CONCURRENCY", "2")),
@@ -358,6 +368,33 @@ class ThermalScenarioPayload(BaseModel):
     radius_m: float = Field(default=12.0, ge=2.0, le=80.0)
     shade_percent: float = Field(default=75.0, ge=1.0, le=100.0)
     intervention: Literal["tree", "shade"] = "tree"
+
+
+class DesignBlockGeometry(BaseModel):
+    ground_m: float = Field(ge=-500, le=1000)
+    base_offset_m: float = Field(default=0, ge=0, le=900)
+    height_m: float = Field(ge=2, le=300)
+    ring: list[tuple[float, float]] = Field(min_length=3, max_length=256)
+    holes: list[list[tuple[float, float]]] = Field(default_factory=list, max_length=32)
+
+
+class DesignSunlightPayload(BaseModel):
+    remove_building_indexes: list[int] = Field(default_factory=list, max_length=1000)
+    add_buildings: list[DesignBlockGeometry] = Field(default_factory=list, max_length=100)
+    date: str = Field(default="2026-01-15", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    start_minutes: int = Field(default=480, ge=0, le=1439)
+    end_minutes: int = Field(default=1080, ge=1, le=1440)
+    step_minutes: int = Field(default=60, ge=10, le=120)
+    resolution_m: Literal[5, 10, 20, 40] = 10
+    surfaces: Literal["all", "roofs", "facades"] = "all"
+    analysis_id: str = Field(min_length=1, max_length=100)
+
+
+class DesignHeatPayload(BaseModel):
+    remove_building_indexes: list[int] = Field(default_factory=list, max_length=1000)
+    add_buildings: list[DesignBlockGeometry] = Field(default_factory=list, max_length=100)
+    date: str = Field(default="2026-01-15", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    minutes: int = Field(default=720, ge=0, le=1439)
 
 
 class WalkingPoint(BaseModel):
@@ -695,6 +732,28 @@ def heat_preview(
         raise HTTPException(status_code=503, detail=f"heat data unavailable: {error}") from error
 
 
+@app.post("/api/heat/design-comparison")
+def heat_design_comparison(payload: DesignHeatPayload) -> dict[str, Any]:
+    try:
+        additions = []
+        for block in payload.add_buildings:
+            ring = [[float(x), float(z)] for x, z in block.ring]
+            holes = [[[float(x), float(z)] for x, z in hole] for hole in block.holes]
+            if any(not math.isfinite(value) or abs(value) > 5000 for outline in [ring, *holes] for point in outline for value in point):
+                raise ValueError("design block coordinates must be finite viewer-local metres within ±5000")
+            footprint = Polygon(ring, holes)
+            if not footprint.is_valid or footprint.is_empty or footprint.area < 1:
+                raise ValueError("design block footprints and holes must form a valid polygon of at least 1 m²")
+            additions.append({"ring": ring, "holes": holes,
+                              "height_m": block.height_m + block.base_offset_m})
+        return design_shade_comparison(payload.date, payload.minutes, payload.remove_building_indexes, additions)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        LOGGER.exception("design heat comparison failed")
+        raise HTTPException(status_code=503, detail=f"design heat comparison unavailable: {error}") from error
+
+
 @app.get("/api/groundcover")
 def groundcover_inventory() -> dict[str, Any]:
     try:
@@ -741,6 +800,251 @@ def sunlight_building_surfaces(
         raise HTTPException(status_code=503, detail=f"building sunlight unavailable: {error}") from error
     finally:
         finish_sunlight_analysis(analysis_id)
+
+
+@app.post("/api/sunlight/design-comparison")
+def sunlight_design_comparison(payload: DesignSunlightPayload) -> dict[str, Any]:
+    """Run matched mapped-city and edited-city direct-sun studies."""
+    try:
+        records = json.loads((ASSET_ROOT / "fallback.json").read_text(encoding="utf-8")).get("buildings", [])
+        if len(set(payload.remove_building_indexes)) != len(payload.remove_building_indexes):
+            raise ValueError("removed building indexes must be unique")
+        if any(index < 0 or index >= len(records) for index in payload.remove_building_indexes):
+            raise ValueError(f"removed building indexes must be between 0 and {len(records) - 1}")
+        if payload.start_minutes >= payload.end_minutes:
+            raise ValueError("sunlight window must satisfy start < end")
+        if len(payload.analysis_id) > 100:
+            raise ValueError("analysis_id must contain 1 to 100 characters")
+        if not payload.remove_building_indexes and not payload.add_buildings:
+            raise ValueError("make at least one geometry edit before comparing sunlight")
+        additions = []
+        for block in payload.add_buildings:
+            ring = [[float(x), float(z)] for x, z in block.ring]
+            holes = [[[float(x), float(z)] for x, z in hole] for hole in block.holes]
+            if any(not math.isfinite(value) or abs(value) > 5000 for outline in [ring, *holes] for point in outline for value in point):
+                raise ValueError("design block coordinates must be finite viewer-local metres within ±5000")
+            if len(set((round(x, 5), round(z, 5)) for x, z in ring)) < 3:
+                raise ValueError("design block footprint needs at least three distinct points")
+            if any(len(set((round(x, 5), round(z, 5)) for x, z in hole)) < 3 for hole in holes):
+                raise ValueError("each design footprint hole needs at least three distinct points")
+            if not Polygon(ring, holes).is_valid:
+                raise ValueError("design block footprints and holes must form a valid polygon")
+            additions.append([block.ground_m, block.height_m, ring, holes])
+        changed_rings = [records[index][2] for index in payload.remove_building_indexes if len(records[index]) > 2]
+        changed_rings.extend(item[2] for item in additions)
+        changed_coordinates = [coordinate for ring in changed_rings for coordinate in ring]
+        changed_heights = [float(block.height_m + block.base_offset_m) for block in payload.add_buildings]
+        changed_heights.extend(float(records[index][1]) for index in payload.remove_building_indexes if len(records[index]) > 1)
+        if not changed_coordinates:
+            raise ValueError("the edited buildings have no usable footprints")
+        changed_bounds = (
+            min(point[0] for point in changed_coordinates), min(point[1] for point in changed_coordinates),
+            max(point[0] for point in changed_coordinates), max(point[1] for point in changed_coordinates),
+        )
+        maximum_solar_shadow = 0.0
+        for start in range(payload.start_minutes, payload.end_minutes, payload.step_minutes):
+            duration = min(payload.step_minutes, payload.end_minutes - start)
+            altitude, _, _ = sun_position(payload.date, start + duration / 2)
+            if altitude > 0.008:
+                maximum_solar_shadow = max(
+                    maximum_solar_shadow,
+                    max(changed_heights, default=0.0) / max(math.tan(altitude), 0.03),
+                )
+        impact_radius = min(800.0, max(250.0, maximum_solar_shadow + 60.0))
+        terrain_bounds = _terrain_grid()["bounds"]
+        local_domain = box(*changed_bounds).buffer(impact_radius).intersection(box(*terrain_bounds))
+        if local_domain.is_empty:
+            raise ValueError("edited buildings are outside the mapped sunlight study area")
+        left, bottom, right, top = local_domain.bounds
+        analysis_bounds = (
+            max(terrain_bounds[0], math.floor(left / 100.0) * 100.0),
+            max(terrain_bounds[1], math.floor(bottom / 100.0) * 100.0),
+            min(terrain_bounds[2], math.ceil(right / 100.0) * 100.0),
+            min(terrain_bounds[3], math.ceil(top / 100.0) * 100.0),
+        )
+        design_geometry = json.dumps({
+            "remove_building_indexes": payload.remove_building_indexes,
+            "add_buildings": additions,
+        }, separators=(",", ":"), sort_keys=True)
+        common = (
+            payload.date, payload.start_minutes, payload.end_minutes, payload.step_minutes,
+            float(payload.resolution_m), payload.surfaces,
+            *analysis_bounds,
+        )
+        # The unchanged city study is identical across proposal revisions at
+        # the same site and time, so let the shared LRU cache reuse it. Keep the
+        # edited candidate cancellable as users continue adjusting massing.
+        baseline = building_surface_sunlight(*common)
+        if _analysis_cancelled(payload.analysis_id):
+            raise SunlightAnalysisCancelled("sunlight analysis cancelled")
+        candidate = building_surface_sunlight.__wrapped__(
+            *common, payload.analysis_id, design_geometry_json=design_geometry,
+        )
+
+        sun_states = []
+        for start in range(payload.start_minutes, payload.end_minutes, payload.step_minutes):
+            duration = min(payload.step_minutes, payload.end_minutes - start)
+            altitude, sun_x, sun_z = sun_position(payload.date, start + duration / 2)
+            if altitude > 0.008:
+                sun_states.append((altitude, sun_x, sun_z, duration / 60.0))
+        baseline_scene = _scene_geometry()
+        candidate_scene = _scene_geometry_with_design(json.loads(design_geometry))
+        ground_before_cells = _ground_cells(baseline_scene, domain_bounds=analysis_bounds)
+        ground_after_cells = _ground_cells(candidate_scene, domain_bounds=analysis_bounds)
+        ground_before_values = _sun_hours_for_cells(ground_before_cells, sun_states, payload.analysis_id, baseline_scene)
+        ground_after_values = _sun_hours_for_cells(ground_after_cells, sun_states, payload.analysis_id, candidate_scene)
+
+        def ground_summary(cells: list[dict[str, Any]], values: list[float]) -> dict[str, Any]:
+            area = sum(cell["area_m2"] for cell in cells)
+            exposure = sum(cell["area_m2"] * value for cell, value in zip(cells, values))
+            return {
+                "mean_sun_hours": exposure / area if area else 0.0,
+                "surface_area_m2": area,
+                "sunlit_area_hours_m2": exposure,
+                "cell_count": len(cells),
+                "by_grid_cell": {cell["grid_key"]: value for cell, value in zip(cells, values)},
+            }
+
+        ground_before = ground_summary(ground_before_cells, ground_before_values)
+        ground_after = ground_summary(ground_after_cells, ground_after_values)
+        before_ground_cells, after_ground_cells = ground_before["by_grid_cell"], ground_after["by_grid_cell"]
+        common_ground_keys = before_ground_cells.keys() & after_ground_cells.keys()
+        paired_ground_before = sum(before_ground_cells[key] for key in common_ground_keys) / max(len(common_ground_keys), 1)
+        paired_ground_after = sum(after_ground_cells[key] for key in common_ground_keys) / max(len(common_ground_keys), 1)
+        affected_area = box(*changed_bounds).buffer(impact_radius)
+        local_ground_keys = {
+            key for key in common_ground_keys
+            if affected_area.covers(Point(
+                terrain_bounds[0] + 10 + key[1] * 20,
+                terrain_bounds[1] + 10 + key[0] * 20,
+            ))
+        }
+        local_ground_before = sum(before_ground_cells[key] for key in local_ground_keys) / max(len(local_ground_keys), 1)
+        local_ground_after = sum(after_ground_cells[key] for key in local_ground_keys) / max(len(local_ground_keys), 1)
+
+        terrain_columns = math.floor((terrain_bounds[2] - terrain_bounds[0]) / 20)
+        terrain_rows = math.floor((terrain_bounds[3] - terrain_bounds[1]) / 20)
+        ground_column_start = max(0, math.floor((analysis_bounds[0] - terrain_bounds[0]) / 20))
+        ground_column_end = min(terrain_columns, math.ceil((analysis_bounds[2] - terrain_bounds[0]) / 20))
+        ground_row_start = max(0, math.floor((analysis_bounds[1] - terrain_bounds[1]) / 20))
+        ground_row_end = min(terrain_rows, math.ceil((analysis_bounds[3] - terrain_bounds[1]) / 20))
+        ground_columns = max(1, ground_column_end - ground_column_start)
+        ground_rows = max(1, ground_row_end - ground_row_start)
+
+        def ground_raster(cells: list[dict[str, Any]], values: list[float]) -> list[float | None]:
+            raster: list[float | None] = [None] * (ground_rows * ground_columns)
+            for cell, value in zip(cells, values):
+                row, column = cell["grid_key"]
+                row, column = row - ground_row_start, column - ground_column_start
+                if 0 <= row < ground_rows and 0 <= column < ground_columns:
+                    raster[row * ground_columns + column] = round(value, 2)
+            return raster
+
+        ground_before_raster = ground_raster(ground_before_cells, ground_before_values)
+        ground_after_raster = ground_raster(ground_after_cells, ground_after_values)
+        ground_before.pop("by_grid_cell", None)
+        ground_after.pop("by_grid_cell", None)
+
+        def summarize(result: dict[str, Any]) -> dict[str, Any]:
+            surfaces: dict[str, dict[str, float]] = {}
+            by_building: dict[str, dict[int, dict[str, float]]] = {}
+            for feature in result["features"]:
+                entry = surfaces.setdefault(feature["surface"], {"area_m2": 0.0, "sunlit_area_hours_m2": 0.0, "cells": 0})
+                area = float(feature["area_m2"])
+                exposure = area * float(feature["value"])
+                entry["area_m2"] += area
+                entry["sunlit_area_hours_m2"] += exposure
+                entry["cells"] += 1
+                building = by_building.setdefault(feature["surface"], {}).setdefault(int(feature["source_id"]), {"area_m2": 0.0, "sunlit_area_hours_m2": 0.0})
+                building["area_m2"] += area
+                building["sunlit_area_hours_m2"] += exposure
+            for entry in surfaces.values():
+                entry["mean_sun_hours"] = entry["sunlit_area_hours_m2"] / entry["area_m2"] if entry["area_m2"] else 0.0
+            total_area = sum(entry["area_m2"] for entry in surfaces.values())
+            total_exposure = sum(entry["sunlit_area_hours_m2"] for entry in surfaces.values())
+            return {
+                "mean_sun_hours": total_exposure / total_area if total_area else 0.0,
+                "surface_area_m2": total_area,
+                "sunlit_area_hours_m2": total_exposure,
+                "cell_count": result["count"],
+                "by_surface": surfaces,
+                "by_building": by_building,
+            }
+
+        before, after = summarize(baseline), summarize(candidate)
+        paired_area_before = paired_area_after = 0.0
+        paired_exposure_before = paired_exposure_after = 0.0
+        matched_building_ids: set[int] = set()
+        for surface in set(before["by_building"]) & set(after["by_building"]):
+            first_ids, second_ids = before["by_building"][surface], after["by_building"][surface]
+            for source_id in set(first_ids) & set(second_ids):
+                if source_id >= 1_000_000:
+                    continue
+                matched_building_ids.add(source_id)
+                paired_area_before += first_ids[source_id]["area_m2"]
+                paired_area_after += second_ids[source_id]["area_m2"]
+                paired_exposure_before += first_ids[source_id]["sunlit_area_hours_m2"]
+                paired_exposure_after += second_ids[source_id]["sunlit_area_hours_m2"]
+        paired_before_mean = paired_exposure_before / paired_area_before if paired_area_before else 0.0
+        paired_after_mean = paired_exposure_after / paired_area_after if paired_area_after else 0.0
+        for summary in (before, after):
+            summary.pop("by_building", None)
+        return {
+            "analysis_id": payload.analysis_id,
+            "geometry_hash": hashlib.sha256(design_geometry.encode("utf-8")).hexdigest(),
+            "scenario": {
+                "date": payload.date, "start_minutes": payload.start_minutes,
+                "end_minutes": payload.end_minutes, "step_minutes": payload.step_minutes,
+                "resolution_m": payload.resolution_m, "surfaces": payload.surfaces,
+                "impact_radius_m": impact_radius, "domain_bounds": analysis_bounds,
+                "geometry_status": "proposal_geometry_unreviewed",
+            },
+            "before": before,
+            "after": after,
+            "ground": {
+                "before": ground_before,
+                "after": ground_after,
+                "paired_cell_count": len(common_ground_keys),
+                "paired_before_mean_sun_hours": paired_ground_before,
+                "paired_after_mean_sun_hours": paired_ground_after,
+                "paired_change_mean_sun_hours": paired_ground_after - paired_ground_before,
+                "local_impact": {
+                    "radius_m": impact_radius,
+                    "paired_cell_count": len(local_ground_keys),
+                    "before_mean_sun_hours": local_ground_before,
+                    "after_mean_sun_hours": local_ground_after,
+                    "change_mean_sun_hours": local_ground_after - local_ground_before,
+                },
+                "resolution_m": 20,
+                "grid": {
+                    "columns": ground_columns, "rows": ground_rows,
+                    "origin_x": terrain_bounds[0] + 10 + ground_column_start * 20,
+                    "origin_z": terrain_bounds[1] + 10 + ground_row_start * 20,
+                    "before": ground_before_raster, "after": ground_after_raster,
+                },
+            },
+            "paired_existing_buildings": {
+                "count": len(matched_building_ids),
+                "before_mean_sun_hours": paired_before_mean,
+                "after_mean_sun_hours": paired_after_mean,
+                "change_mean_sun_hours": paired_after_mean - paired_before_mean,
+            },
+            "change": {
+                "mean_sun_hours": after["mean_sun_hours"] - before["mean_sun_hours"],
+                "surface_area_m2": after["surface_area_m2"] - before["surface_area_m2"],
+                "sunlit_area_hours_m2": after["sunlit_area_hours_m2"] - before["sunlit_area_hours_m2"],
+            },
+            "methodology": "Matched clear-sky direct-sun ray study on baseline and proposed mapped building surfaces plus mapped terrain-grid ground cells. Ground sun uses 20 m cells excluding building footprints; building surfaces use the selected resolution. Uses block-prism geometry; excludes diffuse/reflected light and detailed roof slopes.",
+        }
+    except SunlightAnalysisCancelled as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except Exception as error:
+        LOGGER.exception("design sunlight comparison failed")
+        raise HTTPException(status_code=503, detail=f"design sunlight comparison unavailable: {error}") from error
+    finally:
+        finish_sunlight_analysis(payload.analysis_id)
 
 
 @app.post("/api/sunlight/cancel")

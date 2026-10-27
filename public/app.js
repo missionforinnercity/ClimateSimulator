@@ -1,4 +1,4 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=4';
+import { setupExplorerExperience } from './explorerExperience.js?v=5';
 import { setupWalkingRoutes } from './walkingRoutes.js?v=3';
 import { scopedFetch as fetch } from './requestClient.js';
 
@@ -132,6 +132,11 @@ function setupMenuNavigation() {
       panel.classList.toggle('menu-active', selected);
       panel.hidden = !selected;
     });
+    if (name === 'sun' || name === 'viewshed') {
+      const editor = document.querySelector('#scenario-design-editor');
+      const host = document.querySelector(`#${name}-scenario-editor-host`);
+      if (editor && host && editor.parentElement !== host) host.append(editor);
+    }
     document.querySelector('.scene-mode')?.classList.toggle('is-active', name === 'tools' || Boolean(document.querySelector(`#${name}-toggle`)?.checked));
     dispatchEvent(new CustomEvent('climate-menu-change', { detail: { name } }));
     // Panel listeners may enable or disable their visualization as they open.
@@ -385,7 +390,7 @@ async function loadScene() {
   if (guide) guide.hidden = false;
   try {
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=256');
+    const module = await import('./webglRenderer.js?v=284');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (webglError) {
@@ -394,7 +399,7 @@ async function loadScene() {
     setStartupProgress(72, 'Switching to compatibility engine');
     freshCanvas();
     try {
-      const module = await import('./sceneRenderer.js?v=110');
+      const module = await import('./sceneRenderer.js?v=111');
       await module.startScene(canvas, status);
     } catch (fallbackError) {
       console.error(fallbackError);
@@ -586,7 +591,7 @@ function windReportColor(value, minimum, maximum) {
   return `rgb(${stops[index].map((channel, channelIndex) => Math.round(channel + (stops[index + 1][channelIndex] - channel) * mix)).join(',')})`;
 }
 
-function windReportFieldMap(field) {
+function windReportFieldMap(field, sharedRange = null) {
   const sourceColumns = field.width, sourceRows = field.height;
   const columns = Math.min(64, sourceColumns), rows = Math.min(48, sourceRows);
   const width = 820;
@@ -595,7 +600,10 @@ function windReportFieldMap(field) {
   const values = field.speed || [];
   const comfortMode = field.analysis_mode === 'comfort' && field.comfort_category?.length;
   const comfortColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
-  const minimum = Math.min(...values), maximum = Math.max(...values);
+  let localMinimum = Infinity, localMaximum = -Infinity;
+  values.forEach((value, index) => { if (Number.isFinite(value) && (!field.valid || field.valid[index])) { localMinimum = Math.min(localMinimum, value); localMaximum = Math.max(localMaximum, value); } });
+  const minimum = sharedRange?.minimum ?? localMinimum;
+  const maximum = sharedRange?.maximum ?? localMaximum;
   const cells = [];
   for (let targetRow = 0; targetRow < rows; targetRow += 1) {
     const rowStart = Math.floor(targetRow * sourceRows / rows);
@@ -606,10 +614,13 @@ function windReportFieldMap(field) {
       let total = 0, count = 0;
       for (let row = rowStart; row < rowEnd; row += 1) {
         for (let column = columnStart; column < columnEnd; column += 1) {
-          total += Number(values[row * sourceColumns + column]) || 0;
+          const sourceIndex = row * sourceColumns + column;
+          if (field.valid && !field.valid[sourceIndex]) continue;
+          total += Number(values[sourceIndex]) || 0;
           count += 1;
         }
       }
+      if (!count) continue;
       const speed = total / Math.max(count, 1);
       const x = targetColumn * width / columns, y = targetRow * height / rows;
       const sampleRow = Math.min(sourceRows - 1, Math.floor((rowStart + rowEnd - 1) / 2));
@@ -671,9 +682,9 @@ function setupWindResults() {
   const compareStatus = document.querySelector('#wind-compare-status');
   const compareResult = document.querySelector('#wind-comparison-result');
   const categoryColors = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
-  const describeField = field => field.analysis_mode === 'comfort'
+  const describeField = field => `${field.analysis_mode === 'comfort'
     ? `Comfort · ${field.season || 'annual'} · ${field.stability || 'neutral'} · ${field.height_m ?? '?'} m`
-    : `Direction · ${Math.round(field.direction_deg ?? 0)}° · ${field.season || 'annual'} · ${field.height_m ?? '?'} m`;
+    : `Direction · ${Math.round(field.direction_deg ?? 0)}° · ${field.season || 'annual'} · ${field.height_m ?? '?'} m`}${field.case_label ? ` · ${field.case_label}` : ''}`;
   const distribution = field => {
     const categories = field.comfort_categories || [];
     const valid = index => !field.valid || Boolean(field.valid[index]);
@@ -705,8 +716,12 @@ function setupWindResults() {
         && JSON.stringify(first.origin) === JSON.stringify(second.origin)
         && JSON.stringify(first.basis_xz) === JSON.stringify(second.basis_xz)
         && JSON.stringify(first.basis_z) === JSON.stringify(second.basis_z);
-      let pairedCount = 0, increased = 0, decreased = 0, deltaSum = 0, cells = '';
+      let pairedCount = 0, increased = 0, decreased = 0, deltaSum = 0, cells = '', beforeAfterMaps = '';
       if (sameGrid) {
+        let sharedMinimum = Infinity, sharedMaximum = -Infinity;
+        for (const field of [first, second]) field.speed.forEach((value, index) => { if (Number.isFinite(value) && (!field.valid || field.valid[index])) { sharedMinimum = Math.min(sharedMinimum, value); sharedMaximum = Math.max(sharedMaximum, value); } });
+        const sharedRange = { minimum: Number.isFinite(sharedMinimum) ? sharedMinimum : 0, maximum: Number.isFinite(sharedMaximum) ? sharedMaximum : 1 };
+        beforeAfterMaps = `<div class="wind-before-after"><section><h4>Before · ${windReportEscape(baseline.label)}</h4>${windReportFieldMap(first, sharedRange)}</section><section><h4>After · ${windReportEscape(describeField(second))}</h4>${windReportFieldMap(second, sharedRange)}</section></div>`;
         const columns = Math.min(44, first.width), rows = Math.min(32, first.height);
         const deltas = [];
         for (let row = 0; row < rows; row += 1) for (let column = 0; column < columns; column += 1) {
@@ -725,7 +740,7 @@ function setupWindResults() {
       }
       const meanDelta = pairedCount ? deltaSum / pairedCount : secondMean - firstMean;
       const diffPp = pairedCount ? `${(increased * 100 / pairedCount).toFixed(1)}% faster · ${(decreased * 100 / pairedCount).toFixed(1)}% slower` : 'No shared grid';
-      compareResult.innerHTML = `${cells}<div class="wind-direction-compare-stats"><span>Baseline mean<strong>${windReportSpeed(firstMean)}</strong></span><span>Current mean<strong>${windReportSpeed(secondMean)}</strong></span><span>Mean change<strong>${meanDelta > 0 ? '+' : ''}${windReportNumber(meanDelta, 2, ' m/s')} · ${windReportNumber(meanDelta * 3.6, 1, ' km/h')}</strong></span></div><p>${diffPp} across paired pedestrian cells. Directional steady-state comparison; this is not a comfort classification.</p>`;
+      compareResult.innerHTML = `${beforeAfterMaps}${cells}<div class="wind-direction-compare-stats"><span>Baseline mean<strong>${windReportSpeed(firstMean)}</strong></span><span>Current mean<strong>${windReportSpeed(secondMean)}</strong></span><span>Mean change<strong>${meanDelta > 0 ? '+' : ''}${windReportNumber(meanDelta, 2, ' m/s')} · ${windReportNumber(meanDelta * 3.6, 1, ' km/h')}</strong></span></div><p>${diffPp} across paired pedestrian cells. Directional steady-state comparison; this is not a comfort classification.</p>`;
       compareResult.hidden = false;
       compareStatus.textContent = `${baseline.label} compared with ${describeField(latestField)}.`;
       return;
@@ -764,11 +779,17 @@ function setupWindResults() {
     if (!latestField) return;
     baseline = { field: structuredClone(latestField), label: describeField(latestField) };
     clearBaseline.hidden = false;
+    dispatchEvent(new CustomEvent('climate-wind-baseline-saved', { detail: baseline }));
     renderComparison();
   });
   clearBaseline?.addEventListener('click', () => {
     baseline = null;
     clearBaseline.hidden = true;
+    dispatchEvent(new CustomEvent('climate-wind-baseline-cleared'));
+    renderComparison();
+  });
+  addEventListener('climate-design-geometry-change', () => {
+    latestField = null;
     renderComparison();
   });
 
@@ -908,7 +929,8 @@ function setupWindResults() {
   document.querySelectorAll('[data-wind-lens="direction"], [data-wind-lens="comfort"]').forEach(button => button.addEventListener('click', invalidate));
   addEventListener('climate-wind-result', event => {
     const field = event.detail;
-    const directionResult = field?.analysis_mode === 'direction' && Array.isArray(field.speed);
+    const directionResult = field?.analysis_mode === 'direction'
+      && (Array.isArray(field.speed) || ArrayBuffer.isView(field.speed));
     if (!directionResult && (!field?.comfort_category || !field?.exceedance?.probability)) {
       invalidate();
       return;

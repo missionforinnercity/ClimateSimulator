@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=95">
+    <link rel="stylesheet" href="/style.css?v=110">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -41,6 +41,9 @@
         <div class="scene-mode" role="status" aria-live="polite">
           <span class="scene-mode-dot" aria-hidden="true"></span>
           <span><b id="scene-mode-title">CITY MODEL</b><small id="scene-mode-detail">Base map · ready to explore</small></span>
+        </div>
+        <div id="design-impact-legend" class="design-impact-legend" hidden aria-label="Live design impact legend">
+          <b>Live design impact</b><span><i class="design-impact-added"></i><em id="design-impact-added-label">Added shade · cooling potential</em></span><span><i class="design-impact-removed"></i><em id="design-impact-removed-label">Shade removed · warming potential</em></span>
         </div>
       </div>
       <div class="map-scale" aria-label="Approximate map scale">
@@ -171,7 +174,7 @@
               <label><input type="checkbox" data-layer="groundcover"> Mapped surface inventory</label>
               <label><input type="checkbox" data-layer="cycling"> Mapped cycleways</label>
               <label><input type="checkbox" data-layer="runoff"> Runoff concentration</label>
-              <label><input type="checkbox" data-layer="publicRealm"> Public realm details</label>
+              <label><input type="checkbox" data-layer="publicRealm" checked> Public realm details &amp; street lights</label>
               <label class="building-appearance-control">Building colors
                 <select id="building-appearance">
                   <option value="neutral" selected>Subtle height</option>
@@ -454,6 +457,7 @@
               <select id="sun-surface-resolution">
                 <option value="10" selected>10 m · quicker</option>
                 <option value="5">5 m · more detail</option>
+                <option value="20">20 m · city overview</option>
               </select>
             </label>
             <label>Study area
@@ -478,6 +482,55 @@
         <p id="sun-inspect-result" class="sun-help" role="status" hidden></p>
         <details id="sun-hours-method" class="sun-advanced"><summary>How to read this · method</summary><p>Sun hours are accumulated direct sun, not total daylight or solar energy. A brighter cell means more sampled time in direct sun within the chosen window. Compare different dates using the same area and time window to explore seasonal change. Results use mapped buildings and canopies; roofs are simplified planes. Clouds, diffuse and reflected light are not included, and rough LiDAR roof detail is not treated as engineering-grade solar geometry.</p></details>
         <p class="sun-note">Planning-level comparison · not measured radiation</p>
+        <div id="sun-scenario-editor-host" class="scenario-editor-host">
+          <details id="scenario-design-editor" class="scenario-workspace scenario-design-editor">
+            <summary>Try a design · updates live</summary>
+            <p class="design-intro">Edit mapped buildings or place simple blocks. Sun shadows and Viewshed update as you edit. Recalculate Sun hours after changes.</p>
+            <label class="design-name-label">Scenario name<input id="design-name" type="text" maxlength="64" value="Cape Town design option"></label>
+            <div class="design-pick-actions">
+              <button id="massing-select-building" class="secondary" type="button">Select existing building</button>
+              <button id="massing-demolish" class="secondary" type="button" disabled>Demolish selected</button>
+              <button id="massing-modify" class="secondary" type="button" disabled>Modify footprint / height</button>
+              <button id="massing-replace" class="secondary" type="button" disabled>Replace with block</button>
+            </div>
+            <div class="design-building-list-wrap" id="massing-building-list-wrap" hidden>
+              <b>Removed buildings</b><ul id="massing-building-list" class="massing-list" aria-label="Removed buildings"></ul>
+            </div>
+            <section class="design-block-editor" aria-label="Block dimensions and placement">
+              <b>Block dimensions</b><small>Drag the green width, blue length, yellow height, or purple rotate handle on the map. Mouse and touch both work.</small>
+              <div class="massing-dimensions">
+                <label>Width<input id="massing-width" type="number" min="2" max="300" step="1" value="20"></label>
+                <label>Length<input id="massing-depth" type="number" min="2" max="300" step="1" value="20"></label>
+                <label>Height<input id="massing-height" type="number" min="2" max="300" step="1" value="15"></label>
+                <label>Rotate °<input id="massing-rotation" type="number" min="0" max="359" step="5" value="0"></label>
+              </div>
+              <div class="massing-actions">
+                <button id="massing-place" type="button">Place block</button>
+                <button id="massing-stack" class="secondary" type="button" disabled>Stack on selected</button>
+              </div>
+              <div class="massing-actions">
+                <button id="massing-update" class="secondary" type="button" disabled>Update selected</button>
+                <button id="massing-move" class="secondary" type="button" disabled>Move selected</button>
+              </div>
+              <div class="massing-selection-actions">
+                <button id="massing-delete" class="secondary" type="button" disabled>Delete selected</button>
+                <button id="massing-clear" class="secondary" type="button" disabled>Clear proposal blocks</button>
+                <button id="massing-restore" class="secondary" type="button" disabled>Restore all buildings</button>
+              </div>
+              <div class="massing-actions">
+                <button id="design-import" class="secondary" type="button">Import proposal JSON</button>
+                <button id="design-export" class="secondary" type="button" disabled>Download proposal JSON</button>
+                <input id="design-import-file" type="file" accept=".json,application/json" hidden>
+              </div>
+              <small>Import a saved proposal or download the current draft.</small>
+            </section>
+            <p id="massing-status" class="massing-status" role="status" aria-live="polite">Select a building or place a block on mapped terrain.</p>
+            <div class="design-block-list-wrap"><b>Proposal blocks</b><ul id="massing-list" class="massing-list" aria-label="Proposal blocks"></ul>
+              <p class="massing-count"><span id="massing-count">0</span> blocks · <span id="massing-removed-count">0</span> buildings removed · saved in this browser</p>
+            </div>
+            <p id="design-export-status" class="design-export-status" role="status"></p>
+          </details>
+        </div>
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · COMFORT (PARTIAL)</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
@@ -748,12 +801,6 @@
           <div class="wind-tool-actions"><button id="wind-save-baseline" class="secondary" type="button" disabled>Save current baseline</button><button id="wind-clear-baseline" class="secondary" type="button" hidden>Clear baseline</button></div>
           <p id="wind-compare-status" class="wind-tool-status" role="status">Run a wind study to start a comparison.</p>
           <div id="wind-comparison-result" class="wind-comparison-result" hidden></div>
-          <div class="wind-design-compare">
-            <b>Proposed design</b>
-            <label>Solved proposal <select id="wind-design-select" disabled><option>No solved proposals yet</option></select></label>
-            <button id="wind-design-load" class="secondary" type="button" disabled>Load proposal for comparison</button>
-            <small>Load a baseline direction and save it first. Then load the solved proposal and compare pedestrian speed at the same direction.</small>
-          </div>
         </details>
 
         <details class="wind-tool-card wind-validation-card">
@@ -798,6 +845,7 @@
         <button id="viewshed-person" class="secondary" type="button" aria-pressed="false" disabled>View from observer</button>
         <button id="viewshed-clear" class="secondary" type="button">Clear viewshed</button>
         <p id="viewshed-status" class="viewshed-status" role="status" aria-live="polite">Select Pick viewpoint, then click the map.</p>
+        <div id="viewshed-scenario-editor-host" class="scenario-editor-host"></div>
         <details class="viewshed-method"><summary>Method &amp; coverage</summary><p>Visibility follows the mapped terrain triangles and checks sightlines against terrain and each mapped building's base and top height. Green ground is visible; red ground is blocked. White trees provide context but do not block the calculation. View from observer places the camera at the selected eye height; use Heading to turn. Small structures, atmospheric refraction and sub-grid terrain are not modelled.</p></details>
       </section>
       <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
@@ -1080,6 +1128,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-96"></script>
+    <script type="module" src="/app.js?v=experience-120"></script>
 </body>
 </html>

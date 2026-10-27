@@ -107,6 +107,105 @@ def _scene_geometry() -> dict[str, Any]:
     }
 
 
+@functools.lru_cache(maxsize=1)
+def _terrain_grid() -> dict[str, Any]:
+    scene = json.loads(SCENE_PATH.read_text(encoding="utf-8"))
+    manifest = json.loads((SCENE_PATH.parent / "manifest.json").read_text(encoding="utf-8"))
+    terrain = scene.get("terrain") or {}
+    columns, rows = int(terrain.get("columns", 0)), int(terrain.get("rows", 0))
+    heights, valid = terrain.get("heights", []), terrain.get("valid", [])
+    if columns < 2 or rows < 2 or len(heights) != columns * rows or len(valid) != columns * rows:
+        raise ValueError("mapped terrain grid is unavailable for ground sunlight")
+    min_x, min_z, max_x, max_z = (float(value) for value in manifest["bounds"])
+    return {
+        "columns": columns, "rows": rows, "heights": heights, "valid": valid,
+        "bounds": (min_x, min_z, max_x, max_z),
+    }
+
+
+def _terrain_sample(grid: dict[str, Any], x: float, z: float) -> tuple[float, bool]:
+    min_x, min_z, max_x, max_z = grid["bounds"]
+    u = min(1.0, max(0.0, (x - min_x) / (max_x - min_x))) * (grid["columns"] - 1)
+    v = min(1.0, max(0.0, (z - min_z) / (max_z - min_z))) * (grid["rows"] - 1)
+    column, row = min(grid["columns"] - 2, math.floor(u)), min(grid["rows"] - 2, math.floor(v))
+    tx, ty = u - column, v - row
+    indexes = (row * grid["columns"] + column, row * grid["columns"] + column + 1,
+               (row + 1) * grid["columns"] + column, (row + 1) * grid["columns"] + column + 1)
+    valid = grid["valid"]
+    if sum(bool(valid[index]) for index in indexes) < 3:
+        return 0.0, False
+    heights = grid["heights"]
+    top = heights[indexes[0]] * (1 - tx) + heights[indexes[1]] * tx
+    bottom = heights[indexes[2]] * (1 - tx) + heights[indexes[3]] * tx
+    return top * (1 - ty) + bottom * ty, True
+
+
+def _ground_cells(
+    scene: dict[str, Any], resolution_m: float = 20.0,
+    domain_bounds: tuple[float, float, float, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Sample mapped, non-building terrain cells for city-ground sun exposure."""
+    grid = _terrain_grid()
+    min_x, min_z, max_x, max_z = grid["bounds"]
+    columns = math.floor((max_x - min_x) / resolution_m)
+    rows = math.floor((max_z - min_z) / resolution_m)
+    if domain_bounds is None:
+        column_start, column_end, row_start, row_end = 0, columns, 0, rows
+    else:
+        domain = box(*domain_bounds).intersection(box(min_x, min_z, max_x, max_z))
+        if domain.is_empty:
+            return []
+        left, bottom, right, top = domain.bounds
+        column_start = max(0, math.floor((left - min_x) / resolution_m))
+        column_end = min(columns, math.ceil((right - min_x) / resolution_m))
+        row_start = max(0, math.floor((bottom - min_z) / resolution_m))
+        row_end = min(rows, math.ceil((top - min_z) / resolution_m))
+    building_tree = STRtree([item["footprint"] for item in scene["buildings"]])
+    cells = []
+    for row in range(row_start, row_end):
+        z = min_z + (row + 0.5) * resolution_m
+        for column in range(column_start, column_end):
+            x = min_x + (column + 0.5) * resolution_m
+            ground, mapped = _terrain_sample(grid, x, z)
+            if not mapped:
+                continue
+            point = Point(x, z)
+            if any(scene["buildings"][int(index)]["footprint"].covers(point) for index in building_tree.query(point)):
+                continue
+            cells.append({
+                "surface": "ground", "source_id": -1,
+                "sample": (x, ground + 0.08, z), "normal": (0.0, 1.0, 0.0),
+                "area_m2": resolution_m * resolution_m, "grid_key": (row, column),
+            })
+    return cells
+
+
+def _scene_geometry_with_design(geometry: dict[str, Any]) -> dict[str, Any]:
+    """Return the mapped scene with explicit building removals/additions applied."""
+    base = _scene_geometry()
+    removals = set(geometry.get("remove_building_indexes", ()))
+    buildings = [building for building in base["buildings"] if building["id"] not in removals]
+    next_id = 1_000_000
+    for record in geometry.get("add_buildings", ()):
+        ground, height, ring = float(record[0]), float(record[1]), record[2]
+        holes = record[3] if len(record) > 3 else []
+        footprint = Polygon(ring, holes)
+        if not footprint.is_valid or footprint.is_empty:
+            raise ValueError("design block footprints must be valid, non-empty polygons")
+        buildings.append({
+            "id": next_id, "footprint": footprint, "ring": ring, "rings": [ring, *holes],
+            "ground": ground, "top": ground + height,
+        })
+        next_id += 1
+    blockers = buildings + base["blockers"][len(base["buildings"]):]
+    footprints = [item["footprint"] for item in blockers]
+    return {
+        "buildings": buildings, "blockers": blockers,
+        "tree": STRtree(footprints), "bounds": base["bounds"],
+        "max_top": max((item["top"] for item in blockers), default=0.0),
+    }
+
+
 def _visible_roofs(buildings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ordered = sorted(buildings, key=lambda item: item["top"], reverse=True)
     tree = STRtree([item["footprint"] for item in ordered])
@@ -267,9 +366,9 @@ def _ray_box_interval(
 
 def _sun_hours_for_cells(
     cells: list[dict[str, Any]], sun_states: list[tuple[float, float, float, float]],
-    analysis_id: str | None = None,
+    analysis_id: str | None = None, scene_override: dict[str, Any] | None = None,
 ) -> list[float]:
-    scene = _scene_geometry()
+    scene = scene_override or _scene_geometry()
     blockers = scene["blockers"]
     diagonal = math.hypot(scene["bounds"][2] - scene["bounds"][0], scene["bounds"][3] - scene["bounds"][1])
     minimum_ground = min((item["ground"] for item in blockers), default=0.0)
@@ -398,14 +497,14 @@ def building_surface_sunlight(
     step_minutes: int = 60, resolution_m: float = 10.0, surfaces: str = "all",
     min_x: float | None = None, min_z: float | None = None,
     max_x: float | None = None, max_z: float | None = None,
-    analysis_id: str | None = None,
+    analysis_id: str | None = None, design_geometry_json: str | None = None,
 ) -> dict[str, Any]:
     if not 0 <= start_minutes < end_minutes <= 1440:
         raise ValueError("sunlight window must satisfy 0 <= start < end <= 1440")
     if not 10 <= step_minutes <= 120:
         raise ValueError("sunlight time step must be between 10 and 120 minutes")
-    if resolution_m not in {5.0, 10.0, 20.0}:
-        raise ValueError("building-surface resolution must be 5, 10, or 20 metres")
+    if resolution_m not in {5.0, 10.0, 20.0, 40.0}:
+        raise ValueError("building-surface resolution must be 5, 10, 20, or 40 metres")
     if surfaces not in {"all", "roofs", "facades"}:
         raise ValueError("surfaces must be all, roofs, or facades")
 
@@ -423,7 +522,21 @@ def building_surface_sunlight(
     else:
         domain_bounds = None
 
-    cells = list(_analysis_cells(resolution_m, surfaces, domain_bounds))
+    scene_override = None
+    if design_geometry_json:
+        try:
+            geometry = json.loads(design_geometry_json)
+        except json.JSONDecodeError as error:
+            raise ValueError("design geometry is not valid JSON") from error
+        scene_override = _scene_geometry_with_design(geometry)
+        domain = box(*domain_bounds) if domain_bounds is not None else None
+        cells = []
+        if surfaces in {"all", "roofs"}:
+            cells.extend(_roof_cells(scene_override["buildings"], resolution_m, domain))
+        if surfaces in {"all", "facades"}:
+            cells.extend(_facade_cells(scene_override["buildings"], resolution_m, domain))
+    else:
+        cells = list(_analysis_cells(resolution_m, surfaces, domain_bounds))
     if len(cells) > MAX_ANALYSIS_CELLS:
         raise ValueError(f"analysis creates {len(cells):,} cells; use a coarser building-surface resolution")
 
@@ -435,7 +548,7 @@ def building_surface_sunlight(
             sun_states.append((altitude, sun_x, sun_z, duration / 60.0))
     if _analysis_cancelled(analysis_id):
         raise SunlightAnalysisCancelled("sunlight analysis cancelled")
-    values = _sun_hours_for_cells(cells, sun_states, analysis_id)
+    values = _sun_hours_for_cells(cells, sun_states, analysis_id, scene_override)
     display_values = _display_values(cells, values, resolution_m)
     features = []
     for cell, value, display_value in zip(cells, values, display_values):
