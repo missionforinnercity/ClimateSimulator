@@ -1,4 +1,4 @@
-"""Database-backed heat-zone extraction for the Canvas scene."""
+"""Database-backed heat-zone extraction for the compact viewer scene."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ HEAT_TABLE = "heat_zones"
 HEAT_SOURCE_PATH = Path(__file__).resolve().parents[1] / "data" / "raw" / "scene_footprint_heat_2026_academic_v3_zones.geojson"
 SCENE_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "fallback.json"
 CANOPY_ASSET_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "canopy.json"
-# The source polygons are more detailed than the Canvas scene can display.
+# The source polygons are more detailed than the browser overlay needs.
 # Simplifying in the projected metre-based CRS keeps the visual result while
 # preventing multi-million-vertex browser payloads and draw calls.
 HEAT_SIMPLIFY_METRES = 2.0

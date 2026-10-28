@@ -1,7 +1,7 @@
 import { validateScenario } from './scenarioState.js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION } from './cameraControls.js';
 
-// Adapter keeps saved views independent of Three.js / Canvas camera classes.
+// Adapter keeps saved views independent of Three.js camera classes.
 export function attachSceneExperience({ canvas, readCamera, writeCamera, requestRender, fitScene, useLocation }) {
   const publish = () => dispatchEvent(new CustomEvent('climate-scene-state', { detail: { camera: readCamera() } }));
   addEventListener('climate-capture-view', publish);

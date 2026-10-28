@@ -24,18 +24,12 @@ def main():
     with sync_playwright() as p:
         executable = os.environ.get("CHROME_BIN") or shutil.which("google-chrome") or shutil.which("chromium")
         browser = p.chromium.launch(headless=True, executable_path=executable, args=["--no-sandbox", "--use-angle=swiftshader"])
-        for label, viewport, fallback in [
-            ("desktop", {"width": 1440, "height": 900}, False),
-            ("mobile", {"width": 390, "height": 844}, False),
-            ("canvas", {"width": 1024, "height": 768}, True),
+        for label, viewport in [
+            ("desktop", {"width": 1440, "height": 900}),
+            ("mobile", {"width": 390, "height": 844}),
         ]:
             context = browser.new_context(viewport=viewport, reduced_motion="reduce", accept_downloads=True)
-            if fallback:
-                context.add_init_script("Object.defineProperty(window, 'WebGL2RenderingContext', {value: undefined});")
             page = context.new_page()
-            # Software WebGL can briefly monopolise a constrained CI runner
-            # while drawing the fallback city; interaction assertions should
-            # not fail merely because the event loop needed another frame.
             page.set_default_timeout(30000)
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
@@ -180,6 +174,15 @@ def main():
             assert not metrics["overflow"], metrics
             results.append({"profile": label, **metrics, "pageErrors": errors})
             context.close()
+
+        context = browser.new_context(viewport={"width": 1024, "height": 768}, reduced_motion="reduce")
+        context.add_init_script("Object.defineProperty(window, 'WebGL2RenderingContext', {value: undefined});")
+        page = context.new_page()
+        page.goto(args.url, wait_until="domcontentloaded")
+        page.wait_for_function("() => !document.body.hasAttribute('aria-busy')", timeout=45000)
+        assert "requires WebGL 2" in page.locator("#status").inner_text()
+        assert page.get_by_role("button", name="Reload viewer").is_visible()
+        context.close()
 
         # Reproduce a stale cached shell that predates #explorer-panel-body.
         # The enhanced controls must attach to the legacy .panel-body without

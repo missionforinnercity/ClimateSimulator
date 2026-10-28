@@ -2,7 +2,7 @@ import { setupExplorerExperience } from './explorerExperience.js?v=23';
 import { setupWalkingRoutes } from './walkingRoutes.js?v=3';
 import { scopedFetch as fetch } from './requestClient.js';
 
-let canvas = document.querySelector('#scene');
+const canvas = document.querySelector('#scene');
 const windCanvas = document.querySelector('#wind-overlay');
 const windContext = windCanvas.getContext('2d');
 const status = document.querySelector('#status');
@@ -309,12 +309,6 @@ function setupFullscreenControls() {
   syncControls();
 }
 
-function freshCanvas() {
-  const replacement = canvas.cloneNode(false);
-  canvas.replaceWith(replacement);
-  canvas = replacement;
-}
-
 const startupLoader = document.querySelector('#startup-loader');
 const startupProgress = document.querySelector('#startup-loader-progress');
 const startupPercent = document.querySelector('#startup-loader-percent');
@@ -389,28 +383,24 @@ async function loadScene() {
   const guide = document.querySelector('#wind-box-guide');
   if (guide) guide.hidden = false;
   try {
+    if (!window.WebGL2RenderingContext) throw new Error('WebGL 2 is unavailable');
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=303');
+    const module = await import('./webglRenderer.js?v=306');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
-  } catch (webglError) {
-    console.warn('WebGL renderer unavailable; loading Canvas fallback:', webglError);
-    status.textContent = 'GPU renderer unavailable · loading compatibility view…';
-    setStartupProgress(72, 'Switching to compatibility engine');
-    freshCanvas();
-    try {
-      const module = await import('./sceneRenderer.js?v=111');
-      await module.startScene(canvas, status);
-    } catch (fallbackError) {
-      console.error(fallbackError);
-      status.textContent = `Viewer failed: ${fallbackError.message}`;
-      const retry = document.createElement('button');
-      retry.type = 'button'; retry.textContent = 'Reload viewer';
-      retry.addEventListener('click', () => location.reload());
-      status.after(retry);
-      finishStartupProgress(true);
-      return;
-    }
+  } catch (error) {
+    console.error('WebGL 2 viewer could not start:', error);
+    if (guide) guide.hidden = true;
+    status.setAttribute('role', 'alert');
+    status.textContent = !window.WebGL2RenderingContext || /webgl.*context|webgl 2 is unavailable/i.test(String(error?.message ?? error))
+      ? 'This viewer requires WebGL 2. Enable WebGL and hardware acceleration in your browser, or try a current browser that supports WebGL 2, then reload.'
+      : 'The 3D viewer could not load. Check your connection and reload the page.';
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.textContent = 'Reload viewer';
+    retry.addEventListener('click', () => location.reload());
+    status.after(retry);
+    finishStartupProgress(true);
+    return;
   }
   const currentGuide = document.querySelector('#wind-box-guide');
   if (currentGuide) currentGuide.hidden = true;
@@ -1265,5 +1255,4 @@ setupHeatViewSelector();
 setupWalkingRoutes();
 setupFullscreenControls();
 setupWindResults();
-freshCanvas();
 loadScene();

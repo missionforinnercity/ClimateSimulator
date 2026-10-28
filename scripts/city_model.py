@@ -675,9 +675,16 @@ def build_city_model(
         height_class = {
             "survey_height": "observed",
             "osm_height": "observed",
+            "osm_levels": "derived",
+            "osm_inferred": "inferred",
             "lidar_surface_fallback": "derived",
             "lidar_2025": "derived",
         }.get(height_source, "inferred")
+        geometry_source = (
+            "OpenStreetMap outline/part extrusion"
+            if str(acquisition_method or "").startswith("OpenStreetMap")
+            else f"{acquisition_method or 'Municipal'} building footprint gap-fill extrusion"
+        )
         identifier, feature_id = _identity("building", source_id, ring, index)
         roof_identifier = f"{identifier}:roof"
         roof_feature_id = f"{feature_id}:roof"
@@ -711,7 +718,7 @@ def build_city_model(
             },
             sources=["buildings"],
             quality=_quality(
-                "municipal footprint extrusion",
+                geometry_source,
                 "1",
                 roofRasterCoverage=coverage,
                 confidence="high" if height_source == "survey_height" else "medium",
@@ -739,12 +746,12 @@ def build_city_model(
                 "material": osm_attributes.get("roof:material"),
                 "colour": osm_attributes.get("roof:colour"),
             },
-            sources=["height", "buildings"],
+            sources=["buildings"],
             quality=_quality(
-                "regularised 1 m normalized LiDAR height raster" if detailed else "building height extrusion",
+                "OSM roof tags with flat rendered cap" if detailed else "OSM building height extrusion",
                 "2" if detailed else "1",
                 rasterCoverage=coverage,
-                confidence="medium" if detailed else "low",
+                confidence="medium" if height_source in {"osm_height", "osm_levels"} else "low",
             ),
             relationships={"parent": feature_id},
         )

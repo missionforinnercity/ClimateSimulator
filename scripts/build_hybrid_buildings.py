@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Conflate detailed OSM building parts with municipal building coverage.
+"""Build OSM-preferred building geometry with municipal footprint gap fills.
 
-OSM is preferred for current outlines and explicitly mapped building parts.
-The older municipal photogrammetry remains a gap-fill source and carries its
-surveyed height where it is retained. OSM geometries without an explicit
-height intentionally leave ``BLD_HGT`` empty so the scene build derives their
-height and roof profile from the 2025 LiDAR raster.
+OSM ``building:part`` polygons preserve mapped setbacks and stepped massing;
+parent outlines fill only the uncovered portions of those buildings. Municipal
+photogrammetry footprints are retained where OSM has no building coverage.
+Matched municipal heights and robust LiDAR samples supply building heights.
 """
 
 from __future__ import annotations
@@ -162,21 +161,39 @@ def build_hybrid(osm_path, municipal_path, scene_footprint_path):
         for feature in footprint_data.get("features", [])
     ])
     osm_records = osm_render_parts(load_osm_way_buildings(osm_path, clip))
-    municipal_records = municipal_gap_fill(
-        local_municipal_records(municipal_path, clip),
-        [record["geometry"] for record in osm_records],
-    )
+    survey_records = local_municipal_records(municipal_path, clip) if municipal_path and municipal_path.exists() else []
+    municipal_records = municipal_gap_fill(survey_records, [record["geometry"] for record in osm_records])
+    municipal_geometries = [item["geometry"] for item in survey_records]
+    municipal_tree = STRtree(municipal_geometries) if municipal_geometries else None
     to_web = Transformer.from_crs(LOCAL_CRS, "EPSG:3857", always_xy=True)
     features = []
     for record in osm_records:
         tags = record["tags"]
         explicit_height = numeric_metres(tags.get("height"))
+        surveyed_height = None
+        # Join survey heights onto OSM outlines only. Parts retain their own
+        # explicit/laser heights so a parent survey does not erase stepped massing.
+        if municipal_tree is not None and not record["is_part"]:
+            candidates = municipal_tree.query(record["geometry"])
+            ranked = []
+            for candidate in candidates:
+                survey = survey_records[int(candidate)]
+                height = numeric_metres(survey["properties"].get("BLD_HGT"))
+                if height is None:
+                    continue
+                intersection_area = record["geometry"].intersection(survey["geometry"]).area
+                footprint_match = intersection_area / max(record["geometry"].area, 0.01)
+                survey_match = intersection_area / max(survey["geometry"].area, 0.01)
+                if footprint_match >= 0.80 and survey_match >= 0.50:
+                    ranked.append((footprint_match + survey_match, height))
+            if ranked:
+                surveyed_height = max(ranked)[1]
         features.append({
             "type": "Feature",
             "properties": {
                 "fid": f"osm-{record['osm_type']}-{record['osm_id']}-{record['part_index']}",
-                "BLD_HGT": explicit_height,
-                "HEIGHT_SRC": "osm_height" if explicit_height is not None else "lidar_2025",
+                "BLD_HGT": surveyed_height,
+                "HEIGHT_SRC": "survey_height" if surveyed_height is not None else "lidar_2025",
                 "ACQS_MTHD": "OpenStreetMap building part" if record["is_part"] else "OpenStreetMap outline",
                 "ACQS_PRD": 2026,
                 "OSM_ID": record["osm_id"],
@@ -199,9 +216,11 @@ def build_hybrid(osm_path, municipal_path, scene_footprint_path):
             "geometry": mapping(transform_geometry(to_web.transform, record["geometry"])),
         })
     for record in municipal_records:
+        properties = dict(record["properties"])
+        properties["HEIGHT_SRC"] = "survey_height" if numeric_metres(properties.get("BLD_HGT")) is not None else "lidar_2025"
         features.append({
             "type": "Feature",
-            "properties": record["properties"],
+            "properties": properties,
             "geometry": mapping(transform_geometry(to_web.transform, record["geometry"])),
         })
     return {
@@ -211,8 +230,12 @@ def build_hybrid(osm_path, municipal_path, scene_footprint_path):
         "metadata": {
             "osm_records": len(osm_records),
             "osm_parts": sum(record["is_part"] for record in osm_records),
+            "municipal_height_matches": sum(
+                feature["properties"]["HEIGHT_SRC"] == "survey_height"
+                for feature in features[:len(osm_records)]
+            ),
             "municipal_gap_fills": len(municipal_records),
-            "method": "OSM parts/outlines preferred; municipal footprints retained where OSM coverage is absent",
+            "method": "OSM parts/outlines preferred; municipal photogrammetry footprints fill places where OSM coverage is absent; aligned municipal survey heights, then LiDAR, with OSM tags as final fallback",
             "attribution": "© OpenStreetMap contributors; ODbL 1.0",
         },
         "features": features,
@@ -232,7 +255,8 @@ def main():
     metadata = result["metadata"]
     print(
         f"Saved {len(result['features'])} hybrid footprints "
-        f"({metadata['osm_parts']} OSM parts, {metadata['municipal_gap_fills']} municipal gap fills) to {args.output}"
+        f"({metadata['osm_parts']} OSM parts, {metadata['municipal_gap_fills']} municipal gap fills, "
+        f"{metadata['municipal_height_matches']} matched municipal heights) to {args.output}"
     )
 
 

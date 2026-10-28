@@ -3,9 +3,9 @@
 The Wind panel's **Direction** and **Comfort** lenses are both driven by
 solved OpenFOAM volumes. There is no "layered preview" fallback in that panel
 any more — the older fast, mass-conserving horizontal screening model has
-been retired from it. It's still used elsewhere (the Canvas 2D compatibility
-fallback, and the standalone `/api/wind/preview`, `/api/wind/comfort`,
-`/api/wind/validate` API routes), just not to drive the WebGL wind UI. See
+been retired from it. It's still used by the standalone `/api/wind/preview`,
+`/api/wind/comfort`, and `/api/wind/validate` API routes, just not to drive the
+WebGL wind UI. See
 `README.md`'s "Conditions wind API" section for that split.
 
 Running CFD on every browser click is still not a useful target: mesh

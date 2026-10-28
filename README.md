@@ -50,13 +50,16 @@ not carry completed simulation arrays or drawn traffic closures.
   layers. The panel includes map summaries, provenance and local inspection.
 - **Sunlight:** View date/time-specific shadows or run cumulative direct-sun
   studies for ground, roofs and façades.
+- **3D Viewshed:** Screen terrain visibility from a selected viewpoint using
+  mapped terrain and building massing; mapped trees provide context but are not
+  visibility blockers.
 - **Design comparisons:** Compare proposal geometry against the mapped baseline
   for clear-sky direct sun and heat/shade screening. The screening comparison
   recalculates shade but holds its summer surface-temperature input fixed; it
   does not claim proposal UTCI/Tmrt or CFD results.
 - **Wind:** Inspect solved OpenFOAM direction fields and a wind-rose-weighted
-  Comfort view where solved data exists; the legacy screening proxy remains
-  available for compatibility and its own reports.
+  Comfort view where solved data exists; the horizontal screening proxy remains
+  available through its API and as a diagnostic validation target.
 - **Traffic:** Draw road closures and compare paired SUMO runs, including
   routing, queue, emissions and report outputs. Demand is synthetic and
   exploratory.
@@ -109,25 +112,19 @@ The current product adds about 110,080 m² of lower-accuracy terrain and applies
 a documented −7.923 m SRTM-to-local offset plus seam blending.
 
 This writes `public/assets/city_model.json` (the canonical CityGML 3.0-aligned
-semantic application model), `public/assets/fallback.json` (a legacy compact
-renderer asset), `public/assets/canopy.json` (the footprint-preserving LiDAR canopy),
-`public/assets/roof_surface.bin` (the footprint-clipped 1 m height-map roof
-surface sampled at 2 m), and `public/assets/manifest.json`. Roof processing
-tests raster coverage per building, anchors samples to surveyed height, rejects
-robust height outliers, fills small gaps, and fits credible flat, gently sloped,
-gable, and hip roof volumes. Ambiguous surfaces become regularized flat roofs
-instead of retaining tree, façade-edge, or pixel-scale spikes. Buildings
-without enough raster coverage retain their mapped `BLD_HGT` extrusion. The
-supplied height map already stores height above ground, so roof vertices are
-placed at DTM elevation plus the raster value; the DTM is not subtracted a
-second time.
-
-Building geometry is a hybrid: current OpenStreetMap outlines and mapped
-`building:part` shapes supply stepped massing, while the municipal
-photogrammetry layer fills places where OSM has no reliable coverage. Explicit
-OSM `height` values are retained; otherwise each OSM part is fitted to the 2025
-LiDAR height and roof surface. This avoids treating incomplete OSM level tags
-as authoritative while preserving curved and setback geometry. The derived
+semantic application model), `public/assets/fallback.json` (the compact scene
+asset used by the viewer and analyses), `public/assets/canopy.json` (the
+footprint-preserving LiDAR canopy),
+`public/assets/roof_surface.bin` (an empty compatibility buffer), and
+`public/assets/manifest.json`. Visible buildings prefer OpenStreetMap footprints
+and mapped `building:part` polygons; municipal photogrammetry footprints fill
+places where OSM has no building coverage. Parts preserve mapped stepped
+massing, and parent outlines fill uncovered areas so a parent does not hide
+its parts. Aligned municipal survey heights take precedence, followed by robust
+interior LiDAR samples and then OSM height or level tags. LiDAR supplies the
+overall height only: its sampled roof surface is not drawn. Mapped
+`roof:shape`, `roof:height`, and `roof:direction` tags create simple gable or
+hip roofs; other buildings render as clean flat caps. The derived
 footprint product remains subject to ODbL attribution and share-alike terms.
 The scene boundary is derived from the hybrid DTM's valid-pixel mask, not the
 rectangular GeoTIFF envelope. Terrain triangles, buildings, canopy, roads,
@@ -136,9 +133,9 @@ LiDAR-plus-Company's-Garden footprint; remaining NoData pixels are not
 presented as mapped ground.
 The viewer uses a vendored, pinned
 Three.js WebGL renderer for the city, terrain-following wind heatmaps, white
-GPU gusts, heat geometry, and directional-light shadow maps. The existing
-Canvas 2D renderer remains an automatic compatibility fallback when WebGL 2
-is unavailable.
+GPU gusts, heat geometry, and directional-light shadow maps. The viewer requires
+WebGL 2; if it is unavailable or disabled, the app asks users to enable WebGL
+and hardware acceleration or use a current browser that supports WebGL 2.
 
 The Wind panel's Direction and Comfort lenses are both driven by full-CBD
 OpenFOAM volumes, not the older screening proxy — Direction loads whichever
@@ -155,9 +152,9 @@ annual-hours coverage explicitly — unsolved directions are excluded from the
 weighted sum, never interpolated or assumed calm, so today's Comfort result is
 a labelled lower bound, not a complete annual study. The fast horizontal
 screening proxy (mass-conserving terrain + building/canopy drag) still powers
-the Canvas 2D compatibility fallback, `/api/wind/preview`, and
-`/api/wind/validate`, but no longer drives the main WebGL wind panel. Both
-CFD cases are explicitly exploratory rather than validated planning evidence.
+`/api/wind/preview`, `/api/wind/comfort`, and `/api/wind/validate`, but no
+longer drives the WebGL wind panel. The CFD cases are explicitly exploratory
+rather than validated planning evidence.
 The animated heatmap transports the speed colours themselves through the
 horizontal CFD field on a GPU grid. A second smooth colour wave continuously
 travels along the local CFD velocity as the transported regions deform, while
@@ -280,9 +277,10 @@ python3.12 -m venv .venv
 ./scripts/run_local.sh
 ```
 
-Open http://localhost:8000 in any modern browser. The launcher starts the API
-and serves the app from the same terminal; press Ctrl+C to stop it. To use a
-different port, run `PORT=8001 ./scripts/run_local.sh`.
+Open http://localhost:8000 in a current browser with WebGL 2 enabled. The
+launcher starts the API and serves the app from the same terminal; press
+Ctrl+C to stop it. To use a different port, run
+`PORT=8001 ./scripts/run_local.sh`.
 
 The static-only viewer can still be served with
 `.venv/bin/python -m http.server 8000 -d public`. Production deployments can run `docker compose up --build`: Nginx serves
@@ -299,9 +297,10 @@ In another terminal, install its dependencies and run it alongside Uvicorn:
 ```
 
 Rebuild the SOLWEIG surface rasters with
-`.venv/bin/python scripts/build_thermal_surfaces.py` after pulling this
-radiation audit; the worker checks their material-code version before
-publishing. The worker publishes its first forecast before those layers can display data.
+`.venv/bin/python scripts/build_thermal_surfaces.py` after changing the thermal
+surface inputs or material mapping; the worker checks their material-code
+version before publishing. The worker publishes its first forecast before
+those layers can display data.
 For a containerized run, `docker compose up --build` starts the API and thermal
 worker together.
 The worker publishes one full thermal forecast per hour, waiting an hour after
@@ -370,7 +369,7 @@ Deployment controls are environment variables:
   an unbounded queue.
 
 `GET /api/health` checks generated assets and model compatibility, the SUMO
-binary/network, and theA optional database connection. Request logs are
+binary/network, and the optional database connection. Request logs are
 structured JSON and include an `X-Request-ID`. `.env` is excluded from both Git
 and the Docker build context.
 
@@ -514,8 +513,9 @@ building study places analysis cells on roofs and outward-facing façades, casts
 a clear-sky ray toward every sampled sun position, and tests it against mapped
 opaque building prisms and canopy volumes. Ground, building, or combined
 surfaces can be selected over an editable daily window at 15, 30, or 60 minute
-steps. Full-CBD building grids are available at 20 m (faster) and 10 m
-(detailed); a 20 m all-surface study contains roughly 25,000 cells. The
+steps. Building-surface grids are available at 20 m (city overview), 10 m
+(quicker local study), and 5 m (more detail); a 20 m all-surface study contains
+roughly 25,000 cells. The
 cumulative building study uses CPU ray tests against simplified roof planes
 and mapped blockers. It focuses on direct sunlight; terrain occlusion,
 detailed roof slopes, diffuse light and reflections are outside its current
@@ -528,11 +528,11 @@ directly onto the detailed roof triangles; they are not measured roof-membrane
 temperatures.
 
 The retained screening proxy (fast horizontal mass-conserving model, still
-used by `/api/wind/preview`, `/api/wind/comfort`, `/api/wind/validate`, and
-the Canvas fallback renderer) applies stability-dependent pedestrian-height
-conversion, Lawson-LDDC-style screening categories, conditional threshold
-exceedance, wind-rose-weighted seasonal/annual comfort, and model-form
-uncertainty bands. The API labels these outputs **Screening**; they are not
+used by `/api/wind/preview`, `/api/wind/comfort`, and `/api/wind/validate`)
+applies stability-dependent pedestrian-height conversion, Lawson-LDDC-style
+screening categories, conditional threshold exceedance, wind-rose-weighted
+seasonal/annual comfort, and model-form uncertainty bands. The API labels
+these outputs **Screening**; they are not
 the OpenFOAM Direction/Comfort lenses described above. The installed ERA5
 wind profile now uses a complete 2021–2025 monthly archive (43,824 hourly
 records, all UTC hours). ERA5 frequency coverage is complete for that baseline,
@@ -592,12 +592,6 @@ polygons (a micro-scale ventilation classification, still not measured local
 vector directions or validated CFD results) multiplied against a terrain-
 resolved direction and speed factor from the mass-conserving regional wind
 model described below. Neither replaces validated CFD.
-
-In Canvas compatibility mode, animated streamline particles use the selected
-direction and combined speed field, then apply footprint-aware building
-deflection, downstream wake cues, and porous tree-canopy drag. This local
-interaction is intended for exploratory visualisation; physically validated
-wakes and vortices still require CFD-derived `u/v` fields.
 
 ## Terrain-aware regional wind
 

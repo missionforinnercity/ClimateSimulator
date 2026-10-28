@@ -82,10 +82,13 @@ With the same 21.2°C forecast air input, mean/peak UTCI became **25.68/28.3°C*
 This confirms a substantial radiation forecast error in the original frame.
 It does not resolve the 5.2°C air-temperature difference.
 
-The worker now refreshes on the hour and again at 15 minutes past **every**
-hour. Previously the follow-up happened only once after startup and subsequent
-runs drifted to that offset. Satellite delivery is not guaranteed at the
-refresh time; missing data remains explicitly labelled as forecast.
+At the time of this investigation, the worker was changed to refresh on the
+hour and again at 15 minutes past every hour; that schedule is historical.
+The current worker waits one full refresh interval after each run attempt
+completes, so its next publication time can drift with run duration. The active
+cadence is documented in the [README](../README.md#run-locally). Satellite
+delivery is not guaranteed at refresh time; missing data remains explicitly
+labelled as forecast.
 
 Google Weather is an optional comparison source, not a prerequisite for these
 fixes. Its API combines observations and models; Google does not identify its

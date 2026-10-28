@@ -23,23 +23,14 @@
     },
     "roof_surface": {
       "buildings": 1891,
-      "detailed_buildings": 1515,
-      "fallback_buildings": 376,
-      "roof_models": {
-        "regularized_flat": 604,
-        "height_fallback": 376,
-        "dominant_flat": 411,
-        "parametric_gable": 78,
-        "flat_plane": 103,
-        "fitted_plane": 308,
-        "parametric_hip": 11
-      },
-      "vertices": 223154,
-      "triangles": 424628,
-      "sample_spacing_m": 2,
-      "height_semantics": "height_above_dtm",
-      "bytes": 8666008,
-      "cache_key": "982da7e23f4a1dcc"
+      "detailed_buildings": 0,
+      "fallback_buildings": 1891,
+      "roof_models": {},
+      "vertices": 0,
+      "triangles": 0,
+      "sample_spacing_m": null,
+      "height_semantics": "municipal survey heights, then robust LiDAR height samples; no raster roof mesh",
+      "bytes": 8
     },
     "fallback": {
       "buildings": 1891,
@@ -51,9 +42,9 @@
       "trafficSignals": 429,
       "municipalSurfaceSegments": 476,
       "municipalSurfaceMatches": 80,
-      "bytes": 2281779,
+      "bytes": 2225153,
       "water": 16,
-      "cache_key": "53e92fa3463630c6"
+      "cache_key": "de4c0111754c2222"
     },
     "canopy": {
       "components": 2659,
@@ -79,8 +70,8 @@
         "PlantCover": 61,
         "SolitaryVegetationObject": 2903
       },
-      "bytes": 20083766,
-      "cache_key": "451cbb62e5c328e0"
+      "bytes": 19956727,
+      "cache_key": "b3675aca4bef7e3d"
     },
     "lighting": {
       "objects": 3672,
@@ -130,8 +121,8 @@
     },
     "buildings": {
       "path": "data/derived/BuildingFootprintsHybrid.geojson",
-      "sha256": "5f1a102a04ebcb8075de16548bde31fbc6d67ba554e5ba1f92e8e5fd86c3fbed",
-      "bytes": 1609519,
+      "sha256": "4d85bcec518dd83b3263043a53687f0d746b5fd1433c0a33a8ddba7609d62c68",
+      "bytes": 1617026,
       "files": 1
     },
     "canopy": {

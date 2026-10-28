@@ -21,11 +21,11 @@ New Python HTTP tests use an in-process ASGI client without application lifespan
 ## Release checks
 
 - Load `/`, `/docs`, and `/app`; no missing required assets or JavaScript exceptions. An optional service failure should be explicit.
-- Open all six panels. Confirm visible tab names, one selected tab and keyboard Left/Right/Home/End behaviour. Check the nested wind controls too.
+- Open all eight panels. Confirm visible tab names, one selected tab and keyboard Left/Right/Home/End behaviour. Check the nested wind controls too.
 - Dismiss and reopen the four-step guide. Verify its preference with storage disabled/private browsing.
-- Focus the map; orbit with arrows, zoom with +/− and fit with Home. Repeat on Canvas fallback.
+- Focus the map; orbit with arrows, zoom with +/− and fit with Home. Confirm a browser without WebGL 2 receives the capability warning.
 - At the full-city WebGL overview and neighborhood-scale place focus, confirm the scene settles without a continuous traffic render loop; zoom to very close street scale and confirm ambient traffic resumes.
-- Start on Tools in WebGL and Canvas: heat-zone data should not load until the Heat tab is selected; opening Heat should load the selected metric once.
+- Start on Tools: heat-zone data should not load until the Heat tab is selected; opening Heat should load the selected metric once.
 - Start on Tools in WebGL: traffic roads, live traffic and calibration data should stay unloaded until Traffic is selected; leaving Traffic should stop failed road-network retries until the panel is reopened.
 - Start on Tools in WebGL: the saved CFD proposal registry should stay unloaded until Wind is selected; opening Wind should initialize the proposal selector from the registry, with the empty-state label when no proposals are saved.
 - Start on Tools in WebGL: confirm municipal light posts appear at street-scale after the scene's idle load, stay distance-culled at district scale, and do not cast shadows; confirm lamp glow and road washes are added in Sun after sunset, including the inferred-height caveat.
@@ -33,14 +33,14 @@ New Python HTTP tests use an in-process ASGI client without application lifespan
 - With a published thermal surface, select Heat → Sky-view factor (SVF). Confirm the static map, summary and point inspector use the cached 2 m SVF grid without starting another weather/SOLWEIG run.
 - Heat → Seasonal UTCI: compare month, season and annual KPI scopes. The cold/no-thermal-stress/heat area-time shares should sum to about 100% (allowing display rounding), all expected monthly-hour frames must be present, and equivalent hours must be labelled as composite estimates. The UTCI map remains available. Near-live UTCI should show selected-hour area shares and must not invent period-hours from one frame.
 - Confirm the simplified scene reaches ready before `roof_surface.bin` is requested; wait for the detailed roof count in the status line after it loads.
-- Tools → Map layers: toggle the mapped surface inventory in WebGL and Canvas. Confirm the paved, vegetated and water colors match the area summary, mapped coverage is explicit, and unmapped ground remains unknown.
-- Tools → Map layers: toggle mapped cycleways in WebGL and Canvas. Confirm the highlight follows only dedicated cycleway links, unmatched-end markers align with the summary, and the OSM coverage/safety caveat remains visible.
-- Tools → Map layers: toggle terrain-only runoff concentration in WebGL and Canvas. Confirm flow cells appear only after enabling the layer, the 25 mm gross volume is about 13,249 m³, the rainfall slider scales it linearly, and the terrain/drainage limitations remain visible.
-- Start on Tools in WebGL and Canvas: public-realm points should stay unloaded until enabled; confirm the 107 mapped amenities, 381 pedestrian crossings and 3,328 parking spaces appear with counts. Crossing and parking details should reduce at broad views; retain the inferred bay-dimension caveat.
+- Tools → Map layers: toggle the mapped surface inventory in WebGL. Confirm the paved, vegetated and water colors match the area summary, mapped coverage is explicit, and unmapped ground remains unknown.
+- Tools → Map layers: toggle mapped cycleways in WebGL. Confirm the highlight follows only dedicated cycleway links, unmatched-end markers align with the summary, and the OSM coverage/safety caveat remains visible.
+- Tools → Map layers: toggle terrain-only runoff concentration in WebGL. Confirm flow cells appear only after enabling the layer, the 25 mm gross volume is about 13,249 m³, the rainfall slider scales it linearly, and the terrain/drainage limitations remain visible.
+- Start on Tools: public-realm points should stay unloaded until enabled; confirm the 107 mapped amenities, 381 pedestrian crossings and 3,328 parking spaces appear with counts. Crossing and parking details should reduce at broad views; retain the inferred bay-dimension caveat.
 - In WebGL, zoom to Riebeek Square: confirm the mapped asphalt parking and paved islands replace the broad square fill cleanly, with no crosshatched ground; confirm parking-aisle ribbons sit above those surfaces and cars remain in their bays.
-- Tools → Place inspector: search a street by name and a building by OSM ID in both renderers; confirm the map highlight, source/unknown tags, map-pick mode and Sun/Wind location handoff.
+- Tools → Place inspector: search a street by name and a building by OSM ID; confirm the map highlight, source/unknown tags, map-pick mode and Sun/Wind location handoff.
 - Tools → Place inspector: use ArrowDown/ArrowUp/Home/End and Enter from search results, Escape to dismiss results, and verify duplicate names or missing IDs can be distinguished by ID and mapped centre.
-- Run `scripts/smoke_place_inspector.py` to check keyboard search and empty/out-of-terrain picks in both WebGL and Canvas; run `node --test tests/placeInspector.test.mjs` for duplicate names, missing IDs and distant points.
+- Run `scripts/smoke_place_inspector.py` to check keyboard search and empty/out-of-terrain picks; run `node --test tests/placeInspector.test.mjs` for duplicate names, missing IDs and distant points.
 - Start on Tools without opening Place inspector: confirm search-feature indexing is deferred; then focus search and pick mode to confirm the index builds once and both workflows remain responsive.
 - Inspect all five evidence cards: method, dates/unknown dates, units, limits and use supported by the result. The lower-bound wind caveat stays visible.
 - Heat: change date/time/metric rapidly under network throttling. Only the newest settings should appear. Check the empty fixture and failed-source states.
@@ -70,4 +70,4 @@ New Python HTTP tests use an in-process ASGI client without application lifespan
 
 Record hardware, browser/version, renderer, viewport, device pixel ratio, server/proxy, network throttling, cold/warm cache and source release. Track `performance.getEntriesByName('climate-viewer-ready')`, resource encoded/decoded bytes, slow interactions, renderer draw calls and memory where supported. Compare like-for-like runs; navigation load time is not the same as scene readiness.
 
-The original local desktop baseline loaded the shell in about 160 ms and had about 934 KB of encoded resource data at the observation point, with the model ready within the 12-second observation window. That single unthrottled software-browser sample is not a mobile/FPS benchmark. See implementation status for final measured checks and unresolved hardware validation.
+The original local desktop baseline loaded the shell in about 160 ms and had about 934 KB of encoded resource data at the observation point, with the model ready within the 12-second observation window. That single unthrottled software-browser sample is not a mobile/FPS benchmark; collect current measurements using the recording fields above before making performance claims.

@@ -589,12 +589,9 @@
             <button type="button" data-wind-direction="270">W</button><button type="button" data-wind-direction="315">NW</button>
           </div>
           <p class="wind-cfd-hint">Comfort weights the solved directional fields. Direct observation scoring is available in Check against measurements when you have matched pedestrian and upstream readings. Results remain exploratory until holdout and mesh-sensitivity gates pass.</p>
-          <!-- Hidden in the normal WebGL/OpenFOAM path — the compass presets
-               above replace this as the direction picker there. The Canvas
-               fallback renderer (sceneRenderer.js, used only when WebGL2 is
-               unavailable) has no OpenFOAM cases to pick between, so it
-               un-hides this block itself and uses these as its real
-               screening-model controls. -->
+          <!-- The presets above drive WebGL direction selection. These hidden
+               inputs retain the detailed direction and forcing values used
+               by scenario links and the WebGL wind model. -->
           <div id="wind-legacy-controls" hidden>
             <label>Direction
               <select id="wind-direction">
@@ -1178,6 +1175,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-147"></script>
+    <script type="module" src="/app.js?v=experience-148"></script>
 </body>
 </html>

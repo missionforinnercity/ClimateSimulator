@@ -11,7 +11,6 @@
 | Requests | `public/requestClient.js` | Abort previous request with same key; bound request/body lifetime; retry only a small metadata GET allow-list |
 | Map interaction adapter | `public/sceneExperience.js` | Keyboard camera control, camera restore/capture, selected-location handoff |
 | 3D viewer | `public/webglRenderer.js` | Pinned Three.js, compact terrain/buildings, CFD sampling, wind analysis and OpenFOAM-driven pollutant dispersion overlays. Shared `SCENE_LAYERS` profiles assign render tiers and small terrain lifts to draped surfaces; depth testing handles real 3D occlusion. |
-| Compatibility viewer | `public/sceneRenderer.js` | Canvas geometry and screening API; not equivalent to the CFD viewer |
 | Transport | `public/transportLayer.js` | Timetable-derived vehicles and event access; no live GPS |
 | API boundary | `server/app.py` | FastAPI validation, protected routes, bounded concurrency and rate history, request IDs |
 | Domain models | `server/heat.py`, `sunlight.py`, `field.py`, `traffic.py`, supporting modules | Existing scientific calculations; keep units, source dates, validation and coverage explicit |
@@ -20,11 +19,11 @@
 
 ## Data and identity
 
-`public/assets/manifest.json` version 3 identifies the compact renderer asset, canopy, semantic model and roof surface. Source build inputs, cache keys, source IDs, CRS, geometry confidence, and terrain provenance belong to the scientific record. The runtime validates the supported manifest before interpreting scene geometry. Health reports required scene failures separately from optional SUMO/database availability.
+`public/assets/manifest.json` version 3 identifies the compact scene asset, canopy, semantic model and roof surface. The browser viewer requires WebGL 2 and reports when the capability is unavailable. Source build inputs, cache keys, source IDs, CRS, geometry confidence, and terrain provenance belong to the scientific record. The runtime validates the supported manifest before interpreting scene geometry. Health reports required scene failures separately from optional SUMO/database availability.
 
-`city_model.json` is a CityGML-aligned application encoding, not a conformant CityGML exchange document. The initial renderer uses `fallback.json`, not the much larger semantic asset. The LiDAR-plus-SRTM footprint must remain irregular; do not colour NoData as mapped ground.
+`city_model.json` is a CityGML-aligned application encoding, not a conformant CityGML exchange document. The WebGL viewer loads the compact `fallback.json` scene rather than the much larger semantic asset. The LiDAR-plus-SRTM footprint must remain irregular; do not colour NoData as mapped ground.
 
-CFD assets are offline solved volumes. WebGL comfort weights solved directions only; omitted sectors must not become calm or interpolated evidence. Canvas uses a different screening API and must say so. If that API fails, it now reports unavailable data instead of constructing a synthetic animated field.
+CFD assets are offline solved volumes. WebGL comfort weights solved directions only; omitted sectors must not become calm or interpolated evidence. The separate screening API remains available for explicit API clients.
 
 `GET /api/wind/criteria` publishes the versioned activity-threshold profiles
 used by WebGL comfort and screening responses. Each field and printable report
@@ -103,12 +102,12 @@ or guarantee that its environment can still be installed.
 
 | Event | Meaning |
 | --- | --- |
-| `climate-menu-change` | Active panel changed; existing renderer owns layer visibility |
+| `climate-menu-change` | Active panel changed; the WebGL viewer owns layer visibility |
 | `climate-manifest` | Validated current scene manifest |
 | `climate-viewer-ready` | Renderer initialized; restore validated controls now |
 | `climate-capture-view` / `climate-scene-state` | Synchronous camera snapshot request/response |
 | `climate-restore-view` | Bounded camera restore |
-| `climate-use-location` | Hand a local x/z point to sun/wind; each renderer checks coverage |
+| `climate-use-location` | Hand a local x/z point to sun/wind; the WebGL viewer checks coverage |
 | `climate-request-status` | Loading/ready/error with tool, key, timestamp and request reference where available |
 | `climate-analysis-result` | Small completed-result metadata; never a second copy of the CFD or traffic arrays |
 | `climate-wind-result` | Existing wind-result contract; preserved for report consumers |
@@ -121,4 +120,4 @@ The API returns `X-Request-ID` on early authentication/rate/busy responses as we
 
 Client cancellation aborts requests and prevents superseded response bodies from being used. It does not generally terminate backend CPU work; sunlight also has an existing explicit cancellation endpoint. An expensive simulation is never automatically retried. Optional service outages must leave the map and other controls usable.
 
-See [QA checklist](QA_CHECKLIST.md), [implementation status](IMPLEMENTATION_STATUS.md) and [feature roadmap](FEATURE_ROADMAP.md).
+See the [QA checklist](QA_CHECKLIST.md), [validation status](VALIDATION_STATUS.md), and [feature roadmap](FEATURE_ROADMAP.md).

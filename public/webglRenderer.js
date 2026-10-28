@@ -2048,8 +2048,14 @@ export async function startWebGLScene(canvas, status) {
     const wallElevationColors = [];
     data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0, , , holes = []], buildingIndex) => {
       if (designRemovedBuildingIndexes.has(buildingIndex)) return;
+      const osm = data.buildings[buildingIndex]?.[14] || {};
+      const roofShape = String(osm['roof:shape'] || '').toLowerCase();
+      const shapedRoof = ['gable', 'gabled', 'hip', 'hipped', 'pyramid', 'pyramidal'].includes(roofShape);
+      let roofRise = Number.parseFloat(String(osm['roof:height'] || '').replace(/\s*m(?:et(?:er|re)s?)?$/i, ''));
+      if (!Number.isFinite(roofRise) || roofRise <= 0) roofRise = 0;
+      roofRise = Math.min(roofRise || (shapedRoof ? Math.min(3, height * 0.18) : 0), Math.max(0, height * 0.28));
       const baseY = ground + Math.max(0, Number(minHeight) || 0);
-      const simpleWallHeight = roofSurfaceBuffer ? wallHeight : height;
+      const simpleWallHeight = Math.max(2.5, (roofSurfaceBuffer ? wallHeight : height) - roofRise);
       const roofY = ground + simpleWallHeight;
       const colour = elevationColour(height);
       // Keep mapped buildings neutral; analysis colours remain available only
@@ -2060,8 +2066,8 @@ export async function startWebGLScene(canvas, status) {
           const next = (index + 1) % wallRing.length;
           const [x1, z1] = wallRing[index];
           const [x2, z2] = wallRing[next];
-          const top1 = ground + (roofSurfaceBuffer && ringIndex === 0 ? (wallProfile?.[index] ?? wallHeight) : simpleWallHeight);
-          const top2 = ground + (roofSurfaceBuffer && ringIndex === 0 ? (wallProfile?.[next] ?? wallHeight) : simpleWallHeight);
+          const top1 = ground + (roofSurfaceBuffer && detailedRoof && ringIndex === 0 ? (wallProfile?.[index] ?? wallHeight) : simpleWallHeight);
+          const top2 = ground + (roofSurfaceBuffer && detailedRoof && ringIndex === 0 ? (wallProfile?.[next] ?? wallHeight) : simpleWallHeight);
           wallPositions.push(
             x1, baseY, z1, x2, baseY, z2, x2, top2, z2,
             x1, baseY, z1, x2, top2, z2, x1, top1, z1,
@@ -2076,16 +2082,49 @@ export async function startWebGLScene(canvas, status) {
           }
         }
       }
-      // LiDAR-covered buildings receive their own simplified surface mesh.
-      // Only uncovered buildings retain this authoritative height extrusion.
+      // OSM footprints and mapped building parts define the mass. Mapped roof
+      // shape tags add a restrained gable or hip above that OSM-derived mass.
       if (!detailedRoof || !roofSurfaceBuffer) {
         const triangulated = triangulateRings(ring, holes);
+        const centre = ring.reduce((sum, point) => [sum[0] + point[0] / ring.length, sum[1] + point[1] / ring.length], [0, 0]);
+        let ridgeNormal = null;
+        if (shapedRoof && roofRise > 0) {
+          const directions = { N: 0, NNE: 22.5, NE: 45, ENE: 67.5, E: 90, ESE: 112.5, SE: 135, SSE: 157.5, S: 180, SSW: 202.5, SW: 225, WSW: 247.5, W: 270, WNW: 292.5, NW: 315, NNW: 337.5 };
+          const mapped = String(osm['roof:direction'] || '').trim().toUpperCase();
+          const bearing = Number.isFinite(Number(mapped)) && mapped !== '' ? Number(mapped) : directions[mapped];
+          if (Number.isFinite(bearing)) {
+            const radians = bearing * Math.PI / 180;
+            ridgeNormal = [Math.sin(radians), Math.cos(radians)];
+          } else {
+            let xx = 0, xz = 0, zz = 0;
+            for (const [x, z] of ring) {
+              const dx = x - centre[0], dz = z - centre[1];
+              xx += dx * dx; xz += dx * dz; zz += dz * dz;
+            }
+            const angle = 0.5 * Math.atan2(2 * xz, xx - zz);
+            ridgeNormal = [-Math.sin(angle), Math.cos(angle)];
+          }
+        }
+        const maxProjection = ridgeNormal
+          ? Math.max(0.01, ring.reduce((max, [x, z]) => Math.max(max, Math.abs((x - centre[0]) * ridgeNormal[0] + (z - centre[1]) * ridgeNormal[1])), 0))
+          : 1;
+        const maxAlongProjection = ridgeNormal
+          ? Math.max(0.01, ring.reduce((max, [x, z]) => Math.max(max, Math.abs((x - centre[0]) * ridgeNormal[1] - (z - centre[1]) * ridgeNormal[0])), 0))
+          : 1;
         for (const face of triangulated.faces) {
           const a = triangulated.vertices[face[0]];
           let b = triangulated.vertices[face[1]], c = triangulated.vertices[face[2]];
           const normalY = (b[1] - a[1]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[1] - a[1]);
           if (normalY < 0) [b, c] = [c, b];
-          roofPositions.push(a[0], roofY, a[1], b[0], roofY, b[1], c[0], roofY, c[1]);
+          const surfaceY = ([x, z]) => {
+            if (!ridgeNormal || roofRise <= 0) return roofY;
+            const projection = Math.abs((x - centre[0]) * ridgeNormal[0] + (z - centre[1]) * ridgeNormal[1]);
+            const gable = Math.max(0, 1 - projection / maxProjection);
+            const along = Math.max(0, 1 - Math.abs((x - centre[0]) * ridgeNormal[1] - (z - centre[1]) * ridgeNormal[0]) / maxAlongProjection);
+            const factor = roofShape.startsWith('hip') || roofShape.startsWith('pyramid') ? Math.min(gable, along) : gable;
+            return roofY + roofRise * factor;
+          };
+          roofPositions.push(a[0], surfaceY(a), a[1], b[0], surfaceY(b), b[1], c[0], surfaceY(c), c[1]);
         }
       }
     });
@@ -2566,6 +2605,10 @@ export async function startWebGLScene(canvas, status) {
     layerGroups.grass.add(mesh);
   }
 
+  // Keep the pedestrian surface graph available to the later crossing pass.
+  // Crossing records are loaded lazily, after the base streets are built.
+  let pedestrianSurfaceRecords = [];
+
   function makeRoads() {
     const asphaltTexture = makeSurfaceTexture('asphalt');
     const stoneTexture = makeSurfaceTexture('stone');
@@ -2578,13 +2621,49 @@ export async function startWebGLScene(canvas, status) {
     const positionsByStyle = [[], [], [], [], [], [], [], [], [], []];
     const major = new Set(['motorway', 'motorway_link', 'trunk', 'primary', 'primary_link']);
     const secondary = new Set(['secondary', 'secondary_link', 'tertiary']);
-    const paths = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator']);
+    const paths = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator', 'pedestrian']);
+    const sidewalkRecords = [];
     const offsetPolyline = (points, offset) => points.map(([x, z], index) => {
       const previous = points[Math.max(0, index - 1)], next = points[Math.min(points.length - 1, index + 1)];
       const dx = next[0] - previous[0], dz = next[1] - previous[1];
       const length = Math.hypot(dx, dz) || 1;
       return [x - dz / length * offset, z + dx / length * offset];
     });
+    const offsetSidewalkPolyline = (points, offset) => {
+      const clean = points.filter(([x, z], index) => Number.isFinite(x) && Number.isFinite(z)
+        && (!index || Math.hypot(x - points[index - 1][0], z - points[index - 1][1]) > 0.05));
+      if (clean.length < 2 || Math.abs(offset) < 0.001) return clean.map(point => [...point]);
+      const normals = clean.slice(0, -1).map((point, index) => {
+        const next = clean[index + 1];
+        const dx = next[0] - point[0], dz = next[1] - point[1];
+        const length = Math.hypot(dx, dz) || 1;
+        return [-dz / length, dx / length];
+      });
+      return clean.map(([x, z], index) => {
+        if (index === 0) return [x + normals[0][0] * offset, z + normals[0][1] * offset];
+        if (index === clean.length - 1) {
+          const normal = normals[normals.length - 1];
+          return [x + normal[0] * offset, z + normal[1] * offset];
+        }
+        const before = normals[index - 1], after = normals[index];
+        let mx = before[0] + after[0], mz = before[1] + after[1];
+        const magnitude = Math.hypot(mx, mz);
+        if (magnitude < 0.05) return [x + after[0] * offset, z + after[1] * offset];
+        mx /= magnitude; mz /= magnitude;
+        const denominator = mx * after[0] + mz * after[1];
+        if (denominator <= 0.1) return [x + after[0] * offset, z + after[1] * offset];
+        const miter = Math.min(Math.abs(offset) / denominator, Math.abs(offset) * 2.5) * Math.sign(offset);
+        return [x + mx * miter, z + mz * miter];
+      });
+    };
+    const sidewalkSideEnabled = (general, taggedSide, side) => {
+      if (taggedSide === 'separate' || taggedSide === 'no') return false;
+      if (general === 'separate') return false;
+      if (taggedSide === 'yes') return true;
+      if (general === 'no') return false;
+      if (taggedSide) return false;
+      return ['yes', 'both'].includes(general) || general === side;
+    };
     const inferredVerticalOffset = (attributes, highway) => {
       const explicit = Number(attributes?.inferredVerticalOffsetM);
       if (Number.isFinite(explicit)) return explicit;
@@ -2647,16 +2726,170 @@ export async function startWebGLScene(canvas, status) {
         };
         positionsByStyle[styleIndex].push(roadRecord);
         if (baseStyle < 3) {
-          const width = clamp(Number(mappedWidth) || 4, 2.5, 18);
           const sidewalk = String(attributes.sidewalk || '').toLowerCase();
-          const left = ['yes', 'both', 'left', 'separate'].includes(sidewalk) || ['yes', 'separate'].includes(String(attributes.sidewalkLeft || '').toLowerCase());
-          const right = ['yes', 'both', 'right', 'separate'].includes(sidewalk) || ['yes', 'separate'].includes(String(attributes.sidewalkRight || '').toLowerCase());
-          const separation = width * 0.5 + 1.05;
-          if (left) positionsByStyle[3].push({ points: offsetPolyline(points, separation), width: 1.55, verticalOffset: verticalOffset + 0.02, priority: 0 });
-          if (right) positionsByStyle[3].push({ points: offsetPolyline(points, -separation), width: 1.55, verticalOffset: verticalOffset + 0.02, priority: 0 });
+          const sidewalkWidthFor = value => {
+            const parsed = Number.parseFloat(String(value ?? '').replace(/\s*m(?:et(?:er|re)s?)?$/i, ''));
+            return Number.isFinite(parsed) && parsed > 0 ? clamp(parsed, 1.1, 4.5) : 1.55;
+          };
+          for (const [side, tag, sign, tagWidth] of [
+            ['left', attributes.sidewalkLeft ?? attributes['sidewalk:left'], -1,
+              attributes.sidewalkLeftWidth ?? attributes['sidewalk:left:width'] ?? attributes.sidewalkWidth ?? attributes['sidewalk:width']],
+            ['right', attributes.sidewalkRight ?? attributes['sidewalk:right'], 1,
+              attributes.sidewalkRightWidth ?? attributes['sidewalk:right:width'] ?? attributes.sidewalkWidth ?? attributes['sidewalk:width']],
+          ]) {
+            if (!sidewalkSideEnabled(sidewalk, String(tag || '').toLowerCase(), side)) continue;
+            const sidewalkWidth = sidewalkWidthFor(tagWidth);
+            const separation = roadRecord.width * 0.5 + sidewalkWidth * 0.5 + 0.05;
+            // The viewer flips northing into its Z axis, so OSM left and right
+            // have the opposite sign to the renderer's 2D normal.
+            const pointsOffset = offsetSidewalkPolyline(points, sign * separation);
+            if (pointsOffset.length < 2) continue;
+            sidewalkRecords.push({
+              points: pointsOffset, width: sidewalkWidth,
+              verticalOffset: verticalOffset + 0.02, priority: 0,
+              // Route synthetic sidewalks through the footway painter layer;
+              // missing road fields must not make them draw as asphalt.
+              baseStyle: 3, styleIndex: 3,
+              startNode: points[0], endNode: points[points.length - 1],
+              centerOffset: separation, roadWidth: roadRecord.width,
+              roadCenterline: points, sideSign: sign,
+            });
+          }
         }
       }
     }
+    // At shared OSM road nodes, extend offset sidewalk ends to the miter
+    // intersection of their curb lines. This closes corners without shifting
+    // an entire sidewalk toward or over the carriageway.
+    const sidewalkEndpointsByNode = new Map();
+    sidewalkRecords.forEach((record, recordIndex) => {
+      for (const end of ['start', 'end']) {
+        const node = record[`${end}Node`];
+        const grade = record.verticalOffset.toFixed(1);
+        const key = `${node[0].toFixed(1)}:${node[1].toFixed(1)}:${grade}`;
+        if (!sidewalkEndpointsByNode.has(key)) sidewalkEndpointsByNode.set(key, []);
+        sidewalkEndpointsByNode.get(key).push({ recordIndex, end });
+      }
+    });
+    for (const endpoints of sidewalkEndpointsByNode.values()) {
+      if (endpoints.length < 2) continue;
+      const candidates = [];
+      for (let first = 0; first < endpoints.length; first += 1) {
+        for (let second = first + 1; second < endpoints.length; second += 1) {
+          const a = endpoints[first], b = endpoints[second];
+          const recordA = sidewalkRecords[a.recordIndex], recordB = sidewalkRecords[b.recordIndex];
+          if (a.recordIndex === b.recordIndex && a.end === b.end) continue;
+          const lineA = recordA.points, lineB = recordB.points;
+          const p = a.end === 'start' ? lineA[0] : lineA[lineA.length - 1];
+          const q = b.end === 'start' ? lineB[0] : lineB[lineB.length - 1];
+          const neighborA = a.end === 'start' ? lineA[1] : lineA[lineA.length - 2];
+          const neighborB = b.end === 'start' ? lineB[1] : lineB[lineB.length - 2];
+          const lengthA = Math.hypot(neighborA[0] - p[0], neighborA[1] - p[1]);
+          const lengthB = Math.hypot(neighborB[0] - q[0], neighborB[1] - q[1]);
+          if (lengthA < 0.1 || lengthB < 0.1) continue;
+          const r = [(neighborA[0] - p[0]) / lengthA, (neighborA[1] - p[1]) / lengthA];
+          const s = [(neighborB[0] - q[0]) / lengthB, (neighborB[1] - q[1]) / lengthB];
+          const denominator = r[0] * s[1] - r[1] * s[0];
+          if (Math.abs(denominator) < 0.20) continue;
+          const qp = [q[0] - p[0], q[1] - p[1]];
+          const distanceA = (qp[0] * s[1] - qp[1] * s[0]) / denominator;
+          const distanceB = (qp[0] * r[1] - qp[1] * r[0]) / denominator;
+          const maximum = Math.min(12, recordA.centerOffset + recordB.centerOffset);
+          if (distanceA >= -0.02 || distanceB >= -0.02
+            || Math.abs(distanceA) > maximum || Math.abs(distanceB) > maximum) continue;
+          const intersection = [p[0] + r[0] * distanceA, p[1] + r[1] * distanceA];
+          candidates.push({ a, b, intersection, score: Math.abs(distanceA) + Math.abs(distanceB) });
+        }
+      }
+      candidates.sort((a, b) => a.score - b.score);
+      const joined = new Set();
+      for (const candidate of candidates) {
+        const keyA = `${candidate.a.recordIndex}:${candidate.a.end}`;
+        const keyB = `${candidate.b.recordIndex}:${candidate.b.end}`;
+        if (joined.has(keyA) || joined.has(keyB)) continue;
+        const recordA = sidewalkRecords[candidate.a.recordIndex];
+        const recordB = sidewalkRecords[candidate.b.recordIndex];
+        if (candidate.a.end === 'start') recordA.points[0] = candidate.intersection;
+        else recordA.points[recordA.points.length - 1] = candidate.intersection;
+        if (candidate.b.end === 'start') recordB.points[0] = candidate.intersection;
+        else recordB.points[recordB.points.length - 1] = candidate.intersection;
+        (recordA.joinedEnds ||= new Set()).add(candidate.a.end);
+        (recordB.joinedEnds ||= new Set()).add(candidate.b.end);
+        joined.add(keyA);
+        joined.add(keyB);
+      }
+    }
+
+    const mappedPedestrianRecords = positionsByStyle.flat().filter(record => (
+      record.baseStyle >= 3 && record.points?.length > 1
+    ));
+    const closestPointOnRecords = (point, records, maxDistance, grade, options = {}) => {
+      let best = null;
+      const maximumSquared = maxDistance * maxDistance;
+      const tangent = options.tangent || null;
+      for (const candidate of records) {
+        if (candidate === options.exclude || Math.abs((candidate.verticalOffset || 0) - grade) > 0.75) continue;
+        const points = candidate.points;
+        for (let index = 0; index < points.length - 1; index += 1) {
+          const a = points[index], b = points[index + 1];
+          const dx = b[0] - a[0], dz = b[1] - a[1];
+          const lengthSquared = dx * dx + dz * dz;
+          if (lengthSquared < 0.01) continue;
+          if (tangent) {
+            const alignment = Math.abs((dx * tangent[0] + dz * tangent[1]) / Math.sqrt(lengthSquared));
+            if (alignment < (options.minimumAlignment ?? 0)) continue;
+          }
+          const amount = clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / lengthSquared, 0, 1);
+          const x = a[0] + dx * amount, z = a[1] + dz * amount;
+          const distanceSquared = (point[0] - x) ** 2 + (point[1] - z) ** 2;
+          if (distanceSquared > maximumSquared || (best && distanceSquared >= best.distanceSquared)) continue;
+          best = {
+            point: [x, z], distanceSquared, distance: Math.sqrt(distanceSquared),
+            record: candidate, segmentIndex: index,
+          };
+        }
+      }
+      return best;
+    };
+
+    // Attach synthetic sidewalk ends to mapped pedestrian ways when they stop
+    // close to one. Then attach the ends of mapped footways to those sidewalks
+    // where their actual OSM geometry meets the street edge. This preserves
+    // the mapped path alignment and closes small digitising gaps without
+    // inventing long links across a carriageway or between different levels.
+    for (const record of sidewalkRecords) {
+      for (const end of ['start', 'end']) {
+        if (record.joinedEnds?.has(end)) continue;
+        const point = end === 'start' ? record.points[0] : record.points[record.points.length - 1];
+        const connected = closestPointOnRecords(point, mappedPedestrianRecords, 3.4, record.verticalOffset);
+        if (!connected) continue;
+        const centreline = record.roadCenterline;
+        const centre = record[`${end}Node`];
+        const neighbor = end === 'start' ? centreline[1] : centreline[centreline.length - 2];
+        const dx = neighbor[0] - centre[0], dz = neighbor[1] - centre[1];
+        const length = Math.hypot(dx, dz) || 1;
+        const lateral = ((connected.point[0] - centre[0]) * (-dz / length)
+          + (connected.point[1] - centre[1]) * (dx / length)) * record.sideSign;
+        // A nearby path across a narrow street is not a sidewalk connection.
+        // Keep the snap outside the carriageway edge on the tagged side.
+        if (lateral < record.roadWidth * 0.5 - 0.65) continue;
+        if (end === 'start') record.points[0] = connected.point;
+        else record.points[record.points.length - 1] = connected.point;
+        (record.joinedEnds ||= new Set()).add(end);
+      }
+    }
+    for (const record of mappedPedestrianRecords) {
+      for (const end of ['start', 'end']) {
+        const point = end === 'start' ? record.points[0] : record.points[record.points.length - 1];
+        const maximumGap = clamp(record.width * 0.5 + 1.15, 1.9, 3.4);
+        const connected = closestPointOnRecords(point, sidewalkRecords, maximumGap, record.verticalOffset);
+        if (!connected) continue;
+        if (end === 'start') record.points[0] = connected.point;
+        else record.points[record.points.length - 1] = connected.point;
+      }
+    }
+    pedestrianSurfaceRecords = [...mappedPedestrianRecords, ...sidewalkRecords];
+    positionsByStyle[3].push(...sidewalkRecords);
     const colors = [COLORS.road, COLORS.roadMajor, COLORS.roadSecondary, COLORS.path, COLORS.pedestrian, 0x80796b, 0x9b8e79, 0x99958b, 0xa67866, 0xa66f5c];
     // Higher-priority carriageways sit a few centimetres above lower classes
     // at overlaps. Footways remain contextual and below carriageways so they
@@ -4331,6 +4564,80 @@ export async function startWebGLScene(canvas, status) {
       group.add(mesh);
       return mesh;
     };
+    const landingPositions = [];
+    const landingUvs = [];
+    const landingIndices = [];
+    const addCrossingLanding = (frame, acrossSign, alongOffset = 0) => {
+      if (!pedestrianSurfaceRecords.length) return;
+      const angle = THREE.MathUtils.degToRad(Number(frame.bearing) || 0);
+      const tangent = [Math.cos(angle), Math.sin(angle)];
+      const normal = [-tangent[1], tangent[0]];
+      const curb = offsetOnRoad(frame.centre, frame.bearing, alongOffset, acrossSign * frame.width * 0.5);
+      const probe = offsetOnRoad(frame.centre, frame.bearing, alongOffset, acrossSign * (frame.width * 0.5 + 1.35));
+      let nearest = null;
+      const maximumSquared = 4.5 * 4.5;
+      for (const candidate of pedestrianSurfaceRecords) {
+        if (Math.abs(candidate.verticalOffset || 0) > 0.75) continue;
+        const points = candidate.points || [];
+        for (let index = 0; index < points.length - 1; index += 1) {
+          const a = points[index], b = points[index + 1];
+          const dx = b[0] - a[0], dz = b[1] - a[1];
+          const lengthSquared = dx * dx + dz * dz;
+          if (lengthSquared < 0.01) continue;
+          const alignment = Math.abs((dx * tangent[0] + dz * tangent[1]) / Math.sqrt(lengthSquared));
+          if (alignment < Math.cos(THREE.MathUtils.degToRad(35))) continue;
+          const amount = clamp(((probe[0] - a[0]) * dx + (probe[1] - a[1]) * dz) / lengthSquared, 0, 1);
+          const x = a[0] + dx * amount, z = a[1] + dz * amount;
+          const distanceSquared = (probe[0] - x) ** 2 + (probe[1] - z) ** 2;
+          if (distanceSquared > maximumSquared || (nearest && distanceSquared >= nearest.distanceSquared)) continue;
+          nearest = { point: [x, z], distanceSquared, record: candidate };
+        }
+      }
+      if (!nearest) return;
+      const outwardDistance = (nearest.point[0] - curb[0]) * normal[0] * acrossSign
+        + (nearest.point[1] - curb[1]) * normal[1] * acrossSign;
+      if (outwardDistance < 0.15 || outwardDistance > 5.5) return;
+
+      const halfWidth = clamp((Number(nearest.record.width) || 1.8) * 0.46, 0.8, 1.35);
+      const corners = [
+        [curb[0] - tangent[0] * halfWidth, curb[1] - tangent[1] * halfWidth],
+        [curb[0] + tangent[0] * halfWidth, curb[1] + tangent[1] * halfWidth],
+        [nearest.point[0] - tangent[0] * halfWidth, nearest.point[1] - tangent[1] * halfWidth],
+        [nearest.point[0] + tangent[0] * halfWidth, nearest.point[1] + tangent[1] * halfWidth],
+      ];
+      const first = landingPositions.length / 3;
+      const walkOffset = (nearest.record.surfaceOffset ?? ROAD_CLASS_OFFSETS[3]) + (nearest.record.verticalOffset || 0);
+      const offsets = [frame.surfaceOffset, frame.surfaceOffset, walkOffset, walkOffset];
+      corners.forEach(([x, z], index) => {
+        landingPositions.push(x, roadTerrainHeightAt(x, z) + offsets[index], z);
+        landingUvs.push(x / 8, z / 8);
+      });
+      landingIndices.push(first, first + 1, first + 2, first + 1, first + 3, first + 2);
+    };
+    const makeCrossingLandingMesh = () => {
+      if (!landingIndices.length) return null;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(landingPositions, 3));
+      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(landingUvs, 2));
+      geometry.setIndex(landingIndices);
+      geometry.computeVertexNormals();
+      const material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: makeSurfaceTexture('stone'),
+        roughness: 0.94,
+        metalness: 0,
+        side: THREE.DoubleSide,
+        polygonOffset: true,
+        polygonOffsetFactor: -2,
+        polygonOffsetUnits: -2,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = 'mapped-crossing-sidewalk-landings';
+      mesh.receiveShadow = true;
+      setSceneLayer(mesh, 'path', 0.02);
+      layerGroups.paths.add(mesh);
+      return mesh;
+    };
     const makeDrapedEllipses = (ellipses, color, semanticClass, surfaceOffset) => {
       if (!ellipses.length) return null;
       const positions = [];
@@ -4374,10 +4681,16 @@ export async function startWebGLScene(canvas, status) {
       );
       if (attributes.crossingDesign === 'daisy') {
         daisyItems.push({ item, ...frame });
+        for (const acrossSign of [-1, 1]) {
+          addCrossingLanding(frame, acrossSign, -7.1);
+          addCrossingLanding(frame, acrossSign, 7.1);
+        }
       } else {
         addZebraBand(frame.centre, frame.bearing, frame.width, 0, frame.surfaceOffset);
+        for (const acrossSign of [-1, 1]) addCrossingLanding(frame, acrossSign);
       }
     }
+    makeCrossingLandingMesh();
     const conventionalZebraCount = zebraMarkings.length;
     makeCrossingMesh(zebraMarkings, 'pedestrianCrossing');
 
