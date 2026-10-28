@@ -282,19 +282,59 @@ function setupFullscreenControls() {
     exitButton.hidden = !active;
   };
 
+  let requestPending = false;
+  let retryListening = false;
+  const removeRetryListeners = () => {
+    if (!retryListening) return;
+    document.removeEventListener('pointerdown', retryOnInteraction, true);
+    document.removeEventListener('keydown', retryOnInteraction, true);
+    retryListening = false;
+  };
+  const installRetryListeners = () => {
+    if (!supported || document.fullscreenElement || retryListening) return;
+    document.addEventListener('pointerdown', retryOnInteraction, true);
+    document.addEventListener('keydown', retryOnInteraction, true);
+    retryListening = true;
+  };
+  const enterFullscreen = async () => {
+    if (!supported || document.fullscreenElement || requestPending) return Boolean(document.fullscreenElement);
+
+    requestPending = true;
+    try {
+      await document.documentElement.requestFullscreen();
+      enterButton.removeAttribute('title');
+      return true;
+    } catch (error) {
+      console.warn('Could not enter full screen:', error);
+      enterButton.title = 'Click Full screen to enter; this browser requires a user interaction';
+      return false;
+    } finally {
+      requestPending = false;
+    }
+  };
+  const retryOnInteraction = (event) => {
+    if (document.fullscreenElement) {
+      removeRetryListeners();
+      return;
+    }
+    if (event.type === 'keydown' && event.key === 'Escape') return;
+    if (requestPending) return;
+    if (event.target === enterButton || enterButton.contains(event.target)) {
+      removeRetryListeners();
+      return;
+    }
+    removeRetryListeners();
+    void enterFullscreen().then(entered => {
+      if (!entered && !document.fullscreenElement) installRetryListeners();
+    });
+  };
+
   if (!supported) {
     enterButton.disabled = true;
     enterButton.title = 'Full screen is not supported by this browser';
   }
 
-  enterButton.addEventListener('click', async () => {
-    try {
-      await document.documentElement.requestFullscreen();
-    } catch (error) {
-      console.warn('Could not enter full screen:', error);
-      enterButton.title = 'The browser did not allow full screen';
-    }
-  });
+  enterButton.addEventListener('click', enterFullscreen);
 
   exitButton.addEventListener('click', async () => {
     if (!document.fullscreenElement) return;
@@ -305,8 +345,18 @@ function setupFullscreenControls() {
     }
   });
 
-  document.addEventListener('fullscreenchange', syncControls);
+  document.addEventListener('fullscreenchange', () => {
+    syncControls();
+    if (document.fullscreenElement) removeRetryListeners();
+  });
   syncControls();
+
+  if (supported && !document.fullscreenElement) {
+    installRetryListeners();
+    void enterFullscreen().then(entered => {
+      if (entered) removeRetryListeners();
+    });
+  }
 }
 
 const startupLoader = document.querySelector('#startup-loader');
