@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=110">
+    <link rel="stylesheet" href="/style.css?v=113">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -32,6 +32,7 @@
   <main id="app">
     <canvas id="scene" tabindex="0" aria-label="Interactive Cape Town CBD 3D scene. Mouse and one-finger drag orbit in the same direction. Two fingers or modified mouse drag pan. Arrow keys orbit, plus and minus zoom, and Home fits the city."></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
+    <div id="wind-cfd-loading" class="wind-cfd-loading" role="status" aria-live="polite" hidden><i></i><span id="wind-cfd-loading-message">Loading OpenFOAM field…</span></div>
     <div class="scene-hud" aria-label="Map orientation and legend">
       <div class="scene-hud-top">
         <div class="north-widget" aria-label="North direction">
@@ -571,7 +572,7 @@
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · COMFORT (PARTIAL)</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
-        <p class="wind-intro">Explore pedestrian wind and traffic pollution.</p>
+        <p class="wind-intro">Explore moving pedestrian wind fields and traffic pollution.</p>
         <div class="wind-analysis-tabs" role="group" aria-label="Wind analysis mode">
           <button type="button" data-wind-lens="direction" aria-pressed="false">By direction</button>
           <button class="active" type="button" data-wind-lens="comfort" aria-pressed="true">Wind comfort</button>
@@ -719,9 +720,8 @@
           </details>
         </section>
 
-        <details id="wind-cfd-controls" class="wind-control-section wind-cfd-controls">
-          <summary>Advanced CFD views</summary>
-          <b>Diagnostic view</b>
+        <details id="wind-cfd-controls" class="wind-control-section wind-cfd-controls" open>
+          <summary>Wind views</summary>
           <label>Field
             <select id="wind-cfd-field">
               <option value="speed">Velocity magnitude</option>
@@ -731,17 +731,21 @@
           </label>
           <div class="wind-cfd-view-tabs" role="group" aria-label="CFD view">
             <button class="active" type="button" data-cfd-view="ground" aria-pressed="true">Pedestrian</button>
-            <button type="button" data-cfd-view="flow" aria-pressed="false">Flow</button>
+            <button type="button" data-cfd-view="flow" aria-pressed="false">Flow &amp; box</button>
             <button type="button" data-cfd-view="slice" aria-pressed="false">Slice</button>
             <button type="button" data-cfd-view="facade" aria-pressed="false">Façades</button>
           </div>
           <div id="wind-ground-controls">
-            <label>Height above terrain
+            <label>Height
               <select id="wind-cfd-ground-height">
-                <option value="1.5">1.5 m · seated / child</option>
-                <option value="2" selected>2.0 m · pedestrian</option>
-                <option value="4">4.0 m · elevated</option>
+                <option value="1.5">1.5 m · seated</option>
+                <option value="2" selected>2 m · pedestrian</option>
+                <option value="4">4 m · elevated</option>
               </select>
+            </label>
+            <div class="wind-appearance-row"><span>Heatmap motion</span><label class="wind-inline-switch"><input id="wind-ground-motion" type="checkbox" checked> On</label></div>
+            <label>Motion speed <span id="wind-ground-animation-speed-value">100%</span>
+              <input id="wind-ground-animation-speed" type="range" min="25" max="200" step="25" value="100">
             </label>
           </div>
           <div id="wind-slice-controls" hidden>
@@ -769,11 +773,11 @@
             </label>
             <button id="wind-slice-reset" class="secondary" type="button">Reset full slice</button>
           </div>
-          <p class="wind-cfd-hint" id="wind-cfd-view-hint">Pedestrian is terrain-following CFD. Drag the slice directly in the scene, or use Pressure on Façades.</p>
+          <p class="wind-cfd-hint" id="wind-cfd-view-hint">Terrain-following CFD · pressure on Façades.</p>
         </details>
 
-        <details id="wind-flow-box-controls" class="wind-control-section" hidden>
-          <summary>Flow display options</summary>
+        <details id="wind-flow-box-controls" class="wind-control-section" hidden open>
+          <summary>Flow region · move &amp; resize</summary>
           <b>Flow region</b>
           <button id="wind-move-domain" class="secondary wind-domain-button" type="button" aria-pressed="false">Box · <span id="wind-size-value">300</span> × <span id="wind-size-value-copy">300</span> m</button>
           <label class="wind-size-control">Box size
@@ -866,7 +870,7 @@
           <div id="wind-validation-result" class="wind-validation-result" hidden></div>
         </details>
 
-        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for mapped buildings. Comfort weights solved directions by the ERA5 wind rose and Weibull exceedance; unsolved directions are excluded, not interpolated or treated as calm. Check against measurements can sample the selected CFD volume directly, but only matched sectors and the recorded calibration/holdout locations are scored. Speed scaling uses concurrent upstream wind speed against the case inlet and does not simulate changing stability or transient turbulence. Neither mode has passed domain/mesh sensitivity or local field-validation gates and must not be used for certification.</p></details>
+        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for mapped buildings. The animated heatmap transports speed colours through the horizontal CFD velocity field, with local turbulence energy setting the variation in the source colours. The colours move and deform as visual tracers; transporting them does not solve changing wind speeds. Switch animation off for the mean-speed map. Inspected values and statistics always show the solved mean wind. Comfort weights solved directions by the ERA5 wind rose and Weibull exceedance; unsolved directions are excluded, not interpolated or treated as calm. Check against measurements can sample the selected CFD volume directly, but only matched sectors and the recorded calibration/holdout locations are scored. Speed scaling uses concurrent upstream wind speed against the case inlet and does not simulate changing stability or transient turbulence. Neither mode has passed domain/mesh sensitivity or local field-validation gates and must not be used for certification.</p></details>
       </section>
       <section id="menu-viewshed" class="viewshed-panel menu-section" data-menu-panel="viewshed" role="tabpanel" aria-label="3D viewshed controls" hidden>
         <div class="viewshed-heading"><span>3D viewshed</span><span class="viewshed-badge">Line of sight</span></div>
@@ -1174,6 +1178,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-139"></script>
+    <script type="module" src="/app.js?v=experience-147"></script>
 </body>
 </html>

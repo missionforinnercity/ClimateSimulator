@@ -134,6 +134,27 @@ grid points so narrow streets between them aren't left as holes.
 - Coloured 3D flowlines, seeded and constrained inside a user-drawn,
   movable/resizable flow box (not the old fixed upstream curtain over the
   whole domain) with an adjustable seed height.
+- A moving colour field within the pedestrian heatmap itself. GPU ping-pong
+  textures carry a speed-coloured display scalar along the sampled horizontal
+  velocity field using midpoint backtracing and masked bilinear interpolation.
+  A second continuous colour wave moves through the same palette along the
+  local CFD vector on the displayed surface.
+  Substeps are bounded to less than half a native display cell; building and
+  footprint masks stop transport through solids and missing data. Source
+  colours relax towards the local CFD speed plus smooth illustrative variation
+  bounded by the isotropic component RMS `sqrt(2k/3)` (the
+  [OpenFOAM kinetic-energy convention](https://doc.openfoam.com/2306/tools/processing/boundary-conditions/rtm/derived/inletOutlet/turbulentIntensityKineticEnergyInlet/)).
+  The transported colours directly replace surface colours during animation;
+  they are visual tracers, not a solution of time-varying momentum or gusts.
+  Switching motion off restores the mean-speed map. Inspection, statistics
+  and comfort calculations always use the original solved fields.
+  Surface motion respects reduced-motion preferences. The separate 3D
+  pathline view remains available under **Flow & box**. Selecting a compass
+  sector downloads its case automatically; the existing heatmap stays
+  in view until the replacement surface is ready, with a map loading badge and
+  download progress. The camera holds its framing across sector changes. The
+  view selector opens by default; **Flow & box** opens move, resize, seed-height
+  and flowline controls.
 - Horizontal and vertical slice planes, draggable directly in the 3D scene
   along their own normal axis.
 - Façade pressure and terrain-following pedestrian speed maps.

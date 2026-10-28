@@ -143,7 +143,8 @@ is unavailable.
 The Wind panel's Direction and Comfort lenses are both driven by full-CBD
 OpenFOAM volumes, not the older screening proxy — Direction loads whichever
 solved directional case you pick (16 converted 22.5° sectors are registered;
-the compass enables a direction only when its assets are present) and shows resolved 3D
+the compass enables a direction only when its assets are present) and shows
+a flowing colour texture on its pedestrian speed heatmap, plus resolved 3D
 flowlines, a movable/resizable flow box with an adjustable seed height,
 horizontal/vertical speed and turbulence slices you can drag directly in the
 scene, and pressure mapped onto building façades. Its pedestrian view is
@@ -157,6 +158,13 @@ screening proxy (mass-conserving terrain + building/canopy drag) still powers
 the Canvas 2D compatibility fallback, `/api/wind/preview`, and
 `/api/wind/validate`, but no longer drives the main WebGL wind panel. Both
 CFD cases are explicitly exploratory rather than validated planning evidence.
+The animated heatmap transports the speed colours themselves through the
+horizontal CFD field on a GPU grid. A second smooth colour wave continuously
+travels along the local CFD velocity as the transported regions deform, while
+building masks prevent transport across solids. These are visual tracers,
+not solved time-varying wind speeds. Switch motion off to read the mean-speed
+map; inspected values and statistics always retain the solved mean. The
+animation respects the system reduced-motion preference.
 Comfort offers versioned Lawson-LDDC-style screening and Davenport 1972 hourly-
 mean criteria, with thresholds, source, averaging basis and gust treatment
 carried into results. The formal Lawson LDDC gust-equivalent-mean/safety option

@@ -3313,3 +3313,23 @@ html, body, #app { background: #171717; }
 @media (max-width: 700px) and (orientation: portrait) {
   .panel { width: auto; }
 }
+
+/* Open view sections must still respect analysis-mode visibility. */
+.wind-panel #wind-cfd-controls[hidden],
+.wind-panel #wind-flow-box-controls[hidden] { display: none; }
+.wind-cfd-loading { position: fixed; z-index: 20; top: 18px; left: 50%; display: flex; align-items: center; gap: 9px; max-width: min(80vw, 360px); transform: translateX(-50%); padding: 9px 14px; border: 1px solid #54d7b0; border-radius: 999px; background: #17211feF; color: #e3fff5; box-shadow: 0 5px 22px #0008; font-size: 12px; pointer-events: none; }
+.wind-cfd-loading[hidden] { display: none; }
+.wind-cfd-loading i { width: 12px; height: 12px; flex: 0 0 12px; border: 2px solid #ffffff55; border-top-color: #54d7b0; border-radius: 50%; animation: wind-cfd-spin .8s linear infinite; }
+@keyframes wind-cfd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .wind-cfd-loading i { animation-duration: 2.4s; } }
+
+/* Compact CFD view controls to match the tighter panels used elsewhere. */
+#wind-cfd-controls[open] { gap: 8px; padding: 10px; }
+#wind-cfd-controls[open] > summary { margin-bottom: 0; }
+#wind-cfd-controls[open] > label { gap: 5px; margin: 0; }
+#wind-cfd-controls[open] > .wind-cfd-view-tabs { gap: 4px; margin: 0; }
+#wind-cfd-controls[open] > .wind-cfd-view-tabs button { min-height: 32px; }
+.wind-panel #wind-ground-controls,
+.wind-panel #wind-slice-controls { gap: 8px; padding: 8px; }
+.wind-panel .wind-appearance-row { min-height: 32px; border: 1px solid #484743; border-radius: 4px; background: #363634; }
+.wind-panel .wind-cfd-hint { margin: 0; line-height: 1.35; }

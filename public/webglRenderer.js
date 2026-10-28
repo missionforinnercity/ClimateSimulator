@@ -1,5 +1,6 @@
 import { percentileColorPosition, utciAbsolutePalette, utciPalette, temperatureColor, UTCI_COLOR_MIN, UTCI_COLOR_MAX } from './thermalColors.js';
 import * as THREE from './vendor/three.module.min.js';
+import { createWindSurfaceMaterial } from './windSurfaceMotion.js?v=6';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFromDrag, panFromDrag } from './cameraControls.js';
@@ -5155,6 +5156,11 @@ export async function startWebGLScene(canvas, status) {
   const windFlowlineCount = document.querySelector('#wind-flowline-count');
   const windAnimationSpeed = document.querySelector('#wind-animation-speed');
   const windAnimationSpeedValue = document.querySelector('#wind-animation-speed-value');
+  const windGroundMotion = document.querySelector('#wind-ground-motion');
+  const windGroundAnimationSpeed = document.querySelector('#wind-ground-animation-speed');
+  const windGroundAnimationSpeedValue = document.querySelector('#wind-ground-animation-speed-value');
+  const windCfdLoading = document.querySelector('#wind-cfd-loading');
+  const windCfdLoadingMessage = document.querySelector('#wind-cfd-loading-message');
   const windLensButtons = [...document.querySelectorAll('[data-wind-lens]')];
   const windPanel = document.querySelector('.wind-panel');
   const windModeBadge = document.querySelector('.wind-mode-badge');
@@ -5292,6 +5298,7 @@ export async function startWebGLScene(canvas, status) {
     cfdView: 'ground',
     cfdField: 'speed',
     cfdGroundHeight: 2,
+    groundMotionVisible: windGroundMotion?.checked !== false,
     slicePlane: 'vertical-crosswind',
     slicePosition: 0.5,
     sliceWidth: 1,
@@ -5450,6 +5457,41 @@ export async function startWebGLScene(canvas, status) {
   let windDrag = null;
   let sunDrag = null;
   let sliceDrag = null;
+
+  let windSurfaceLastTime = null;
+  function updateWindSurfaceMotion(now) {
+    const motion = windHeatMesh?.material.userData.surfaceMotion;
+    const active = Boolean(motion && windHeatMesh.visible && windGroup.visible && windState.enabled
+      && windState.analysisMode === 'direction' && windState.cfdView === 'ground'
+      && windState.cfdField === 'speed' && windState.groundMotionVisible
+      && !matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (motion) {
+      motion.enabled.value = active ? 1 : 0;
+      if (active) {
+        const seconds = windSurfaceLastTime === null ? 0
+          : Math.min(0.1, Math.max(0, (now - windSurfaceLastTime) / 1000)) * windState.animationSpeed * 3;
+        motion.update(renderer, seconds);
+      }
+    }
+    windSurfaceLastTime = active ? now : null;
+    return active;
+  }
+
+  // Initialise and advance the transport target when a newly built surface
+  // first becomes visible, so the initial CFD load starts with motion already
+  // underway instead of waiting for a later reload to seed it.
+  function primeWindSurfaceMotion() {
+    const motion = windHeatMesh?.material.userData.surfaceMotion;
+    const active = Boolean(motion && windHeatMesh.visible && windGroup.visible && windState.enabled
+      && windState.analysisMode === 'direction' && windState.cfdView === 'ground'
+      && windState.cfdField === 'speed' && windState.groundMotionVisible
+      && !matchMedia('(prefers-reduced-motion: reduce)').matches);
+    if (!active) return false;
+    motion.enabled.value = 1;
+    motion.update(renderer, Math.min(0.1, (1 / 30) * windState.animationSpeed * 3));
+    windSurfaceLastTime = performance.now();
+    return true;
+  }
 
   function makeWindLayerMaterial(parameters) {
     return new THREE.MeshBasicMaterial(parameters);
@@ -11931,19 +11973,40 @@ export async function startWebGLScene(canvas, status) {
   const checkWindRevision = revision => {
     if (revision !== windStudyRevision) throw new DOMException('Wind settings changed; run again.', 'AbortError');
   };
-  async function ensureCfdCaseLoaded(directionDeg, revision = windStudyRevision) {
+  async function ensureCfdCaseLoaded(directionDeg, revision = windStudyRevision, onProgress = () => {}) {
     const cfdCase = typeof directionDeg === 'object' ? directionDeg : findCfdCase(directionDeg);
     if (!cfdCase) throw new Error(`no solved OpenFOAM case for ${directionDeg}°`);
     const base = cfdCase.base;
+    onProgress(`Loading ${cfdCase.label} OpenFOAM manifest…`);
     const manifest = await fetch(`${base}volume.json`, { cache: 'no-store' }).then(response => {
       if (!response.ok) throw new Error(`manifest HTTP ${response.status}`);
       return response.json();
     });
     checkWindRevision(revision);
     const assetVersion = `${manifest.solver.case_id}-${manifest.result_time}-${manifest.dimensions.join('x')}`;
+    const download = async (url, name) => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${name} HTTP ${response.status}`);
+      if (!response.body?.getReader) return response.arrayBuffer();
+      const reader = response.body.getReader(), chunks = [];
+      const total = Number(response.headers.get('content-length')) || 0;
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); loaded += value.byteLength;
+        const amount = total ? `${(100 * loaded / total).toFixed(0)}%` : `${(loaded / 1048576).toFixed(0)} MB`;
+        onProgress(`Loading ${cfdCase.label} OpenFOAM ${name} · ${amount}…`);
+      }
+      const buffer = new Uint8Array(loaded);
+      let offset = 0;
+      for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength; }
+      return buffer.buffer;
+    };
+    onProgress(`Downloading ${cfdCase.label} OpenFOAM velocity and mask fields…`);
     const [fieldBuffer, maskBuffer] = await Promise.all([
-      fetch(`${base}${manifest.fields}?v=${assetVersion}`).then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`fields HTTP ${response.status}`))),
-      fetch(`${base}${manifest.valid_mask}?v=${assetVersion}`).then(response => response.ok ? response.arrayBuffer() : Promise.reject(new Error(`mask HTTP ${response.status}`))),
+      download(`${base}${manifest.fields}?v=${assetVersion}`, 'velocity'),
+      download(`${base}${manifest.valid_mask}?v=${assetVersion}`, 'valid-cell mask'),
     ]);
     checkWindRevision(revision);
     const channels = Object.fromEntries(manifest.channels.map((name, index) => [name, index]));
@@ -11964,9 +12027,19 @@ export async function startWebGLScene(canvas, status) {
     windSimulate.disabled = true;
     windSimulate.textContent = 'Loading CFD volume…';
     windStatus.textContent = 'Loading compact OpenFOAM fields…';
+    if (windCfdLoadingMessage) windCfdLoadingMessage.textContent = `Loading ${Math.round(directionDeg)}° OpenFOAM field…`;
+    if (windCfdLoading) windCfdLoading.hidden = false;
+    if (windState.analysisMode === 'direction' && windPoints) windPoints.visible = false;
     try {
-      const cfdCase = await ensureCfdCaseLoaded(directionDeg, revision);
+      const showLoading = message => {
+        windStatus.textContent = message;
+        if (windCfdLoadingMessage) windCfdLoadingMessage.textContent = message;
+        if (windCfdLoading) windCfdLoading.hidden = false;
+      };
+      const cfdCase = await ensureCfdCaseLoaded(directionDeg, revision, showLoading);
       checkWindRevision(revision);
+      const base = cfdCase.base;
+      showLoading(`Building ${cfdCase.label} pedestrian heatmap…`);
       windState.loadedCfdCase = cfdCase;
       const manifest = windState.cfd.manifest;
       windState.direction = manifest.direction_deg_from;
@@ -12012,6 +12085,7 @@ export async function startWebGLScene(canvas, status) {
         windToggle.checked = true;
         windToggle.dispatchEvent(new Event('change'));
       }
+      primeWindSurfaceMotion();
       // buildCfdPedestrianSurface already emits the map's sampled field for
       // baseline saving. Avoid a second full-domain sampling pass here.
       resetWindParticles();
@@ -12020,11 +12094,11 @@ export async function startWebGLScene(canvas, status) {
       const solver = manifest.solver;
       const coverage = manifest.building_coverage;
       const coverageLabel = coverage
-        ? `${coverage.centroids_in_domain}/${coverage.scene_buildings} buildings in solved domain`
-        : 'solved domain only';
+        ? `${coverage.centroids_in_domain}/${coverage.scene_buildings} buildings`
+        : 'solved domain';
       if (windModeBadge) windModeBadge.textContent = coverage?.fraction >= 0.99 ? 'CFD · FULL CBD' : 'CFD · PILOT';
       windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
-      windStatus.textContent = `${windState.designGeometryDirty ? 'Baseline geometry · design edits use the quick estimator · ' : ''}OpenFOAM ${solver.version} · ${windState.cfdGroundHeight.toFixed(1)} m pedestrian field · ${coverageLabel}`;
+      windStatus.textContent = `${windState.designGeometryDirty ? 'Baseline geometry · ' : ''}OpenFOAM ${solver.version} · ${windState.cfdGroundHeight.toFixed(1)} m · ${coverageLabel}`;
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind', metadata: {
         description: `${cfdCase.label} · ${coverageLabel} · ${manifest.validation_status || 'unvalidated'}. Native spacing ${manifest.spacing_foam_m.join(' × ')} m.`,
         solver, direction: manifest.direction_deg_from, validation: manifest.validation_status, spacing: manifest.spacing_foam_m,
@@ -12037,18 +12111,23 @@ export async function startWebGLScene(canvas, status) {
           building_domain_coverage_pct: Number.isFinite(Number(coverage?.fraction)) ? Number(coverage.fraction) * 100 : null,
         },
       } } }));
-      const half = windState.domainSize * 0.52;
-      frameBounds([
-        windState.domainCenter[0] - half, windState.domainCenter[1] - half,
-        windState.domainCenter[0] + half, windState.domainCenter[1] + half,
-      ], { elevation: 0.38 });
+      if (!windState.cfdCameraFramed) {
+        const half = windState.domainSize * 0.52;
+        frameBounds([
+          windState.domainCenter[0] - half, windState.domainCenter[1] - half,
+          windState.domainCenter[0] + half, windState.domainCenter[1] + half,
+        ], { elevation: 0.38 });
+        windState.cfdCameraFramed = true;
+      }
     } catch (error) {
       if (revision !== windStudyRevision) return;
       windStatus.textContent = `CFD volume unavailable (${error.message})`;
     } finally {
+      if (revision !== windStudyRevision) return;
+      if (windCfdLoading) windCfdLoading.hidden = true;
       windSimulate.disabled = false;
       windSimulate.textContent = windState.analysisMode === 'pollution'
-        ? pollutionRunActionLabel() : 'Reload OpenFOAM result';
+        ? pollutionRunActionLabel() : 'Reload CFD result';
       requestRender();
     }
   }
@@ -13269,12 +13348,15 @@ export async function startWebGLScene(canvas, status) {
   }
   async function buildCfdPedestrianSurface() {
     const buildRevision = ++cfdSurfaceBuildRevision;
-    if (windHeatMesh) {
-      windGroup.remove(windHeatMesh);
-      disposeObject(windHeatMesh);
-      windHeatMesh = null;
+    const previousWindHeatMesh = windHeatMesh;
+    if (!windState.cfd || windState.cfdView !== 'ground') {
+      if (previousWindHeatMesh) {
+        windGroup.remove(previousWindHeatMesh);
+        disposeObject(previousWindHeatMesh);
+        windHeatMesh = null;
+      }
+      return;
     }
-    if (!windState.cfd || windState.cfdView !== 'ground') return;
     const manifest = windState.cfd.manifest;
     const nativeSpacing = manifest.spacing_foam_m;
     const domainSizeX = nativeSpacing[0] * (manifest.dimensions[0] - 1);
@@ -13337,6 +13419,7 @@ export async function startWebGLScene(canvas, status) {
     };
     const positions = [];
     const colors = [];
+    const surfaceUvs = [];
     const valid = [];
     const indices = [];
     const cornerCount = (columns + 1) * (rows + 1);
@@ -13403,6 +13486,7 @@ export async function startWebGLScene(canvas, status) {
           const cornerValue = cornerSamples[corner] ? cornerSums[corner] / cornerSamples[corner] : displaySample[windState.cfdField];
           const color = cfdColor(cornerValue);
           colors.push(color.r, color.g, color.b);
+          surfaceUvs.push((corner % (columns + 1)) / columns, Math.floor(corner / (columns + 1)) / rows);
         }
         const vertex = positions.length / 3 - 4;
         indices.push(vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3);
@@ -13411,15 +13495,39 @@ export async function startWebGLScene(canvas, status) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute('windSurfaceUv', new THREE.Float32BufferAttribute(surfaceUvs, 2));
     geometry.setIndex(indices);
-    windHeatMesh = new THREE.Mesh(geometry, makeWindLayerMaterial({
+    const materialParameters = {
       vertexColors: true, transparent: true, opacity: 0.82, side: THREE.DoubleSide,
       depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
-    }));
-    windHeatMesh.name = `cfd-terrain-following-${windState.cfdGroundHeight}m-${windState.cfdField}`;
-    windHeatMesh.renderOrder = 3;
-    windGroup.add(windHeatMesh);
+    };
+    let material;
+    if (windState.cfdField === 'speed') {
+      const range = cfdFieldRange('speed');
+      const palette = new Float32Array(256 * 4);
+      for (let i = 0; i < 256; i++) {
+        const color = cfdColor(range[0] + (range[1] - range[0]) * i / 255, 'speed');
+        palette.set([color.r, color.g, color.b, 1], i * 4);
+      }
+      material = createWindSurfaceMaterial(materialParameters, {
+        columns, rows, samples: cellSamples,
+        basisX: manifest.coordinates.x_downwind_in_viewer_xz,
+        basisZ: manifest.coordinates.y_crosswind_in_viewer_xz,
+        sizeX: domainSizeX, sizeZ: domainSizeY, range, palette,
+      });
+    } else material = makeWindLayerMaterial(materialParameters);
+    const nextWindHeatMesh = new THREE.Mesh(geometry, material);
+    nextWindHeatMesh.name = `cfd-terrain-following-${windState.cfdGroundHeight}m-${windState.cfdField}`;
+    nextWindHeatMesh.renderOrder = 3;
+    windGroup.add(nextWindHeatMesh);
+    if (previousWindHeatMesh) {
+      windGroup.remove(previousWindHeatMesh);
+      disposeObject(previousWindHeatMesh);
+    }
+    windHeatMesh = nextWindHeatMesh;
     hideStreetLayersForWind();
+    primeWindSurfaceMotion();
+    requestRender();
     if (windState.analysisMode === 'direction') {
       const result = {
         analysis_mode: 'direction', cfd: true,
@@ -13814,9 +13922,11 @@ export async function startWebGLScene(canvas, status) {
         const x = center[0] + (Math.random() * 2 - 1) * half;
         const z = center[1] + (Math.random() * 2 - 1) * half;
         const groundY = terrainHeightAt(x, z);
-        const heightAboveGround = !groundFlowMode && windState.volumeVisible
-          ? 2 + Math.random() ** 1.5 * Math.max(3, windState.flowBoxHeight - 2)
-          : windState.cfdGroundHeight + Math.random() * 3;
+        const heightAboveGround = groundFlowMode
+          ? windState.cfdGroundHeight
+          : windState.volumeVisible
+            ? 2 + Math.random() ** 1.5 * Math.max(3, windState.flowBoxHeight - 2)
+            : windState.cfdGroundHeight + Math.random() * 3;
         const worldY = groundY + heightAboveGround;
         if (sampleCfd(x, worldY, z) && !windPointInsideBuilding(x, z, worldY)) {
           return makeParticle(x, worldY, z, Math.random() * 7, heightAboveGround);
@@ -15245,6 +15355,8 @@ export async function startWebGLScene(canvas, status) {
     }
     windState.analysisMode = mode;
     if (mode !== 'direction') {
+      if (windCfdLoading) windCfdLoading.hidden = true;
+      if (windSimulate) windSimulate.disabled = false;
       windState.particles = [];
       if (windPoints) windPoints.visible = false;
     }
@@ -15260,7 +15372,10 @@ export async function startWebGLScene(canvas, status) {
     if (windDirectionControls) windDirectionControls.hidden = !['direction', 'pollution'].includes(mode);
     const compassPresets = windDirectionControls?.querySelector('.wind-compass-presets');
     if (compassPresets) compassPresets.hidden = mode === 'pollution';
-    if (windCfdControls) windCfdControls.hidden = mode !== 'direction';
+    if (windCfdControls) {
+      windCfdControls.hidden = mode !== 'direction';
+      if (mode === 'direction') windCfdControls.open = true;
+    }
     if (windClimateControls) windClimateControls.hidden = mode !== 'comfort';
     if (pollutionControls) pollutionControls.hidden = mode !== 'pollution';
     if (mode === 'pollution') syncPollutionControls();
@@ -15329,8 +15444,22 @@ export async function startWebGLScene(canvas, status) {
       ? 'Weights solved OpenFOAM directions by ERA5 wind-rose frequency. Unsolved directions are excluded, not assumed calm.'
       : mode === 'pollution'
         ? 'Choose a wind direction and run the plume scenario.'
-        : 'The SE 135° OpenFOAM result loads when Wind opens. Select another solved direction to inspect it.';
+        : 'Select a compass direction to load its OpenFOAM result. The current map stays visible while the new case loads.';
     requestRender();
+    if (mode === 'direction') {
+      if (!windState.cfd
+        || Math.round(windState.cfd.manifest.direction_deg_from) !== Math.round(windState.direction)) {
+        void loadCfdWind(windState.direction);
+      } else {
+        // Switching lenses disposes the displayed layers but keeps the solved
+        // volume in memory. Rebuild the selected CFD view when returning.
+        void buildCfdView().then(() => {
+          primeWindSurfaceMotion();
+          resetWindParticles();
+          requestRender();
+        });
+      }
+    }
   }
 
   windLensButtons.forEach(button => button.addEventListener('click', () => {
@@ -15495,17 +15624,31 @@ export async function startWebGLScene(canvas, status) {
     windState.direction = directionDeg;
     if (pollutionDirection) pollutionDirection.value = String(directionDeg);
     windDirectionPresets.forEach(item => item.classList.toggle('active', Number(item.dataset.windDirection) === directionDeg));
-    windState.field = null;
-    clearWindSimulation();
-    if (windState.analysisMode === 'pollution') buildPollutionSourceMarker();
-    windStatus.textContent = `${button.textContent} selected · ${windState.analysisMode === 'pollution' ? 'run the dispersion study when ready.' : 'load the direction result when ready.'}`;
-    requestRender();
+    if (windState.analysisMode === 'pollution') {
+      windState.field = null;
+      clearWindSimulation();
+      buildPollutionSourceMarker();
+      windStatus.textContent = `${button.textContent} selected · run the dispersion study when ready.`;
+      requestRender();
+    } else if (windState.analysisMode === 'direction') {
+      void loadCfdWind(directionDeg);
+    }
   }));
   windFlowlinesVisible?.addEventListener('change', event => {
     windState.flowlinesVisible = event.target.checked;
     if (windState.cfdView === 'flow' && windState.flowlinesVisible) resetWindParticles();
     else if (windPoints) windPoints.visible = false;
     requestRender();
+  });
+  windGroundMotion?.addEventListener('change', event => {
+    windState.groundMotionVisible = event.target.checked;
+    requestRender();
+  });
+  windGroundAnimationSpeed?.addEventListener('input', event => {
+    windState.animationSpeed = Number(event.target.value) / 100;
+    if (windGroundAnimationSpeedValue) windGroundAnimationSpeedValue.textContent = `${event.target.value}%`;
+    if (windAnimationSpeed) windAnimationSpeed.value = event.target.value;
+    if (windAnimationSpeedValue) windAnimationSpeedValue.textContent = `${event.target.value}%`;
   });
   windInspectToggle?.addEventListener('click', () => {
     const active = windInspectToggle.getAttribute('aria-pressed') !== 'true';
@@ -15543,6 +15686,8 @@ export async function startWebGLScene(canvas, status) {
   windAnimationSpeed?.addEventListener('input', event => {
     windState.animationSpeed = Number(event.target.value) / 100;
     if (windAnimationSpeedValue) windAnimationSpeedValue.textContent = `${event.target.value}%`;
+    if (windGroundAnimationSpeed) windGroundAnimationSpeed.value = event.target.value;
+    if (windGroundAnimationSpeedValue) windGroundAnimationSpeedValue.textContent = `${event.target.value}%`;
   });
   windCfdViewButtons.forEach(button => button.addEventListener('click', () => {
     windState.cfdView = button.dataset.cfdView;
@@ -15557,19 +15702,22 @@ export async function startWebGLScene(canvas, status) {
     }
     if (windSliceControls) windSliceControls.hidden = windState.cfdView !== 'slice';
     if (windGroundControls) windGroundControls.hidden = windState.cfdView !== 'ground';
-    if (windFlowBoxControls) windFlowBoxControls.hidden = windState.cfdView !== 'flow';
+    if (windFlowBoxControls) {
+      windFlowBoxControls.hidden = windState.cfdView !== 'flow';
+      if (windState.cfdView === 'flow') windFlowBoxControls.open = true;
+    }
     if (windState.cfd && (windState.cfdView === 'flow'
       || (windState.cfdView === 'ground' && windState.cfdField === 'speed'))) resetWindParticles();
     updateWindBox();
     void buildCfdView();
     if (windState.cfd) {
       windStatus.textContent = windState.cfdView === 'ground'
-        ? `${windState.cfdGroundHeight.toFixed(1)} m terrain-following OpenFOAM field · solved cells only.`
+        ? `${windState.cfdGroundHeight.toFixed(1)} m · terrain-following field`
         : windState.cfdView === 'slice'
-          ? 'Move the plane and crop its two dimensions with the slice controls.'
+          ? 'Adjust the slice plane and crop.'
           : windState.cfdView === 'facade'
-            ? 'OpenFOAM kinematic pressure mapped to façades inside the solved domain.'
-            : 'Resolved 3D pathlines through the OpenFOAM velocity volume.';
+            ? 'OpenFOAM pressure on solved façades.'
+            : '3D pathlines · drag the box to move it.';
     }
     requestRender();
   }));
@@ -15591,7 +15739,7 @@ export async function startWebGLScene(canvas, status) {
   windCfdGroundHeight?.addEventListener('change', event => {
     windState.cfdGroundHeight = Number(event.target.value) || 2;
     void buildCfdPedestrianSurface();
-    windStatus.textContent = `${windState.cfdGroundHeight.toFixed(1)} m terrain-following OpenFOAM field · solved cells only.`;
+    windStatus.textContent = `${windState.cfdGroundHeight.toFixed(1)} m · terrain-following field`;
     requestRender();
   });
   windSlicePlane?.addEventListener('change', event => {
@@ -15777,15 +15925,26 @@ export async function startWebGLScene(canvas, status) {
     requestRender();
   });
   function openWindWithDefaultCase() {
-    const defaultDirection = 135;
-    if (windState.analysisMode !== 'direction') setWindAnalysisMode('direction');
-    windState.direction = defaultDirection;
-    if (windDirection) windDirection.value = String(defaultDirection);
+    if (windDirection) windDirection.value = String(windState.direction);
     windDirectionPresets.forEach(button => {
-      button.classList.toggle('active', Number(button.dataset.windDirection) === defaultDirection);
+      button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction);
     });
-    if (Math.round(windState.cfd?.manifest.direction_deg_from) !== defaultDirection) {
-      void loadCfdWind(defaultDirection);
+    windCfdViewButtons.forEach(button => {
+      const active = button.dataset.cfdView === windState.cfdView;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    if (windState.analysisMode === 'direction') {
+      if (!windState.cfd
+        || Math.round(windState.cfd.manifest.direction_deg_from) !== Math.round(windState.direction)) {
+        void loadCfdWind(windState.direction);
+      } else if (!windHeatMesh && !windCfdSlice && !windFacadePressure) {
+        void buildCfdView().then(() => {
+          primeWindSurfaceMotion();
+          resetWindParticles();
+          requestRender();
+        });
+      }
     }
   }
   addEventListener('keydown', event => {
@@ -16163,6 +16322,7 @@ export async function startWebGLScene(canvas, status) {
     skySphere.visible = shadowState.enabled && !viewshedState.active;
     skySphere.position.copy(camera.position);
     skyUniforms.cloudTime.value = now * 0.001;
+    const windSurfaceAnimating = updateWindSurfaceMotion(now);
     updateWindParticles(now);
     updatePollutionVisuals(now);
     updateTrafficCars(now);
@@ -16195,7 +16355,7 @@ export async function startWebGLScene(canvas, status) {
     scheduleAmbientTrafficSetup();
     const ambientTrafficAnimating = Boolean(ambientTraffic.group?.visible && layerGroups.roads.visible
       && cameraState.distance <= ambientTrafficAnimationDistance);
-    const otherAnimatedLayerActive = (windState.enabled && windState.field && windPoints?.visible)
+    const otherAnimatedLayerActive = windSurfaceAnimating || (windState.enabled && windState.field && windPoints?.visible)
       || (windState.enabled && pollutionState.playing)
       || (trafficGroup.visible && trafficState.tracks.length)
       || (trafficStatusGroup.visible && scenarioStatusGroup.children.length);
