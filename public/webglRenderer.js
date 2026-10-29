@@ -6,7 +6,7 @@ import { attachSceneExperience } from './sceneExperience.js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFromDrag, panFromDrag } from './cameraControls.js';
 import { createTransportLayer } from './transportLayer.js?v=33';
 import { attachPlaceInspector } from './placeInspector.js?v=3';
-import { createDesignMassing } from './designMassing.js?v=12';
+import { createDesignMassing } from './designMassing.js?v=14';
 import { rayFootprintIntervals, addVerticalOccluder, blockedByVerticalOccluder, terrainRayDistances, viewshedRingDistances } from './viewshedMath.js';
 import { recordSourceResidence, summarizeSourceResidence } from './plumeAttribution.js';
 import { accumulateResidenceBins, advancePollutantStep, clipPolylineToValidSamples, clipReflectedSegmentWithinRange, clipSegmentToValidIntervals, combinedTrafficMassG, intersectIntervals, lagrangianTimeScale, normalizedMaskedInterpolationGradient, pollutantTimeStep, reflectNormalVelocityAtBoundary, reflectVelocityAtBoundary, segmentBuildingIntervals, segmentCellFractions, segmentPolygonSetIntervals, stratifiedFractions, stratifiedSampleTime, subtractIntervals } from './pollutantTransport.js';
@@ -5072,6 +5072,155 @@ export async function startWebGLScene(canvas, status) {
       mesh.material.needsUpdate = true;
     }
     requestRender();
+  }
+  const activeDemolitions = new Set();
+  function startBuildingDemolition(index) {
+    const record = data.buildings[index];
+    const ring = record?.[2];
+    if (!Array.isArray(ring) || ring.length < 3 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const xs = ring.map(point => Number(point[0])), zs = ring.map(point => Number(point[1]));
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+    const ground = Number(record[0]) || 0;
+    const base = ground + Math.max(0, Number(record[10]) || 0);
+    const height = Math.max(3, Number(record[5]) || Number(record[1]) || 12);
+    const centerX = (minX + maxX) / 2, centerZ = (minZ + maxZ) / 2;
+    const holes = Array.isArray(record[13]) ? record[13] : [];
+    const group = new THREE.Group();
+    group.name = 'building-demolition-rubble';
+
+    // Keep a faithful footprint for the opening collapse beat, then let
+    // irregular masonry fragments break away from the shell.
+    const shape = new THREE.Shape();
+    ring.forEach(([x, z], pointIndex) => {
+      const px = x - centerX, pz = -(z - centerZ);
+      if (pointIndex === 0) shape.moveTo(px, pz); else shape.lineTo(px, pz);
+    });
+    shape.closePath();
+    for (const hole of holes) {
+      const path = new THREE.Path();
+      hole.forEach(([x, z], pointIndex) => {
+        const px = x - centerX, pz = -(z - centerZ);
+        if (pointIndex === 0) path.moveTo(px, pz); else path.lineTo(px, pz);
+      });
+      path.closePath();
+      shape.holes.push(path);
+    }
+    const shellGeometry = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false, curveSegments: 1 });
+    shellGeometry.rotateX(-Math.PI / 2);
+    const shellMaterial = new THREE.MeshStandardMaterial({
+      color: 0xb4b4b4, roughness: 0.94, flatShading: true, transparent: true,
+      side: THREE.DoubleSide,
+    });
+    const shell = new THREE.Mesh(shellGeometry, shellMaterial);
+    shell.position.set(centerX, base, centerZ);
+    shell.castShadow = true;
+    shell.receiveShadow = true;
+    group.add(shell);
+
+    const fragments = [];
+    const fragmentCount = clamp(Math.round(((maxX - minX) * (maxZ - minZ)) / 95), 18, 52);
+    for (let fragmentIndex = 0, attempts = 0; fragmentIndex < fragmentCount && attempts < fragmentCount * 12; attempts += 1) {
+      const x = minX + Math.random() * (maxX - minX), z = minZ + Math.random() * (maxZ - minZ);
+      if (!pointInWindRing(x, z, ring) || holes.some(hole => pointInWindRing(x, z, hole))) continue;
+      const size = 1.1 + Math.random() * Math.min(4.4, Math.max(1.6, height * 0.12));
+      const geometry = new THREE.DodecahedronGeometry(size, 0);
+      const material = new THREE.MeshStandardMaterial({
+        color: [0xb4b4b4, 0x999894, 0xc5c0b5, 0x827f78][Math.floor(Math.random() * 4)],
+        roughness: 0.98, flatShading: true, transparent: true,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.scale.set(0.65 + Math.random() * 1.1, 0.45 + Math.random() * 0.9, 0.65 + Math.random() * 1.1);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      const origin = new THREE.Vector3(x, base + height * (0.22 + Math.random() * 0.78), z);
+      mesh.position.copy(origin);
+      const initialRotation = [Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI];
+      mesh.rotation.set(...initialRotation);
+      group.add(mesh);
+      const dx = x - centerX + (Math.random() - 0.5) * 5;
+      const dz = z - centerZ + (Math.random() - 0.5) * 5;
+      const length = Math.hypot(dx, dz) || 1;
+      fragments.push({ mesh, origin, vx: dx / length * (3 + Math.random() * 8),
+        vy: 3 + Math.random() * 9, vz: dz / length * (3 + Math.random() * 8),
+        initialRotation, spin: [Math.random() * 5 - 2.5, Math.random() * 5 - 2.5, Math.random() * 5 - 2.5],
+        delay: 0.18 + Math.random() * 0.7, halfHeight: size * 0.8, groundedAt: null });
+      fragmentIndex += 1;
+    }
+    const dustPoints = [];
+    for (let i = 0; i < 28; i += 1) {
+      const x = minX + Math.random() * (maxX - minX), z = minZ + Math.random() * (maxZ - minZ);
+      dustPoints.push(new THREE.Vector3(x, base + 1 + Math.random() * 3, z));
+    }
+    const dustGeometry = new THREE.BufferGeometry().setFromPoints(dustPoints);
+    const dustMaterial = new THREE.PointsMaterial({
+      color: 0xb5b0a7, size: 5, transparent: true, opacity: 0,
+      depthWrite: false, sizeAttenuation: true,
+    });
+    const dust = new THREE.Points(dustGeometry, dustMaterial);
+    group.add(dust);
+    if (!fragments.length) {
+      shellGeometry.dispose();
+      shellMaterial.dispose();
+      dustGeometry.dispose();
+      dustMaterial.dispose();
+      return;
+    }
+    scene.add(group);
+    activeDemolitions.add({ group, shell, shellMaterial, dust, dustMaterial, fragments, startedAt: performance.now() });
+    requestRender();
+  }
+  addEventListener('climate-building-demolition-start', event => {
+    startBuildingDemolition(Number(event.detail?.index));
+  });
+  function updateDemolitionAnimations(now) {
+    for (const demolition of activeDemolitions) {
+      const elapsed = (now - demolition.startedAt) / 1000;
+      const collapse = clamp((elapsed - 0.2) / 0.9, 0, 1);
+      demolition.shell.rotation.set(collapse * 0.11, 0, -collapse * 0.2);
+      demolition.shell.scale.y = 1 - collapse * 0.68;
+      demolition.shellMaterial.opacity = 1 - collapse * 0.95;
+      demolition.dust.position.y = Math.max(0, elapsed - 0.25) * 5;
+      demolition.dustMaterial.opacity = clamp((elapsed - 0.25) * 0.9, 0, 0.34) * clamp(1 - Math.max(0, elapsed - 0.7) / 1.1, 0, 1);
+      for (const fragment of demolition.fragments) {
+        const t = elapsed - fragment.delay;
+        if (t <= 0) continue;
+        const { mesh, origin } = fragment;
+        if (fragment.groundedAt === null) {
+          const x = origin.x + fragment.vx * t;
+          const z = origin.z + fragment.vz * t;
+          const y = origin.y + fragment.vy * t - 12 * t * t;
+          const floor = terrainHeightAt(x, z) + fragment.halfHeight;
+          mesh.position.set(x, y, z);
+          mesh.rotation.set(
+            fragment.initialRotation[0] + fragment.spin[0] * t,
+            fragment.initialRotation[1] + fragment.spin[1] * t,
+            fragment.initialRotation[2] + fragment.spin[2] * t,
+          );
+          if (y <= floor) {
+            mesh.position.y = floor;
+            fragment.groundedAt = now;
+          }
+        } else {
+          const fade = clamp(1 - (now - fragment.groundedAt) / 620, 0, 1);
+          mesh.material.opacity = fade;
+          if (!fade) mesh.visible = false;
+        }
+      }
+      if (demolition.fragments.every(fragment => fragment.groundedAt !== null
+        && now - fragment.groundedAt >= 620)) {
+        scene.remove(demolition.group);
+        demolition.shell.geometry.dispose();
+        demolition.shellMaterial.dispose();
+        demolition.dust.geometry.dispose();
+        demolition.dustMaterial.dispose();
+        for (const fragment of demolition.fragments) {
+          fragment.mesh.geometry.dispose();
+          fragment.mesh.material.dispose();
+        }
+        activeDemolitions.delete(demolition);
+      }
+    }
+    return activeDemolitions.size > 0;
   }
   function rebuildDesignGeometry(removedIndexes, blocks) {
     const hadEditedGeometry = Boolean(windState.designGeometryDirty);
@@ -15703,7 +15852,7 @@ export async function startWebGLScene(canvas, status) {
       ? 'Combines available solved directions with Cape Town’s wind rose. Unsolved directions are excluded, so coverage is partial.'
       : mode === 'pollution'
         ? 'Choose a traffic period and wind direction, then run the plume screen.'
-        : 'Inspect one solved wind direction. Select a direction, then load its full-CBD OpenFOAM result.';
+        : 'Inspect one solved wind direction. The full-CBD OpenFOAM result loads automatically and animates pedestrian-level flow.';
     const directionHint = windDirectionControls?.querySelector('.wind-cfd-hint');
     if (directionHint) directionHint.textContent = mode === 'pollution'
       ? 'The city plume uses road-level SUMO emissions and this steady OpenFOAM flow and turbulence field.'
@@ -16238,6 +16387,14 @@ export async function startWebGLScene(canvas, status) {
     requestRender();
   });
   function openWindWithDefaultCase() {
+    // Opening Wind is an invitation to explore the live directional CFD
+    // layer. Put the panel in that mode and show the map automatically; the
+    // ground motion control remains on by default for its moving tracers.
+    if (windState.analysisMode !== 'direction') setWindAnalysisMode('direction');
+    if (windToggle && !windToggle.checked) {
+      windToggle.checked = true;
+      windToggle.dispatchEvent(new Event('change'));
+    }
     if (windDirection) windDirection.value = String(windState.direction);
     windDirectionPresets.forEach(button => {
       button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction);
@@ -16247,7 +16404,7 @@ export async function startWebGLScene(canvas, status) {
       button.classList.toggle('active', active);
       button.setAttribute('aria-pressed', String(active));
     });
-    if (windState.analysisMode === 'direction') {
+    if (windState.analysisMode === 'direction' && !windSimulate?.disabled) {
       if (!windState.cfd
         || Math.round(windState.cfd.manifest.direction_deg_from) !== Math.round(windState.direction)) {
         void loadCfdWind(windState.direction);
@@ -16635,6 +16792,7 @@ export async function startWebGLScene(canvas, status) {
     skySphere.visible = shadowState.enabled && !viewshedState.active;
     skySphere.position.copy(camera.position);
     skyUniforms.cloudTime.value = now * 0.001;
+    const demolitionAnimating = updateDemolitionAnimations(now);
     const windSurfaceAnimating = updateWindSurfaceMotion(now);
     updateWindParticles(now);
     updatePollutionVisuals(now);
@@ -16668,7 +16826,7 @@ export async function startWebGLScene(canvas, status) {
     scheduleAmbientTrafficSetup();
     const ambientTrafficAnimating = Boolean(ambientTraffic.group?.visible && layerGroups.roads.visible
       && cameraState.distance <= ambientTrafficAnimationDistance);
-    const otherAnimatedLayerActive = windSurfaceAnimating || (windState.enabled && windState.field && windPoints?.visible)
+    const otherAnimatedLayerActive = demolitionAnimating || windSurfaceAnimating || (windState.enabled && windState.field && windPoints?.visible)
       || (windState.enabled && pollutionState.playing)
       || (trafficGroup.visible && trafficState.tracks.length)
       || (trafficStatusGroup.visible && scenarioStatusGroup.children.length);
@@ -16961,6 +17119,13 @@ export async function startWebGLScene(canvas, status) {
   });
   createDesignMassing({
     THREE, scene, camera, terrainMesh, terrainSurfaceHeightAt, terrainValidAt, requestRender,
+    focusPlacedBlock: (x, z) => {
+      cameraState.distance = Math.min(cameraState.distance, 460);
+      const right = new THREE.Vector3(Math.sin(cameraState.azimuth), 0, -Math.cos(cameraState.azimuth));
+      cameraState.target.set(x, terrainSurfaceHeightAt(x, z) + 12, z)
+        .addScaledVector(right, cameraState.distance * 0.14);
+      updateCamera();
+    },
     addScenePickHandler, canvas, buildingRecords: data.buildings, onChange: rebuildDesignGeometry,
   });
   return { renderer, scene, camera };

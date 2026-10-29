@@ -435,7 +435,7 @@ async function loadScene() {
   try {
     if (!window.WebGL2RenderingContext) throw new Error('WebGL 2 is unavailable');
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=306');
+    const module = await import('./webglRenderer.js?v=308');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (error) {

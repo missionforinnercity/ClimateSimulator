@@ -37,7 +37,7 @@ function readSaved() {
   } catch { return { blocks: [], removed: [], proposalId: null }; }
 }
 
-export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrainSurfaceHeightAt, terrainValidAt, requestRender, addScenePickHandler, canvas, buildingRecords = [], onChange = () => {} }) {
+export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrainSurfaceHeightAt, terrainValidAt, requestRender, focusPlacedBlock = () => {}, addScenePickHandler, canvas, buildingRecords = [], onChange = () => {} }) {
   const root = new THREE.Group(); root.name = 'concept-design-massing'; scene.add(root);
   const buildingOutline = new THREE.Group(); buildingOutline.name = 'design-selected-building'; scene.add(buildingOutline);
   const saved = readSaved();
@@ -211,9 +211,9 @@ export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrain
   };
   const style = block => {
     const active = block.id === selectedId;
-    block.mesh.material.color.setHex(active ? 0xd9eee5 : 0xcbd9d3);
-    block.mesh.material.emissive.setHex(active ? 0x183e31 : 0x071512);
-    block.edges.material.color.setHex(active ? 0x28c88e : 0x6b9685);
+    block.mesh.material.color.setHex(active ? 0x8df2ca : 0xb9d8cc);
+    block.mesh.material.emissive.setHex(active ? 0x24674d : 0x123b2e);
+    block.edges.material.color.setHex(active ? 0x43ffc0 : 0x57cda0);
   };
   const handleGroup = new THREE.Group();
   handleGroup.name = 'design-block-edit-handles';
@@ -298,7 +298,10 @@ export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrain
     const id = globalThis.crypto?.randomUUID?.() || `block-${Date.now()}-${++seq}`;
     const block = { id, x, z, ...size, baseOffsetM, supportId, ...shape,
       ...makeVisual({ id, x, z, ...size, baseOffsetM, ...shape }) };
-    blocks.push(block); byId.set(id, block); selectBlock(id); persist(); notifyChange(); return block;
+    blocks.push(block); byId.set(id, block); selectBlock(id); persist(); notifyChange();
+    if (mode === 'place') focusPlacedBlock(x, z, size.height);
+    setStatus(`Block placed at ${Math.round(x)} m east, ${Math.round(z)} m south · drag its coloured handles to edit.`);
+    return block;
   };
   const stopMode = message => { mode = null; if (selectBuildingButton) selectBuildingButton.textContent = 'Select existing building'; if (placeButton) placeButton.textContent = 'Place block'; if (moveButton) moveButton.textContent = 'Move selected'; canvas.style.cursor = ''; updateHandles(); if (message) setStatus(message); };
   const startMode = next => {
@@ -312,7 +315,8 @@ export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrain
     if (next === 'place') placeButton.textContent = 'Cancel placement';
     if (next === 'move') moveButton.textContent = 'Cancel move';
     if (next === 'building') selectBuildingButton.textContent = 'Cancel selection';
-    setStatus(next === 'building' ? 'Click an existing mapped building to select it.' : 'Click mapped ground to position the block. Press Escape to cancel.');
+    setStatus(next === 'building' ? 'Click an existing mapped building to select it.'
+      : `Click clear mapped ground. The full ${width.value} × ${depth.value} m footprint must fit. Press Escape to cancel.`);
   };
   const dispose = block => { root.remove(block.group); block.mesh.geometry.dispose(); block.mesh.material.dispose(); block.edges.geometry.dispose(); block.edges.material.dispose(); blockByIdDelete(block.id); };
   function blockByIdDelete(id) { byId.delete(id); }
@@ -375,8 +379,8 @@ export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrain
   }));
   el('massing-modify')?.addEventListener('click', modifySelectedBuilding);
   el('massing-stack')?.addEventListener('click', () => { const base = selected(), size = dimensions(); if (!base || !size) return; const baseOffsetM = (base.groundM ?? terrainSurfaceHeightAt(base.x, base.z) + base.baseOffsetM) - terrainSurfaceHeightAt(base.x, base.z) + base.height; const b = addBlock(base.x, base.z, size, baseOffsetM, base.id, true); if (b) { persist(); notifyChange(); setStatus('Block stacked above the selected block.'); } });
-  el('massing-demolish')?.addEventListener('click', () => { if (selectedBuilding === null) return; removed.add(selectedBuilding); selectedBuilding = null; showBuildingOutline(null); persist(); notifyChange(); rebuildLists(); setStatus('Building removed from the design scenario.'); });
-  el('massing-replace')?.addEventListener('click', () => { if (selectedBuilding === null) return; const index = selectedBuilding, record = buildingRecords[index], ring = record?.[2] || []; if (ring.length < 3) return; const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]); const w = Math.max(2, Math.min(300, Math.max(...xs) - Math.min(...xs))), d = Math.max(2, Math.min(300, Math.max(...zs) - Math.min(...zs))); removed.add(index); selectedBuilding = null; showBuildingOutline(null); addBlock((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2, { width: w, depth: d, height: Math.max(2, Math.min(300, Number(record[1]) || 12)) }, 0, null, true); persist(); notifyChange(); rebuildLists(); setStatus('Existing building removed and replaced with a simple rectangular concept block.'); });
+  el('massing-demolish')?.addEventListener('click', () => { if (selectedBuilding === null) return; dispatchEvent(new CustomEvent('climate-building-demolition-start', { detail: { index: selectedBuilding } })); removed.add(selectedBuilding); selectedBuilding = null; showBuildingOutline(null); persist(); notifyChange(); rebuildLists(); setStatus('Building demolished from the design scenario.'); });
+  el('massing-replace')?.addEventListener('click', () => { if (selectedBuilding === null) return; const index = selectedBuilding, record = buildingRecords[index], ring = record?.[2] || []; if (ring.length < 3) return; const xs = ring.map(p => p[0]), zs = ring.map(p => p[1]); const w = Math.max(2, Math.min(300, Math.max(...xs) - Math.min(...xs))), d = Math.max(2, Math.min(300, Math.max(...zs) - Math.min(...zs))); dispatchEvent(new CustomEvent('climate-building-demolition-start', { detail: { index } })); removed.add(index); selectedBuilding = null; showBuildingOutline(null); addBlock((Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2, { width: w, depth: d, height: Math.max(2, Math.min(300, Number(record[1]) || 12)) }, 0, null, true); persist(); notifyChange(); rebuildLists(); setStatus('Existing building removed and replaced with a simple rectangular concept block.'); });
   el('massing-delete')?.addEventListener('click', () => { const b = selected(); if (!b) return; cascadeDelete(b.id); selectedId = null; persist(); notifyChange(); rebuildLists(); setStatus('Selected block and supported stack removed.'); });
   el('massing-clear')?.addEventListener('click', () => { [...blocks].forEach(b => cascadeDelete(b.id)); selectedId = null; persist(); notifyChange(); rebuildLists(); setStatus('All proposal blocks cleared.'); });
   el('massing-restore')?.addEventListener('click', () => { removed.clear(); persist(); notifyChange(); rebuildLists(); setStatus('All demolished buildings restored.'); });
@@ -645,13 +649,23 @@ export function createDesignMassing({ THREE, scene, camera, terrainMesh, terrain
     if (mode === 'place' || mode === 'move') {
       const hit = raycaster.intersectObject(terrainMesh, false)[0]; if (!hit) return true;
       const block = selected(), size = mode === 'place' ? dimensions() : block && { width: block.width, depth: block.depth, height: block.height };
-      if (size) { if (mode === 'place') addBlock(hit.point.x, hit.point.z, { ...size, rotationDeg: Number(rotation?.value) || 0 }); else if (footprintMapped(hit.point.x, hit.point.z, size.width, size.depth, block.rotationDeg || 0)) { block.x = hit.point.x; block.z = hit.point.z; block.baseOffsetM = 0; block.groundM = null; block.supportId = null; rebuildBlock(block); syncDescendants(block); persist(); notifyChange(); } else setStatus('The whole rotated footprint must fit on mapped terrain.'); }
+      if (mode === 'place') {
+        const placed = size && addBlock(hit.point.x, hit.point.z, { ...size, rotationDeg: Number(rotation?.value) || 0 });
+        if (placed) stopMode();
+        // Keep placement active after a rejected footprint so the user can
+        // choose another site without restarting the tool.
+        return true;
+      }
+      if (size && footprintMapped(hit.point.x, hit.point.z, size.width, size.depth, block.rotationDeg || 0)) {
+        block.x = hit.point.x; block.z = hit.point.z; block.baseOffsetM = 0; block.groundM = null; block.supportId = null;
+        rebuildBlock(block); syncDescendants(block); persist(); notifyChange();
+      } else if (size) setStatus('The whole rotated footprint must fit on mapped terrain.');
       stopMode(); return true;
     }
     const hit = raycaster.intersectObjects(root.children, true).find(candidate => candidate.object.userData.designBlockId);
     if (hit) { selectBlock(hit.object.userData.designBlockId); return true; }
     return false;
   });
-  saved.blocks.forEach(block => { if (blocks.length < MAX_BLOCKS) { Object.assign(block, makeVisual(block)); blocks.push(block); byId.set(block.id, block); seq++; } });
+  saved.blocks.forEach(block => { if (blocks.length < MAX_BLOCKS) { Object.assign(block, makeVisual(block)); blocks.push(block); byId.set(block.id, block); style(block); seq++; } });
   rebuildLists(); notifyChange(false); return { getBlocks: () => blocks.map(({ id, x, z, width: w, depth: d, height: h, baseOffsetM }) => ({ id, x, z, width: w, depth: d, height: h, baseOffsetM })), getRemoved: () => [...removed] };
 }
