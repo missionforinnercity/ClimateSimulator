@@ -141,6 +141,19 @@ export async function startWebGLScene(canvas, status) {
   reportAreaOutline.renderOrder = 2000;
   reportAreaOutline.visible = false;
   scene.add(reportAreaOutline);
+  const reportAreaHandleGeometry = new THREE.SphereGeometry(1, 16, 12);
+  const reportAreaHandleMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa6aaa8, emissive: 0x171a19, roughness: 0.88, metalness: 0,
+    depthTest: false, depthWrite: false,
+  });
+  const reportAreaHandles = new THREE.Group();
+  reportAreaHandles.name = 'report-area-corner-handles';
+  reportAreaHandles.visible = false;
+  const reportAreaHandle = new THREE.Mesh(reportAreaHandleGeometry, reportAreaHandleMaterial);
+  reportAreaHandle.name = 'report-area-resize-handle';
+  reportAreaHandle.renderOrder = 2001;
+  reportAreaHandles.add(reportAreaHandle);
+  scene.add(reportAreaHandles);
   const placeInspectorHighlight = new THREE.Group();
   placeInspectorHighlight.name = 'place-inspector-highlight';
   scene.add(placeInspectorHighlight);
@@ -519,6 +532,8 @@ export async function startWebGLScene(canvas, status) {
   let reportAreaPickMode = false;
   let reportAreaDrag = null;
   let reportAreaBounds = null;
+  let reportAreaHandleCornerIndex = 2;
+  let reportAreaLocked = false;
   const viewshedState = {
     active: false, pickMode: false, point: null, radius: 500, eyeHeight: 1.7,
     shape: 'cone', heading: 0, spread: 60, verticalFov: 20, group: new THREE.Group(),
@@ -6463,6 +6478,7 @@ export async function startWebGLScene(canvas, status) {
       }
     }
     scheduleLightingAreaLoad();
+    updateReportAreaHandles(reportAreaBounds);
     requestRender();
   }
 
@@ -6475,6 +6491,7 @@ export async function startWebGLScene(canvas, status) {
     renderer.setSize(width, height, false);
     camera.aspect = width / Math.max(height, 1);
     camera.updateProjectionMatrix();
+    updateReportAreaHandles(reportAreaBounds);
     updateMapHud();
   }
 
@@ -15323,21 +15340,139 @@ export async function startWebGLScene(canvas, status) {
       center: { x: centerX, z: centerZ } };
   }
 
-  function updateReportAreaOutline(bounds) {
-    if (!bounds) { reportAreaOutline.visible = false; return; }
-    const corners = [
+  function reportAreaCorners(bounds) {
+    return [
       [bounds.min_x, bounds.min_z], [bounds.max_x, bounds.min_z],
       [bounds.max_x, bounds.max_z], [bounds.min_x, bounds.max_z],
     ];
+  }
+
+  function updateReportAreaHandles(bounds) {
+    const visible = Boolean(bounds) && !reportAreaLocked;
+    reportAreaHandles.visible = visible;
+    if (!visible) return;
+    const [x, z] = reportAreaCorners(bounds)[reportAreaHandleCornerIndex];
+    const groundY = terrainSurfaceHeightAt(x, z);
+    const distance = camera.position.distanceTo(new THREE.Vector3(x, groundY, z));
+    const worldPerPixel = 2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))
+      / Math.max(canvas.clientHeight, 1);
+    const radius = worldPerPixel * 7;
+    reportAreaHandle.position.set(x, groundY + radius, z);
+    reportAreaHandle.scale.setScalar(radius);
+  }
+
+  function reportSquareFromResize(anchor, current) {
+    const directionX = current.x < anchor.x ? -1 : 1;
+    const directionZ = current.z < anchor.z ? -1 : 1;
+    const maximum = Math.min(1200,
+      directionX > 0 ? right - anchor.x : anchor.x - left,
+      directionZ > 0 ? maxZ - anchor.z : anchor.z - minZ);
+    if (maximum < 100) return null;
+    const size = clamp(Math.max(Math.abs(current.x - anchor.x), Math.abs(current.z - anchor.z)), 100, maximum);
+    const endX = anchor.x + directionX * size, endZ = anchor.z + directionZ * size;
+    const minX = Math.min(anchor.x, endX), maxX = Math.max(anchor.x, endX);
+    const minZ = Math.min(anchor.z, endZ), maxZValue = Math.max(anchor.z, endZ);
+    return {
+      min_x: minX, min_z: minZ, max_x: maxX, max_z: maxZValue, size_m: size,
+      center: { x: (minX + maxX) / 2, z: (minZ + maxZValue) / 2 },
+    };
+  }
+
+  function reportSquareFromMove(start, current, original) {
+    const half = original.size_m / 2;
+    const centerX = clamp(original.center.x + current.x - start.x, left + half, right - half);
+    const centerZ = clamp(original.center.z + current.z - start.z, minZ + half, maxZ - half);
+    return {
+      min_x: centerX - half, min_z: centerZ - half,
+      max_x: centerX + half, max_z: centerZ + half,
+      size_m: original.size_m, center: { x: centerX, z: centerZ },
+    };
+  }
+
+  function reportAreaScreenPoint(x, z) {
+    const projected = new THREE.Vector3(x, terrainSurfaceHeightAt(x, z) + 1.8, z).project(camera);
+    const rect = canvas.getBoundingClientRect();
+    return { x: rect.left + (projected.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (-projected.y * 0.5 + 0.5) * rect.height };
+  }
+
+  function chooseReportAreaHandleCorner(bounds) {
+    const viewport = canvas.getBoundingClientRect();
+    const visible = { left: viewport.left + 14, top: viewport.top + 14,
+      right: viewport.right - 14, bottom: viewport.bottom - 14 };
+    const panel = document.querySelector('.panel')?.getBoundingClientRect();
+    if (panel) {
+      const overlap = Math.min(viewport.bottom, panel.bottom) - Math.max(viewport.top, panel.top);
+      const panelIsSideSheet = overlap > viewport.height * 0.6;
+      if (panelIsSideSheet && panel.left >= (viewport.left + viewport.right) / 2) {
+        visible.right = Math.min(visible.right, panel.left - 14);
+      } else if (panelIsSideSheet && panel.right <= (viewport.left + viewport.right) / 2) {
+        visible.left = Math.max(visible.left, panel.right + 14);
+      }
+    }
+    const center = { x: (visible.left + visible.right) / 2, y: (visible.top + visible.bottom) / 2 };
+    let bestIndex = 0, bestScore = Infinity;
+    reportAreaCorners(bounds).forEach(([x, z], index) => {
+      const point = reportAreaScreenPoint(x, z);
+      const outsideX = Math.max(visible.left - point.x, 0, point.x - visible.right);
+      const outsideY = Math.max(visible.top - point.y, 0, point.y - visible.bottom);
+      const centerDistance = Math.hypot(point.x - center.x, point.y - center.y);
+      const score = Math.hypot(outsideX, outsideY) * 100 + centerDistance;
+      if (score < bestScore) { bestIndex = index; bestScore = score; }
+    });
+    return bestIndex;
+  }
+
+  function reportAreaGroundPoint(event, bounds, flat = false) {
+    if (!flat) {
+      const point = pointerGround(event);
+      if (point || !bounds?.center) return point;
+    }
+    if (!bounds?.center) return null;
+    const groundY = terrainSurfaceHeightAt(bounds.center.x, bounds.center.z);
+    const fallbackPoint = new THREE.Vector3();
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -groundY);
+    return pointerRaycaster(event).ray.intersectPlane(plane, fallbackPoint) ? fallbackPoint : null;
+  }
+
+  function reportAreaInteractionAt(event) {
+    if (!reportAreaBounds || reportAreaLocked) return null;
+    const corners = reportAreaCorners(reportAreaBounds).map(([x, z]) => reportAreaScreenPoint(x, z));
+    const cornerTolerance = event.pointerType === 'touch' ? 32 : 20;
+    const handleScreen = corners[reportAreaHandleCornerIndex];
+    if (Math.hypot(event.clientX - handleScreen.x, event.clientY - handleScreen.y) <= cornerTolerance) {
+      const opposite = reportAreaCorners(reportAreaBounds)[(reportAreaHandleCornerIndex + 2) % 4];
+      const anchor = { x: opposite[0], z: opposite[1] };
+      const anchorScreen = corners[(reportAreaHandleCornerIndex + 2) % 4];
+      const dx = handleScreen.x - anchorScreen.x, dy = handleScreen.y - anchorScreen.y;
+      return { mode: 'resize-corner', anchor, cursor: dx * dy >= 0 ? 'nwse-resize' : 'nesw-resize' };
+    }
+    const point = reportAreaGroundPoint(event, reportAreaBounds);
+    return pointInReportArea(point, reportAreaBounds) ? { mode: 'move', cursor: 'move' } : null;
+  }
+
+  function pointInReportArea(point, bounds) {
+    return Boolean(point && bounds && point.x >= bounds.min_x && point.x <= bounds.max_x
+      && point.z >= bounds.min_z && point.z <= bounds.max_z);
+  }
+
+  function updateReportAreaOutline(bounds) {
+    if (!bounds) {
+      reportAreaOutline.visible = false;
+      updateReportAreaHandles(null);
+      return;
+    }
+    const corners = reportAreaCorners(bounds);
     reportAreaOutline.geometry.dispose();
     reportAreaOutline.geometry = new THREE.BufferGeometry().setFromPoints(corners.map(([x, z]) =>
       new THREE.Vector3(x, terrainSurfaceHeightAt(x, z) + 1.8, z)));
     reportAreaOutline.visible = true;
+    updateReportAreaHandles(bounds);
     requestRender();
   }
 
   addEventListener('climate-report-area-pick', event => {
-    reportAreaPickMode = Boolean(event.detail?.enabled);
+    reportAreaPickMode = !reportAreaLocked && Boolean(event.detail?.enabled);
     reportAreaDrag = null;
     if (reportAreaPickMode) {
       requestGroundPick(null);
@@ -15353,6 +15488,17 @@ export async function startWebGLScene(canvas, status) {
   addEventListener('climate-report-area-clear', () => {
     reportAreaBounds = null;
     updateReportAreaOutline(null);
+  });
+  addEventListener('climate-report-area-lock', () => {
+    reportAreaLocked = true;
+    reportAreaPickMode = false;
+    reportAreaDrag = null;
+    canvas.style.cursor = '';
+    updateReportAreaOutline(reportAreaBounds);
+  });
+  addEventListener('climate-report-area-unlock', () => {
+    reportAreaLocked = false;
+    updateReportAreaOutline(reportAreaBounds);
   });
 
   function pointerRaycaster(event) {
@@ -15466,16 +15612,43 @@ export async function startWebGLScene(canvas, status) {
   });
   canvas.addEventListener('pointerdown', event => {
     cameraIntro = null;
-    if (reportAreaPickMode && event.button === 0) {
-      const point = pointerGround(event);
-      if (!point) return;
-      reportAreaDrag = { pointerId: event.pointerId, start: { x: point.x, z: point.z },
-        current: { x: point.x, z: point.z }, screenStart: [event.clientX, event.clientY] };
-      clickCandidate = null;
-      drag = null;
-      capturePointer(event);
-      event.preventDefault();
-      return;
+    if (event.button === 0 && !reportAreaLocked) {
+      let point = reportAreaPickMode ? pointerGround(event) : null;
+      if (reportAreaPickMode && !point) return;
+      let mode = null, anchor = null, cursor = '', worldOffset = null;
+      if (point && reportAreaPickMode) {
+        mode = 'draw';
+      } else if (reportAreaBounds) {
+        const interaction = reportAreaInteractionAt(event);
+        if (interaction) {
+          point = reportAreaGroundPoint(event, reportAreaBounds, true);
+          if (point) {
+            mode = interaction.mode;
+            anchor = interaction.anchor || null;
+            cursor = interaction.cursor || '';
+            if (mode === 'resize-corner') {
+              const [handleX, handleZ] = reportAreaCorners(reportAreaBounds)[reportAreaHandleCornerIndex];
+              worldOffset = { x: handleX - point.x, z: handleZ - point.z };
+              point = { x: handleX, y: point.y, z: handleZ };
+            }
+          }
+        }
+      }
+      if (mode) {
+        if (!point) return;
+        reportAreaDrag = {
+          mode, anchor, worldOffset, pointerId: event.pointerId,
+          start: { x: point.x, z: point.z }, current: { x: point.x, z: point.z },
+          initialBounds: reportAreaBounds ? { ...reportAreaBounds, center: { ...reportAreaBounds.center } } : null,
+          previewBounds: null, screenStart: [event.clientX, event.clientY],
+        };
+        clickCandidate = null;
+        drag = null;
+        canvas.style.cursor = cursor || (mode === 'draw' ? 'crosshair' : 'move');
+        capturePointer(event);
+        event.preventDefault();
+        return;
+      }
     }
     clickCandidate = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
     if (groundPickHandler && event.button === 0) {
@@ -15597,11 +15770,25 @@ export async function startWebGLScene(canvas, status) {
   });
   canvas.addEventListener('pointermove', event => {
     if (reportAreaDrag && event.pointerId === reportAreaDrag.pointerId) {
-      const point = pointerGround(event);
+      const point = reportAreaDrag.mode === 'draw'
+        ? pointerGround(event) : reportAreaGroundPoint(event, reportAreaDrag.initialBounds, true);
       if (point) {
-        reportAreaDrag.current = { x: point.x, z: point.z };
+        reportAreaDrag.current = {
+          x: point.x + (reportAreaDrag.worldOffset?.x || 0),
+          z: point.z + (reportAreaDrag.worldOffset?.z || 0),
+        };
         const distance = Math.hypot(event.clientX - reportAreaDrag.screenStart[0], event.clientY - reportAreaDrag.screenStart[1]);
-        if (distance >= 8) updateReportAreaOutline(reportSquareFromDrag(reportAreaDrag.start, reportAreaDrag.current));
+        if (distance >= 8) {
+          const bounds = reportAreaDrag.mode === 'draw'
+            ? reportSquareFromDrag(reportAreaDrag.start, reportAreaDrag.current)
+            : reportAreaDrag.mode === 'resize-corner'
+              ? reportSquareFromResize(reportAreaDrag.anchor, reportAreaDrag.current)
+              : reportSquareFromMove(reportAreaDrag.start, reportAreaDrag.current, reportAreaDrag.initialBounds);
+          if (bounds) {
+            reportAreaDrag.previewBounds = bounds;
+            updateReportAreaOutline(bounds);
+          }
+        }
       }
       return;
     }
@@ -15676,6 +15863,9 @@ export async function startWebGLScene(canvas, status) {
       requestRender();
       return;
     }
+    if (!drag && !reportAreaLocked && reportAreaBounds && !reportAreaPickMode) {
+      canvas.style.cursor = reportAreaInteractionAt(event)?.cursor || '';
+    }
     if (!drag) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
@@ -15693,25 +15883,38 @@ export async function startWebGLScene(canvas, status) {
   });
   canvas.addEventListener('pointerup', event => {
     if (reportAreaDrag && event.pointerId === reportAreaDrag.pointerId) {
-      const point = pointerGround(event);
-      if (point) reportAreaDrag.current = { x: point.x, z: point.z };
+      const point = reportAreaDrag.mode === 'draw'
+        ? pointerGround(event) : reportAreaGroundPoint(event, reportAreaDrag.initialBounds, true);
+      if (point) {
+        reportAreaDrag.current = {
+          x: point.x + (reportAreaDrag.worldOffset?.x || 0),
+          z: point.z + (reportAreaDrag.worldOffset?.z || 0),
+        };
+      }
       const screenDistance = Math.hypot(event.clientX - reportAreaDrag.screenStart[0], event.clientY - reportAreaDrag.screenStart[1]);
-      const bounds = screenDistance >= 8
-        ? reportSquareFromDrag(reportAreaDrag.start, reportAreaDrag.current) : null;
+      const mode = reportAreaDrag.mode;
+      const bounds = screenDistance < 8 ? null : mode === 'draw'
+        ? reportSquareFromDrag(reportAreaDrag.start, reportAreaDrag.current)
+        : mode === 'resize-corner'
+          ? reportSquareFromResize(reportAreaDrag.anchor, reportAreaDrag.current)
+          : reportSquareFromMove(reportAreaDrag.start, reportAreaDrag.current, reportAreaDrag.initialBounds);
       reportAreaDrag = null;
-      reportAreaPickMode = false;
+      if (mode === 'draw') reportAreaPickMode = false;
       clickCandidate = null;
       drag = null;
       canvas.style.cursor = '';
       if (bounds) {
         reportAreaBounds = bounds;
+        if (mode === 'draw') {
+          cameraIntro = null;
+          frameBounds([bounds.min_x, bounds.min_z, bounds.max_x, bounds.max_z], { elevation: 0.55, accountForPanel: true });
+        }
+        reportAreaHandleCornerIndex = chooseReportAreaHandleCorner(bounds);
         updateReportAreaOutline(bounds);
-        cameraIntro = null;
-        frameBounds([bounds.min_x, bounds.min_z, bounds.max_x, bounds.max_z], { elevation: 0.55, accountForPanel: true });
-        dispatchEvent(new CustomEvent('climate-report-area-selected', { detail: bounds }));
+        dispatchEvent(new CustomEvent('climate-report-area-selected', { detail: { ...bounds, operation: mode } }));
       } else {
         updateReportAreaOutline(reportAreaBounds);
-        dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'drag-too-short' } }));
+        if (mode === 'draw') dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'drag-too-short' } }));
       }
       event.preventDefault();
       return;
@@ -15853,9 +16056,11 @@ export async function startWebGLScene(canvas, status) {
     cameraTouchPointers.delete(event.pointerId);
     cameraTouchGesture = null;
     if (event.pointerId === reportAreaDrag?.pointerId) {
+      const mode = reportAreaDrag.mode;
       reportAreaDrag = null;
+      if (mode === 'draw') reportAreaPickMode = false;
       updateReportAreaOutline(reportAreaBounds);
-      dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'pointer-cancelled' } }));
+      if (mode === 'draw') dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'pointer-cancelled' } }));
     }
     if (event.pointerId === trafficState.pointerId) {
       cancelInterruptedTrafficStroke('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');

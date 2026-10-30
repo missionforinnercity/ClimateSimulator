@@ -1,6 +1,6 @@
 import { CONTROL_IDS, MODES, validateScenario, readScenarioURL } from './scenarioState.js';
 import { cancelRequests } from './requestClient.js';
-import { buildClimateReportHtml } from './climateReport.js?v=7';
+import { buildClimateReportHtml } from './climateReport.js?v=10';
 
 const EVIDENCE = {
   heat: {
@@ -118,7 +118,7 @@ export function setupExplorerExperience() {
   workspace.append(el('summary', 'Climate report'));
   const summary = el('p', 'Create a readable report from the completed analyses in this session.', 'scenario-context');
   workspace.append(summary);
-  const locationText = el('p', 'No area selected. Draw a square on the map to include it in the report.');
+  const locationText = el('p', 'No area selected. Draw a square, then drag its corner handle to resize it.');
   workspace.append(locationText);
   const feedback = el('p', '', 'experience-feedback'); feedback.setAttribute('role', 'status');
   const actions = el('div', undefined, 'experience-actions');
@@ -134,9 +134,10 @@ export function setupExplorerExperience() {
   }
   function refresh() {
     summary.textContent = 'Select a square, then create a report with fresh results and charts for that area.';
+    selectAreaButton.textContent = areaSelection ? 'Draw another square' : 'Draw square area';
     locationText.textContent = areaSelection
-      ? `Selected square: ${Math.round(areaSelection.size_m)} m × ${Math.round(areaSelection.size_m)} m. Drag again to change it.`
-      : 'No area selected. Draw a square on the map to include it in the report.';
+      ? `Selected square: ${Math.round(areaSelection.size_m)} m × ${Math.round(areaSelection.size_m)} m. Drag the corner handle to resize, or drag inside to move; generating the report locks it while results are calculated.`
+      : 'No area selected. Draw a square, then drag its corner handle to resize it.';
   }
   function markDirty(tool) {
     if (applying || !resultMetadata[tool]) return;
@@ -208,7 +209,7 @@ export function setupExplorerExperience() {
   const selectAreaButton = button('Draw square area', () => {
     if (!ready) return notify('Wait for the scene to finish loading.');
     dispatchEvent(new CustomEvent('climate-report-area-pick', { detail: { enabled: true } }));
-    notify('Drag across the map to draw a square. Press Esc to cancel.');
+    notify('Click and drag across the map to draw a square. Then pull its corner handle to resize it, or drag inside to move it. Press Esc to cancel drawing.');
   });
   const generateReportButton = el('button', 'Generate HTML report', 'primary');
   generateReportButton.type = 'button';
@@ -499,6 +500,7 @@ export function setupExplorerExperience() {
     };
     selectAreaButton.disabled = true;
     generateReportButton.disabled = true;
+    dispatchEvent(new CustomEvent('climate-report-area-lock'));
     addEventListener('climate-report-area-progress', progressListener);
     notify('Starting heat, sunlight, viewshed and wind comfort analysis inside the selected square…');
     try {
@@ -571,6 +573,7 @@ export function setupExplorerExperience() {
       notify(`Could not generate the area report (${error.message || 'analysis failed'}).`);
     } finally {
       removeEventListener('climate-report-area-progress', progressListener);
+      dispatchEvent(new CustomEvent('climate-report-area-unlock'));
       selectAreaButton.disabled = false;
       generateReportButton.disabled = false;
     }
@@ -625,6 +628,7 @@ export function setupExplorerExperience() {
   });
   addEventListener('climate-report-area-selected', event => {
     const bounds = event.detail || {};
+    const operation = bounds.operation || 'draw';
     const width = Number(bounds.max_x) - Number(bounds.min_x);
     const depth = Number(bounds.max_z) - Number(bounds.min_z);
     if (![bounds.min_x, bounds.min_z, bounds.max_x, bounds.max_z].every(value => Number.isFinite(Number(value)))
@@ -641,7 +645,7 @@ export function setupExplorerExperience() {
         : { x: (Number(bounds.min_x) + Number(bounds.max_x)) / 2, z: (Number(bounds.min_z) + Number(bounds.max_z)) / 2 },
     };
     refresh();
-    notify(`Square selected · ${Math.round(areaSelection.size_m)} m on each side. The map is centred on the area.`);
+    notify(`${operation === 'draw' ? 'Square selected' : 'Square updated'} · ${Math.round(areaSelection.size_m)} m on each side.`);
   });
   addEventListener('climate-report-area-pick-cancelled', event => {
     if (event.detail?.reason === 'drag-too-short') notify('Drag across the map to draw a square at least 100 m wide.');
