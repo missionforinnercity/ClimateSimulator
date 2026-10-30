@@ -1,5 +1,6 @@
-import { CONTROL_IDS, MODES, TOOLS, validateScenario, readScenarioURL, scenarioURL, compareScenarios } from './scenarioState.js';
+import { CONTROL_IDS, MODES, validateScenario, readScenarioURL } from './scenarioState.js';
 import { cancelRequests } from './requestClient.js';
+import { buildClimateReportHtml } from './climateReport.js?v=7';
 
 const EVIDENCE = {
   heat: {
@@ -32,11 +33,19 @@ const EVIDENCE = {
     legend: 'Hours (h) show sampled direct sun in the chosen time window. More sun is not always better; the intended use and season matter.',
   },
   wind: {
-    status: 'Exploratory · Unvalidated', method: 'WebGL: solved OpenFOAM volumes. Compatibility view: separate horizontal screening proxy.',
-    sources: 'Only solved CFD directions contribute to the WebGL comfort study. ERA5 supplies regional wind frequencies, not street measurements.',
+    status: 'Exploratory · Unvalidated', method: 'The selected-square report uses a multi-direction wind comfort screen. The live 3D wind view can show solved OpenFOAM fields where available.',
+    sources: 'Seasonal ERA5 wind patterns and mapped terrain and buildings inform the area comfort screen. ERA5 is regional context, not a street measurement.',
     supports: 'Inspect possible exposed areas, flow patterns, and questions for a validated wind study.',
-    limits: 'Comfort is a lower bound over solved sectors, not a complete annual study. No certification or field validation; unsolved directions are excluded.',
-    legend: 'Speed is m/s; pressure/turbulence units follow the selected diagnostic. Comfort categories describe activity thresholds, not a safety guarantee.',
+    limits: 'The comfort map is an exploratory planning estimate, not measured street conditions or certified wind-safety evidence. Field measurements are needed for high-stakes design.',
+    legend: 'The map groups locations by suitable outdoor activity. A category is not a guarantee of safety or comfort for every person.',
+  },
+  viewshed: {
+    status: 'Screening · mapped line of sight',
+    method: 'Ground visibility is sampled from one selected observer point against mapped terrain and building massing.',
+    sources: 'Mapped terrain and building footprints/heights; trees and small unmapped objects do not block the calculation.',
+    supports: 'Identify visible and screened ground within the selected distance and viewing direction.',
+    limits: 'A planning screen, not a surveyed sightline. Sub-grid terrain, unmapped structures and atmospheric refraction are not represented.',
+    legend: 'Visible share is the portion of valid sampled ground cells with a clear line of sight.',
   },
   wind_validation: {
     status: 'Diagnostic · measured observations',
@@ -69,12 +78,6 @@ const EVIDENCE = {
     legend: 'Departures are scheduled services; places are nominal capacity. Coverage compares scheduled capacity to an assumed event-demand proxy.',
   },
 };
-const GUIDE = [
-  ['Navigate the city', 'Drag to orbit. Pinch or scroll to zoom; two fingers pan.'],
-  ['Choose a lens', 'Choose Heat, Walk, Sun, Wind, Traffic or Transport. Each answers a different question using its own model and assumptions.'],
-  ['Choose the scenario', 'Set the date, time and available controls. Sun, wind and traffic have explicit run actions. A picked map location can be passed to the sun or wind analysis area.'],
-  ['Read the evidence', 'Read the units, evidence status and limitations before using a result. Save Before and After settings to compare assumptions, or share a settings link.'],
-];
 const $ = selector => document.querySelector(selector);
 function el(tag, text, className) {
   const node = document.createElement(tag);
@@ -82,8 +85,8 @@ function el(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
-function button(text, action) {
-  const node = el('button', text, 'secondary'); node.type = 'button'; node.addEventListener('click', action); return node;
+function button(text, action, className = 'secondary') {
+  const node = el('button', text, className); node.type = 'button'; node.addEventListener('click', action); return node;
 }
 function rulesFromDOM() {
   return Object.fromEntries(CONTROL_IDS.map(id => {
@@ -100,17 +103,8 @@ function activeTool() { return $('[data-menu-target].active')?.dataset.menuTarge
 function timeLabel(date) { return new Date(date).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }); }
 
 export function setupExplorerExperience() {
-  let manifest = null, camera = null, picked = null, ready = false, applying = false;
-  let guideIndex = 0, before = null, after = null;
+  let camera = null, picked = null, areaSelection = null, ready = false, applying = false;
   const resultMetadata = {}, requestSettings = {}, activeRequests = {};
-  let serverHealthSnapshot = { status: 'pending' };
-  fetch('/api/health', { headers: { Accept: 'application/json' } })
-    .then(async response => {
-      serverHealthSnapshot = response.ok
-        ? await response.json()
-        : { status: 'unavailable', httpStatus: response.status };
-    })
-    .catch(() => { serverHealthSnapshot = { status: 'unavailable' }; });
   // Older cached viewer shells used only `.panel-body`. Supporting that shell
   // prevents a newly revalidated module from stopping the entire renderer
   // before the user gets a chance to reload.
@@ -119,124 +113,18 @@ export function setupExplorerExperience() {
     console.warn('Explorer experience controls unavailable: panel body is missing.');
     return;
   }
-  const workspace = el('details', undefined, 'scenario-workspace');
-  workspace.append(el('summary', 'Scenario · save, compare & share'));
-  const summary = el('p', 'Current controls; no saved scenario.', 'scenario-context');
+  const workspace = el('details', undefined, 'scenario-workspace report-workspace');
+  workspace.open = true;
+  workspace.append(el('summary', 'Climate report'));
+  const summary = el('p', 'Create a readable report from the completed analyses in this session.', 'scenario-context');
   workspace.append(summary);
-  const locationText = el('p', 'Location: current view. Use “Pick location” for a shared analysis centre.');
+  const locationText = el('p', 'No area selected. Draw a square on the map to include it in the report.');
   workspace.append(locationText);
-  const REPORT_META_KEY = 'conditions-climate-report-metadata-v1';
-  const reportMetadata = {
-    projectName: 'Conditions · Cape Town CBD', client: '', projectReference: '', preparedBy: '',
-    location: 'Cape Town, South Africa', periodStart: '', periodEnd: '', notes: '',
-  };
-  try {
-    const saved = JSON.parse(localStorage.getItem(REPORT_META_KEY) || '{}');
-    for (const key of Object.keys(reportMetadata)) {
-      if (typeof saved?.[key] === 'string' && saved[key].length <= (key === 'notes' ? 2000 : 200)) reportMetadata[key] = saved[key];
-    }
-  } catch { /* report metadata remains editable if storage is unavailable */ }
-  const reportDetails = el('details', undefined, 'report-metadata');
-  reportDetails.append(el('summary', 'Client report details'));
-  reportDetails.append(el('p', 'These labels are saved with the exported report. They do not alter model inputs or imply validation; model dates remain in each result’s scenario settings.'));
-  const reportFields = el('div', undefined, 'report-metadata-grid');
-  const addReportField = (key, labelText, type = 'text', maxLength = 200) => {
-    const label = el('label', labelText);
-    const input = el('input'); input.type = type; input.value = reportMetadata[key];
-    if (type === 'text') input.maxLength = maxLength;
-    input.autocomplete = 'off'; input.setAttribute('aria-label', labelText);
-    input.addEventListener('input', () => {
-      reportMetadata[key] = input.value;
-      try { localStorage.setItem(REPORT_META_KEY, JSON.stringify(reportMetadata)); } catch { /* still included in this export */ }
-    });
-    label.append(input); reportFields.append(label);
-  };
-  addReportField('projectName', 'Project / report name');
-  addReportField('client', 'Client / organization');
-  addReportField('projectReference', 'Project reference');
-  addReportField('preparedBy', 'Prepared by');
-  addReportField('location', 'Study location');
-  addReportField('periodStart', 'Reporting period starts', 'date');
-  addReportField('periodEnd', 'Reporting period ends', 'date');
-  const notesLabel = el('label', 'Report notes');
-  const notesInput = el('textarea'); notesInput.rows = 3; notesInput.maxLength = 2000;
-  notesInput.value = reportMetadata.notes; notesInput.setAttribute('aria-label', 'Report notes');
-  notesInput.addEventListener('input', () => {
-    reportMetadata.notes = notesInput.value;
-    try { localStorage.setItem(REPORT_META_KEY, JSON.stringify(reportMetadata)); } catch { /* still included in this export */ }
-  });
-  notesLabel.append(notesInput); reportFields.append(notesLabel);
-  reportDetails.append(reportFields); workspace.append(reportDetails);
   const feedback = el('p', '', 'experience-feedback'); feedback.setAttribute('role', 'status');
   const actions = el('div', undefined, 'experience-actions');
-  const notesPanel = el('section', undefined, 'local-notes');
-  notesPanel.setAttribute('aria-label', 'Local map notes');
-  notesPanel.append(el('h3', 'Map notes · this browser only'));
-  notesPanel.append(el('p', 'Notes stay in this browser and are not included in settings links or scenario exports. This is not public feedback or voting.'));
-  const notesForm = el('form', undefined, 'local-note-form');
-  const noteInput = el('textarea');
-  noteInput.maxLength = 500;
-  noteInput.rows = 3;
-  noteInput.required = true;
-  noteInput.setAttribute('aria-label', 'Map note');
-  noteInput.placeholder = 'Add a note for this location (up to 500 characters)';
-  const saveNote = el('button', 'Save note'); saveNote.type = 'submit';
-  notesForm.append(noteInput, saveNote);
-  notesForm.hidden = true;
-  const notesList = el('ul', undefined, 'local-note-list');
-  notesPanel.append(notesForm, notesList);
-  workspace.append(actions, feedback, notesPanel);
+  workspace.append(actions, feedback);
   root.prepend(workspace);
   const notify = text => { feedback.textContent = text; };
-  const NOTE_KEY = 'conditions-local-notes-v1';
-  const NOTE_LIMIT = 50;
-  let notes = [];
-  let pendingNoteLocation = null;
-  try {
-    const saved = JSON.parse(localStorage.getItem(NOTE_KEY) || '[]');
-    if (Array.isArray(saved)) notes = saved.filter(note => note && typeof note.text === 'string'
-      && note.text.trim() && note.text.length <= 500 && Number.isFinite(note.x) && Number.isFinite(note.z)
-      && typeof note.id === 'string' && typeof note.createdAt === 'string').slice(-NOTE_LIMIT);
-  } catch { /* Local notes are optional when storage is unavailable. */ }
-  function persistNotes(previousNotes) {
-    try {
-      localStorage.setItem(NOTE_KEY, JSON.stringify(notes));
-      dispatchEvent(new CustomEvent('climate-local-notes', { detail: notes }));
-      renderNotes();
-      return true;
-    } catch {
-      notes = previousNotes;
-      renderNotes();
-      notify('Browser storage is unavailable; the note was not saved.');
-      return false;
-    }
-  }
-  function renderNotes() {
-    notesList.replaceChildren();
-    for (const note of notes) {
-      const item = el('li');
-      const content = el('span', `${note.text} · ${note.x.toFixed(0)} m east, ${note.z.toFixed(0)} m viewer z`);
-      const remove = button('Delete', () => {
-        const previous = notes;
-        notes = notes.filter(candidate => candidate.id !== note.id);
-        persistNotes(previous);
-      });
-      item.append(content, remove);
-      notesList.append(item);
-    }
-    dispatchEvent(new CustomEvent('climate-local-notes', { detail: notes }));
-  }
-  notesForm.addEventListener('submit', event => {
-    event.preventDefault();
-    const text = noteInput.value.trim();
-    if (!pendingNoteLocation || !text) return;
-    if (notes.length >= NOTE_LIMIT) return notify(`This browser already has ${NOTE_LIMIT} notes. Delete one before adding another.`);
-    const previous = notes;
-    notes = [...notes, { id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString(), ...pendingNoteLocation, text }];
-    pendingNoteLocation = null; notesForm.hidden = true; noteInput.value = '';
-    if (persistNotes(previous)) notify('Map note saved in this browser.');
-  });
-  renderNotes();
 
   function capture() {
     dispatchEvent(new CustomEvent('climate-capture-view'));
@@ -245,12 +133,10 @@ export function setupExplorerExperience() {
     return validateScenario({ version: 1, tool: activeTool(), controls, modes, camera, location: picked }, rulesFromDOM());
   }
   function refresh() {
-    const tool = activeTool();
-    const label = $(`[data-menu-target="${tool}"]`)?.textContent.trim() || tool;
-    const date = $(`#${tool === 'transport' ? 'transport-event' : tool}-date`)?.value;
-    const metric = tool === 'heat' ? $('#heat-metric')?.selectedOptions[0]?.textContent : tool === 'wind' ? modeValue('wind-lens') : '';
-    summary.textContent = `${label}${date ? ` · ${date}` : ''}${metric ? ` · ${metric}` : ''}. ${EVIDENCE[tool]?.status || 'Map context'}.`;
-    locationText.textContent = picked ? `Picked local position: ${picked.x.toFixed(0)} m east, ${picked.z.toFixed(0)} m viewer z.` : 'Location: current view. Use “Pick location” for a shared analysis centre.';
+    summary.textContent = 'Select a square, then create a report with fresh results and charts for that area.';
+    locationText.textContent = areaSelection
+      ? `Selected square: ${Math.round(areaSelection.size_m)} m × ${Math.round(areaSelection.size_m)} m. Drag again to change it.`
+      : 'No area selected. Draw a square on the map to include it in the report.';
   }
   function markDirty(tool) {
     if (applying || !resultMetadata[tool]) return;
@@ -288,7 +174,7 @@ export function setupExplorerExperience() {
     const settings = metadata.clientOnly ? capture() : requestSettings[tool] || capture();
     resultMetadata[tool] = { ...(metadata.clientOnly ? {} : resultMetadata[tool]), ...metadata, settings, stale: false };
     const node = $(`#evidence-result-${tool}`);
-    if (node) node.textContent = `${metadata.label || 'Result received'} · ${timeLabel(metadata.receivedAt || new Date())}${metadata.requestId ? ` · Reference ${metadata.requestId}` : ''}. Settings are included in the scenario export.`;
+    if (node) node.textContent = `${metadata.label || 'Result received'} · ${timeLabel(metadata.receivedAt || new Date())}${metadata.requestId ? ` · Reference ${metadata.requestId}` : ''}. The result will be included in the HTML report.`;
   }
 
   for (const [tool, evidence] of Object.entries(EVIDENCE)) {
@@ -298,7 +184,7 @@ export function setupExplorerExperience() {
     card.append(el('p', evidence.status, 'evidence-badge'), el('p', evidence.limits, 'evidence-limit'));
     const result = el('p', 'No completed result recorded in this session.', 'evidence-result'); result.id = `evidence-result-${tool}`;
     const request = el('p', '', 'request-state'); request.id = `request-state-${tool}`; request.setAttribute('role', 'status');
-    const details = el('details'); details.append(el('summary', 'About this result'));
+    const details = el('details'); details.append(el('summary', 'Evidence & result detail'));
     for (const [title, text] of [['Method', evidence.method], ['Sources & dates', evidence.sources], ['Can support', evidence.supports], ['Legend & units', evidence.legend]]) {
       const p = el('p'); p.append(el('strong', `${title}. `), document.createTextNode(text)); details.append(p);
     }
@@ -314,101 +200,22 @@ export function setupExplorerExperience() {
     const retry = button('Retry', () => dispatchEvent(new CustomEvent('climate-retry-analysis', { detail: { tool } })));
     retry.hidden = true; retry.id = `request-retry-${tool}`;
     card.append(details, request, cancel, retry);
-    panel.append(card);
+    const methodSection = panel.querySelector(':scope > .panel-method');
+    if (methodSection) panel.insertBefore(card, methodSection);
+    else panel.append(card);
   }
 
-  actions.append(button('Pick location', () => {
+  const selectAreaButton = button('Draw square area', () => {
     if (!ready) return notify('Wait for the scene to finish loading.');
-    dispatchEvent(new CustomEvent('climate-streetview-mode', { detail: { enabled: true } }));
-    notify('Click a mapped ground position. Press Esc to cancel.');
-  }));
-  actions.append(button('Add map note', () => {
-    if (!ready) return notify('Wait for the scene to finish loading.');
-    pendingNoteLocation = null;
-    notesForm.hidden = true;
-    dispatchEvent(new CustomEvent('climate-local-note-pick-mode', { detail: { enabled: true } }));
-    notify('Click a mapped ground position for the note. Press Esc to cancel.');
-  }));
-  for (const tool of ['sun', 'wind']) actions.append(button(`Use location in ${tool}`, () => {
-    if (!picked) return notify('Pick a mapped location first.');
-    $(`[data-menu-target="${tool}"]`)?.click();
-    dispatchEvent(new CustomEvent('climate-use-location', { detail: { tool, ...picked } }));
-    markDirty(tool);
-    notify(tool === 'wind'
-      ? 'Wind flow box moved to this location. Comfort still covers the solved domain; select Flow to inspect the local box.'
-      : 'Sunlight analysis centre updated. Calculate sun hours to obtain a new local result.');
-  }));
-  const comparison = el('div', undefined, 'scenario-comparison'); workspace.append(comparison);
-  function showComparison() {
-    comparison.replaceChildren();
-    if (!before || !after) return;
-    const rows = compareScenarios(before.settings, after.settings);
-    comparison.append(el('p', `${rows.filter(r => r.changed).length} changed settings. This compares captured settings, not simulated intervention benefits. Drawn traffic closures are not restored by this version.`));
-    const table = el('table'); table.append(el('caption', 'Before / After settings'));
-    const header = el('tr'); for (const label of ['Setting', 'Before', 'After']) { const th = el('th', label); th.scope = 'col'; header.append(th); }
-    const head = el('thead'); head.append(header); table.append(head);
-    const body = el('tbody');
-    for (const row of rows.filter(r => r.changed)) {
-      const tr = el('tr'); tr.append(el('th', row.key), el('td', row.before), el('td', row.after)); body.append(tr);
-    }
-    table.append(body); comparison.append(table);
-    const unchanged = el('details'); unchanged.append(el('summary', `${rows.filter(r => !r.changed).length} settings held constant`));
-    for (const row of rows.filter(r => !r.changed)) unchanged.append(el('p', `${row.key}: ${row.before}`));
-    comparison.append(unchanged);
-  }
-  function snapshot(includeMap = false) {
-    return {
-      settings: capture(), createdAt: new Date().toISOString(), evidence: structuredClone(resultMetadata), manifest: manifestIdentity(),
-      ...(includeMap ? { map: captureMapImage(), resultReferences: reportEvidence() } : {}),
-    };
-  }
-  for (const slot of ['Before', 'After']) actions.append(button(`Save ${slot}`, () => {
-    if (!ready) return notify('Wait for the scene to finish loading.');
-    if (slot === 'Before') before = snapshot(true); else after = snapshot(true);
-    showComparison(); notify(`${slot} captured in this tab. Export to keep a copy; refreshing clears these snapshots.`);
-  }));
-  for (const slot of ['Before', 'After']) actions.append(button(`Restore ${slot}`, () => {
-    const saved = slot === 'Before' ? before : after;
-    if (!saved) return notify(`Save ${slot} first.`);
-    apply(saved.settings); notify(`${slot} settings restored. Run analyses again; drawn closures and result arrays are not restored.`);
-  }));
-  function manifestIdentity() {
-    if (!manifest) return null;
-    return { version: manifest.version, crs: manifest.crs, bounds: manifest.bounds,
-      assets: manifest.assets,
-      buildInputs: manifest.buildInputs || {},
-      layers: Object.fromEntries(Object.entries(manifest.layers || {}).map(([k, v]) => [k, { cache_key: v.cache_key, bytes: v.bytes, resolution_m: v.resolution_m }])) };
-  }
-  actions.append(button('Copy settings link', async () => {
-    const url = scenarioURL(location.href, capture());
-    try { await navigator.clipboard.writeText(url); notify('Settings link copied. It uses the recipient’s current data release and does not include completed simulations or drawn closures.'); }
-    catch {
-      const field = el('textarea'); field.value = url; field.readOnly = true; field.setAttribute('aria-label', 'Settings link');
-      feedback.replaceChildren(el('span', 'Copy this settings link: '), field); field.focus(); field.select();
-    }
-  }));
-  actions.append(button('Export scenario JSON', () => {
-    const scenarioSnapshot = value => {
-      if (!value) return null;
-      const { map: _capturedMap, ...settingsSnapshot } = value;
-      return settingsSnapshot;
-    };
-    const data = { schema: 'conditions-scenario/1', ...snapshot(), before: scenarioSnapshot(before), after: scenarioSnapshot(after),
-      sources: EVIDENCE, limitations: 'Settings and evidence metadata only; no result arrays, traffic closure geometry, event names, credentials or personal data.' };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const anchor = el('a'); anchor.href = url; anchor.download = 'conditions-scenario.json'; anchor.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000); notify('Scenario exported. Results must be recomputed against the recorded data release.');
-  }));
+    dispatchEvent(new CustomEvent('climate-report-area-pick', { detail: { enabled: true } }));
+    notify('Drag across the map to draw a square. Press Esc to cancel.');
+  });
+  const generateReportButton = el('button', 'Generate HTML report', 'primary');
+  generateReportButton.type = 'button';
+  actions.append(selectAreaButton, generateReportButton);
   function reportEvidence() {
-    const summaryKeys = ['description', 'label', 'receivedAt', 'requestId', 'analysis_id', 'run_id', 'frame_id', 'valid_at',
-      'run_generated_at', 'manifest_sha256', 'frame_sha256', 'model_versions', 'models', 'grid', 'channels', 'wind_sector',
-      'climatology', 'manifest_generated_at', 'aggregate', 'month', 'season', 'local_hour', 'source_frames',
-      'validation_status', 'validation', 'provenance', 'weather_warnings', 'weather_inputs', 'scenario', 'meanSunHours', 'pairedBeforeMeanSunHours',
-      'pairedAfterMeanSunHours', 'pairedChangeMeanSunHours', 'pairedGroundCellCount', 'localChangeMeanSunHours',
-      'solver', 'worker', 'direction', 'case_id', 'spacing', 'asset_hashes', 'source_provenance', 'kpis',
-      'arrivals', 'returns', 'coverage', 'date', 'job_id', 'reference', 'result_data', 'caveat', 'stale'];
     return Object.fromEntries(Object.entries(resultMetadata).map(([tool, value]) => {
-      const summary = Object.fromEntries(summaryKeys.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
+      const { settings, result_data: resultData, ...summary } = value;
       const absoluteAssetUrl = path => new URL(`/${String(path).replace(/^\/+/, '')}`, location.origin).href;
       let reference = { type: 'session-result', retrievable: false, replayable: false, retention: 'Browser session only; rerun from the recorded settings.' };
       if (tool === 'heat' && value.run_id && value.frame_id) reference = {
@@ -425,7 +232,7 @@ export function setupExplorerExperience() {
         ...value.reference,
         endpoint: '/api/heat/design-comparison',
         retrievable: false, replayable: false,
-        retention: 'Summary KPIs and proposal geometry/settings are embedded in this report; exact rerun requires the matching app, heat-zone data, scene geometry and method version.',
+        retention: 'Summary findings and proposal geometry/settings are included with this report; an exact rerun requires the matching app, heat-zone data, scene geometry and method version.',
       };
       if (tool === 'heat' && value.climatology && Array.isArray(value.source_frames)) reference = {
         type: 'thermal-climatology-composite',
@@ -452,7 +259,7 @@ export function setupExplorerExperience() {
         asset_hashes: value.asset_hashes || null,
         supporting_asset_hashes: value.source_provenance || null,
         result_embedded_in_report: true, retrievable: false, replayable: false,
-        retention: 'Per-row observations, residuals, holdout metrics and the imported observation source are embedded in report JSON. Exact replay also needs matching CFD, terrain, scene and code versions.',
+        retention: 'Per-row observations, residuals, holdout results and the imported observation source are included with this report. Exact replay also needs matching wind, terrain, scene and code versions.',
       };
       if (tool === 'thermal_validation' && value.run_id && value.provenance?.manifest_sha256) {
         const pairs = value.result_data?.pairs || [];
@@ -473,7 +280,7 @@ export function setupExplorerExperience() {
             url: absoluteAssetUrl(`api/thermal/frames/${encodeURIComponent(value.run_id)}/${encodeURIComponent(frame.id)}`),
           })),
           result_embedded_in_report: true, retrievable: true, replayable: false,
-          retention: 'Paired measurements, residuals and metrics are embedded in report JSON. The original CSV and referenced frames are included in an archive when available; replay still requires matching code and environment.',
+          retention: 'Paired measurements, residuals and summary results are included with this report. The original CSV and referenced frames are included in an archive when available; replay still requires matching code and environment.',
         };
       }
       if (tool === 'traffic' && value.job_id) reference = {
@@ -491,56 +298,171 @@ export function setupExplorerExperience() {
         type: 'sunlight-analysis', analysis_id: value.analysis_id || value.requestId, retrievable: false, replayable: false,
         retention: 'The server does not retain the raster result; rerun with the recorded scenario and current assets.',
       };
-      return [tool, { summary, reference, settings: value.settings || null,
-        ...(value.result_data ? { result_data: value.result_data } : {}) }];
+      return [tool, { summary, reference, settings: settings || null,
+        ...(resultData ? { result_data: resultData } : {}) }];
     }));
   }
-  function reportKpiComparisons() {
-    if (!before || !after) return [];
-    const flatten = value => {
-      const output = {};
-      const visit = (node, prefix) => {
-        if (typeof node === 'number' && Number.isFinite(node)) output[prefix] = node;
-        else if (node && typeof node === 'object' && !Array.isArray(node)) {
-          for (const [key, child] of Object.entries(node)) visit(child, prefix ? `${prefix}.${key}` : key);
-        }
-      };
-      visit(value, '');
-      return output;
-    };
-    const rows = [];
-    for (const [tool, left] of Object.entries(before.evidence || {})) {
-      const right = after.evidence?.[tool];
-      if (!right || left.stale || right.stale) continue;
-      const beforeKpis = flatten(left.kpis || {});
-      const afterKpis = flatten(right.kpis || {});
-      for (const [metric, beforeValue] of Object.entries(beforeKpis)) {
-        if (afterKpis[metric] === undefined) continue;
-        const unit = metric.endsWith('_pct') || metric.includes('share_pct') || metric.includes('completion_share') ? '%'
-          : metric.includes('sun_hours') ? 'h'
-            : metric.endsWith('_deg') ? '°'
-              : metric.endsWith('_m2') ? 'm²'
-                : metric === 'mean' || metric === 'maximum' ? '°C'
-                  : metric.includes('queue') ? 'vehicles'
-                    : metric.includes('count') || metric.includes('cells') || metric.includes('arrivals') || metric.includes('returns') ? 'count'
-                      : metric.endsWith('_m') ? 'm' : '';
-        rows.push({ tool, metric, before: beforeValue, after: afterKpis[metric], change: afterKpis[metric] - beforeValue, unit });
-      }
+  function areaDistribution(samples, title, unit, areaWeighted = false) {
+    const valid = samples.filter(sample => Number.isFinite(Number(sample.value))
+      && (!areaWeighted || Number(sample.area_m2) > 0));
+    if (!valid.length) return null;
+    const values = valid.map(sample => Number(sample.value));
+    const minimum = Math.min(...values), maximum = Math.max(...values);
+    const constant = maximum === minimum;
+    const range = maximum - minimum;
+    const binCount = constant ? 1 : Math.min(5, Math.max(1, valid.length));
+    const bins = Array.from({ length: binCount }, (_, index) => ({
+      lower: constant ? minimum : minimum + range * index / binCount,
+      upper: constant ? maximum : minimum + range * (index + 1) / binCount,
+      weight: 0,
+    }));
+    let totalWeight = 0;
+    for (const sample of valid) {
+      const weight = areaWeighted ? Number(sample.area_m2) : 1;
+      const index = constant ? 0 : Math.min(binCount - 1, Math.floor((Number(sample.value) - minimum) / range * binCount));
+      bins[index].weight += weight;
+      totalWeight += weight;
     }
-    return rows;
+    const digits = unit === '°C' || unit === 'h' || unit === 'm/s' ? 1 : 0;
+    const number = value => Number(value).toFixed(digits);
+    return {
+      type: 'distribution', title, unit,
+      axis_label: areaWeighted ? 'Share of mapped area' : 'Share of sampled locations',
+      bins: bins.map(bin => ({
+        label: constant ? `${number(bin.lower)} ${unit}` : `${number(bin.lower)}–${number(bin.upper)} ${unit}`,
+        share_pct: totalWeight ? bin.weight / totalWeight * 100 : 0,
+        sample_count: valid.length,
+      })),
+    };
+  }
+  async function requestAreaZoneAnalysis(tool, bounds, requestId) {
+    dispatchEvent(new CustomEvent('climate-report-area-progress', {
+      detail: { requestId, tool, message: tool === 'heat' ? 'Measuring heat across the square…' : 'Calculating sunlight across the square…' },
+    }));
+    const apiBase = (new URLSearchParams(location.search).get('windApi') || '/api').replace(/\/$/, '');
+    const date = tool === 'sun'
+      ? $('#sun-analysis-date')?.value || $('#sun-date')?.value || '2026-01-15'
+      : $('#heat-date')?.value || '2026-01-15';
+    const minutes = Number($('#heat-time')?.value) || 720;
+    const params = new URLSearchParams({
+      metric: tool === 'sun' ? 'cumulative_sun_hours' : 'heat_model_lst_c',
+      date, minutes: String(minutes),
+      min_x: String(bounds.min_x), min_z: String(bounds.min_z),
+      max_x: String(bounds.max_x), max_z: String(bounds.max_z),
+    });
+    if (tool === 'sun') {
+      params.set('start_minutes', $('#sun-start-time')?.value || '480');
+      params.set('end_minutes', $('#sun-end-time')?.value || '1080');
+      params.set('step_minutes', $('#sun-step-time')?.value || '60');
+    }
+    const timeout = new AbortController();
+    const timeoutId = setTimeout(() => timeout.abort(new DOMException('Area analysis timed out.', 'TimeoutError')), 5 * 60 * 1000);
+    try {
+      const response = await fetch(`${apiBase}/heat/zones?${params}`, { signal: timeout.signal });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.detail || `${tool} data request failed (${response.status}).`);
+      const samples = (payload.features || []).map(feature => ({
+        value: Number(feature.value), area_m2: Number(feature.area_m2),
+        surface_type: feature.surface_type || null, nearest_road_name: feature.nearest_road_name || null,
+        geometry: feature.geometry || null,
+      })).filter(sample => Number.isFinite(sample.value) && sample.area_m2 > 0);
+      const totalArea = samples.reduce((sum, sample) => sum + sample.area_m2, 0);
+      if (!samples.length || !totalArea) throw new Error(`No ${tool} source data overlaps the selected square.`);
+      const mean = Number(payload.summary?.area_weighted_mean);
+      const maximum = Number(payload.summary?.maximum);
+      const average = Number.isFinite(mean) ? mean : samples.reduce((sum, sample) => sum + sample.value * sample.area_m2, 0) / totalArea;
+      const peak = Number.isFinite(maximum) ? maximum : Math.max(...samples.map(sample => sample.value));
+      const unit = tool === 'heat' ? '°C' : 'h';
+      const chart = areaDistribution(samples, tool === 'heat' ? 'Surface temperature in the selected area' : 'Direct sunlight in the selected area', unit, true);
+      const kpis = tool === 'heat' ? {
+        average_surface_temperature_c: average, highest_surface_temperature_c: peak,
+        mapped_area_m2: totalArea, mapped_zone_count: samples.length,
+        area_above_hotspot_threshold_pct: (() => {
+          const ordered = [...samples].sort((a, b) => a.value - b.value);
+          const threshold = ordered[Math.min(ordered.length - 1, Math.floor((ordered.length - 1) * 0.9))]?.value;
+          return threshold === undefined ? null : samples.reduce((area, sample) => area + (sample.value >= threshold ? sample.area_m2 : 0), 0) / totalArea * 100;
+        })(),
+      } : {
+        average_direct_sun_hours: average, highest_direct_sun_hours: peak,
+        mapped_area_m2: totalArea, mapped_zone_count: samples.length,
+      };
+      return {
+        status: 'ready',
+        summary: {
+          description: tool === 'heat'
+            ? `Average mapped surface temperature in the square is ${average.toFixed(1)} °C.`
+            : `The square receives an area-weighted average of ${average.toFixed(1)} hours of direct sunlight during the selected study window.`,
+          kpis, scenario: { date, ...(tool === 'sun' ? {
+            start_minutes: Number(params.get('start_minutes')), end_minutes: Number(params.get('end_minutes')),
+            step_minutes: Number(params.get('step_minutes')),
+          } : { time: minutes }) },
+          source: payload.source, period: payload.window?.label || null,
+          validation_status: tool === 'heat' ? 'satellite_surface_heat_screening' : 'clear_sky_direct_sun_model',
+        },
+        chart,
+        samples,
+        method: tool === 'heat'
+          ? 'Area-weighted mapped surface-temperature screen, clipped to this square. Surface temperature is not air temperature or outdoor comfort.'
+          : 'Area-weighted direct-sun duration from the mapped surface-temperature zone geometry, clipped to this square. Clouds, diffuse light and reflected light are not included.',
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  function requestRendererAreaAnalysis(bounds, requestId, onProgress) {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        removeEventListener('climate-report-area-analysis-result', onResult);
+        removeEventListener('climate-report-area-progress', onProgress);
+        reject(new Error('Wind comfort and visibility analysis timed out.'));
+      }, 45 * 60 * 1000);
+      const onResult = event => {
+        if (event.detail?.requestId !== requestId) return;
+        clearTimeout(timeoutId);
+        removeEventListener('climate-report-area-analysis-result', onResult);
+        removeEventListener('climate-report-area-progress', onProgress);
+        resolve(event.detail.results || {});
+      };
+      addEventListener('climate-report-area-analysis-result', onResult);
+      addEventListener('climate-report-area-progress', onProgress);
+      dispatchEvent(new CustomEvent('climate-report-area-analysis-request', { detail: { requestId, bounds } }));
+    });
   }
   function captureMapImage() {
     const canvas = $('#scene');
     if (!canvas) return { status: 'unavailable', reason: 'Scene canvas is missing.' };
     try {
+      let sourceLeft = 0, sourceTop = 0, sourceWidth = canvas.width, sourceHeight = canvas.height;
+      const viewport = canvas.getBoundingClientRect();
+      const panel = document.querySelector('.panel');
+      const panelRect = panel?.getBoundingClientRect();
+      if (panelRect && getComputedStyle(panel).display !== 'none') {
+        const verticalOverlap = Math.min(viewport.bottom, panelRect.bottom) - Math.max(viewport.top, panelRect.top);
+        const horizontalOverlap = Math.min(viewport.right, panelRect.right) - Math.max(viewport.left, panelRect.left);
+        if (verticalOverlap > viewport.height * 0.6 && panelRect.left >= (viewport.left + viewport.right) / 2
+          && panelRect.right >= viewport.right - 4) {
+          sourceWidth = Math.round(canvas.width * (panelRect.left - viewport.left) / viewport.width);
+        } else if (verticalOverlap > viewport.height * 0.6 && panelRect.right <= (viewport.left + viewport.right) / 2
+          && panelRect.left <= viewport.left + 4) {
+          const croppedWidth = Math.round(canvas.width * (panelRect.right - viewport.left) / viewport.width);
+          sourceLeft = croppedWidth; sourceWidth -= croppedWidth;
+        } else if (horizontalOverlap > viewport.width * 0.6 && panelRect.top >= (viewport.top + viewport.bottom) / 2
+          && panelRect.bottom >= viewport.bottom - 4) {
+          sourceHeight = Math.round(canvas.height * (panelRect.top - viewport.top) / viewport.height);
+        }
+      }
+      sourceWidth = Math.max(1, Math.min(canvas.width - sourceLeft, sourceWidth));
+      sourceHeight = Math.max(1, Math.min(canvas.height - sourceTop, sourceHeight));
       const image = document.createElement('canvas');
-      image.width = canvas.width; image.height = canvas.height;
+      image.width = sourceWidth; image.height = sourceHeight;
       const context = image.getContext('2d');
-      context.drawImage(canvas, 0, 0);
+      context.drawImage(canvas, sourceLeft, sourceTop, sourceWidth, sourceHeight, 0, 0, image.width, image.height);
       const overlay = $('#wind-overlay');
       if (overlay && overlay.width && getComputedStyle(overlay).visibility !== 'hidden' && getComputedStyle(overlay).display !== 'none') {
         context.globalAlpha = Number.parseFloat(getComputedStyle(overlay).opacity) || 1;
-        context.drawImage(overlay, 0, 0, image.width, image.height);
+        const scaleX = overlay.width / canvas.width, scaleY = overlay.height / canvas.height;
+        context.drawImage(overlay, sourceLeft * scaleX, sourceTop * scaleY, sourceWidth * scaleX, sourceHeight * scaleY,
+          0, 0, image.width, image.height);
       }
       const dataUrl = image.toDataURL('image/png');
       if (!dataUrl.startsWith('data:image/png') || dataUrl.length < 5000) return { status: 'unavailable', reason: 'The browser did not provide a rendered map image. Use the live app to inspect the map.' };
@@ -556,76 +478,104 @@ export function setupExplorerExperience() {
     document.body.append(anchor); anchor.click(); anchor.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  function reportHealthSnapshot() {
-    const health = serverHealthSnapshot;
-    if (!health || !health.checks) return { status: health?.status || 'pending' };
-    return {
-      status: health.status,
-      application_version: health.application_version || null,
-      runtime_source: health.runtime_source || null,
-      field_version: health.field_version,
-      checks: Object.fromEntries(Object.entries(health.checks).map(([name, check]) => [name, {
-        status: check.status, required: check.required,
-        manifest_version: check.manifest_version,
-      }])),
-    };
+  function settleAreaResult(result, tool) {
+    return result.status === 'fulfilled'
+      ? result.value
+      : { status: 'unavailable', message: result.reason?.message || `${tool} analysis is unavailable.` };
   }
-  function reportHtml(report) {
-    const safeJson = JSON.stringify(report).replaceAll('<', '\\u003c').replaceAll('>', '\\u003e').replaceAll('&', '\\u0026');
-    return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Conditions climate report</title>
-      <style>body{font:15px/1.5 system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#18242e}h1,h2{line-height:1.2}header,.card{border:1px solid #ccd6dc;border-radius:10px;padding:1rem;margin:1rem 0}small,.muted{color:#536574}img{max-width:100%;height:auto;border:1px solid #ccd6dc}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{text-align:left;vertical-align:top;border-bottom:1px solid #d7e0e5;padding:.55rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f5f7;padding:.75rem;border-radius:6px;font-size:12px}.actions{position:sticky;top:0;background:#fff;padding:.5rem}@media print{.actions{display:none}body{margin:0;max-width:none}.card,header{break-inside:avoid}}</style>
-      <main><div class="actions"><button onclick="print()">Print / Save PDF</button> <a download="conditions-climate-report.json" id="json-download">Download report data</a></div><header><h1 id="report-title"></h1><p id="generated"></p><p>This report records model outputs and their provenance. It does not imply that an unvalidated field has passed scientific validation.</p></header><section class="card"><h2>Map</h2><div id="map"></div></section><section class="card" id="before-map-card" hidden><h2>Scene view at Before</h2><div id="before-map"></div></section><section class="card" id="after-map-card" hidden><h2>Scene view at After</h2><div id="after-map"></div></section><section class="card"><h2>Project metadata</h2><div id="project"></div></section><section class="card"><h2>Scenario settings</h2><div id="scenario"></div></section><section class="card"><h2>Completed results</h2><div id="results"></div></section><section class="card"><h2>Before / After KPI comparison</h2><div id="comparisons"></div></section><section class="card"><h2>Data release and validation status</h2><div id="provenance"></div></section><section class="card"><h2>Evidence, assumptions and limitations</h2><div id="limitations"></div></section></main>
-      <script id="report-data" type="application/json">${safeJson}</script><script>(()=>{const d=JSON.parse(document.querySelector('#report-data').textContent);const pre=(parent,v)=>{const n=document.createElement('pre');n.textContent=JSON.stringify(v,null,2);parent.append(n)};const table=(parent,rows)=>{const t=document.createElement('table');for(const [k,v] of rows){const tr=t.insertRow();const th=document.createElement('th');th.textContent=k.replaceAll('_',' ');const td=document.createElement('td');td.textContent=typeof v==='object'?JSON.stringify(v):String(v??'—');tr.append(th,td);t.append(tr)}parent.append(t)};document.title=(d.project.name||'Conditions climate report');document.querySelector('#report-title').textContent=d.project.name||'Conditions climate report';document.querySelector('#generated').textContent='Generated '+d.generatedAt+' · '+(d.project.location||'');table(document.querySelector('#project'),Object.entries(d.project.details||{}));const drawMap=(parentId,map,label)=>{const parent=document.querySelector(parentId);if(map?.status==='embedded'){const i=document.createElement('img');i.src=map.dataUrl;i.alt=label;parent.append(i);return true}return false};const m=document.querySelector('#map');if(!drawMap('#map',d.map,'Current captured application map')){const p=document.createElement('p');p.className='muted';p.textContent=d.map.reason||'No map image was captured.';m.append(p)}if(drawMap('#before-map',d.before?.map,'Scene view captured with Before settings'))document.querySelector('#before-map-card').hidden=false;if(drawMap('#after-map',d.after?.map,'Scene view captured with After settings'))document.querySelector('#after-map-card').hidden=false;table(document.querySelector('#scenario'),[['Current analysis settings',d.settings]]);if(d.before||d.after){const b=document.createElement('details');b.innerHTML='<summary>Saved before and after settings</summary>';pre(b,{before:d.before&&{createdAt:d.before.createdAt,settings:d.before.settings,resultReferences:d.before.resultReferences},after:d.after&&{createdAt:d.after.createdAt,settings:d.after.settings,resultReferences:d.after.resultReferences}});document.querySelector('#scenario').append(b)}const r=document.querySelector('#results');for(const [tool,item] of Object.entries(d.results)){const a=document.createElement('article');const h=document.createElement('h3');h.textContent=tool;r.append(a);a.append(h);table(a,Object.entries(item.summary));const details=document.createElement('details');details.innerHTML='<summary>Result reference, run settings and embedded result data</summary>';pre(details,{resultReference:item.reference,settings:item.settings,resultData:item.result_data});a.append(details)}if(!Object.keys(d.results).length)r.textContent='No completed analyses were recorded in this browser session.';const c=document.querySelector('#comparisons');if(d.kpiComparisons?.length)table(c,d.kpiComparisons.map(x=>[x.tool+' · '+x.metric, x.before+' '+x.unit+' → '+x.after+' '+x.unit+' (change '+x.change+' '+x.unit+')']));else c.textContent='Save Before and After with comparable completed results to create KPI comparisons.';pre(document.querySelector('#provenance'),{application:d.application,sceneManifest:d.provenance.sceneManifest});pre(document.querySelector('#limitations'),d.evidence);const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});document.querySelector('#json-download').href=URL.createObjectURL(blob)})();</script></html>`;
-  }
-  actions.append(button('Export climate report', () => {
-    if (reportMetadata.periodStart && reportMetadata.periodEnd && reportMetadata.periodEnd < reportMetadata.periodStart) {
-      notify('The report period end date must be on or after its start date.');
-      reportDetails.open = true;
+  async function generateAreaReport() {
+    if (!areaSelection) {
+      notify('Draw a square on the map before generating the report.');
       return;
     }
-    const report = {
-      schema: 'conditions-climate-report/1', generatedAt: new Date().toISOString(),
-      project: {
-        name: reportMetadata.projectName.trim() || 'Conditions · Cape Town CBD',
-        location: reportMetadata.location.trim() || 'Cape Town, South Africa',
-        details: {
-          client: reportMetadata.client.trim() || null,
-          project_reference: reportMetadata.projectReference.trim() || null,
-          prepared_by: reportMetadata.preparedBy.trim() || null,
-          reporting_period_start: reportMetadata.periodStart || null,
-          reporting_period_end: reportMetadata.periodEnd || null,
-          notes: reportMetadata.notes.trim() || null,
-          analysis_bounds_local_metres: manifest?.bounds || null,
-        },
-      },
-      application: {
-        origin: location.origin,
-        clientEntry: document.querySelector('script[src*="/app.js"]')?.src || null,
-        serverHealthUrl: `${location.origin}/api/health`,
-        serverHealth: reportHealthSnapshot(),
-      },
-      settings: capture(), before, after,
-      provenance: { sceneManifest: manifestIdentity(), resultReferences: reportEvidence() },
-      results: reportEvidence(), kpiComparisons: reportKpiComparisons(), evidence: EVIDENCE, map: captureMapImage(),
-      limitations: 'Values are model outputs with the status shown above. Wind and thermal fields have not been validated against held-out local CBD observations. See the linked validation methods for required evidence.',
+    const bounds = {
+      min_x: areaSelection.min_x, min_z: areaSelection.min_z,
+      max_x: areaSelection.max_x, max_z: areaSelection.max_z,
+      size_m: areaSelection.size_m, center: areaSelection.center,
     };
-    const json = JSON.stringify(report, null, 2);
-    downloadBlob('conditions-climate-report.json', json, 'application/json');
-    downloadBlob('conditions-climate-report.html', reportHtml(report), 'text/html');
-    notify('Climate report exported as HTML and JSON. The HTML is printable; references state whether each result can still be replayed.');
-  }));
-  actions.append(button('Reset view & controls', () => {
-    const url = new URL(location.href); url.search = ''; url.hash = ''; location.assign(url.href);
-  }));
-
-  const guide = el('section', undefined, 'explorer-guide'); guide.setAttribute('aria-label', 'Getting started');
-  const guideTitle = el('h2'), guideText = el('p'), guideActions = el('div', undefined, 'experience-actions');
-  function renderGuide() { guideTitle.textContent = `${guideIndex + 1}/4 · ${GUIDE[guideIndex][0]}`; guideText.textContent = GUIDE[guideIndex][1]; }
-  const dismiss = () => { guide.hidden = true; try { localStorage.setItem('climate-guide-v1', 'dismissed'); } catch { /* private browsing */ } };
-  guideActions.append(button('Next step', () => { if (guideIndex === 3) dismiss(); else { guideIndex++; renderGuide(); } }), button('Dismiss guide', dismiss));
-  guide.append(guideTitle, guideText, guideActions); root.prepend(guide); renderGuide();
-  try { guide.hidden = localStorage.getItem('climate-guide-v1') === 'dismissed'; } catch { /* no persistent preference */ }
-  actions.append(button('Getting started', () => { guideIndex = 0; renderGuide(); guide.hidden = false; root.scrollTop = 0; guideTitle.tabIndex = -1; guideTitle.focus(); }));
+    const requestId = globalThis.crypto?.randomUUID?.() || `report-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const progressListener = event => {
+      if (event.detail?.requestId === requestId && event.detail.message) notify(event.detail.message);
+    };
+    selectAreaButton.disabled = true;
+    generateReportButton.disabled = true;
+    addEventListener('climate-report-area-progress', progressListener);
+    notify('Starting heat, sunlight, viewshed and wind comfort analysis inside the selected square…');
+    try {
+      const [heatResult, sunResult, localResult] = await Promise.allSettled([
+        requestAreaZoneAnalysis('heat', bounds, requestId),
+        requestAreaZoneAnalysis('sun', bounds, requestId),
+        requestRendererAreaAnalysis(bounds, requestId, progressListener),
+      ]);
+      const local = settleAreaResult(localResult, 'map-based');
+      const areaResults = {
+        heat: settleAreaResult(heatResult, 'heat'),
+        sun: settleAreaResult(sunResult, 'sunlight'),
+        viewshed: local.viewshed || { status: 'unavailable', message: 'Viewshed did not return an area result.' },
+        wind: local.wind || { status: 'unavailable', message: 'Wind did not return an area result.' },
+      };
+      if (areaResults.wind.status === 'ready') {
+        const wind = areaResults.wind;
+        wind.chart = areaDistribution(
+          (wind.speed_values_mps || []).map(value => ({ value: value * 3.6, area_m2: 1 })),
+          'Typical pedestrian wind speed inside the selected square', 'km/h', false,
+        );
+        wind.summary = {
+          description: wind.description,
+          kpis: wind.kpis,
+          scenario: { season: wind.season, height_m: wind.height_m, comfort_standard: wind.comfort_standard, direction_count: wind.direction_count },
+          validation_status: wind.validation_status,
+        };
+        delete wind.speed_values_mps;
+      }
+      if (areaResults.viewshed.status === 'ready') {
+        const viewshed = areaResults.viewshed;
+        viewshed.chart = {
+          type: 'share', title: 'Visible and screened ground in the selected area',
+          segments: [
+            { label: 'Visible', value: viewshed.kpis.visible_ground_pct, color: '#23875e' },
+            { label: 'Screened', value: viewshed.kpis.hidden_ground_pct, color: '#cb6658' },
+          ],
+        };
+        viewshed.summary = {
+          description: viewshed.description,
+          kpis: viewshed.kpis,
+          scenario: { observer: viewshed.observer_label, shape: 'Full 360° view' },
+        };
+      }
+      const report = {
+        schema: 'conditions-climate-report/1', generatedAt: new Date().toISOString(),
+        application: { origin: location.origin },
+        project: { name: 'Climate area report', location: 'Cape Town CBD, South Africa' },
+        studyArea: {
+          bounds: { min_x: bounds.min_x, min_z: bounds.min_z, max_x: bounds.max_x, max_z: bounds.max_z },
+          size_m: bounds.size_m, area_m2: bounds.size_m * bounds.size_m,
+        },
+        areaAnalysis: {
+          size_m: bounds.size_m,
+          area_m2: bounds.size_m * bounds.size_m,
+          results: areaResults,
+        },
+        results: reportEvidence(), evidence: EVIDENCE, map: captureMapImage(),
+        limitations: 'The maps and charts summarize data sampled or clipped inside the selected square. Heat is mapped surface temperature, not air temperature. Wind comfort is an exploratory screen using seasonal patterns and mapped terrain and buildings; it is not measured or certified street-level evidence. Viewshed visibility is measured from an open point near the square centre. Read each topic’s method and limits before using the results.',
+      };
+      downloadBlob('conditions-climate-report.html', buildClimateReportHtml(report), 'text/html');
+      const unavailable = Object.entries(areaResults).filter(([, result]) => result.status !== 'ready').map(([tool]) => tool);
+      const directionalWindFallback = areaResults.wind.status === 'ready' && areaResults.wind.result_source === 'single-direction-fallback';
+      notify(unavailable.length
+        ? `HTML report generated. Some area analyses were unavailable: ${unavailable.join(', ')}.`
+        : directionalWindFallback
+          ? 'HTML report generated. The full wind comfort study could not finish, so the wind map uses one solved direction.'
+          : 'HTML report generated with fresh charts and findings for the selected square.');
+    } catch (error) {
+      notify(`Could not generate the area report (${error.message || 'analysis failed'}).`);
+    } finally {
+      removeEventListener('climate-report-area-progress', progressListener);
+      selectAreaButton.disabled = false;
+      generateReportButton.disabled = false;
+    }
+  }
+  generateReportButton.addEventListener('click', generateAreaReport);
 
   const hints = {
     'wind-cfd-ground-height': 'Sampling height above local terrain; this does not change the solved CFD mesh.',
@@ -668,19 +618,35 @@ export function setupExplorerExperience() {
     if (tool) markDirty(tool); refresh();
   });
   addEventListener('climate-menu-change', refresh);
-  addEventListener('climate-manifest', event => { manifest = event.detail; });
   addEventListener('climate-scene-state', event => { camera = event.detail.camera; });
   addEventListener('climate-streetview-point', event => {
     const location = validateScenario({ version: 1, tool: activeTool(), location: event.detail }, {}).location;
-    if (location) { picked = location; refresh(); notify('Mapped location selected. Choose sun or wind to use this analysis centre.'); }
+    if (location) { picked = location; refresh(); notify('Mapped location selected for the report.'); }
   });
-  addEventListener('climate-local-note-point', event => {
-    const x = Number(event.detail?.x), z = Number(event.detail?.z);
-    if (!Number.isFinite(x) || !Number.isFinite(z)) return;
-    pendingNoteLocation = { x, z };
-    notesForm.hidden = false;
-    noteInput.focus();
-    notify(`Location selected (${x.toFixed(0)} m east, ${z.toFixed(0)} m viewer z). Add a short local note.`);
+  addEventListener('climate-report-area-selected', event => {
+    const bounds = event.detail || {};
+    const width = Number(bounds.max_x) - Number(bounds.min_x);
+    const depth = Number(bounds.max_z) - Number(bounds.min_z);
+    if (![bounds.min_x, bounds.min_z, bounds.max_x, bounds.max_z].every(value => Number.isFinite(Number(value)))
+      || width < 99 || depth < 99 || Math.abs(width - depth) > 1) {
+      notify('That square could not be read. Draw it again on mapped ground.');
+      return;
+    }
+    areaSelection = {
+      min_x: Number(bounds.min_x), min_z: Number(bounds.min_z),
+      max_x: Number(bounds.max_x), max_z: Number(bounds.max_z),
+      size_m: (width + depth) / 2,
+      center: bounds.center && Number.isFinite(bounds.center.x) && Number.isFinite(bounds.center.z)
+        ? { x: Number(bounds.center.x), z: Number(bounds.center.z) }
+        : { x: (Number(bounds.min_x) + Number(bounds.max_x)) / 2, z: (Number(bounds.min_z) + Number(bounds.max_z)) / 2 },
+    };
+    refresh();
+    notify(`Square selected · ${Math.round(areaSelection.size_m)} m on each side. The map is centred on the area.`);
+  });
+  addEventListener('climate-report-area-pick-cancelled', event => {
+    if (event.detail?.reason === 'drag-too-short') notify('Drag across the map to draw a square at least 100 m wide.');
+    else if (event.detail?.reason === 'escape') notify('Area selection cancelled.');
+    else if (event.detail?.reason === 'pointer-cancelled') notify('Area selection interrupted. Draw the square again.');
   });
   addEventListener('climate-request-status', event => {
     const d = event.detail;
@@ -706,11 +672,52 @@ export function setupExplorerExperience() {
   addEventListener('climate-wind-result', event => {
     const field = event.detail;
     if (!field) return;
-    record('wind', { receivedAt: new Date().toISOString(), label: 'Wind result ready', model: field.model_kind, validation: field.validation_status, coverage: field.coverage_fraction ?? field.coverage, version: field.version });
+    const speeds = (field.speed || []).filter((speed, index) => {
+      const valid = !field.valid || Boolean(field.valid[index]);
+      return valid && Number.isFinite(Number(speed)) && Number(speed) >= 0;
+    }).map(Number);
+    const sortedSpeeds = [...speeds].sort((a, b) => a - b);
+    const meanSpeed = speeds.length ? speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length : null;
+    const categoryShares = {};
+    if (field.comfort_category && field.comfort_categories?.length) {
+      const counts = new Map();
+      for (let index = 0; index < field.comfort_category.length; index += 1) {
+        if (field.valid && !field.valid[index]) continue;
+        const code = Number(field.comfort_category[index]);
+        counts.set(code, (counts.get(code) || 0) + 1);
+      }
+      const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+      for (const category of field.comfort_categories) {
+        const name = category.label || `Class ${category.code}`;
+        categoryShares[name] = total ? (counts.get(Number(category.code)) || 0) / total * 100 : 0;
+      }
+    }
+    const comfortMode = field.analysis_mode === 'comfort';
+    const direction = Number.isFinite(Number(field.direction_deg)) ? `${Math.round(Number(field.direction_deg))}°` : '';
+    const coverage = Number(field.coverage_fraction ?? field.coverage);
+    const description = comfortMode
+      ? `${field.comfort_standard || 'Wind comfort screen'} · ${field.season || 'selected season'}; ${(Number.isFinite(coverage) ? coverage * 100 : 0).toFixed(1)}% of seasonal wind hours are represented by solved directions.`
+      : `Steady pedestrian wind from ${direction || 'the selected direction'} · ${meanSpeed === null ? 'mean speed not available' : `${meanSpeed.toFixed(1)} m/s average`} at ${Number(field.height_m || 1.5).toFixed(1)} m above ground.`;
+    record('wind', {
+      receivedAt: new Date().toISOString(), label: 'Wind result ready', description,
+      analysis_mode: field.analysis_mode || 'direction', comfort_standard: field.comfort_standard,
+      model_kind: field.model_kind, validation_status: field.validation_status || field.validation,
+      coverage_fraction: Number.isFinite(coverage) ? coverage : null,
+      forcing_coverage: field.forcing_coverage || null,
+      version: field.version, direction_deg: field.direction_deg, height_m: field.height_m,
+      season: field.season, stability: field.stability, direction_count: field.direction_count,
+      kpis: {
+        mean_speed_mps: meanSpeed,
+        p95_speed_mps: sortedSpeeds.length ? sortedSpeeds[Math.floor((sortedSpeeds.length - 1) * 0.95)] : null,
+        maximum_speed_mps: sortedSpeeds.length ? sortedSpeeds.at(-1) : null,
+        valid_cell_count: speeds.length,
+        grid_coverage_pct: field.valid?.length ? speeds.length / field.valid.length * 100 : null,
+        comfort_class_share_pct: Object.keys(categoryShares).length ? categoryShares : null,
+      },
+    });
   });
   addEventListener('climate-viewer-ready', () => {
     ready = true;
-    dispatchEvent(new CustomEvent('climate-local-notes', { detail: notes }));
     const restored = readScenarioURL(location.search, rulesFromDOM());
     if (restored) { apply(restored); notify('Shared settings restored. Run analyses as needed. Data versions may differ from the sender’s; drawn closures are not included.'); }
     else if (new URLSearchParams(location.search).has('scenario')) notify('Invalid or unsupported scenario link ignored.');
@@ -719,8 +726,6 @@ export function setupExplorerExperience() {
   addEventListener('keydown', event => {
     if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
     dispatchEvent(new CustomEvent('climate-streetview-mode', { detail: { enabled: false } }));
-    dispatchEvent(new CustomEvent('climate-local-note-pick-mode', { detail: { enabled: false } }));
-    if (pendingNoteLocation) { pendingNoteLocation = null; notesForm.hidden = true; notify('Map note cancelled.'); }
     const close = $('#transport-results-close');
     if (!$('#transport-event-results')?.hidden) { close?.click(); $('#transport-event-analyse')?.focus(); }
   });

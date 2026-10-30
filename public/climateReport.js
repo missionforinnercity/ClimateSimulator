@@ -1,0 +1,243 @@
+const CORE_SECTIONS = [
+  ['heat', 'Heat', 'Mapped surface heat'],
+  ['sun', 'Sunlight', 'Sunlight and shade'],
+  ['viewshed', 'Viewshed', 'Visibility inside the square'],
+  ['wind', 'Wind', 'Wind comfort inside the square'],
+];
+
+const FRIENDLY_LABELS = {
+  description: 'Finding', metric: 'Measure', metric_label: 'Measure', source: 'Source',
+  mean: 'Average', maximum: 'Highest value', mean_direct_sun_hours: 'Average direct sunlight',
+  pairedBeforeMeanSunHours: 'Before · average direct sunlight',
+  pairedAfterMeanSunHours: 'After · average direct sunlight',
+  pairedChangeMeanSunHours: 'Change in average direct sunlight',
+  analysis_width_m: 'Study width', building_cell_count: 'Building surfaces sampled',
+  valid_cell_count: 'Mapped locations included', valid_area_m2: 'Mapped area included', p90: 'Higher-end conditions',
+  hotspot_area_pct: 'Area above the heat screening threshold',
+  utci_area_share_pct: 'Share of mapped area by outdoor comfort category',
+  cold_stress: 'Cool conditions', no_thermal_stress: 'No thermal stress', heat_stress: 'Heat stress',
+  visible_ground_pct: 'Ground visible from this point', visible_samples: 'Visible ground samples',
+  sampled_ground_count: 'Ground samples checked', radius_m: 'Viewing distance', eye_height_m: 'Observer height',
+  mean_speed_mps: 'Average wind speed', p95_speed_mps: 'Higher-end wind speed', maximum_speed_mps: 'Highest wind speed',
+  comfort_class_share_pct: 'Area by wind comfort category', building_domain_coverage_pct: 'Mapped building coverage',
+  coverage_pct: 'Mapped grid coverage', grid_coverage_pct: 'Mapped grid coverage', coverage_fraction: 'Seasonal wind hours represented', direction_count: 'Wind directions included',
+  forcing_coverage: 'Wind data coverage', comfort_standard: 'Comfort guide used', analysis_mode: 'Wind assessment',
+  validation_status: 'Evidence status', validation: 'Evidence status', season: 'Season represented',
+  direction: 'Wind direction', direction_deg: 'Wind direction', wind_sector: 'Wind direction sector',
+  heading_deg: 'View direction', spread_deg: 'View width', shape: 'View shape', observer: 'Observer position',
+  surface: 'Observer position on', period_label: 'Period represented', model_kind: 'Wind model', height_m: 'Sampling height',
+  date: 'Date studied', valid_at: 'Conditions time', aggregate: 'Period represented', month: 'Month',
+  local_hour: 'Local time', window: 'Study period', scenario: 'Study settings',
+  start_minutes: 'Study starts', end_minutes: 'Study ends',
+  rmse: 'Typical difference from measurements', mae: 'Average absolute difference from measurements', bias: 'Average model difference',
+  count: 'Number of observations', n: 'Number of observations',
+  summary: 'Summary', caveat: 'Interpretation note', weather_warnings: 'Weather data notes',
+  arrivals: 'Arrivals', returns: 'Returns', percentage: 'Share', count: 'Count',
+  average_surface_temperature_c: 'Average surface temperature', highest_surface_temperature_c: 'Highest surface temperature',
+  mapped_area_m2: 'Mapped area', mapped_zone_count: 'Mapped locations', area_above_hotspot_threshold_pct: 'Area in the warmest local range',
+  average_direct_sun_hours: 'Average direct sunlight', highest_direct_sun_hours: 'Highest direct sunlight',
+  sampled_cell_count: 'Wind locations sampled', total_cell_count: 'Wind locations in square', grid_coverage_pct: 'Wind data coverage',
+  viewing_distance_m: 'Viewing distance', observer_height_m: 'Observer height', hidden_ground_pct: 'Ground screened from view',
+  sampling_height_m: 'Sampling height', direction_deg: 'Wind direction',
+  building_appearance: 'Building display', heat_metric: 'Heat measure', heat_period: 'Heat period',
+  heat_climate_month: 'Month represented', heat_climate_hour: 'Local hour represented', heat_date: 'Heat study date',
+  heat_time: 'Heat study time', heat_forecast_time: 'Forecast time', walking_date: 'Route study date',
+  walking_time: 'Route study time', sun_date: 'Sunlight study date', sun_time: 'Sunlight study time',
+  sun_analysis_surfaces: 'Surfaces included', sun_start_time: 'Study window starts', sun_end_time: 'Study window ends',
+  sun_step_time: 'Sampling interval', sun_surface_resolution: 'Map detail level', sun_domain_size: 'Study area width',
+  wind_direction: 'Wind direction', wind_forcing_mode: 'Wind data source', wind_speed: 'Wind speed',
+  wind_cfd_field: 'Wind display', wind_cfd_ground_height: 'Sampling height', wind_slice_plane: 'Cross-section orientation',
+  wind_slice_position: 'Cross-section position', wind_slice_width: 'Cross-section width', wind_slice_height: 'Cross-section height',
+  wind_slice_center_x: 'Cross-section east position', wind_slice_center_y: 'Cross-section north position',
+  wind_size: 'Wind study area width', wind_flow_box_height: 'Wind volume height', wind_season: 'Season represented',
+  wind_stability: 'Atmospheric stability assumption', wind_comfort_criterion: 'Wind comfort guide',
+  traffic_scenario: 'Traffic scenario', traffic_demand: 'Traffic demand assumption', traffic_seed_count: 'Simulation repeats',
+  traffic_control_model: 'Traffic signal assumption', traffic_duration: 'Traffic study period',
+  transport_event_date: 'Event date', transport_event_start: 'Event starts', transport_event_end: 'Event ends',
+  transport_event_attendance: 'Expected attendance', transport_event_walk: 'Walking distance considered',
+  transport_event_buffer: 'Nearby service window', transport_event_dispersal: 'Dispersal period',
+  transport_event_share: 'Expected public transport share',
+};
+
+function labelFor(key) {
+  if (FRIENDLY_LABELS[key]) return FRIENDLY_LABELS[key];
+  return String(key)
+    .replaceAll(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replaceAll(/[_-]+/g, ' ')
+    .replaceAll(/\b(?:pct|percentage)\b/gi, 'share')
+    .replaceAll(/\b(?:mps)\b/gi, 'speed')
+    .replaceAll(/\b(?:utci)\b/gi, 'outdoor comfort')
+    .replaceAll(/\b(?:tmrt)\b/gi, 'radiant temperature')
+    .replaceAll(/\b\w/g, letter => letter.toUpperCase());
+}
+
+function safeInlineJson(value) {
+  return JSON.stringify(value)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026');
+}
+
+export function buildClimateReportHtml(report) {
+  const safeJson = safeInlineJson(report);
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Climate area report</title>
+  <style>
+    :root{font-family:Inter,"Segoe UI",Arial,sans-serif;color:#1b2928;background:#edf0eb;font-synthesis:none;text-rendering:optimizeLegibility;--ink:#1b2928;--muted:#66736f;--line:#d9e0d9;--paper:#fffefa;--green:#225e4c;--soft:#eef4ee;--amber:#f3ead3}
+    *{box-sizing:border-box}body{margin:0;background:#edf0eb;color:var(--ink);font-size:15px;line-height:1.55}.toolbar{position:sticky;top:0;z-index:2;display:flex;justify-content:flex-end;max-width:1120px;margin:0 auto;padding:12px 24px;background:#edf0ebed;backdrop-filter:blur(12px)}button{border:0;border-radius:7px;background:var(--green);color:white;padding:10px 16px;font:inherit;font-weight:700;cursor:pointer}.sheet{max-width:1060px;margin:0 auto 48px;padding:0 24px}.cover{position:relative;overflow:hidden;padding:48px 52px;border-radius:16px;background:linear-gradient(120deg,#173f37,#28644f 65%,#67826a);color:white;box-shadow:0 18px 45px #1b292818}.cover:after{position:absolute;right:-70px;bottom:-175px;width:430px;height:430px;border:1px solid #ffffff3a;border-radius:50%;box-shadow:0 0 0 42px #ffffff0c,0 0 0 86px #ffffff09;content:""}.eyebrow{margin:0 0 18px;color:#d4e9d9;font-size:11px;font-weight:800;letter-spacing:.15em;text-transform:uppercase}.cover h1{position:relative;z-index:1;max-width:740px;margin:0;font-family:Georgia,serif;font-size:clamp(34px,6vw,58px);font-weight:500;letter-spacing:-.035em;line-height:1.06}.cover-subtitle{position:relative;z-index:1;max-width:690px;margin:16px 0 0;color:#e0eee3;font-size:17px}.cover-meta{position:relative;z-index:1;display:flex;flex-wrap:wrap;gap:8px;margin-top:30px}.chip{border:1px solid #ffffff42;border-radius:99px;padding:6px 11px;color:#f0f6ef;font-size:12px;background:#ffffff0d}.section{margin-top:20px;padding:28px 30px;border:1px solid var(--line);border-radius:13px;background:var(--paper);box-shadow:0 5px 18px #1b292808}.section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 18px}.section-heading h2{margin:0;font-family:Georgia,serif;font-size:27px;font-weight:500;letter-spacing:-.02em}.section-heading p{margin:0;color:var(--muted);font-size:12px}.overview{border-left:4px solid #98b29a}.overview p{margin:0;font-size:16px}.project-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.project-item{min-width:0;padding:12px 14px;border-radius:8px;background:#f2f5ef}.project-item span,.project-item strong{display:block;overflow-wrap:anywhere}.project-item span{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em}.project-item strong{margin-top:3px;font-size:14px}.map-frame{overflow:hidden;border:1px solid var(--line);border-radius:9px;background:#f1f3ef}.map-frame img{display:block;width:100%;max-height:520px;object-fit:contain}.map-caption{margin:10px 0 0;color:var(--muted);font-size:12px}.report-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.analysis-card{display:flex;flex-direction:column;min-width:0;padding:22px;border:1px solid var(--line);border-radius:12px;background:var(--paper);box-shadow:0 5px 18px #1b292808}.analysis-card h3{margin:0;font-family:Georgia,serif;font-size:24px;font-weight:500}.analysis-subtitle{margin:3px 0 12px;color:var(--muted);font-size:12px}.badge{align-self:flex-start;border-radius:99px;padding:4px 9px;background:var(--soft);color:#285b48;font-size:11px;font-weight:750}.badge.missing{background:#f1f1ec;color:#68716d}.badge.stale{background:var(--amber);color:#785d20}.finding{margin:14px 0 0;font-size:14px}.facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:16px 0 0}.fact{min-width:0;padding:11px 12px;border-radius:8px;background:#f3f5f1}.fact span,.fact strong{display:block;overflow-wrap:anywhere}.fact span{color:var(--muted);font-size:11px}.fact strong{margin-top:2px;font-size:18px;line-height:1.25}.analysis-card details{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}.analysis-card summary,.methods summary{cursor:pointer;color:var(--green);font-size:12px;font-weight:750}.detail-list{display:grid;grid-template-columns:minmax(120px,.75fr) minmax(0,1.6fr);gap:8px 16px;margin:12px 0 0;font-size:12px}.detail-list dt{color:var(--muted)}.detail-list dd{margin:0;overflow-wrap:anywhere}.method-copy{margin:12px 0 0;color:#4a5955;font-size:12px}.empty-state{padding:18px;border:1px dashed #cbd4cb;border-radius:8px;background:#f6f7f3;color:#62706b}.other-results{display:grid;gap:14px}.other-card{padding:20px;border:1px solid var(--line);border-radius:11px;background:var(--paper)}.other-card h3{margin:0;font-size:18px}.other-card .finding{margin-top:6px}.other-card details{margin-top:12px}.footnote{margin:20px 0 0;padding:18px 20px;border-radius:9px;background:#e7ece6;color:#56645f;font-size:12px}.report-footer{padding:26px 4px 6px;color:var(--muted);font-size:11px;text-align:center}.report-footer strong{color:var(--ink)}
+    .area-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.area-chart-card{min-width:0;padding:18px;border:1px solid var(--line);border-radius:11px;background:#fff}.area-chart-card h3{margin:0;font-size:16px}.area-chart-card p{margin:3px 0 12px;color:var(--muted);font-size:12px}.area-chart-svg{display:block;width:100%;height:auto;overflow:visible}.area-chart-svg text{fill:#586761;font:11px Inter,"Segoe UI",Arial,sans-serif}.area-chart-svg .value-label{fill:#244b3e;font-weight:750}.area-chart-svg .gridline{stroke:#e3e9e3;stroke-width:1}.area-chart-svg .axis-line{stroke:#9aa8a0;stroke-width:1}.area-chart-svg .bar{fill:#458b6d}.area-share-bar{display:flex;width:100%;height:32px;overflow:hidden;margin:22px 0 12px;border-radius:6px;background:#edf1ec}.area-share-segment{height:100%}.area-chart-legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:0;padding:0;list-style:none;color:#52615b;font-size:12px}.area-chart-legend li{display:flex;align-items:center;gap:6px}.area-chart-legend i{width:10px;height:10px;border-radius:3px}.area-analysis-unavailable{padding:14px;border:1px dashed #cbd4cb;border-radius:8px;background:#f6f7f3;color:#62706b}.area-data-details{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}.area-data-details summary{cursor:pointer;color:var(--green);font-size:12px;font-weight:750}.area-data-table-wrap{max-height:340px;overflow:auto;margin-top:9px;border:1px solid var(--line);border-radius:7px}.area-data-table{width:100%;border-collapse:collapse;font-size:11px}.area-data-table th,.area-data-table td{padding:7px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.area-data-table th{position:sticky;top:0;background:#edf2eb}.area-scope-note{margin:10px 0 0;color:var(--muted);font-size:12px}
+    .area-map-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.area-map-card{min-width:0;padding:16px;border:1px solid var(--line);border-radius:11px;background:#fff}.area-map-card h3{margin:0;font-family:Georgia,serif;font-size:21px;font-weight:500}.area-map-card>p{margin:4px 0 12px;color:var(--muted);font-size:12px}.area-map-svg{display:block;width:100%;height:auto;border:1px solid #e3e8e1;border-radius:8px;background:#f5f6f1;print-color-adjust:exact;-webkit-print-color-adjust:exact}.area-map-svg text{font-family:Inter,"Segoe UI",Arial,sans-serif}.area-map-legend{display:flex;flex-wrap:wrap;gap:7px 13px;margin:12px 0 0;padding:0;list-style:none;color:#4d5c56;font-size:11px}.area-map-legend li{display:flex;align-items:center;gap:6px}.area-map-legend i{width:11px;height:11px;border-radius:3px;flex:0 0 auto}.map-street-label{paint-order:stroke;stroke:#fffefa;stroke-width:3px;stroke-linejoin:round;fill:#243a33;font-size:10px;font-weight:750}.map-highlight-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:14px}.map-highlight{padding:12px;border-radius:8px;background:#f2f5f1}.map-highlight h4{margin:0 0 7px;font-size:12px}.map-highlight ol{margin:0;padding-left:20px;color:#47564f;font-size:12px}.map-highlight li+li{margin-top:5px}.map-highlight small{display:block;color:var(--muted);font-size:10px}.hotspot-list{margin:12px 0 0;padding:0;list-style:none}.hotspot-list li{padding:8px 0;border-top:1px solid var(--line);font-size:12px}.hotspot-list b{color:#943f35}.area-map-unavailable{padding:18px;border:1px dashed #cbd4cb;border-radius:8px;background:#f6f7f3;color:#62706b}
+    @media(max-width:700px){.toolbar{padding:10px 14px}.sheet{padding:0 14px}.cover{padding:32px 25px}.section{padding:21px 18px}.project-grid,.report-grid,.area-chart-grid,.area-map-grid{grid-template-columns:1fr}.section-heading{display:block}.section-heading p{margin-top:4px}.detail-list{grid-template-columns:1fr;gap:2px}.detail-list dd{margin-bottom:8px}.map-highlight-grid{grid-template-columns:1fr}}
+    @media print{@page{size:A4;margin:14mm}body{background:white;font-size:11pt}.toolbar{display:none}.sheet{max-width:none;margin:0;padding:0}.cover{padding:28px 32px;box-shadow:none;print-color-adjust:exact;-webkit-print-color-adjust:exact}.section,.analysis-card,.other-card,.area-chart-card,.area-map-card{break-inside:avoid;box-shadow:none}.section{padding:20px}.analysis-card{padding:16px}.report-grid,.area-chart-grid,.area-map-grid{gap:10px}.section-heading h2{font-size:22px}.cover h1{font-size:38px}.analysis-card details[open]{break-inside:avoid}.map-frame img{max-height:360px}.area-data-table-wrap{max-height:none;overflow:visible}.area-data-table th{position:static}.report-footer{break-before:avoid}}
+    .cover{background:linear-gradient(120deg,#1d1d1d,#363636 65%,#565656)}.toolbar button{background:#474747}.overview{border-left-color:#777}
+    @media print{
+      html,body{background:#fff!important;color:#222!important;font-size:10pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .toolbar{display:none!important}.sheet{max-width:none;margin:0;padding:0}
+      .cover{padding:22px 26px;border:1px solid #bdbdbd;border-radius:0;background:#f1f1f1!important;color:#222!important;box-shadow:none;break-inside:avoid}
+      .cover:after{display:none}.cover .eyebrow,.cover .cover-subtitle,.cover .chip{color:#444!important}.cover .chip{border-color:#bbb;background:transparent}
+      .cover h1{color:#222;font-size:34px}.section{margin-top:8mm;padding:8mm;border:1px solid #c8c8c8;border-radius:0;background:#fff;box-shadow:none;break-inside:auto}
+      .section-heading{break-after:avoid}.section-heading h2{font-size:19px}.area-map-grid{grid-template-columns:1fr;gap:7mm}
+      .area-map-card,.area-chart-card,.analysis-card,.other-card{break-inside:avoid;border-color:#c8c8c8;box-shadow:none}
+      .area-map-svg{background:#f5f5f5}.map-highlight{background:#f2f2f2}.map-highlight-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .section,.area-map-card,.area-chart-card,.analysis-card,.other-card{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+      .area-data-table-wrap{max-height:none;overflow:visible}.area-data-table th{position:static;background:#eee}
+      a{color:#222;text-decoration:none}.report-footer{color:#555}
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar"><button id="print-report" type="button">Print or save as PDF</button></div>
+  <main class="sheet">
+    <header class="cover">
+      <p class="eyebrow">Cape Town CBD · Conditions climate explorer</p>
+      <h1 id="report-title">Climate area report</h1>
+      <p class="cover-subtitle" id="report-subtitle"></p>
+      <div class="cover-meta" id="report-meta"></div>
+    </header>
+    <section class="section overview"><div class="section-heading"><h2>At a glance</h2><p>What this report contains</p></div><p id="overview-copy"></p></section>
+    <section class="section"><div class="section-heading"><h2>Selected square</h2><p>Map view centred on the selected area</p></div><div class="map-frame" id="map-frame"></div><p class="map-caption" id="map-caption"></p></section>
+    <section class="section"><div class="section-heading"><h2>Heat and seasonal wind comfort</h2><p>Multi-direction conditions across the selected square</p></div><div class="area-map-grid"><article class="area-map-card"><h3>Surface heat</h3><p>Mapped surface temperature by location</p><div id="heat-area-map"></div><div id="heat-street-findings"></div></article><article class="area-map-card"><h3>Seasonal wind comfort</h3><p>Where outdoor activity is more or less comfortable across solved wind directions</p><div id="wind-area-map"></div><div id="wind-street-findings"></div></article></div></section>
+    <section class="section"><div class="section-heading"><h2>Southeast and northwest wind studies</h2><p>Separate solved cases for Cape Town’s strong seasonal winds</p></div><div class="area-map-grid"><article class="area-map-card"><h3>Southeast wind · 135°</h3><p>Wind entering from the southeast</p><div id="wind-se-area-map"></div><div id="wind-se-street-findings"></div></article><article class="area-map-card"><h3>Northwest wind · 315°</h3><p>Wind entering from the northwest</p><div id="wind-nw-area-map"></div><div id="wind-nw-street-findings"></div></article></div></section>
+    <section class="section"><div class="section-heading"><h2>Charts for this square</h2><p>Every chart uses samples clipped to the selected area</p></div><div class="area-chart-grid" id="area-charts"></div><p class="area-scope-note">Heat and sunlight are weighted by mapped surface area. Wind comfort uses valid open-ground locations. Viewshed uses sampled ground points inside the square.</p></section>
+    <section class="section"><div class="section-heading"><h2>Findings for this square</h2><p>Heat, sunlight, visibility and wind</p></div><div class="report-grid" id="core-results"></div></section>
+    <section class="section methods"><div class="section-heading"><h2>How to interpret the results</h2><p>Evidence and limits</p></div><div id="method-notes"></div></section>
+    <footer class="report-footer"><strong>Conditions · Cape Town CBD</strong><br>Prepared from the results available in this browser session.</footer>
+  </main>
+  <script id="report-data" type="application/json">${safeJson}</script>
+  <script>
+  (()=>{
+    const d=JSON.parse(document.getElementById('report-data').textContent);
+    const $=s=>document.querySelector(s), make=(tag,cls,text)=>{const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n};
+    const fmtDate=value=>{if(!value)return '—';const date=new Date(value);return Number.isNaN(date.getTime())?String(value):new Intl.DateTimeFormat('en-ZA',{timeZone:'Africa/Johannesburg',dateStyle:'medium',timeStyle:value.length>10?'short':undefined}).format(date)};
+    const fmtNumber=(value,key,context)=>{if(value===null||value===undefined||!Number.isFinite(Number(value)))return value==null?'—':String(value);const leaf=key.split('.').at(-1);let n=Number(value);let suffix='';if(/fraction$/i.test(leaf)){n*=100;suffix='%'}else if(/pct|percent|share/i.test(key))suffix='%';else if(/mps|speed/i.test(leaf)&&context==='wind'){n*=3.6;suffix=' km/h'}else if(/sun.?hours|sunhours|meanSunHours|paired.*SunHours/i.test(leaf))suffix=' h';else if(/area.?m2|valid_area_m2/i.test(leaf))suffix=' m²';else if(/(?:^|_)m(?:$|_)/i.test(leaf)||/radius|height|width|spacing/i.test(leaf))suffix=' m';else if(/_deg$/i.test(leaf))suffix='°';else if(/utci|tmrt|temperature|mean$|maximum$/i.test(leaf)&&context==='heat')suffix=' °C';else if(/minutes|duration_min/i.test(leaf))suffix=' min';else if(/hours/i.test(leaf))suffix=' h';const digits=Math.abs(n)>=1000?0:(Number.isInteger(n)?0:1);return new Intl.NumberFormat('en-ZA',{maximumFractionDigits:digits}).format(n)+suffix};
+    const display=(value,key,context)=>{const leaf=key.split('.').at(-1);if(value===null||value===undefined||value==='')return '—';if(typeof value==='boolean')return value?'Yes':'No';if(typeof value==='number')return fmtNumber(value,key,context);if(Array.isArray(value))return value.map(v=>typeof v==='object'?Object.values(v).filter(x=>x!=null).join(' · '):String(v)).join(', ');if(typeof value==='object')return Object.entries(value).map(([k,v])=>label(k)+': '+display(v,k,context)).join(' · ');if(typeof value==='string'){if(['valid_at','receivedAt','run_generated_at'].includes(leaf))return fmtDate(value);if(['start_minutes','end_minutes','minutes'].includes(leaf)){const mins=Number(value);return Number.isFinite(mins)?String(Math.floor(mins/60)).padStart(2,'0')+':'+String(mins%60).padStart(2,'0'):value}if(leaf==='analysis_mode')return value==='comfort'?'Annual wind comfort screen':value==='direction'?'Single wind direction':value.replaceAll('_',' ');if(leaf==='metric')return({utci_c:'Outdoor comfort (UTCI)',tmrt_c:'Mean radiant temperature (Tmrt)',sky_view_factor:'Sky visibility',surface_temp_c:'Surface temperature'}[value]||value.replaceAll('_',' '));const aliases={climatology:'Historical climate profile',forecast:'Near-live estimate',hours:'Sun-hours study',shadows:'Shadow view',steady_openfoam_rans:'Steady wind simulation',utci_c:'Outdoor comfort (UTCI)',tmrt_c:'Mean radiant temperature (Tmrt)',cape_doctor:'Cape Doctor wind'};return aliases[value]||value.replaceAll('_',' ')}return String(value)};
+    const label=key=>{const known=${JSON.stringify(FRIENDLY_LABELS)};if(known[key])return known[key];return String(key).replaceAll(/([a-z0-9])([A-Z])/g,'$1 $2').replaceAll(/[_-]+/g,' ').replaceAll(/\\b\\w/g,c=>c.toUpperCase())};
+    const flatten=(value,prefix,out,context)=>{if(value===null||value===undefined||value==='')return;if(Array.isArray(value)){if(value.length)out.push([prefix,value]);return}if(typeof value==='object'){for(const [key,child] of Object.entries(value)){if(['source_frames','asset_hashes','manifest_sha256','frame_sha256','sha256','provenance','models','solver','result_data','reference','requestId','analysis_id','run_id','frame_id','case_id','job_id','manifest_url','url'].includes(key))continue;flatten(child,prefix?prefix+'.'+key:key,out,context)}return}out.push([prefix,value])};
+    const friendlyKey=path=>{const parts=path.split('.');return parts.map(part=>label(part)).join(' · ')};
+    const makeDetails=(parent,item,tool)=>{
+      const details=make('details','');details.append(make('summary','','Study details and source notes'));
+      const dl=make('dl','detail-list');const rows=[];flatten(item.summary||{},'',rows,tool);
+      for(const [path,value]of rows){if(['description','label','receivedAt','stale','caveat'].includes(path))continue;dl.append(make('dt','',friendlyKey(path)),make('dd','',display(value,path,tool)))}
+      if(item.settings?.controls)for(const [key,value]of Object.entries(item.settings.controls)){if(value===null||value===undefined||value==='')continue;const rowKey='setting_'+key;dl.append(make('dt','',label(key.replaceAll('-','_'))),make('dd','',display(value,rowKey,tool)))}
+      if(item.reference?.retention)dl.append(make('dt','','Result availability'),make('dd','',item.reference.retention));
+      if(dl.childElementCount)details.append(dl);else details.append(make('p','method-copy','No additional scenario details were recorded.'));
+      if(Array.isArray(item.samples)&&item.samples.length){
+        const sampleDetails=make('details','area-data-details');
+        sampleDetails.append(make('summary','',\`All \${item.samples.length.toLocaleString('en-ZA')} mapped surface zones inside this square\`));
+        const wrap=make('div','area-data-table-wrap');const table=make('table','area-data-table');
+        const thead=make('thead',''),headRow=make('tr','');
+        for(const heading of ['Surface','Nearby street','Mapped area','Measure'])headRow.append(make('th','',heading));
+        thead.append(headRow);table.append(thead);const tbody=make('tbody','');
+        const measureKey=tool==='heat'?'average_surface_temperature_c':'average_direct_sun_hours';
+        for(const sample of item.samples){const row=make('tr','');row.append(make('td','',label(sample.surface_type||'ground')),
+          make('td','',sample.nearest_road_name||'—'),make('td','',display(sample.area_m2,'area_m2',tool)),
+          make('td','',display(sample.value,measureKey,tool)));tbody.append(row)}
+        table.append(tbody);wrap.append(table);sampleDetails.append(wrap);details.append(sampleDetails);
+      }
+      parent.append(details);
+    };
+    const factsFor=(tool,summary,item)=>{const facts=[];const k=summary.kpis||{};const take=(key,title,source=k)=>{if(source[key]!==undefined&&source[key]!==null)facts.push([title,display(source[key],key,tool)])};
+      if(tool==='heat'){take('average_surface_temperature_c','Average surface temperature');take('highest_surface_temperature_c','Hottest mapped surface');take('area_above_hotspot_threshold_pct','Area in the warmest local range');}
+      if(tool==='sun'){take('average_direct_sun_hours','Average direct sunlight');take('highest_direct_sun_hours','Most direct sunlight');take('mean_direct_sun_hours','Average direct sunlight');take('meanSunHours','Average direct sunlight',summary);take('pairedChangeMeanSunHours','Change in average sunlight',summary);}
+      if(tool==='viewshed'){take('visible_ground_pct','Ground visible');take('hidden_ground_pct','Ground screened from view');}
+      if(tool==='wind'){take('mean_speed_mps','Typical wind speed');const shares=Object.entries(k.comfort_class_share_pct||{}).sort((a,b)=>Number(b[1])-Number(a[1]));if(shares.length){const top=shares[0],category=(item.comfort_categories||[]).find(entry=>String(entry.key||entry.label||entry.code).toLowerCase().replaceAll(/[^a-z0-9]+/g,'_').replaceAll(/^_|_$/g,'')===top[0]);facts.push(['Most common comfort class',(category?.label||label(top[0]))+' · '+display(top[1],'share_pct','wind')])}}
+      if(!facts.length){const other=Object.entries(k).filter(([,v])=>typeof v==='number'||typeof v==='string').slice(0,3);for(const [key,value]of other)facts.push([label(key),display(value,key,tool)])}
+      return facts.slice(0,4)};
+    const summaryText=item=>{const s=item?.summary||{};if(s.description)return s.description;if(s.summary&&typeof s.summary==='string')return s.summary;if(s.label)return s.label;return 'Analysis result recorded for this topic.'};
+    const makeCard=(key,title,subtitle,item)=>{
+      const card=make('article','analysis-card');card.append(make('h3','',title),make('p','analysis-subtitle',subtitle));
+      if(!item){card.append(make('span','badge missing','Not run'),make('p','empty-state','No result was returned for this topic.'));return card}
+      if(item.status==='unavailable'){card.append(make('span','badge missing','Unavailable'),make('p','empty-state',item.message||'This analysis could not be completed for the selected square.'));return card}
+      const stale=Boolean(item.summary?.stale);card.append(make('span','badge'+(stale?' stale':''),stale?'Older result · settings changed':'Calculated for this square'));
+      card.append(make('p','finding',summaryText(item)));
+      const facts=factsFor(key,item.summary||{},item);
+      if(facts.length){const grid=make('div','facts');for(const [name,value]of facts){const box=make('div','fact');box.append(make('span','',name),make('strong','',value));grid.append(box)}card.append(grid)}
+      if(item.method)card.append(make('p','method-copy',item.method));
+      const evidence=d.evidence?.[key];if(evidence)card.append(make('p','method-copy',evidence.limits));
+      makeDetails(card,item,key);return card;
+    };
+    const svgNode=(tag,attributes={},text)=>{const node=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value]of Object.entries(attributes))node.setAttribute(key,String(value));if(text!==undefined)node.textContent=text;return node};
+    const appendChart=(parent,key,title,item)=>{
+      const card=make('article','area-chart-card');
+      if(!item||item.status!=='ready'||!item.chart){card.append(make('h3','',title),make('p','area-analysis-unavailable',item?.message||'No area chart could be produced for this topic.'));parent.append(card);return}
+      const chart=item.chart;card.append(make('h3','',chart.title||title),make('p','',chart.axis_label||'Selected-area results'));
+      if(chart.type==='share'){
+        const bar=make('div','area-share-bar');bar.setAttribute('role','img');
+        bar.setAttribute('aria-label',chart.segments.map(segment=>segment.label+': '+Number(segment.value).toFixed(1)+'%').join(', '));
+        const legend=make('ul','area-chart-legend');
+        for(const segment of chart.segments){const value=Math.max(0,Math.min(100,Number(segment.value)||0));const block=make('div','area-share-segment');block.style.flexBasis=value+'%';block.style.backgroundColor=segment.color;block.title=segment.label+': '+value.toFixed(1)+'%';bar.append(block);const row=make('li',''),swatch=make('i','');swatch.style.backgroundColor=segment.color;row.append(swatch,document.createTextNode(segment.label+' · '+value.toFixed(1)+'%'));legend.append(row)}
+        card.append(bar,legend);parent.append(card);return;
+      }
+      const bins=chart.bins||[];if(!bins.length){card.append(make('p','area-analysis-unavailable','No sample values were available for this chart.'));parent.append(card);return}
+      const svg=svgNode('svg',{class:'area-chart-svg',viewBox:'0 0 640 250',role:'img','aria-label':chart.title||title});
+      const left=52,top=30,width=560,height=160,bottom=top+height;
+      for(const tick of [0,25,50,75,100]){const y=bottom-height*tick/100;svg.append(svgNode('line',{x1:left,y1:y,x2:left+width,y2:y,class:tick===0?'axis-line':'gridline'}));svg.append(svgNode('text',{x:left-8,y:y+4,'text-anchor':'end'},String(tick)+'%'))}
+      const step=width/bins.length,barWidth=Math.min(72,step*.56);
+      bins.forEach((bin,index)=>{const value=Math.max(0,Math.min(100,Number(bin.share_pct)||0));const barHeight=height*value/100;const x=left+index*step+(step-barWidth)/2;const rect=svgNode('rect',{x,y:bottom-barHeight,width:barWidth,height:barHeight,rx:4,class:'bar'});rect.append(svgNode('title',{},bin.label+': '+value.toFixed(1)+'%'));svg.append(rect);svg.append(svgNode('text',{x:x+barWidth/2,y:Math.max(top-4,bottom-barHeight-7),'text-anchor':'middle',class:'value-label'},value.toFixed(0)+'%'));svg.append(svgNode('text',{x:left+index*step+step/2,y:bottom+20,'text-anchor':'middle'},bin.label))});
+      svg.append(svgNode('text',{x:left+width/2,y:238,'text-anchor':'middle'},chart.unit==='m/s'||chart.unit==='km/h'?'Typical wind speed':chart.unit==='°C'?'Surface temperature':chart.unit==='h'?'Direct sunlight duration':''));
+      card.append(svg);parent.append(card);
+    };
+    const mapExtent=d.studyArea?.bounds||{}, mapMinX=Number(mapExtent.min_x), mapMinZ=Number(mapExtent.min_z), mapMaxX=Number(mapExtent.max_x), mapMaxZ=Number(mapExtent.max_z);
+    const mapPlot={x:88,y:28,width:424,height:424};
+    const mapPoint=(x,z)=>({x:mapPlot.x+(Number(x)-mapMinX)/(mapMaxX-mapMinX)*mapPlot.width,y:mapPlot.y+(mapMaxZ-Number(z))/(mapMaxZ-mapMinZ)*mapPlot.height});
+    const heatColor=(value,min,max)=>{const t=max===min?0.5:Math.max(0,Math.min(1,(value-min)/(max-min)));const low=[255,239,183],mid=[232,124,70],high=[163,43,51];const a=t<.55?low:mid,b=t<.55?mid:high,f=t<.55?t/.55:(t-.55)/.45;return 'rgb('+a.map((part,index)=>Math.round(part+(b[index]-part)*f)).join(',')+')'};
+    const geoParts=geometry=>{if(!geometry)return[];if(geometry.type==='Polygon')return[geometry.coordinates||[]];if(geometry.type==='MultiPolygon')return geometry.coordinates||[];return[]};
+    const geometryPath=(geometry)=>geoParts(geometry).map(polygon=>polygon.map(ring=>ring.map((coordinate,index)=>{const point=mapPoint(coordinate[0],coordinate[1]);return(index?'L':'M')+point.x.toFixed(1)+' '+point.y.toFixed(1)}).join(' ')+' Z').join(' ')).join(' ');
+    const geometryCenter=(geometry)=>{const points=[];const visit=value=>{if(!Array.isArray(value))return;if(typeof value[0]==='number'&&typeof value[1]==='number'){points.push(value);return}for(const child of value)visit(child)};visit(geometry?.coordinates||[]);if(!points.length)return null;return{x:points.reduce((sum,p)=>sum+p[0],0)/points.length,z:points.reduce((sum,p)=>sum+p[1],0)/points.length}};
+    const appendRoadContext=(svg,windItem)=>{const paths=windItem?.street_paths||[],byName=new Map();for(const road of paths){const points=road.points||[];if(points.length<2)continue;const first=mapPoint(points[0][0],points[0][1]),last=mapPoint(points[1][0],points[1][1]);const path=svgNode('path',{d:'M'+first.x.toFixed(1)+' '+first.y.toFixed(1)+' L'+last.x.toFixed(1)+' '+last.y.toFixed(1),fill:'none',stroke:'#ffffff', 'stroke-width':3,'stroke-linecap':'round',opacity:.8});svg.append(path);svg.append(svgNode('path',{d:'M'+first.x.toFixed(1)+' '+first.y.toFixed(1)+' L'+last.x.toFixed(1)+' '+last.y.toFixed(1),fill:'none',stroke:'#34453f','stroke-width':1.1,'stroke-linecap':'round',opacity:.78}));const length=Number(road.length_m)||0;if(!byName.has(road.name)||length>byName.get(road.name).length)byName.set(road.name,{length,x:(first.x+last.x)/2,y:(first.y+last.y)/2})}for(const [name,position]of [...byName.entries()].sort((a,b)=>b[1].length-a[1].length).slice(0,7)){svg.append(svgNode('text',{x:position.x,y:position.y,class:'map-street-label','text-anchor':'middle'},name))}};
+    const appendNorthArrow=svg=>{svg.append(svgNode('path',{d:'M584 73 L584 39 M576 49 L584 39 L592 49',fill:'none',stroke:'#34453f','stroke-width':2,'stroke-linecap':'round','stroke-linejoin':'round'}));svg.append(svgNode('text',{x:584,y:29,'text-anchor':'middle',fill:'#34453f','font-size':11,'font-weight':800},'N'))};
+    const makeMapSvg=()=>{const svg=svgNode('svg',{class:'area-map-svg',viewBox:'0 0 640 480',role:'img'});svg.append(svgNode('rect',{x:0,y:0,width:640,height:480,fill:'#f2f2f2'}));svg.append(svgNode('rect',{x:mapPlot.x,y:mapPlot.y,width:mapPlot.width,height:mapPlot.height,fill:'#e9e9e9',stroke:'#777','stroke-width':1.4}));return svg};
+    const appendMapLegend=(parent,items)=>{const list=make('ul','area-map-legend');for(const item of items){const row=make('li',''),swatch=make('i','');swatch.style.background=item.color;row.append(swatch,document.createTextNode(item.label));list.append(row)}parent.append(list)};
+    const appendHighlightList=(parent,title,items,format)=>{const box=make('section','map-highlight');box.append(make('h4','',title));if(!items.length){box.append(make('small','','No named mapped streets were available inside this square.'));parent.append(box);return}const list=make('ol','');for(const item of items){const row=make('li','');row.append(document.createTextNode(format(item)));list.append(row)}box.append(list);parent.append(box)};
+    const renderHeatMap=(item,windItem)=>{const parent=$('#heat-area-map'),findings=$('#heat-street-findings');parent.replaceChildren();findings.replaceChildren();if(!item||item.status!=='ready'){parent.append(make('div','area-map-unavailable',item?.message||'A heat map could not be produced for this square.'));return}const samples=(item.samples||[]).filter(sample=>sample.geometry);if(!samples.length){parent.append(make('div','area-map-unavailable','The heat results do not include map geometry for this square.'));return}const svg=makeMapSvg(),values=samples.map(sample=>Number(sample.value)).filter(Number.isFinite),minimum=Math.min(...values),maximum=Math.max(...values);for(const sample of samples){const path=svgNode('path',{d:geometryPath(sample.geometry),fill:heatColor(Number(sample.value),minimum,maximum),stroke:'#fffefa','stroke-width':.55,'fill-rule':'evenodd',opacity:.94});path.append(svgNode('title',{},(sample.nearest_road_name||'Mapped surface')+' · '+Number(sample.value).toFixed(1)+' °C surface temperature'));svg.append(path)}appendRoadContext(svg,windItem);const hotspots=[],seen=new Set();for(const sample of [...samples].sort((a,b)=>Number(b.value)-Number(a.value))){const name=String(sample.nearest_road_name||sample.surface_type||'Mapped surface').trim();if(seen.has(name))continue;const center=geometryCenter(sample.geometry);if(!center)continue;seen.add(name);hotspots.push({sample,name,center});if(hotspots.length===3)break}hotspots.forEach((hotspot,index)=>{const point=mapPoint(hotspot.center.x,hotspot.center.z);const marker=svgNode('circle',{cx:point.x,cy:point.y,r:10,fill:'#fffefa',stroke:'#a52f38','stroke-width':3});marker.append(svgNode('title',{},'Warm spot '+(index+1)+': '+hotspot.name+' · '+Number(hotspot.sample.value).toFixed(1)+' °C'));svg.append(marker);svg.append(svgNode('text',{x:point.x,y:point.y+3.5,'text-anchor':'middle',fill:'#8c3038','font-size':10,'font-weight':800},String(index+1)))});svg.append(svgNode('rect',{x:mapPlot.x,y:mapPlot.y,width:mapPlot.width,height:mapPlot.height,fill:'none',stroke:'#64716b','stroke-width':1.4}));appendNorthArrow(svg);parent.append(svg);appendMapLegend(parent,[{color:'linear-gradient(90deg,#ffefb7,#e87c46,#a32b33)',label:'Cooler surfaces  →  hotter surfaces'}]);const byStreet=new Map();for(const sample of samples){const name=String(sample.nearest_road_name||'').trim();if(!name)continue;let group=byStreet.get(name);if(!group)byStreet.set(name,group={name,area:0,total:0,maximum:-Infinity});const area=Number(sample.area_m2)||0;group.area+=area;group.total+=Number(sample.value)*area;group.maximum=Math.max(group.maximum,Number(sample.value))}const streets=[...byStreet.values()].filter(group=>group.area>0).map(group=>({...group,average:group.total/group.area}));const warmest=[...streets].sort((a,b)=>b.average-a.average).slice(0,3),coolest=[...streets].sort((a,b)=>a.average-b.average).slice(0,3);const ranks=make('div','map-highlight-grid');appendHighlightList(ranks,'Warmest mapped streets',warmest,street=>street.name+' · '+street.average.toFixed(1)+' °C average surface temperature');appendHighlightList(ranks,'Coolest mapped streets',coolest,street=>street.name+' · '+street.average.toFixed(1)+' °C average surface temperature');findings.append(ranks);const hotspotList=make('ol','hotspot-list');for(const [index,spot]of hotspots.entries()){const row=make('li','');row.append(make('b','',String(index+1)+'. '+spot.name+' — '+Number(spot.sample.value).toFixed(1)+' °C'),document.createTextNode(' · warmest mapped surface sample nearby'));hotspotList.append(row)}if(hotspots.length){findings.append(make('h4','','Warmest mapped spots'),hotspotList)}findings.append(make('p','map-caption','Street names refer to the nearest mapped street. Heat values describe surface temperature, not air temperature.'))};
+    const renderWindMap=(item,mapId='wind-area-map',findingsId='wind-street-findings')=>{const parent=$('#'+mapId),findings=$('#'+findingsId);parent.replaceChildren();findings.replaceChildren();if(!item||item.status!=='ready'){parent.append(make('div','area-map-unavailable',item?.message||'A wind map could not be produced for this square.'));return}const cells=item.cells||[];if(!cells.length){parent.append(make('div','area-map-unavailable','No valid wind cells were available inside this square.'));return}const svg=makeMapSvg(),categories=item.comfort_categories||[],colors=new Map(categories.map(category=>[Number(category.code),category.color||'#767b80'])),scaleX=mapPlot.width/(mapMaxX-mapMinX),scaleY=mapPlot.height/(mapMaxZ-mapMinZ);for(const cell of cells){const size=Number(cell.size_m)||Number(item.grid?.resolution_m)||12,point=mapPoint(cell.x,cell.z+size/2);const rect=svgNode('rect',{x:point.x-size*scaleX/2,y:point.y,width:size*scaleX+0.3,height:size*scaleY+0.3,fill:colors.get(Number(cell.category_code))||'#a9b1aa',stroke:'#fffefa','stroke-width':.4});const category=categories.find(entry=>Number(entry.code)===Number(cell.category_code));rect.append(svgNode('title',{},(category?.label||'Wind comfort')+' · '+(Number(cell.speed_mps)*3.6).toFixed(0)+' km/h modelled wind'));svg.append(rect)}appendRoadContext(svg,item);svg.append(svgNode('rect',{x:mapPlot.x,y:mapPlot.y,width:mapPlot.width,height:mapPlot.height,fill:'none',stroke:'#64716b','stroke-width':1.4}));appendNorthArrow(svg);parent.append(svg);const kpis=item.summary?.kpis||item.kpis||{},shares=kpis.comfort_class_share_pct||{};appendMapLegend(parent,categories.map(category=>{const key=String(category.key||category.label||category.code).toLowerCase().replaceAll(/[^a-z0-9]+/g,'_').replaceAll(/^_|_$/g,'');const share=Number(shares[key]);return{color:category.color||colors.get(Number(category.code)),label:category.label+(Number.isFinite(share)?' · '+share.toFixed(0)+'%':'')}}));const rankings=item.street_rankings||{},rankGrid=make('div','map-highlight-grid');const speedText=street=>(Number(street.mean_speed_mps)*3.6).toFixed(0)+' km/h modelled wind · '+street.dominant_category;appendHighlightList(rankGrid,'Most comfortable streets',rankings.best||[],street=>street.name+' · '+speedText(street));appendHighlightList(rankGrid,'Most exposed streets',rankings.worst||[],street=>street.name+' · '+speedText(street));findings.append(rankGrid,make('p','map-caption',item.method||'Streets are ranked by modelled comfort class and wind speed along mapped road segments inside the square.'))};
+    const prependWindSpeedSummary=(item,findingsId)=>{if(item?.status!=='ready')return;const values=item.kpis||{},facts=[];if(Number.isFinite(Number(values.mean_speed_mps)))facts.push(['Average modelled wind',(Number(values.mean_speed_mps)*3.6).toFixed(1)+' km/h']);if(Number.isFinite(Number(values.p95_speed_mps)))facts.push(['Higher-end wind · 95th percentile',(Number(values.p95_speed_mps)*3.6).toFixed(1)+' km/h']);if(!facts.length)return;const grid=make('div','facts');for(const [label,value]of facts){const card=make('div','fact');card.append(make('span','',label),make('strong','',value));grid.append(card)}const parent=$('#'+findingsId);parent.insertBefore(grid,parent.firstChild)};
+    const areaResults=d.areaAnalysis?.results||{};
+    renderHeatMap(areaResults.heat,areaResults.wind);
+    renderWindMap(areaResults.wind);
+    prependWindSpeedSummary(areaResults.wind,'wind-street-findings');
+    const directionalWind=areaResults.wind?.directional_studies||[];
+    renderWindMap(directionalWind.find(item=>item.key==='se'),'wind-se-area-map','wind-se-street-findings');
+    renderWindMap(directionalWind.find(item=>item.key==='nw'),'wind-nw-area-map','wind-nw-street-findings');
+    prependWindSpeedSummary(directionalWind.find(item=>item.key==='se'),'wind-se-street-findings');
+    prependWindSpeedSummary(directionalWind.find(item=>item.key==='nw'),'wind-nw-street-findings');
+    document.title=(d.project?.name||'Climate area report');$('#report-title').textContent=d.project?.name||'Climate area report';$('#report-subtitle').textContent='A plain-language account of the climate conditions and visibility inside the selected square.';
+    const meta=$('#report-meta');const addChip=(title,value)=>{if(!value)return;const chip=make('span','chip',title+' · '+value);meta.append(chip)};
+    addChip('Study location',d.project?.location);if(d.areaAnalysis?.size_m)addChip('Square',Math.round(d.areaAnalysis.size_m)+' m × '+Math.round(d.areaAnalysis.size_m)+' m');addChip('Report created',fmtDate(d.generatedAt));
+    const readyCount=Object.values(areaResults).filter(item=>item?.status==='ready').length;
+    $('#overview-copy').textContent='This report brings together heat, sunlight, visibility and wind for the selected square. '+readyCount+' of 4 main analyses returned results, with separate southeast and northwest wind screens where solved cases are available. The maps highlight warmer surfaces and wind exposure; nearby streets are ranked to make the findings easier to act on.';
+    const map=$('#map-frame');if(d.map?.status==='embedded'){const img=make('img');img.src=d.map.dataUrl;img.alt='Map view centred on the selected square';map.append(img);$('#map-caption').textContent=d.areaAnalysis?.size_m?'The outlined square is '+Math.round(d.areaAnalysis.size_m)+' metres on each side.':'Map view centred on the study area.'}else{$('#map-caption').textContent=d.map?.reason||'No map image was available when this report was created.';map.append(make('p','empty-state',d.map?.reason||'Map image unavailable.'))}
+    const charts=$('#area-charts');for(const [key,title]of ${JSON.stringify(CORE_SECTIONS.map(([key,title])=>[key,title]))})appendChart(charts,key,title,areaResults[key]);
+    const cards=$('#core-results');for(const [key,title,subtitle]of ${JSON.stringify(CORE_SECTIONS)})cards.append(makeCard(key,title,subtitle,areaResults[key]));
+    const methods=$('#method-notes');for(const key of ['heat','sun','viewshed','wind']){const evidence=d.evidence?.[key];if(!evidence)continue;const areaItem=areaResults[key];const details=make('details','');details.append(make('summary','',({heat:'Heat',sun:'Sunlight',viewshed:'Viewshed',wind:'Wind'}[key])+' · method and limits'));details.append(make('p','method-copy',[areaItem?.method||evidence.method,evidence.limits].filter(Boolean).join(' ')));methods.append(details)}
+    $('#print-report').addEventListener('click',()=>window.print());
+  })();
+  </script>
+</body>
+</html>`;
+}

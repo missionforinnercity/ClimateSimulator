@@ -12,6 +12,7 @@ import argparse
 import base64
 from datetime import datetime, timezone
 import hashlib
+from html.parser import HTMLParser
 import json
 import math
 from pathlib import Path
@@ -28,6 +29,44 @@ MAX_JSON_BYTES = 50 * 1024 * 1024
 
 class VerificationError(ValueError):
     pass
+
+
+class _EmbeddedReportParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.capturing = False
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() == "script" and dict(attrs).get("id") == "report-data":
+            self.capturing = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() == "script" and self.capturing:
+            self.capturing = False
+
+    def handle_data(self, data: str) -> None:
+        if self.capturing:
+            self.parts.append(data)
+
+
+def load_report_file(path: Path) -> dict[str, Any]:
+    """Load either a JSON report or the data embedded in its HTML export."""
+    contents = path.read_text(encoding="utf-8")
+    try:
+        report = json.loads(contents)
+    except json.JSONDecodeError:
+        parser = _EmbeddedReportParser()
+        parser.feed(contents)
+        if not parser.parts:
+            raise VerificationError("file is neither a climate report JSON file nor an HTML report with embedded report data")
+        try:
+            report = json.loads("".join(parser.parts))
+        except json.JSONDecodeError as error:
+            raise VerificationError("embedded HTML report data is not valid JSON") from error
+    if not isinstance(report, dict):
+        raise VerificationError("climate report must contain a JSON object")
+    return report
 
 
 def _origin(value: str) -> tuple[str, str, int | None]:
@@ -387,14 +426,14 @@ def verify(report: dict[str, Any], *, override: str | None = None, timeout: floa
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path, help="conditions-climate-report/1 JSON file")
+    parser.add_argument("report", type=Path, help="conditions-climate-report/1 JSON file or generated HTML report")
     parser.add_argument("--base-url", help="redirect report artifact paths to another deployment origin")
     parser.add_argument("--timeout", type=float, default=20.0)
     args = parser.parse_args()
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8"))
+        report = load_report_file(args.report)
         output = verify(report, override=args.base_url, timeout=args.timeout)
     except (OSError, json.JSONDecodeError, VerificationError, ValueError) as error:
         print(json.dumps({"status": "invalid_report", "detail": str(error)}, indent=2), file=sys.stderr)

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=113">
+    <link rel="stylesheet" href="/style.css?v=116">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -223,6 +223,12 @@
             <a id="streetview-link" class="streetview-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open Street View ↗</a>
           </section>
         </details>
+        <details class="panel-method">
+          <summary>Method &amp; data coverage</summary>
+          <p>The city view combines mapped terrain, buildings, transport links, trees and street assets from the checked-in scene products. Building outlines prefer OpenStreetMap footprints and mapped building parts, with municipal photogrammetry footprints filling gaps; available heights use aligned survey records, LiDAR samples or mapped tags according to coverage.</p>
+          <p>Street fixtures, crossings, parking and public lights follow municipal records where supplied. Some displayed dimensions and pole heights are inferred for visualisation, not surveyed. Weather and traffic context may use external modelled or observed feeds when available; each panel labels its source and freshness.</p>
+          <p>Layer visibility is not a completeness check. An unmapped feature, missing tag or blank area means the selected source has no usable record there; it does not confirm that the real-world feature is absent.</p>
+        </details>
       </section>
       <section id="menu-heat" class="heat-panel menu-section" data-menu-panel="heat" role="tabpanel" aria-label="Heat overlay controls" hidden>
         <div class="heat-heading"><div><strong>Urban heat</strong><small>UTCI &amp; satellite heat</small></div><label class="heat-switch compact-switch"><input id="heat-toggle" type="checkbox"> Show map</label></div>
@@ -386,7 +392,12 @@
           <button id="thermal-validation-attach" class="secondary" type="button">Attach to climate report</button>
           <p id="thermal-validation-import-status" class="method-note" role="status">No thermal observation score attached.</p>
         </details>
-        <details class="compact-about"><summary>About</summary><p>UTCI and Tmrt are experimental model estimates, not observations. Satellite screening layers are separate from UTCI.</p></details>
+        <details class="panel-method">
+          <summary>Method &amp; limitations</summary>
+          <p>Near-live UTCI and mean radiant temperature (Tmrt) combine weather inputs with mapped urban geometry and surface response. They are model estimates for the selected forecast frame, not street measurements. Missing or stale thermal coverage is reported separately from the map and should not be read as comfortable conditions.</p>
+          <p>The historical profile uses ERA5 reanalysis composites for 2016–2025. Weather is averaged by month and South African local hour before the local surface and shade model is run; the result represents a composite climate condition, not a reconstructed day or the average of hourly UTCI observations.</p>
+          <p>Satellite-era surface-temperature layers are a separate screening product from UTCI. Shade-priority and shade-deficit views combine their fixed summer baseline with the selected date and time and mapped building/canopy shadows. They do not estimate a new UTCI value for that date. Results cover valid mapped cells only.</p>
+        </details>
       </section>
       <section id="menu-sun" class="sun-panel menu-section" data-menu-panel="sun" role="tabpanel" aria-label="Sunlight and shadow controls" hidden>
         <div class="sun-heading"><span>Sunlight</span><label class="sun-switch"><input id="sun-toggle" type="checkbox"> Show</label></div>
@@ -502,7 +513,7 @@
         </div>
         <button id="sun-inspect" class="secondary" type="button" hidden>Inspect a surface</button>
         <p id="sun-inspect-result" class="sun-help" role="status" hidden></p>
-        <details id="sun-hours-method" class="sun-advanced"><summary>How to read this · method</summary><p>Sun hours are accumulated direct sun, not total daylight or solar energy. A brighter cell means more sampled time in direct sun within the chosen window. Compare different dates using the same area and time window to explore seasonal change. Results use mapped buildings and canopies; roofs are simplified planes. Clouds, diffuse and reflected light are not included, and rough LiDAR roof detail is not treated as engineering-grade solar geometry.</p></details>
+        <details id="sun-hours-method" class="sun-advanced"><summary>Sun-hours map guide</summary><p>Sun hours are accumulated direct sun, not total daylight or solar energy. A brighter cell means more sampled time in direct sun within the chosen window. Compare different dates using the same area and time window to explore seasonal change. Results use mapped buildings and canopies; roofs are simplified planes. Clouds, diffuse and reflected light are not included, and rough LiDAR roof detail is not treated as engineering-grade solar geometry.</p></details>
         <p class="sun-note">Planning-level comparison · not measured radiation</p>
         <div id="sun-scenario-editor-host" class="scenario-editor-host">
           <details id="scenario-design-editor" class="scenario-workspace scenario-design-editor">
@@ -569,6 +580,12 @@
             <p id="design-export-status" class="design-export-status" role="status"></p>
           </details>
         </div>
+        <details class="panel-method">
+          <summary>Method &amp; limitations</summary>
+          <p>Shadow views calculate the sun position for Cape Town at the chosen local date and time, then project clear-sky direct-light geometry against mapped buildings and tree canopies. The diagram and map show geometric sun and shade; cloud cover, diffuse sky light and reflected light are not part of this calculation.</p>
+          <p>Sun-hours studies sample direct sunlight across the selected time window and add the sunlit time for each selected ground, roof or façade surface. The study area, time step and surface resolution trade detail for calculation time. Use the same area, surfaces and time settings when comparing dates or design options. The result is not total daylight duration or solar-energy yield.</p>
+          <p>Building massing and roof surfaces are simplified from available mapped footprints and height sources; detailed roof obstructions and small structures may be missing. Municipal lamp positions use recorded locations with support heights inferred from type and wattage, not field measurements. Treat comparisons as planning-level geometry, not engineering-grade radiation analysis.</p>
+        </details>
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · FULL CBD</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
@@ -867,7 +884,13 @@
           <div id="wind-validation-result" class="wind-validation-result" hidden></div>
         </details>
 
-        <details class="wind-method"><summary>Method &amp; limitations</summary><p>Direction displays the full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction, including terrain-following pedestrian speed, vertical velocity, pressure and turbulence for mapped buildings. The animated heatmap transports speed colours through the horizontal CFD velocity field, with local turbulence energy setting the variation in the source colours. The colours move and deform as visual tracers; transporting them does not solve changing wind speeds. Switch animation off for the mean-speed map. Inspected values and statistics always show the solved mean wind. Comfort weights solved directions by the ERA5 wind rose and Weibull exceedance; unsolved directions are excluded, not interpolated or treated as calm. Check against measurements can sample the selected CFD volume directly, but only matched sectors and the recorded calibration/holdout locations are scored. Speed scaling uses concurrent upstream wind speed against the case inlet and does not simulate changing stability or transient turbulence. Neither mode has passed domain/mesh sensitivity or local field-validation gates and must not be used for certification.</p></details>
+        <details class="panel-method wind-method">
+          <summary>Method &amp; limitations</summary>
+          <p>Direction view displays the available full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction. Pedestrian speed is sampled from the CFD volume at the selected terrain-following height; vertical velocity, pressure and turbulence are solved around the mapped buildings. A direction is selectable only when its converted case is available.</p>
+          <p>The animated heat map transports speed colours through the horizontal CFD velocity field, with local turbulence energy shaping the colour variation. These moving colours are visual tracers and do not solve changing wind speeds. Turn motion off to read the mean-speed map; inspected values and statistics always use the solved mean field. Comfort combines available solved directions using the ERA5 wind rose and Weibull exceedance. Missing sectors are excluded rather than interpolated or treated as calm.</p>
+          <p>Measurement checks sample the selected CFD volume at supplied observation locations. Only matched sectors and the declared calibration/holdout groups are scored. Inlet scaling uses concurrent upstream wind speed but does not simulate changing atmospheric stability or transient turbulence. The wind cases have not passed domain and mesh sensitivity or local field-validation gates, so these outputs are exploratory and not suitable for certification.</p>
+          <p>Pollutant dispersal combines modelled road NOx and exhaust PMx as a mass-weighted tracer, then estimates near-ground residence through one steady wind field with a random walk using turbulence inferred from k and epsilon. Colours are relative residence within the scenario, not measured concentration or health risk; synthetic traffic demand and isotropic turbulence assumptions limit interpretation.</p>
+        </details>
       </section>
       <section id="menu-viewshed" class="viewshed-panel menu-section" data-menu-panel="viewshed" role="tabpanel" aria-label="3D viewshed controls" hidden>
         <div class="viewshed-heading"><span>3D viewshed</span><span class="viewshed-badge">Line of sight</span></div>
@@ -893,7 +916,11 @@
         <button id="viewshed-clear" class="secondary" type="button">Clear viewshed</button>
         <p id="viewshed-status" class="viewshed-status" role="status" aria-live="polite">Select Pick viewpoint, then click the map.</p>
         <div id="viewshed-scenario-editor-host" class="scenario-editor-host"></div>
-        <details class="viewshed-method"><summary>Method &amp; coverage</summary><p>Visibility follows the mapped terrain triangles and checks sightlines against terrain and each mapped building's base and top height. Green ground is visible; red ground is blocked. White trees provide context but do not block the calculation. View from observer places the camera at the selected eye height; use Heading to turn. Small structures, atmospheric refraction and sub-grid terrain are not modelled.</p></details>
+        <details class="panel-method viewshed-method">
+          <summary>Method &amp; coverage</summary>
+          <p>The observer is placed on the selected terrain, roof or building face at the chosen eye height. For each visible ground sample within the selected radius and viewing shape, the tool tests the sightline against the mapped terrain triangles and mapped building base-to-top massing. Heading and horizontal spread set the cone direction and width; full 360° removes the directional limit.</p>
+          <p>Green ground is visible from the observer and red ground is blocked by terrain or a mapped building. White trees and street details provide scene context but do not block the line-of-sight calculation. Small structures, unmapped objects, sub-grid terrain detail and atmospheric refraction are not represented, so this is a coverage screen rather than a surveyed sightline assessment.</p>
+        </details>
       </section>
       <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
         <div class="transport-heading">
@@ -969,7 +996,13 @@
           </div>
         </details>
 
-        <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a><details class="compact-about"><summary>Data &amp; accuracy</summary><p>Vehicles interpolate along mapped routes using supplied schedule times. Positions are inferred, not live GPS. Event capacity is a planning proxy and should be verified with operators.</p></details></div>
+        <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a></div>
+        <details class="panel-method">
+          <summary>Method &amp; limitations</summary>
+          <p>Bus and rail geometry follows mapped routes, stops, stations and track assets. MyCiTi movement uses supplied weekday timetable endpoints; Metrorail uses the supplied directional schedule CSV where a corridor matches, with a labelled planning cadence on unmatched corridors. The model clock advances through these schedules and vehicles move along their mapped service geometry at assumed speeds of 18 km/h for buses and 40 km/h for rail.</p>
+          <p>Vehicle counts and positions are schedule-derived estimates, not live GPS or confirmed arrivals. Service alerts are linked for reference but are not applied to the simulation. Check the operator before making a trip.</p>
+          <p>The event planner uses the selected venue, walking catchment, arrival buffer, dispersal window, attendance and mode share to compare scheduled movements with a simple capacity allowance of 60 places per bus movement and 800 per train movement. This is planning arithmetic, not vehicle allocation, observed passenger demand or a live capacity check.</p>
+        </details>
       </section>
       <section id="menu-walking" class="walking-panel menu-section" data-menu-panel="walking" role="tabpanel" aria-label="Climate-aware walking routes" hidden>
         <div class="walking-heading"><div><span class="walking-kicker">PEDESTRIAN ROUTING</span><strong>Walk the CBD</strong></div><span class="walking-network-badge">OSM network</span></div>
@@ -990,7 +1023,12 @@
           <button id="walking-traffic-run" class="secondary" type="button" disabled>Run road-emissions context</button>
           <p id="walking-traffic-status" class="walking-status" aria-live="polite">Available after route comparison.</p>
         </details>
-        <details class="walking-method"><summary>Data coverage &amp; assumptions</summary><p>Routes use the checked-in OpenStreetMap pedestrian network and an estimated walking speed of 4.8 km/h. Shade uses mapped building and tree-canopy shadows in five-minute traversal-time bins. UTCI and pedestrian wind use the nearest complete hourly forecast frame within 30 minutes. Missing or stale thermal data does not prevent routing. OSM segments without explicit foot-access tags are retained and marked uncertain. Mapped steps are included; this does not assess wheelchair accessibility.</p></details>
+        <details class="panel-method walking-method">
+          <summary>Method &amp; coverage</summary>
+          <p>Routes use the checked-in OpenStreetMap pedestrian network, with explicitly prohibited ways and motorways filtered. Each endpoint is snapped to its nearest directed walkable segment; picks more than 50 m from the network are rejected. Segments without explicit foot-access, pedestrian-way or sidewalk evidence remain available but are flagged as uncertain, and mapped steps are included.</p>
+          <p>The tool compares separate objectives: fastest estimated walking time, least direct-sun walking time, and lowest cumulative UTCI heat load when thermal coverage is available. Routing uses an estimated 4.8 km/h walking speed. Shade is sampled along each path at its expected traversal time in five-minute bins; UTCI and pedestrian wind use the nearest complete hourly forecast frame within 30 minutes. Missing or stale thermal data removes the heat-ranked alternative but leaves other route options available.</p>
+          <p>Matched route cohorts show 100 synthetic walkers with seeded speeds from 4.0–5.6 km/h, using the same speed for each person across alternatives. They are not a demographic model and do not include crowding or interactions. Street evidence reports mapped crossings, lighting, sidewalk and width tags; missing tags remain unknown. These indicators do not establish safety or wheelchair accessibility.</p>
+        </details>
       </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
         <div class="traffic-heading">
@@ -1091,10 +1129,12 @@
             </div>
           </details>
         </div>
-        <details id="traffic-calibration-details" class="compact-about traffic-calibration-details">
-          <summary>Data coverage &amp; model assumptions <span id="traffic-calibration-badge">Checking…</span></summary>
+        <details id="traffic-calibration-details" class="panel-method traffic-calibration-details">
+          <summary>Method &amp; validation <span id="traffic-calibration-badge">Checking…</span></summary>
           <p id="traffic-calibration-status">Checking available traffic observations…</p>
-          <p>Live speed patterns help identify peak timing; they do not provide vehicle counts. Simulation demand remains synthetic until observed counts are supplied. Use results to screen options, then validate preferred designs with surveyed counts and turning movements.</p>
+          <p>Each comparison runs a baseline SUMO scenario and a paired scenario with the selected mapped lane, street or one-way closure. Both use the same time period, demand assumptions and random seeds so the difference isolates the scenario within the model. The interface reports trip completion, queues, speed and emissions alongside validity checks; incomplete or overloaded runs withhold impact claims.</p>
+          <p>Demand, origin–destination movements, signal behaviour and fleet composition are model assumptions unless explicitly calibrated with observations. TomTom speed samples help identify live street patterns and peak timing, but do not provide vehicle counts. Demand remains synthetic until observed counts are configured. A small or stable modelled change is not evidence of no real-world effect.</p>
+          <p>Use the output to screen options. Validate a preferred design with held-out vehicle counts, turning movements, travel times and queue observations from a different period than the calibration data.</p>
           <a href="/docs#traffic" class="traffic-data-link">Calibration and validation notes <span aria-hidden="true">↗</span></a>
         </details>
       </section>
@@ -1175,6 +1215,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-151"></script>
+    <script type="module" src="/app.js?v=experience-162"></script>
 </body>
 </html>

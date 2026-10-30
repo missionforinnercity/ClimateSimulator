@@ -83,20 +83,15 @@ paired thermal frames with the client report.
 
 Settings links carry an allow-listed `scenario` JSON query value and selected `tool`. Unknown fields, unsupported versions, invalid dates, out-of-range coordinates, disabled select choices and oversized input are ignored. Local x/z coordinates are viewer coordinates, not longitude/latitude.
 
-Before/After snapshots live only in the current browser tab. `Export scenario JSON` preserves settings and evidence metadata. `Export climate report` downloads printable HTML plus a `conditions-climate-report/1` JSON package with current and saved Before/After map images, app health, scene manifest/build-input hashes, result KPI summaries, matching KPI deltas for saved Before/After snapshots, and typed references to retained thermal frames, deployed OpenFOAM volumes, sunlight analysis IDs, traffic jobs and design heat/shade screens. OpenFOAM references include case/time version and field/mask SHA-256 hashes; thermal references include run-manifest and frame SHA-256 hashes, model versions and grid metadata; traffic references include selected edge IDs, request settings, the SUMO network SHA-256 and API field version. Design heat/shade references include proposal geometry/settings and source-asset hashes, area-weighted KPIs and per-zone result values; the verifier checks report consistency, while `scripts/archive_climate_report.py` packages matching local source inputs. This is traceable result data, not replay or scientific validation. The report excludes arbitrary query strings, API keys and raw CFD/traffic arrays. Server-side immutable result storage and replay validation remain future work; settings links use the recipient's current release.
+The report workspace has two actions: **Draw square area** and **Generate HTML report**. Dragging on the map selects a square, outlines it, and zooms and centres the view on it. Report generation runs heat and sunlight zone analysis clipped to the square, then calculates viewshed and samples the solved wind field within the same bounds. `conditions-climate-report.html` includes the captured map, four area-only charts and plain-language findings with method notes. Heat and sunlight include mapped-zone detail; wind and viewshed include area-scoped summaries. Only results generated for the selected square appear in the report. If an area analysis cannot run, its report section explains that instead of substituting an older result.
 
-The Scenario workspace also has optional client-report metadata fields for the
-project name, client, project reference, preparer, location, reporting dates and
-notes. Values persist in browser local storage and are copied into the HTML and
-JSON export; they do not alter model inputs. The report rejects an end date
-earlier than its start date.
+The HTML keeps a `conditions-climate-report/1` data payload inside the document for reference verification and archiving; the workspace downloads only the HTML file. The payload includes typed references to retained thermal frames, deployed OpenFOAM volumes, sunlight analysis IDs, traffic jobs and design heat/shade screens. OpenFOAM references include case/time version and field/mask SHA-256 hashes; thermal references include run-manifest and frame SHA-256 hashes, model versions and grid metadata; traffic references include selected edge IDs and the SUMO network SHA-256. Design heat/shade references include proposal geometry/settings, source-asset hashes, area-weighted KPIs and per-zone result values. `scripts/verify_climate_report.py` and `scripts/archive_climate_report.py` accept this HTML report directly. This is traceable result data, not replay or scientific validation. The report excludes arbitrary query strings, API keys and raw CFD/traffic arrays. Server-side immutable result storage and replay validation remain future work; settings links use the recipient's current release.
 
-The `/api/health` snapshot also records the FastAPI application version and a
+The `/api/health` endpoint records the FastAPI application version and a
 runtime-source fingerprint. Its aggregate SHA-256 and per-file hashes cover the
 server Python modules, browser JavaScript, app shell/style, thermal observation
-scorer and container/dependency lock files. The report can therefore identify
-which code/configuration generated it; these hashes do not package that source
-or guarantee that its environment can still be installed.
+scorer and container/dependency lock files. These hashes identify source when
+queried from the running service; they are not included in the printable report.
 
 ## Browser events
 

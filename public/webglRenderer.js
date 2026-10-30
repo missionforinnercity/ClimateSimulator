@@ -134,6 +134,13 @@ export async function startWebGLScene(canvas, status) {
   ]);
 
   const scene = new THREE.Scene();
+  const reportAreaOutline = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
+    color: 0x83e6bd, transparent: true, opacity: 0.98, depthTest: false, depthWrite: false,
+  }));
+  reportAreaOutline.name = 'report-area-square';
+  reportAreaOutline.renderOrder = 2000;
+  reportAreaOutline.visible = false;
+  scene.add(reportAreaOutline);
   const placeInspectorHighlight = new THREE.Group();
   placeInspectorHighlight.name = 'place-inspector-highlight';
   scene.add(placeInspectorHighlight);
@@ -509,6 +516,9 @@ export async function startWebGLScene(canvas, status) {
   let clickCandidate = null;
   const scenePickHandlers = new Set();
   let placeInspectorPickMode = false;
+  let reportAreaPickMode = false;
+  let reportAreaDrag = null;
+  let reportAreaBounds = null;
   const viewshedState = {
     active: false, pickMode: false, point: null, radius: 500, eyeHeight: 1.7,
     shape: 'cone', heading: 0, spread: 60, verticalFov: 20, group: new THREE.Group(),
@@ -878,7 +888,7 @@ export async function startWebGLScene(canvas, status) {
     requestRender();
   }
 
-  function buildViewshed(x, z, placement = null) {
+  function buildViewshed(x, z, placement = null, reportBounds = null) {
     const radius = viewshedState.radius;
     const eyeHeight = viewshedState.eyeHeight;
     const onBuilding = placement?.kind === 'building';
@@ -963,8 +973,15 @@ export async function startWebGLScene(canvas, status) {
         const visible = !blockedByVerticalOccluder(occludedAngles, targetAngle) && targetAngle >= horizon - 0.001;
         while (nextRing <= radialSegments && d >= ringDistances[nextRing] - 0.001) {
           visibility[angleIndex][nextRing] = visible ? 1 : 2;
-          validSamples += 1;
-          if (visible) visibleSamples += 1;
+          const sampleDistance = ringDistances[nextRing];
+          const sampleX = originX + dx * sampleDistance;
+          const sampleZ = originZ + dz * sampleDistance;
+          const inReportArea = !reportBounds || (sampleX >= reportBounds.min_x && sampleX <= reportBounds.max_x
+            && sampleZ >= reportBounds.min_z && sampleZ <= reportBounds.max_z);
+          if (inReportArea) {
+            validSamples += 1;
+            if (visible) visibleSamples += 1;
+          }
           nextRing += 1;
         }
         horizon = Math.max(horizon, targetAngle);
@@ -1193,6 +1210,32 @@ export async function startWebGLScene(canvas, status) {
       const sourceLabel = wallPlacement ? 'façade / window' : onBuilding ? 'roof' : 'ground';
       viewshedStatus.textContent = `${percent}% of sampled ground visible · ${sourceLabel} · ${shapeSummary} · ${radius} m radius.`;
     }
+    const visibleGroundPercent = validSamples ? visibleSamples / validSamples * 100 : 0;
+    const shapeLabel = isCone ? 'Directional view' : 'Full 360° view';
+    const surfaceLabel = wallPlacement ? 'building face' : onBuilding ? 'roof' : 'ground';
+    dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'viewshed', metadata: {
+      description: reportBounds
+        ? `${visibleGroundPercent.toFixed(1)}% of sampled ground inside the selected square is visible from its centre.`
+        : `${visibleGroundPercent.toFixed(1)}% of mapped ground is visible from this viewpoint within ${radius} m. ${shapeLabel}${isCone ? ` facing ${compassLabel(viewshedState.heading)}` : ''}.`,
+      visible_ground_pct: visibleGroundPercent,
+      visible_samples: visibleSamples,
+      sampled_ground_count: validSamples,
+      radius_m: radius,
+      eye_height_m: eyeHeight,
+      heading_deg: isCone ? viewshedState.heading : null,
+      spread_deg: isCone ? viewshedState.spread : 360,
+      shape: shapeLabel,
+      analysis_scope: reportBounds ? 'selected-square' : 'view-radius',
+      area_bounds: reportBounds || null,
+      observer: { x: originX, z: originZ, height_m: observerY, surface: surfaceLabel },
+      kpis: {
+        visible_ground_pct: visibleGroundPercent,
+        visible_samples: visibleSamples,
+        sampled_ground_count: validSamples,
+        radius_m: radius,
+        eye_height_m: eyeHeight,
+      },
+    } } }));
     requestRender();
     return true;
   }
@@ -6487,7 +6530,7 @@ export async function startWebGLScene(canvas, status) {
   // Frame a local-space [minX, minZ, maxX, maxZ] box. Used after a traffic
   // run so the corridor the user just closed fills the view: at full-CBD
   // zoom an individual car is only a few pixels and lost between buildings.
-  function frameBounds(bounds, { elevation = 0.5 } = {}) {
+  function frameBounds(bounds, { elevation = 0.5, accountForPanel = false } = {}) {
     if (!bounds || bounds.length !== 4) return;
     const [minX, minZ, maxX, maxZ] = bounds;
     const centerX = (minX + maxX) / 2;
@@ -6496,6 +6539,24 @@ export async function startWebGLScene(canvas, status) {
     cameraState.target.set(centerX, terrainHeightAt(centerX, centerZ) + 15, centerZ);
     cameraState.distance = clamp(span * 0.9, CAMERA_MIN_DISTANCE, 2400);
     cameraState.elevation = elevation;
+    if (accountForPanel) {
+      const viewport = canvas.getBoundingClientRect();
+      const panelRect = document.querySelector('.panel')?.getBoundingClientRect();
+      if (panelRect && panelRect.left < viewport.right && panelRect.right > viewport.left) {
+        let visibleLeft = viewport.left, visibleRight = viewport.right;
+        const panelOverlapsMostHeight = Math.min(viewport.bottom, panelRect.bottom) - Math.max(viewport.top, panelRect.top) > viewport.height * 0.6;
+        if (panelOverlapsMostHeight && panelRect.left >= (viewport.left + viewport.right) / 2) {
+          visibleRight = Math.min(visibleRight, panelRect.left);
+        } else if (panelOverlapsMostHeight && panelRect.right <= (viewport.left + viewport.right) / 2) {
+          visibleLeft = Math.max(visibleLeft, panelRect.right);
+        }
+        const targetScreenOffset = (visibleLeft + visibleRight) / 2 - (viewport.left + viewport.right) / 2;
+        const worldPerPixel = 2 * cameraState.distance * Math.tan(THREE.MathUtils.degToRad(camera.fov * 0.5))
+          * camera.aspect / Math.max(viewport.width, 1);
+        cameraState.target.x -= targetScreenOffset * worldPerPixel * Math.sin(cameraState.azimuth);
+        cameraState.target.z += targetScreenOffset * worldPerPixel * Math.cos(cameraState.azimuth);
+      }
+    }
     updateCamera();
   }
 
@@ -7555,11 +7616,17 @@ export async function startWebGLScene(canvas, status) {
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
       description: `${periodLabel}, ${localHour} SAST · ERA5 ${thermalClimatology.baseline.start_year}–${thermalClimatology.baseline.end_year} climate composite`,
       metric, valid_at: sourceFrames[0].valid_at, validation_status: thermalClimatology.validation_status,
+      metric_label: metric === 'utci_c' ? 'Outdoor comfort (UTCI)' : metric === 'tmrt_c' ? 'Mean radiant temperature (Tmrt)' : 'Heat measure',
+      period_label: periodLabel,
       climatology: true, aggregate, month, season: selectedSeason, local_hour: hour,
       manifest_generated_at: thermalClimatology.generated_at,
       manifest_sha256: thermalClimatology.manifest_sha256, models: thermalClimatology.models,
       grid: thermalClimatology.grid,
       source_frames: sourceFrames.map(frame => ({ id: frame.id, valid_at: frame.valid_at, sha256: frame.sha256, bytes: frame.bytes })),
+      kpis: {
+        mean, p90: percentile90, valid_cell_count: stats.length,
+        hotspot_area_pct: metric === 'utci_c' ? stats.filter(value => value >= 26).length / Math.max(1, stats.length) * 100 : null,
+      },
     } } }));
   }
 
@@ -8387,6 +8454,7 @@ export async function startWebGLScene(canvas, status) {
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
         description: `Source: ${payload.source || 'not supplied'} · window: ${payload.window?.label || 'not supplied'} · units: ${payload.metric_metadata?.unit || 'not supplied'}`,
         source: payload.source, window: payload.window, scenario: payload.scenario, metric: payload.metric,
+        metric_label: payload.metric_label, metric_metadata: payload.metric_metadata, kpis: payload.summary,
       } } }));
       if (heatToggle?.checked && !shadowState.enabled) buildHeatMesh(payload);
       renderHeatSummary(payload.summary, payload.metric_metadata, payload.metric_label);
@@ -14555,7 +14623,7 @@ export async function startWebGLScene(canvas, status) {
   // math server/field.py used, just summed over 1 term instead of 16. It
   // never interpolates or assumes calm for the missing sectors; it excludes
   // them, so the result is an honest lower bound, not a full annual study.
-  async function runComfortStudy() {
+  async function runComfortStudy(reportRequestId = null) {
     if (windState.designGeometryDirty) {
       windStatus.textContent = 'This comfort study uses baseline directional cases. Solve proposed-geometry cases for multiple directions before comparing annual comfort.';
       return;
@@ -14566,6 +14634,9 @@ export async function startWebGLScene(canvas, status) {
       detail: { tool: 'wind', key: 'comfort-compute', path: '/comfort-compute', state, message },
     }));
     announceStudy('loading');
+    if (reportRequestId) dispatchEvent(new CustomEvent('climate-report-area-progress', {
+      detail: { requestId: reportRequestId, tool: 'wind', message: 'Running the multi-direction wind comfort study…' },
+    }));
     windSimulate.disabled = true;
     windSimulate.textContent = 'Weighting OpenFOAM sectors…';
     windStatus.textContent = 'Loading ERA5 sector frequencies…';
@@ -14615,14 +14686,25 @@ export async function startWebGLScene(canvas, status) {
       // Load and sample one case's volume at a time — every resolved
       // direction contributes its own weighted share to the same grid, never
       // interpolated with the others, only summed.
-      for (const { cfdCase, sector } of resolved) {
+      for (const [sectorIndex, { cfdCase, sector }] of resolved.entries()) {
         windStatus.textContent = `Sampling ${cfdCase.label}…`;
-        await ensureCfdCaseLoaded(cfdCase.direction_deg, revision);
+        if (reportRequestId) dispatchEvent(new CustomEvent('climate-report-area-progress', {
+          detail: { requestId: reportRequestId, tool: 'wind', message: `Running the comfort study · direction ${sectorIndex + 1} of ${resolved.length}…` },
+        }));
+        await ensureCfdCaseLoaded(cfdCase.direction_deg, revision, message => {
+          windStatus.textContent = message;
+          if (reportRequestId) dispatchEvent(new CustomEvent('climate-report-area-progress', {
+            detail: { requestId: reportRequestId, tool: 'wind', message },
+          }));
+        });
         checkWindRevision(revision);
         for (let row = 0; row < height; row += 1) {
           if (row % 8 === 0) {
             await new Promise(resolve => setTimeout(resolve, 0));
             checkWindRevision(revision);
+            if (reportRequestId) dispatchEvent(new CustomEvent('climate-report-area-progress', {
+              detail: { requestId: reportRequestId, tool: 'wind', message: `Sampling the comfort map · direction ${sectorIndex + 1} of ${resolved.length} · ${Math.round((row + 1) / height * 100)}%…` },
+            }));
           }
           for (let column = 0; column < width; column += 1) {
             const x = originX + (column + 0.5) * dx;
@@ -14664,6 +14746,7 @@ export async function startWebGLScene(canvas, status) {
         comfort_standard: `${criterion.name} v${criterion.version}`,
         comfort_criterion: criterion,
         season: windState.season,
+        stability: windState.stability,
         height_m: windState.cfdGroundHeight,
         origin: [originX, originZ], width, height, dx, dz,
         speed, u, v, valid, comfort_category: comfortCategory,
@@ -14713,6 +14796,376 @@ export async function startWebGLScene(canvas, status) {
     buildWindHeatmap();
     requestRender();
   }
+
+  function reportViewshedPoint(bounds) {
+    const center = bounds.center || { x: (bounds.min_x + bounds.max_x) / 2, z: (bounds.min_z + bounds.max_z) / 2 };
+    let nearest = null;
+    let nearestDistance = Infinity;
+    for (let z = bounds.min_z + 10; z < bounds.max_z; z += 20) {
+      for (let x = bounds.min_x + 10; x < bounds.max_x; x += 20) {
+        if (!terrainValidAt(x, z)) continue;
+        const ground = terrainSurfaceHeightAt(x, z);
+        const eye = ground + viewshedState.eyeHeight;
+        const obstructed = viewshedBuildingsAt(x, z).some(building => eye >= building.ground && eye < building.top);
+        if (obstructed) continue;
+        const distance = (x - center.x) ** 2 + (z - center.z) ** 2;
+        if (distance < nearestDistance) { nearest = { x, z }; nearestDistance = distance; }
+      }
+    }
+    return nearest;
+  }
+
+  function calculateReportViewshed(bounds) {
+    const observer = reportViewshedPoint(bounds);
+    if (!observer) throw new Error('No open mapped observer position was found inside this square.');
+    viewshedState.active = false;
+    viewshedState.pickMode = false;
+    viewshedState.shape = 'full';
+    viewshedState.radius = Math.min(1200, Math.max(150, bounds.size_m / Math.sqrt(2)));
+    if (viewshedShape) viewshedShape.value = 'full';
+    if (viewshedRadius) viewshedRadius.value = String(Math.round(viewshedState.radius / 50) * 50);
+    if (viewshedRadiusValue) viewshedRadiusValue.textContent = `${Math.round(viewshedState.radius)} m`;
+    let metadata = null;
+    const captureResult = event => {
+      if (event.detail?.tool === 'viewshed') metadata = event.detail.metadata;
+    };
+    addEventListener('climate-analysis-result', captureResult);
+    try {
+      if (!buildViewshed(observer.x, observer.z, { kind: 'terrain' }, bounds) || !metadata) {
+        throw new Error(viewshedStatus?.textContent || 'Viewshed could not be calculated in this square.');
+      }
+    } finally {
+      removeEventListener('climate-analysis-result', captureResult);
+    }
+    return {
+      description: `${Number(metadata.visible_ground_pct).toFixed(1)}% of sampled ground inside the square is visible from an open point near its centre.`,
+      observer_label: 'Open ground near the square centre',
+      kpis: {
+        visible_ground_pct: metadata.visible_ground_pct,
+        hidden_ground_pct: 100 - metadata.visible_ground_pct,
+        visible_samples: metadata.visible_samples,
+        sampled_ground_count: metadata.sampled_ground_count,
+        viewing_distance_m: viewshedState.radius,
+        observer_height_m: viewshedState.eyeHeight,
+      },
+      method: 'Mapped terrain and building massing; visibility samples and the chart are limited to ground locations inside the selected square. Trees and small unmapped objects are not visibility blockers.',
+    };
+  }
+
+  async function calculateReportDirectionalWind(bounds, requestId, revision, height, directionOverride = null) {
+    const previous = { cfd: windState.cfd, dataMode: windState.dataMode, loadedCfdCase: windState.loadedCfdCase };
+    const requestedDirection = Number(directionOverride ?? windState.direction);
+    const direction = Number.isFinite(requestedDirection) ? requestedDirection : 135;
+    const cfdCase = findCfdCase(direction);
+    if (!cfdCase) throw new Error(`No solved OpenFOAM case is available for ${direction}°.`);
+    try {
+      dispatchEvent(new CustomEvent('climate-report-area-progress', {
+        detail: { requestId, tool: 'wind', message: `Preparing the ${cfdCase.label} direction-specific wind study…` },
+      }));
+      let criterion = null;
+      try { criterion = await loadWindCriteriaCatalog(); } catch { /* Use the built-in default guide if the catalog is unavailable. */ }
+      if (!criterion?.categories?.length) {
+        if (windState.comfortCriterionId !== 'lawson_lddc_style_screening_v1') {
+          throw new Error('The selected wind comfort guide could not be loaded for the fallback map.');
+        }
+        criterion = {
+          name: 'Lawson LDDC screening guide', version: '1', exceedance_probability: 0.05,
+          categories: [
+            { code: 0, key: 'long_sitting', label: 'Long sitting', max_speed_mps: 2.5 },
+            { code: 1, key: 'short_sitting', label: 'Short sitting', max_speed_mps: 4 },
+            { code: 2, key: 'standing', label: 'Standing', max_speed_mps: 6 },
+            { code: 3, key: 'strolling', label: 'Strolling', max_speed_mps: 8 },
+            { code: 4, key: 'business_walking', label: 'Business walking', max_speed_mps: 10 },
+            { code: 5, key: 'uncomfortable', label: 'Uncomfortable', max_speed_mps: null },
+          ],
+        };
+      }
+      let shape = ({ unstable: 1.7, neutral: 2.0, stable: 2.5 })[windState.stability] || 2.0;
+      try {
+        const params = new URLSearchParams({ season: windState.season, stability: windState.stability });
+        const response = await fetch(`${windApi}/wind/climatology/sectors?${params}`);
+        if (response.ok) {
+          const sectors = (await response.json()).sectors || [];
+          const sector = sectors.reduce((best, item) => {
+            const delta = Math.abs(((Number(item.direction_deg) - direction + 540) % 360) - 180);
+            return !best || delta < best.delta ? { item, delta } : best;
+          }, null)?.item;
+          if (Number.isFinite(Number(sector?.weibull_shape))) shape = Number(sector.weibull_shape);
+        }
+      } catch { /* The selected stability profile supplies a fallback shape. */ }
+      const existingDirection = Number(previous.cfd?.manifest?.direction_deg_from);
+      if (!previous.cfd || Math.abs(existingDirection - direction) > 0.01) {
+        const loaded = await ensureCfdCaseLoaded(cfdCase, revision, message => dispatchEvent(new CustomEvent('climate-report-area-progress', {
+          detail: { requestId, tool: 'wind', message },
+        })));
+        windState.loadedCfdCase = loaded;
+      }
+      checkWindRevision(revision);
+      const columns = Math.max(1, Math.ceil(bounds.size_m / 12)), rows = columns;
+      const dx = bounds.size_m / columns, dz = bounds.size_m / rows, cellCount = columns * rows;
+      const speed = new Array(cellCount).fill(0);
+      const comfortCategory = new Array(cellCount).fill(Number(criterion.categories.at(-1).code));
+      const valid = new Uint8Array(cellCount), thresholds = criterion.categories.slice(0, -1);
+      for (let row = 0; row < rows; row += 1) {
+        if (row % 8 === 0) {
+          await buildWindUiYield();
+          checkWindRevision(revision);
+          dispatchEvent(new CustomEvent('climate-report-area-progress', {
+            detail: { requestId, tool: 'wind', message: `Sampling the available wind direction · ${Math.round((row + 1) / rows * 100)}%` },
+          }));
+        }
+        for (let column = 0; column < columns; column += 1) {
+          const index = row * columns + column;
+          const x = bounds.min_x + (column + 0.5) * dx, z = bounds.min_z + (row + 0.5) * dz;
+          if (!pointInLidarFootprint(x, z) || windPointInsideBuilding(x, z, terrainHeightAt(x, z) + height)) continue;
+          const sample = sampleCfd(x, terrainHeightAt(x, z) + height, z);
+          if (!sample || !Number.isFinite(sample.speed) || sample.speed < 0) continue;
+          speed[index] = sample.speed;
+          valid[index] = 1;
+          for (const category of thresholds) {
+            if (weibullExceedance(sample.speed, Number(category.max_speed_mps), shape) <= Number(criterion.exceedance_probability)) {
+              comfortCategory[index] = Number(category.code);
+              break;
+            }
+          }
+        }
+      }
+      if (!valid.some(Boolean)) throw new Error('No solved wind cells overlap this square.');
+      return {
+        origin: [bounds.min_x, bounds.min_z], width: columns, height: rows, dx, dz,
+        speed, comfort_category: comfortCategory, valid, comfort_categories: criterion.categories,
+        comfort_standard: `${criterion.name} v${criterion.version}`, comfort_criterion: criterion,
+        analysis_mode: 'comfort', direction_deg: direction, direction_count: 1,
+        season: windState.season, stability: windState.stability, height_m: height,
+        model_kind: 'OpenFOAM single-direction comfort screen',
+        validation_status: previous.cfd?.manifest?.validation_status || 'exploratory_unvalidated_pilot',
+      };
+    } finally {
+      windState.cfd = previous.cfd;
+      windState.dataMode = previous.dataMode;
+      windState.loadedCfdCase = previous.loadedCfdCase;
+    }
+  }
+
+  async function calculateReportWind(bounds, requestId, directionDegrees = null) {
+    let revision = windStudyRevision;
+    if (windState.designGeometryDirty) throw new Error('The wind comfort screen uses baseline building geometry; reset the proposed building changes before including it in this report.');
+    const directionalStudy = directionDegrees !== null;
+    const directionCase = directionalStudy ? findCfdCase(Number(directionDegrees)) : null;
+    if (directionalStudy && !directionCase) throw new Error(`No solved OpenFOAM case is available for ${directionDegrees}°.`);
+    dispatchEvent(new CustomEvent('climate-report-area-progress', {
+      detail: { requestId, tool: 'wind', message: directionalStudy
+        ? `Running the ${directionCase.label} direction-specific wind study…`
+        : 'Running the multi-direction wind comfort study…' },
+    }));
+    const height = Math.min(10, Math.max(1, Number(windState.cfdGroundHeight) || 2));
+    let field = null, resultSource = directionalStudy ? 'directional-study' : 'report-comfort-study';
+    if (directionalStudy) {
+      field = await calculateReportDirectionalWind(bounds, requestId, revision, height, Number(directionDegrees));
+    } else {
+      const currentComfort = windState.field?.analysis_mode === 'comfort'
+        && windState.field.season === windState.season
+        && windState.field.comfort_criterion?.id === windState.comfortCriterionId
+        && (!windState.field.stability || windState.field.stability === windState.stability)
+        && Math.abs(Number(windState.field.height_m) - height) < 0.01;
+      if (currentComfort) {
+        field = windState.field;
+        resultSource = 'existing-comfort-study';
+      } else {
+        try {
+          const revisionBeforeStudy = windStudyRevision;
+          await runComfortStudy(requestId);
+          revision = windStudyRevision;
+          if (revision !== revisionBeforeStudy + 1) throw new DOMException('Wind settings changed; run again.', 'AbortError');
+          field = windState.field;
+          const matchesStudySettings = field?.analysis_mode === 'comfort'
+            && field.season === windState.season
+            && field.comfort_criterion?.id === windState.comfortCriterionId
+            && field.stability === windState.stability
+            && Math.abs(Number(field.height_m) - height) < 0.01;
+          if (!matchesStudySettings) throw new Error('The multi-direction wind comfort study could not be completed.');
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          revision = windStudyRevision;
+          field = await calculateReportDirectionalWind(bounds, requestId, revision, height);
+          resultSource = 'single-direction-fallback';
+        }
+      }
+    }
+    checkWindRevision(revision);
+    const categories = field.comfort_categories || [];
+    if (!categories.length || !Array.isArray(field.comfort_category) || !Array.isArray(field.speed)) {
+      throw new Error('The wind comfort study returned an incomplete map.');
+    }
+    const columns = Number(field.width), rows = Number(field.height);
+    const origin = field.origin || [bounds.min_x, bounds.min_z];
+    const dx = Number(field.dx), dz = Number(field.dz);
+    if (!columns || !rows || !(dx > 0) || !(dz > 0)) throw new Error('The wind comfort map grid could not be read.');
+    const speedScale = resultSource !== 'single-direction-fallback' && Number(field.coverage_fraction) > 0
+      ? 1 / Number(field.coverage_fraction) : 1;
+    const available = new Uint8Array(columns * rows);
+    const cells = [];
+    const values = [];
+    const categoryCounts = new Map(categories.map(category => [Number(category.code), 0]));
+    for (let row = 0; row < rows; row += 1) {
+      if (row % 8 === 0) {
+        await buildWindUiYield();
+        checkWindRevision(revision);
+      }
+      for (let column = 0; column < columns; column += 1) {
+        const index = row * columns + column;
+        const x = origin[0] + (column + 0.5) * dx;
+        const z = origin[1] + (row + 0.5) * dz;
+        if (!pointInLidarFootprint(x, z) || windPointInsideBuilding(x, z, terrainHeightAt(x, z) + height)) continue;
+        const speed = Number(field.speed[index]) * speedScale;
+        const categoryCode = Number(field.comfort_category[index]);
+        if (!Number.isFinite(speed) || !Number.isFinite(categoryCode)) continue;
+        available[index] = 1;
+        values.push(speed);
+        categoryCounts.set(categoryCode, (categoryCounts.get(categoryCode) || 0) + 1);
+        cells.push({ x, z, size_m: Math.min(dx, dz), speed_mps: speed, category_code: categoryCode });
+      }
+    }
+    if (!cells.length) throw new Error('No valid wind comfort locations overlap this square.');
+    const comfortAt = (x, z) => {
+      const column = Math.floor((x - origin[0]) / dx), row = Math.floor((z - origin[1]) / dz);
+      if (column < 0 || row < 0 || column >= columns || row >= rows) return null;
+      const index = row * columns + column;
+      if (!available[index]) return null;
+      return { speed: Number(field.speed[index]) * speedScale, category: Number(field.comfort_category[index]) };
+    };
+    const streetTotals = new Map(), streetPaths = [];
+    const clipSegment = (first, second) => {
+      const x1 = first[0], z1 = first[1], deltaX = second[0] - x1, deltaZ = second[1] - z1;
+      let start = 0, end = 1;
+      const p = [-deltaX, deltaX, -deltaZ, deltaZ];
+      const q = [x1 - bounds.min_x, bounds.max_x - x1, z1 - bounds.min_z, bounds.max_z - z1];
+      for (let edge = 0; edge < 4; edge += 1) {
+        if (Math.abs(p[edge]) < 1e-9) { if (q[edge] < 0) return null; continue; }
+        const ratio = q[edge] / p[edge];
+        if (p[edge] < 0) { if (ratio > end) return null; start = Math.max(start, ratio); }
+        else { if (ratio < start) return null; end = Math.min(end, ratio); }
+      }
+      return [[x1 + start * deltaX, z1 + start * deltaZ], [x1 + end * deltaX, z1 + end * deltaZ]];
+    };
+    for (const road of data.roads || []) {
+      const name = String(road?.[3]?.name || '').trim(), points = road?.[2];
+      if (!name || !Array.isArray(points) || points.length < 2) continue;
+      for (let pointIndex = 1; pointIndex < points.length; pointIndex += 1) {
+        const segment = clipSegment(points[pointIndex - 1], points[pointIndex]);
+        if (!segment) continue;
+        const [first, second] = segment;
+        const length = Math.hypot(second[0] - first[0], second[1] - first[1]);
+        if (!(length > 0)) continue;
+        streetPaths.push({ name, points: [first, second], length_m: length });
+        const steps = Math.max(1, Math.ceil(length / 12)), sampleWeight = length / steps;
+        let totals = streetTotals.get(name);
+        if (!totals) streetTotals.set(name, totals = { name, length: 0, speedTotal: 0, categoryTotal: 0, categories: new Map() });
+        for (let step = 0; step < steps; step += 1) {
+          const fraction = (step + 0.5) / steps;
+          const sample = comfortAt(first[0] + (second[0] - first[0]) * fraction, first[1] + (second[1] - first[1]) * fraction);
+          if (!sample) continue;
+          totals.length += sampleWeight;
+          totals.speedTotal += sample.speed * sampleWeight;
+          totals.categoryTotal += sample.category * sampleWeight;
+          totals.categories.set(sample.category, (totals.categories.get(sample.category) || 0) + sampleWeight);
+        }
+      }
+    }
+    const rankedStreets = [...streetTotals.values()].filter(item => item.length >= 18).map(item => {
+      const mostCommon = [...item.categories.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+      const category = categories.find(entry => Number(entry.code) === Number(mostCommon));
+      return {
+        name: item.name, mean_speed_mps: item.speedTotal / item.length,
+        comfort_score: item.categoryTotal / item.length, dominant_category: category?.label || 'Unclassified',
+        sampled_length_m: item.length,
+      };
+    });
+    const bestStreets = [...rankedStreets].sort((a, b) => a.comfort_score - b.comfort_score || a.mean_speed_mps - b.mean_speed_mps).slice(0, 3);
+    const worstStreets = [...rankedStreets].sort((a, b) => b.comfort_score - a.comfort_score || b.mean_speed_mps - a.mean_speed_mps).slice(0, 3);
+    const sorted = [...values].sort((a, b) => a - b);
+    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const classShares = Object.fromEntries(categories.map(category => {
+      const count = categoryCounts.get(Number(category.code)) || 0;
+      return [String(category.key || category.label || category.code).toLowerCase().replaceAll(/[^a-z0-9]+/g, '_').replaceAll(/^_|_$/g, ''), count / cells.length * 100];
+    }));
+    const dominantCode = [...categoryCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+    const dominantCategory = categories.find(category => Number(category.code) === Number(dominantCode));
+    const colorByCode = ['#287f69', '#55aa70', '#a8c84c', '#e5bd3f', '#df8039', '#c7473f'];
+    const method = resultSource === 'single-direction-fallback'
+      ? `The multi-direction comfort study could not be completed, so this map uses one solved ${Math.round(Number(field.direction_deg) || Number(windState.direction))}° wind direction and the selected comfort guide. Treat it as a directional screen rather than a seasonal comfort result.`
+      : resultSource === 'directional-study'
+        ? `This map shows the solved ${directionCase.label} OpenFOAM wind field at ${height.toFixed(1)} m above ground, sampled inside the selected square and grouped by the selected comfort guide. It is a single-direction planning screen, not a seasonal average or a certified wind-safety assessment.`
+      : resultSource === 'existing-comfort-study'
+        ? 'This map reuses the current multi-direction comfort result shown in the explorer, clipped to the selected square. It remains an exploratory screen, not a street measurement or a certified wind-safety assessment.'
+        : `This report ran the multi-direction wind comfort study and clipped its map to the selected square. It combines ${Number(field.direction_count) || 16} solved compass directions using seasonal ERA5 wind patterns (${(Number(field.coverage_fraction || 0) * 100).toFixed(1)}% of seasonal wind hours represented). Unsolved directions are excluded, so where coverage is partial this is a lower-bound planning estimate, not a street measurement or a certified wind-safety assessment.`;
+    const result = {
+      description: `${directionalStudy ? `${directionCase.label} wind` : 'The wind comfort map'} shows ${dominantCategory?.label || 'the mapped comfort categories'} most often across this square. The best and most exposed named streets are listed below.`,
+      result_source: resultSource,
+      direction_count: Number(field.direction_count) || 16,
+      season: field.season || windState.season,
+      comfort_standard: field.comfort_standard || categories[0]?.label || 'Selected wind comfort guide',
+      comfort_categories: categories.map(category => ({
+        code: Number(category.code), key: category.key, label: category.label,
+        color: colorByCode[Number(category.code)] || '#c7473f',
+      })),
+      cells,
+      street_paths: streetPaths,
+      street_rankings: { best: bestStreets, worst: worstStreets },
+      height_m: height,
+      model_kind: field.model_kind || 'wind comfort screening model',
+      validation_status: field.validation_status || 'exploratory_not_engineering_grade',
+      grid: { resolution_m: Math.min(dx, dz), columns, rows },
+      speed_values_mps: values,
+      kpis: {
+        mean_speed_mps: average,
+        p95_speed_mps: sorted[Math.floor((sorted.length - 1) * 0.95)],
+        maximum_speed_mps: sorted.at(-1),
+        sampled_cell_count: cells.length,
+        total_cell_count: columns * rows,
+        grid_coverage_pct: cells.length / (columns * rows) * 100,
+        direction_count: Number(field.direction_count) || 16,
+        comfort_class_share_pct: classShares,
+        sampling_height_m: height,
+      },
+      method,
+    };
+    if (!directionalStudy) {
+      result.directional_studies = [];
+      for (const study of [
+        { key: 'se', label: 'Southeast (SE)', direction_deg: 135 },
+        { key: 'nw', label: 'Northwest (NW)', direction_deg: 315 },
+      ]) {
+        try {
+          const directionalResult = await calculateReportWind(bounds, requestId, study.direction_deg);
+          result.directional_studies.push({ ...directionalResult, ...study, status: 'ready' });
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+          result.directional_studies.push({ ...study, status: 'unavailable', message: error.message || `${study.label} wind study unavailable.` });
+        }
+      }
+    }
+    return result;
+  }
+
+  addEventListener('climate-report-area-analysis-request', async event => {
+    const { requestId, bounds } = event.detail || {};
+    if (!requestId || !bounds) return;
+    const results = {};
+    for (const tool of ['viewshed', 'wind']) {
+      dispatchEvent(new CustomEvent('climate-report-area-progress', {
+        detail: { requestId, tool, message: tool === 'viewshed' ? 'Calculating visibility inside the square…' : 'Preparing the wind comfort map…' },
+      }));
+      try {
+        results[tool] = { status: 'ready', ...(tool === 'viewshed'
+          ? calculateReportViewshed(bounds)
+          : await calculateReportWind(bounds, requestId)) };
+      } catch (error) {
+        results[tool] = { status: 'unavailable', message: error.message || `${tool} analysis unavailable.` };
+      }
+    }
+    dispatchEvent(new CustomEvent('climate-report-area-analysis-result', { detail: { requestId, results } }));
+  });
 
   function updateWindParticles(now) {
     if (!windState.enabled || !windState.field || !windPoints?.visible) return;
@@ -14857,6 +15310,51 @@ export async function startWebGLScene(canvas, status) {
     return raycaster.ray.intersectPlane(plane, point) ? point : null;
   }
 
+  function reportSquareFromDrag(start, current) {
+    const maximum = Math.min(1200, right - left, maxZ - minZ);
+    if (!(maximum >= 100)) return null;
+    const size = clamp(Math.max(Math.abs(current.x - start.x), Math.abs(current.z - start.z)), 100, maximum);
+    const directionX = current.x < start.x ? -1 : 1;
+    const directionZ = current.z < start.z ? -1 : 1;
+    const centerX = clamp(start.x + directionX * size / 2, left + size / 2, right - size / 2);
+    const centerZ = clamp(start.z + directionZ * size / 2, minZ + size / 2, maxZ - size / 2);
+    return { min_x: centerX - size / 2, min_z: centerZ - size / 2,
+      max_x: centerX + size / 2, max_z: centerZ + size / 2, size_m: size,
+      center: { x: centerX, z: centerZ } };
+  }
+
+  function updateReportAreaOutline(bounds) {
+    if (!bounds) { reportAreaOutline.visible = false; return; }
+    const corners = [
+      [bounds.min_x, bounds.min_z], [bounds.max_x, bounds.min_z],
+      [bounds.max_x, bounds.max_z], [bounds.min_x, bounds.max_z],
+    ];
+    reportAreaOutline.geometry.dispose();
+    reportAreaOutline.geometry = new THREE.BufferGeometry().setFromPoints(corners.map(([x, z]) =>
+      new THREE.Vector3(x, terrainSurfaceHeightAt(x, z) + 1.8, z)));
+    reportAreaOutline.visible = true;
+    requestRender();
+  }
+
+  addEventListener('climate-report-area-pick', event => {
+    reportAreaPickMode = Boolean(event.detail?.enabled);
+    reportAreaDrag = null;
+    if (reportAreaPickMode) {
+      requestGroundPick(null);
+      streetViewState.placing = false;
+      sunDrag = null;
+      windDrag = null;
+      sliceDrag = null;
+      clickCandidate = null;
+      drag = null;
+      canvas.style.cursor = 'crosshair';
+    } else if (!placeInspectorPickMode && !groundPickHandler) canvas.style.cursor = '';
+  });
+  addEventListener('climate-report-area-clear', () => {
+    reportAreaBounds = null;
+    updateReportAreaOutline(null);
+  });
+
   function pointerRaycaster(event) {
     const rect = canvas.getBoundingClientRect();
     const raycaster = new THREE.Raycaster();
@@ -14968,6 +15466,17 @@ export async function startWebGLScene(canvas, status) {
   });
   canvas.addEventListener('pointerdown', event => {
     cameraIntro = null;
+    if (reportAreaPickMode && event.button === 0) {
+      const point = pointerGround(event);
+      if (!point) return;
+      reportAreaDrag = { pointerId: event.pointerId, start: { x: point.x, z: point.z },
+        current: { x: point.x, z: point.z }, screenStart: [event.clientX, event.clientY] };
+      clickCandidate = null;
+      drag = null;
+      capturePointer(event);
+      event.preventDefault();
+      return;
+    }
     clickCandidate = event.button === 0 ? { x: event.clientX, y: event.clientY } : null;
     if (groundPickHandler && event.button === 0) {
       const point = pointerGround(event);
@@ -15087,6 +15596,15 @@ export async function startWebGLScene(canvas, status) {
     capturePointer(event);
   });
   canvas.addEventListener('pointermove', event => {
+    if (reportAreaDrag && event.pointerId === reportAreaDrag.pointerId) {
+      const point = pointerGround(event);
+      if (point) {
+        reportAreaDrag.current = { x: point.x, z: point.z };
+        const distance = Math.hypot(event.clientX - reportAreaDrag.screenStart[0], event.clientY - reportAreaDrag.screenStart[1]);
+        if (distance >= 8) updateReportAreaOutline(reportSquareFromDrag(reportAreaDrag.start, reportAreaDrag.current));
+      }
+      return;
+    }
     if (event.pointerType === 'touch' && cameraTouchPointers.has(event.pointerId)) {
       cameraTouchPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (cameraTouchGesture && cameraTouchPointers.size >= 2) {
@@ -15174,6 +15692,30 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   });
   canvas.addEventListener('pointerup', event => {
+    if (reportAreaDrag && event.pointerId === reportAreaDrag.pointerId) {
+      const point = pointerGround(event);
+      if (point) reportAreaDrag.current = { x: point.x, z: point.z };
+      const screenDistance = Math.hypot(event.clientX - reportAreaDrag.screenStart[0], event.clientY - reportAreaDrag.screenStart[1]);
+      const bounds = screenDistance >= 8
+        ? reportSquareFromDrag(reportAreaDrag.start, reportAreaDrag.current) : null;
+      reportAreaDrag = null;
+      reportAreaPickMode = false;
+      clickCandidate = null;
+      drag = null;
+      canvas.style.cursor = '';
+      if (bounds) {
+        reportAreaBounds = bounds;
+        updateReportAreaOutline(bounds);
+        cameraIntro = null;
+        frameBounds([bounds.min_x, bounds.min_z, bounds.max_x, bounds.max_z], { elevation: 0.55, accountForPanel: true });
+        dispatchEvent(new CustomEvent('climate-report-area-selected', { detail: bounds }));
+      } else {
+        updateReportAreaOutline(reportAreaBounds);
+        dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'drag-too-short' } }));
+      }
+      event.preventDefault();
+      return;
+    }
     if (trafficState.drawing && trafficState.stroking && event.pointerId === trafficState.pointerId) {
       const touchTap = event.pointerType === 'touch' && trafficState.strokeStartScreen
         && Math.hypot(event.clientX - trafficState.strokeStartScreen[0], event.clientY - trafficState.strokeStartScreen[1]) <= 12;
@@ -15310,6 +15852,11 @@ export async function startWebGLScene(canvas, status) {
   canvas.addEventListener('pointercancel', event => {
     cameraTouchPointers.delete(event.pointerId);
     cameraTouchGesture = null;
+    if (event.pointerId === reportAreaDrag?.pointerId) {
+      reportAreaDrag = null;
+      updateReportAreaOutline(reportAreaBounds);
+      dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'pointer-cancelled' } }));
+    }
     if (event.pointerId === trafficState.pointerId) {
       cancelInterruptedTrafficStroke('Stroke cancelled by the pointer. Draw again or confirm the existing selection.');
     }
@@ -16419,6 +16966,17 @@ export async function startWebGLScene(canvas, status) {
   }
   addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
+    if (reportAreaPickMode || reportAreaDrag) {
+      event.preventDefault();
+      reportAreaPickMode = false;
+      reportAreaDrag = null;
+      clickCandidate = null;
+      drag = null;
+      canvas.style.cursor = '';
+      updateReportAreaOutline(reportAreaBounds);
+      dispatchEvent(new CustomEvent('climate-report-area-pick-cancelled', { detail: { reason: 'escape' } }));
+      return;
+    }
     if (groundPickHandler) {
       event.preventDefault();
       const handler = groundPickHandler;

@@ -6,18 +6,16 @@ wind, traffic, public transport, and current weather. The browser app is served
 by a FastAPI backend for modelled conditions and bounded analysis jobs; several
 layers also work as a static-only viewer when their data assets are available.
 
-The app includes an introductory guide, evidence and provenance cards, keyboard
-map controls, and a **Scenario · save, compare & share** workspace. Save Before
-and After settings, compare changed assumptions, copy a settings link, or export
-a printable HTML climate report plus machine-readable JSON with the visible map,
-saved Before/After map views, scene build-input hashes, result KPI summaries,
-saved Before/After KPI comparisons and per-snapshot run references. Some
-results are transient and the report states their retention limits; it is not a
-guarantee that every analysis can be replayed later. Optional client/project
-metadata (name, client, reference, preparer, location, reporting dates and notes)
-is saved in this browser and included in the exported report without changing
-simulation settings. Snapshots are local to the current tab. Settings links do
-not carry completed simulation arrays or drawn traffic closures.
+The app includes evidence and provenance cards, keyboard map controls, and a
+report workspace with **Draw square area** and **Generate HTML report**. Drag
+across the map to select an area; the view zooms and centres on that square.
+Generating the report runs heat, sunlight, viewshed and wind analysis for the
+selected area, then downloads a polished, printable HTML report with a captured
+map, readable findings, charts and method notes. It contains only the selected
+square's heat, sunlight, viewshed and wind findings.
+Result references state their retention limits; the report does not guarantee
+that every analysis can be replayed later. Shared settings links do not carry
+completed simulation arrays or drawn traffic closures.
 
 ## Application overview
 

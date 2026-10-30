@@ -86,9 +86,9 @@ retained by the worker (currently the latest three runs):
 Add `--output /path/to/thermal-validation.json` to save the machine-readable
 result. In Heat → **Attach thermal validation to report**, select that JSON
 and the exact original CSV; the browser verifies the CSV SHA-256 before
-embedding paired rows and holdout metrics in the next client report export.
+embedding paired rows and holdout metrics in the next HTML report.
 Archive the exported report while the referenced thermal run is retained:
-`scripts/archive_climate_report.py report.json`. The archive includes the
+`scripts/archive_climate_report.py conditions-climate-report.html`. The archive includes the
 original observation bytes, run manifest and every paired frame whose hash
 still matches. This preserves evidence; it does not rerun the model.
 

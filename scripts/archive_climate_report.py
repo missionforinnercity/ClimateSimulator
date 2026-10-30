@@ -29,9 +29,9 @@ from urllib.request import Request, urlopen
 import zipfile
 
 try:
-    from .verify_climate_report import MAX_JSON_BYTES, VerificationError, _origin, _read_url, _url_for
+    from .verify_climate_report import MAX_JSON_BYTES, VerificationError, _origin, _read_url, _url_for, load_report_file
 except ImportError:  # supports direct execution as ``python scripts/archive_climate_report.py``
-    from verify_climate_report import MAX_JSON_BYTES, VerificationError, _origin, _read_url, _url_for
+    from verify_climate_report import MAX_JSON_BYTES, VerificationError, _origin, _read_url, _url_for, load_report_file
 
 
 SCHEMA = "conditions-climate-report/1"
@@ -424,7 +424,7 @@ def archive_report(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path, help="conditions-climate-report/1 JSON file")
+    parser.add_argument("report", type=Path, help="conditions-climate-report/1 JSON file or generated HTML report")
     parser.add_argument("--output", type=Path, help="ZIP path (defaults to <report>.archive.zip)")
     parser.add_argument("--html", type=Path, help="optional matching printable HTML report to include")
     parser.add_argument("--base-url", help="redirect report artifact paths to another deployment origin")
@@ -435,9 +435,10 @@ def main() -> int:
         parser.error("timeout and max-artifact-bytes must be positive")
     output = args.output or args.report.with_suffix(".archive.zip")
     try:
-        report = json.loads(args.report.read_text(encoding="utf-8"))
+        report = load_report_file(args.report)
         manifest = archive_report(
-            report, output, override=args.base_url, html_path=args.html,
+            report, output, override=args.base_url,
+            html_path=args.html or (args.report if args.report.suffix.lower() == ".html" else None),
             timeout=args.timeout, max_total_bytes=args.max_artifact_bytes,
         )
     except (OSError, json.JSONDecodeError, VerificationError, ArchiveError, ValueError) as error:

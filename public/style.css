@@ -102,12 +102,6 @@
 .scenario-workspace summary, .evidence-card summary, .experience-advanced summary {
   cursor: pointer; color: var(--ink); padding: 5px 0; font-weight: 650;
 }
-.report-metadata { margin: 10px 0; border-top: 1px solid var(--line-light); border-bottom: 1px solid var(--line-light); }
-.report-metadata-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 8px 0; }
-.report-metadata-grid label { display: grid; gap: 4px; min-width: 0; font-size: 12px; color: var(--muted); }
-.report-metadata-grid input, .report-metadata-grid textarea { width: 100%; min-width: 0; box-sizing: border-box; }
-.report-metadata-grid label:last-child { grid-column: 1 / -1; }
-@media (max-width: 520px) { .report-metadata-grid { grid-template-columns: minmax(0, 1fr); } .report-metadata-grid label:last-child { grid-column: auto; } }
 .explorer-guide { border-color: #4c8e78; background: #203029; }
 .explorer-guide h2 { color: #d5f5e8; font-size: 14px; margin: 0; }
 .explorer-guide p, .scenario-workspace p, .evidence-card p { margin: 7px 0; }
@@ -3333,3 +3327,303 @@ html, body, #app { background: #171717; }
 .wind-panel #wind-slice-controls { gap: 8px; padding: 8px; }
 .wind-panel .wind-appearance-row { min-height: 32px; border: 1px solid #484743; border-radius: 4px; background: #363634; }
 .wind-panel .wind-cfd-hint { margin: 0; line-height: 1.35; }
+
+/* Sun-led neutral finish shared by every tool tab. */
+:root {
+  --panel-line: #4c4b48;
+  --panel-copy: #dedbd4;
+  --panel-muted: #aaa69e;
+  --panel-surface: #30302e;
+  --panel-control: #3c3b39;
+  --panel-control-hover: #4a4946;
+  --panel-selected: #5a5853;
+}
+
+.panel .panel-context {
+  border-color: #454441;
+  background: #2c2b29;
+}
+.panel .panel-context > span { color: #aaa69e; }
+.panel .panel-context > strong { color: #e0ddd7; }
+.panel .panel-header { border-bottom-color: #484744; }
+.panel .panel-header .menu-tab { color: #b4b1aa; }
+.panel .panel-header .menu-tab:hover { background: #3a3936; color: #f1eee8; }
+.panel .panel-header .menu-tab.active,
+.panel .panel-header .menu-tab.active:hover {
+  border-color: #5b5954;
+  background: linear-gradient(180deg, #4a4945, #383734);
+  color: #f4f1ea;
+  box-shadow: none;
+}
+.panel .panel-header .menu-tab.active::after { background: #c3c0b8; }
+
+#explorer-panel-body .menu-section {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  color: #d4d1ca;
+  font-size: 11px;
+  line-height: 1.45;
+}
+#explorer-panel-body .menu-section[hidden] { display: none !important; }
+#explorer-panel-body .menu-section > :is(.heat-heading, .sun-heading, .wind-heading, .traffic-heading, .transport-heading, .walking-heading, .viewshed-heading) {
+  min-height: 38px;
+  margin: 0;
+  padding: 2px 0 8px;
+  border-bottom: 1px solid #484744;
+  color: #e7e4dd;
+  letter-spacing: 0;
+  text-transform: none;
+}
+#explorer-panel-body .menu-section > :is(.heat-heading, .sun-heading, .wind-heading, .traffic-heading, .transport-heading, .walking-heading, .viewshed-heading) :is(strong, h2) {
+  color: #ece9e2;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -.01em;
+  text-transform: none;
+}
+#explorer-panel-body .menu-section > :is(.heat-heading, .sun-heading, .wind-heading, .traffic-heading, .transport-heading, .walking-heading, .viewshed-heading) :is(small, .walking-kicker, .traffic-kicker, .transport-kicker) {
+  color: #aaa69e;
+}
+
+#explorer-panel-body .menu-section button,
+#explorer-panel-body .menu-section .transport-service-link {
+  min-height: 32px;
+  border: 1px solid #5a5854;
+  border-radius: 4px;
+  background: var(--panel-control);
+  color: #e5e2dc;
+  box-shadow: none;
+  font-weight: 650;
+  transition: background-color .16s ease, border-color .16s ease, color .16s ease;
+}
+#explorer-panel-body .menu-section button:hover:not(:disabled),
+#explorer-panel-body .menu-section .transport-service-link:hover {
+  border-color: #77746e;
+  background: var(--panel-control-hover);
+  color: #fff;
+  transform: none;
+}
+#explorer-panel-body .menu-section button:disabled { opacity: .48; }
+#explorer-panel-body .menu-section :is(button.active, button[aria-pressed="true"], .traffic-view-toggles label:has(input:checked)) {
+  border-color: #77746e;
+  background: var(--panel-selected);
+  color: #faf8f2;
+  box-shadow: inset 0 0 0 1px #ffffff0b;
+}
+#explorer-panel-body .menu-section :is(button.secondary, .transport-service-link) {
+  border-color: #53524f;
+  background: #343432;
+  color: #d8d5ce;
+}
+#explorer-panel-body .menu-section :is(button.secondary, .transport-service-link):hover:not(:disabled) {
+  background: #444340;
+}
+#explorer-panel-body .menu-section :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run, .current-actions button:first-child) {
+  border-color: #77746e;
+  background: #5a5853;
+  color: #f7f5ef;
+}
+#explorer-panel-body .menu-section :is(.heat-actions button, .wind-run-button, .transport-analyse, .transport-playback #transport-play, #traffic-run, .current-actions button:first-child):hover:not(:disabled) {
+  border-color: #89867f;
+  background: #686660;
+}
+#explorer-panel-body .menu-section :is(input[type="checkbox"], input[type="radio"], input[type="range"]) { accent-color: #b6b2a9; }
+#explorer-panel-body .menu-section :is(.sun-switch, .heat-switch, .wind-switch, .traffic-switch, .transport-show-switch, .compact-switch):has(input:checked) {
+  border-color: #77746e;
+  background: #55534e;
+  color: #f1eee8;
+}
+#explorer-panel-body .menu-section :is(select, input[type="date"], input[type="time"], input[type="text"], input[type="number"], textarea) {
+  border-color: #555450;
+  border-radius: 4px;
+  background: #373634;
+  color: #e4e1da;
+}
+#explorer-panel-body .menu-section :is(select, input, textarea):focus-visible {
+  border-color: #aaa69e;
+  outline-color: #d0ccc4;
+  box-shadow: 0 0 0 2px #ffffff14;
+}
+#explorer-panel-body .menu-section :is(.heat-view-groups, .sun-segmented, .wind-analysis-tabs, .wind-cfd-view-tabs, .transport-mode-tabs, .traffic-view-toggles, .wind-lenses) {
+  gap: 3px;
+  border-color: #4b4a47;
+  border-radius: 4px;
+  background: #383735;
+}
+#explorer-panel-body .menu-section :is(.heat-view-groups button, .sun-segmented button, .wind-analysis-tabs button, .wind-cfd-view-tabs button, .transport-mode-tabs button, .wind-lenses button) {
+  min-height: 30px;
+  border-radius: 3px;
+  background: transparent;
+  color: #c9c6bf;
+}
+#explorer-panel-body .menu-section :is(.wind-analysis-tabs button.active, .wind-cfd-view-tabs button.active, .transport-mode-tabs button.active, .heat-view-groups button[aria-pressed="true"], .sun-segmented button.active, .wind-lenses button.active) {
+  border-color: #77746e;
+  background: #5a5853;
+  color: #faf8f2;
+}
+#explorer-panel-body .menu-section :is(.tool-section, .compact-section, .traffic-card, .heat-control-card, .wind-cfd-controls, .wind-flow-box-controls, .wind-tool-card, .transport-simulator, .transport-event-planner, .walking-route-card, .walking-street-context, .pollution-legend, .current-panel) {
+  border-color: #4b4a47;
+  border-radius: 4px;
+  background: #30302e;
+  box-shadow: none;
+}
+#explorer-panel-body .menu-section :is(.current-panel, .traffic-live-card, .wind-data-banner, .transport-simulator, .transport-event-planner) {
+  background: #30302e;
+}
+#explorer-panel-body .menu-section :is(.heat-summary span, .wind-results span, .traffic-results span, .transport-live-board, .current-metrics > div) {
+  border-color: #4c4b48;
+  border-radius: 4px;
+  background: #373634;
+  box-shadow: none;
+}
+#explorer-panel-body .menu-section :is(.freshness, .estimate-badge, .wind-mode-badge, .walking-network-badge, .traffic-quality-pill) {
+  border-color: #5b5954;
+  border-radius: 4px;
+  background: #3a3936;
+  color: #d1cec7;
+}
+#explorer-panel-body .menu-section :is(.heat-status, .wind-status, .traffic-status, .traffic-selection-status, .current-status, .wind-mode-help, .heat-spin-selector, .traffic-uncertainty) {
+  border-color: #4c4b48;
+  border-radius: 4px;
+  background: #30302e;
+  color: #c7c4bd;
+}
+#explorer-panel-body .menu-section :is(.traffic-kicker, .walking-kicker, .design-kicker, .traffic-calibration-details summary span, .traffic-data-link, .traffic-duration-label output, .traffic-quality-pill, .transport-live-board strong, .wind-data-banner i, .traffic-live-dot, .transport-data-banner > i) {
+  color: #cbc8c0;
+}
+#explorer-panel-body .menu-section :is(.wind-data-banner i, .traffic-live-dot, .transport-data-banner > i) {
+  background: #aaa69e;
+  box-shadow: none;
+}
+#explorer-panel-body .menu-section :is(.wind-compass-presets button.active, #wind-inspect-toggle[aria-pressed="true"], .transport-pick.active, .traffic-closure-choice button.active, .traffic-view-toggles label:has(input:checked)) {
+  border-color: #77746e;
+  background: #5a5853;
+  color: #faf8f2;
+}
+#explorer-panel-body .menu-section :is(.heat-spin-selector, .heat-spin-controls button, .heat-spin-wheel, .traffic-oneway-toggle, .walking-endpoint, .walking-street-context, .walking-context-grid > div, .walking-trace, .transport-map-controls .transport-chip) {
+  border-color: #4c4b48;
+  background: #30302e;
+  color: #d7d4cd;
+}
+#explorer-panel-body .menu-section :is(.heat-spin-wheel, .heat-loading-state span) { background: #5b5954; color: #f0ede7; }
+#explorer-panel-body .menu-section .heat-spin-wheel small { color: #c3c0b8; }
+#explorer-panel-body .menu-section :is(.tool-disclosure, .compact-about, .sun-advanced, .walking-method, .walking-traffic-context, .traffic-map-key, .pollution-method, .pollution-advanced, .transport-map-key, .panel-method) {
+  border-color: #4c4b48;
+}
+#explorer-panel-body .menu-section :is(.design-coupling, .design-block-editor, .design-block-list-wrap, .design-building-list-wrap, .scenario-design-editor, .place-inspector-card) {
+  border-color: #4c4b48;
+  border-radius: 4px;
+  background: #30302e;
+  color: #d4d1ca;
+}
+#explorer-panel-body .menu-section :is(.massing-status, .design-export-status, .design-sun-delta, .walking-route-agents, .walking-trace polyline, .walking-trace svg circle, .traffic-live-actions .freshness.is-ready) {
+  border-color: #5b5954;
+  color: #d2cfc8 !important;
+}
+#explorer-panel-body .menu-section :is(.massing-status, .design-sun-delta) { background: #373634; }
+#explorer-panel-body .menu-section :is(.massing-item, .walking-endpoint-dot) {
+  border-color: #5b5954;
+  background: #4a4945;
+  color: #e5e2dc;
+  box-shadow: none;
+}
+#explorer-panel-body .menu-section .walking-endpoint-dot.destination { background: #85827a; }
+#explorer-panel-body .menu-section :is(.traffic-calibration-details summary, .traffic-calibration-details summary span, .traffic-data-link) { color: #d1cec7; }
+#explorer-panel-body .menu-section .viewshed-status { color: #c7c4bd; }
+#explorer-panel-body .menu-section :is(.viewshed-badge, .viewshed-control output, #viewshed-heading-value) {
+  border-color: #5b5954;
+  color: #d2cfc8;
+}
+#explorer-panel-body .menu-section :is(#walking-origin-label, #walking-destination-label, .wind-mode-help, .wind-cfd-hint, .wind-tool-status, .pollution-traffic-note, .pollution-source-status) { color: #bdbab3; }
+#explorer-panel-body .menu-section :is(.transport-data-banner em, .transport-data-banner small, .transport-service-link, .transport-service-link:hover) { color: #d2cfc8; }
+#explorer-panel-body .menu-section .transport-data-banner em { border-color: #5b5954; background: #3a3936; }
+#explorer-panel-body .menu-section .evidence-card {
+  border-color: #4c4b48;
+  border-radius: 4px;
+  background: #30302e;
+  color: #c8c5be;
+  box-shadow: none;
+}
+#explorer-panel-body .menu-section .evidence-card :is(.evidence-badge, .evidence-limit, .evidence-result, .request-state) { color: #c4c1ba; }
+#explorer-panel-body .menu-section .evidence-limit { border-left-color: #77746e; }
+#explorer-panel-body .menu-section .evidence-card a { color: #d5d2cb; }
+#explorer-panel-body .menu-section :is(.transport-service-link, #transport-event-pick) { background: #343432; }
+#explorer-panel-body .menu-section .transport-service-link:hover { background: #444340; }
+.panel-footer button,
+.panel-footer button.secondary {
+  border-color: #53524f;
+  border-radius: 4px;
+  background: #343432;
+  color: #d8d5ce;
+  box-shadow: none;
+}
+.panel-footer button:hover:not(:disabled) { border-color: #77746e; background: #444340; color: #faf8f2; }
+.wind-cfd-loading {
+  border-color: #66635d;
+  background: #30302ef2;
+  color: #e5e2dc;
+}
+.wind-cfd-loading i { border-top-color: #c0bcb3; }
+#menu-heat .heat-switch:has(input:checked),
+#menu-wind .wind-switch:has(input:checked),
+#menu-traffic .traffic-switch:has(input:checked),
+#menu-transport .transport-show-switch:has(input:checked) {
+  border-color: #77746e;
+  background: #55534e;
+  color: #f1eee8;
+}
+
+#explorer-panel-body .menu-section > .panel-method {
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 2px;
+  padding: 10px;
+  border: 1px solid #4c4b48;
+  border-radius: 4px;
+  background: #30302e;
+  color: #c8c5be;
+  font-size: 10px;
+  line-height: 1.5;
+}
+#explorer-panel-body .menu-section > .panel-method > summary {
+  padding: 0;
+  color: #e3e0d9;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+  list-style-position: inside;
+}
+#explorer-panel-body .menu-section > .panel-method > p { margin: 0; color: #bdbab3; font-size: 10px; line-height: 1.5; }
+#explorer-panel-body .menu-section > .panel-method > a { color: #d3d0c8; text-underline-offset: 2px; }
+#explorer-panel-body .menu-section > .panel-method > summary span { float: right; color: #aaa69e; font-size: 8px; font-weight: 550; }
+
+.report-workspace {
+  border-color: #5a5955;
+  background: #2b2b29;
+}
+.report-workspace > summary {
+  color: #ebe8e1;
+  font-size: 13px;
+  font-weight: 750;
+}
+.report-workspace .scenario-context { color: #cbc8c0; }
+.report-workspace .experience-actions { display: grid; grid-template-columns: 1fr; gap: 7px; margin: 10px 0; }
+.report-workspace .experience-actions button { width: 100%; min-height: 38px; }
+.report-workspace .experience-actions button.primary {
+  border-color: #a6a39a;
+  background: #c9c6bc;
+  color: #242421;
+  font-weight: 800;
+}
+.report-workspace .experience-actions button.primary:hover:not(:disabled) {
+  border-color: #d2cfc6;
+  background: #d8d5cc;
+  color: #171715;
+}
+.report-workspace .experience-feedback { color: #d6d3cb; }
+
+@media (prefers-reduced-motion: reduce) {
+  #explorer-panel-body .menu-section :is(button, .transport-service-link) { transition: none; }
+}
