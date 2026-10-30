@@ -516,6 +516,9 @@ export async function startWebGLScene(canvas, status) {
     distance: 1600,
     target: new THREE.Vector3(0, 20, 0),
   };
+  const streetNameOverlay = document.querySelector('#street-name-overlay');
+  const streetNameToggle = document.querySelector('#map-street-names');
+  let streetNameLabelSignature = '';
   let animationFrame = 0;
   let animationTimer = 0;
   let renderRequested = true;
@@ -711,6 +714,20 @@ export async function startWebGLScene(canvas, status) {
   }
 
   const roadSurfaceHeightAt = (x, z) => Math.max(roadTerrainHeightAt(x, z), terrainSurfaceHeightAt(x, z));
+
+  const nonStreetNameRoadTypes = new Set(['footway', 'path', 'cycleway', 'steps', 'corridor', 'elevator']);
+  const namedStreetFeatures = (data.roads || []).flatMap(record => {
+    const name = String(record?.[3]?.name || '').trim();
+    const highway = String(record?.[1] || '');
+    const points = record?.[2];
+    if (!name || nonStreetNameRoadTypes.has(highway) || !Array.isArray(points) || points.length < 2) return [];
+    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+    for (const [x, z] of points) {
+      minX = Math.min(minX, x); minZ = Math.min(minZ, z);
+      maxX = Math.max(maxX, x); maxZ = Math.max(maxZ, z);
+    }
+    return [{ name, points, minX, minZ, maxX, maxZ }];
+  });
 
   function clearPlaceInspectorHighlight() {
     for (const child of [...placeInspectorHighlight.children]) {
@@ -6414,6 +6431,110 @@ export async function startWebGLScene(canvas, status) {
     scaleLabel.textContent = `≈ ${niceDistance >= 1000 ? `${Number((niceDistance / 1000).toFixed(1))} km` : `${Math.round(niceDistance)} m}`}`;
   }
 
+  function updateStreetNameLabels() {
+    if (!streetNameOverlay) return;
+    const observerView = Boolean(viewshedPersonCamera && viewshedState.point);
+    const enabled = streetNameToggle?.getAttribute('aria-pressed') !== 'false';
+    const streetScale = observerView || cameraState.distance <= 880;
+    if (!enabled || !streetScale || !namedStreetFeatures.length) {
+      const signature = `hidden:${enabled}:${streetScale}`;
+      if (signature !== streetNameLabelSignature) {
+        streetNameLabelSignature = signature;
+        if (streetNameOverlay.childElementCount) streetNameOverlay.replaceChildren();
+      }
+      return;
+    }
+
+    const canvasBounds = canvas.getBoundingClientRect();
+    if (canvasBounds.width < 20 || canvasBounds.height < 20) {
+      streetNameLabelSignature = 'empty';
+      if (streetNameOverlay.childElementCount) streetNameOverlay.replaceChildren();
+      return;
+    }
+    const interfaceBounds = [];
+    for (const element of document.querySelectorAll('.panel, .scene-hud-top, .scene-legend, .map-scale, .map-controls, #wind-cfd-loading, #traffic-draw-popup')) {
+      if (element.hidden || getComputedStyle(element).display === 'none') continue;
+      const bounds = element.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0) interfaceBounds.push(bounds);
+    }
+    const cameraPose = observerView
+      ? [camera.position.x, camera.position.y, camera.position.z, camera.rotation.x, camera.rotation.y, camera.rotation.z, camera.fov]
+      : [cameraState.distance, cameraState.target.x, cameraState.target.y, cameraState.target.z, cameraState.azimuth, cameraState.elevation, camera.fov];
+    const signature = [...cameraPose, canvasBounds.left, canvasBounds.top, canvasBounds.width, canvasBounds.height,
+      ...interfaceBounds.flatMap(bounds => [bounds.left, bounds.top, bounds.width, bounds.height])]
+      .map(value => Number(value).toFixed(2)).join(':');
+    if (signature === streetNameLabelSignature) return;
+    streetNameLabelSignature = signature;
+
+    camera.updateMatrixWorld(true);
+    let centerX = cameraState.target.x, centerZ = cameraState.target.z;
+    let searchRadius = Math.max(90, cameraState.distance * 1.15);
+    if (observerView) {
+      const direction = camera.getWorldDirection(new THREE.Vector3());
+      centerX = camera.position.x + direction.x * 110;
+      centerZ = camera.position.z + direction.z * 110;
+      searchRadius = 260;
+    }
+    const radiusSquared = searchRadius * searchRadius;
+    const nearestByName = new Map();
+    for (const feature of namedStreetFeatures) {
+      const gapX = Math.max(feature.minX - centerX, 0, centerX - feature.maxX);
+      const gapZ = Math.max(feature.minZ - centerZ, 0, centerZ - feature.maxZ);
+      if (gapX * gapX + gapZ * gapZ > radiusSquared) continue;
+      const points = feature.points;
+      let nearest = null;
+      for (let index = 1; index < points.length; index += 1) {
+        const [ax, az] = points[index - 1], [bx, bz] = points[index];
+        const dx = bx - ax, dz = bz - az;
+        const lengthSquared = dx * dx + dz * dz;
+        if (!(lengthSquared > 0.01)) continue;
+        const amount = clamp(((centerX - ax) * dx + (centerZ - az) * dz) / lengthSquared, 0, 1);
+        const x = ax + dx * amount, z = az + dz * amount;
+        const distanceSquared = (centerX - x) ** 2 + (centerZ - z) ** 2;
+        if (!nearest || distanceSquared < nearest.distanceSquared) nearest = { x, z, distanceSquared };
+      }
+      if (!nearest || nearest.distanceSquared > radiusSquared) continue;
+      const current = nearestByName.get(feature.name);
+      if (!current || nearest.distanceSquared < current.distanceSquared) nearestByName.set(feature.name, nearest);
+    }
+
+    const projected = new THREE.Vector3();
+    const candidates = [];
+    for (const [name, point] of nearestByName) {
+      projected.set(point.x, roadSurfaceHeightAt(point.x, point.z) + 1.8, point.z).project(camera);
+      if (projected.z < -1 || projected.z > 1) continue;
+      const x = canvasBounds.left + (projected.x * 0.5 + 0.5) * canvasBounds.width;
+      const y = canvasBounds.top + (-projected.y * 0.5 + 0.5) * canvasBounds.height;
+      const width = Math.max(72, name.length * 6.4 + 20);
+      const box = { left: x - width / 2, right: x + width / 2, top: y - 34, bottom: y + 5 };
+      if (box.left < canvasBounds.left + 7 || box.right > canvasBounds.right - 7
+        || box.top < canvasBounds.top + 8 || box.bottom > canvasBounds.bottom - 8) continue;
+      candidates.push({ name, x, y, box, distanceSquared: point.distanceSquared });
+    }
+    candidates.sort((a, b) => a.distanceSquared - b.distanceSquared);
+
+    const reserved = interfaceBounds.map(bounds => ({
+      left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom,
+    }));
+    const placed = [...reserved];
+    const labels = [];
+    for (const candidate of candidates) {
+      const overlaps = placed.some(box => candidate.box.left < box.right + 8
+        && candidate.box.right + 8 > box.left
+        && candidate.box.top < box.bottom + 6
+        && candidate.box.bottom + 6 > box.top);
+      if (overlaps) continue;
+      placed.push(candidate.box);
+      const label = document.createElement('span');
+      label.className = 'street-name-label';
+      label.textContent = candidate.name;
+      label.style.left = `${candidate.x}px`;
+      label.style.top = `${candidate.y - 3}px`;
+      labels.push(label);
+    }
+    streetNameOverlay.replaceChildren(...labels);
+  }
+
   function updateCamera() {
     if (viewshedPersonCamera && viewshedState.point) {
       const { originX, originZ, observerY } = viewshedState.point;
@@ -6543,6 +6664,14 @@ export async function startWebGLScene(canvas, status) {
     updateCamera();
   });
   document.querySelector('#map-fit')?.addEventListener('click', fitScene);
+  streetNameToggle?.addEventListener('click', () => {
+    const enabled = streetNameToggle.getAttribute('aria-pressed') !== 'true';
+    streetNameToggle.setAttribute('aria-pressed', String(enabled));
+    streetNameToggle.title = enabled
+      ? 'Street names show when zoomed to street level'
+      : 'Street names are hidden';
+    requestRender();
+  });
 
   // Frame a local-space [minX, minZ, maxX, maxZ] box. Used after a traffic
   // run so the corridor the user just closed fills the view: at full-CBD
@@ -17551,6 +17680,7 @@ export async function startWebGLScene(canvas, status) {
       }
     }
     resize();
+    updateStreetNameLabels();
     resizePostProcessing();
     skySphere.visible = shadowState.enabled && !viewshedState.active;
     skySphere.position.copy(camera.position);

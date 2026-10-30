@@ -32,6 +32,7 @@
   <main id="app">
     <canvas id="scene" tabindex="0" aria-label="Interactive Cape Town CBD 3D scene. Mouse and one-finger drag orbit in the same direction. Two fingers or modified mouse drag pan. Arrow keys orbit, plus and minus zoom, and Home fits the city."></canvas>
     <canvas id="wind-overlay" aria-label="Wind simulation overlay"></canvas>
+    <div id="street-name-overlay" class="street-name-overlay" aria-hidden="true"></div>
     <div id="wind-cfd-loading" class="wind-cfd-loading" role="status" aria-live="polite" hidden><i></i><span id="wind-cfd-loading-message">Loading OpenFOAM field…</span></div>
     <div class="scene-hud" aria-label="Map orientation and legend">
       <div class="scene-hud-top">
@@ -66,6 +67,7 @@
       <button id="map-zoom-in" type="button" aria-label="Zoom in" title="Zoom in">+</button>
       <button id="map-zoom-out" type="button" aria-label="Zoom out" title="Zoom out">−</button>
       <button id="map-fit" type="button" aria-label="Fit city to map" title="Fit city to map">⌂</button>
+      <button id="map-street-names" type="button" aria-label="Toggle street names" aria-pressed="true" title="Street names show when zoomed to street level">Aa</button>
     </div>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
     <div id="transport-stop-card" class="transport-stop-card" role="dialog" aria-label="Stop details" hidden></div>
