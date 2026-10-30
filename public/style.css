@@ -2329,20 +2329,13 @@ select, input[type="date"], input[type="number"] {
 .legend-road { background: #746e4f; }
 .legend-green { background: #50745a; }
 .legend-water { background: #368f9f; }
-.legend-groundcover { background: linear-gradient(90deg, #e8ad61 0 34%, #5ecb91 34% 68%, #54c3e1 68%); }
 .legend-cycling { background: linear-gradient(180deg, #0b3440 0 35%, #57e1ec 35% 75%, #c6fff4 75%); }
-.legend-runoff { background: linear-gradient(90deg, #2475e5, #28cfdb, #ffe17a, #ff7659); }
 .legend-public-realm { width: 8px; height: 8px; border-radius: 50%; background: #ffd36e; border: 1px solid #30291a; box-shadow: 0 0 0 1px #ffd36e; }
-.groundcover-summary { display: grid; gap: 7px; margin-top: 10px; padding: 10px; border: 1px solid #43534a; border-radius: 7px; background: #1e2923; }
-.groundcover-summary[hidden] { display: none; }
+.map-layer-summary { display: grid; gap: 7px; margin-top: 10px; padding: 10px; border: 1px solid #43534a; border-radius: 7px; background: #1e2923; }
+.map-layer-summary[hidden] { display: none; }
 .cycling-summary { border-color: #32616a; background: #19282b; }
-.runoff-summary { border-color: #346b78; background: #17272d; }
-.groundcover-summary > b { color: #dbe9df; font-size: 10px; }
-.groundcover-summary > p { margin: 0; color: #aebbb2; font-size: 9px; line-height: 1.45; }
-.runoff-rainfall-control { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; color: #c2d8df; font-size: 9px; }
-.runoff-rainfall-control output { color: #fff0b5; font-weight: 700; }
-.runoff-rainfall-control input { grid-column: 1 / -1; width: 100%; accent-color: #41cfe1; }
-.groundcover-summary > .runoff-volume { color: #f6df9d; font-weight: 700; }
+.map-layer-summary > b { color: #dbe9df; font-size: 10px; }
+.map-layer-summary > p { margin: 0; color: #aebbb2; font-size: 9px; line-height: 1.45; }
 .place-inspector-panel { gap: 8px; }
 .place-search-label { color: #c8d3d2; font-size: 10px; }
 #place-search { width: 100%; min-width: 0; min-height: 36px; padding: 8px 9px; border: 1px solid #3e565b; border-radius: 6px; background: #1d282b; color: #edf4f3; font-size: 11px; }
@@ -2366,11 +2359,6 @@ select, input[type="date"], input[type="number"] {
 .place-inspector-actions button { min-height: 34px; padding: 5px 6px; border: 1px solid #3e6b64; border-radius: 5px; background: #263c36; color: #d8eee4; font-size: 9px; cursor: pointer; }
 .place-inspector-actions button:hover, .place-inspector-actions button:focus-visible { border-color: #83d6b3; background: #315149; outline: none; }
 .place-inspector-card .method-note { margin: 0; }
-.groundcover-areas { display: grid; gap: 4px; }
-.groundcover-area { display: flex; justify-content: space-between; gap: 10px; padding: 5px 7px; border-left: 3px solid #e8ad61; border-radius: 3px; background: #ffffff08; color: #c6d2ca; font-size: 9px; }
-.groundcover-area.vegetated { border-left-color: #5ecb91; }
-.groundcover-area.water { border-left-color: #54c3e1; }
-.groundcover-area b { color: #edf5ee; font-variant-numeric: tabular-nums; }
 .map-controls {
   position: fixed;
   z-index: 4;

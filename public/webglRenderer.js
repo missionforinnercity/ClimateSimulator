@@ -46,8 +46,6 @@ const SCENE_LAYERS = Object.freeze({
   roadPriorityStep: 0.12,
   groundTexture: { order: 5, lift: 0.42 },
   streetMarking: { order: 8, lift: 0.48 },
-  mappedCoverage: { order: 7, lift: 0.62 },
-  runoff: { order: 9, lift: 0.82 },
   cycling: { order: 10, lift: 1.15 },
   analysisSurface: { order: 20, lift: 0.68 },
   analysisVolume: { order: 18, lift: 0 },
@@ -561,9 +559,7 @@ export async function startWebGLScene(canvas, status) {
   let designViewshedRefreshTimer = 0;
   const layerGroups = {
     terrain: new THREE.Group(),
-    groundcover: new THREE.Group(),
     cycling: new THREE.Group(),
-    runoff: new THREE.Group(),
     water: new THREE.Group(),
     grass: new THREE.Group(),
     railways: new THREE.Group(),
@@ -580,19 +576,11 @@ export async function startWebGLScene(canvas, status) {
   const groundSurfaceMeshes = [];
   const pavementOverrideMeshes = [];
   const sunModeNeutralMeshes = [];
-  layerGroups.groundcover.visible = false;
   layerGroups.cycling.visible = false;
-  layerGroups.runoff.visible = false;
   layerGroups.cityFurniture.visible = true;
   layerGroups.publicRealm.visible = true;
   Object.values(layerGroups).forEach(group => scene.add(group));
-  let groundcoverLoaded = false;
-  let groundcoverLoading = null;
   let cyclingLoaded = false;
-  let runoffLoading = null;
-  let runoffLoaded = false;
-  let runoffMetadata = null;
-  let runoffRainfallDepthMm = 25;
 
   // Decorative and municipal lighting share the same solar switch. Street
   // lamp glows and ground pools are batched; only festoon fill lights use
@@ -2119,6 +2107,7 @@ export async function startWebGLScene(canvas, status) {
     const wallPositions = [];
     const wallTriangles = [];
     const roofPositions = [];
+    const roofElevationColors = [];
     const wallColors = [];
     const wallElevationColors = [];
     data.buildings.forEach(([ground, height, ring, , , wallHeight = height, detailedRoof = false, , , wallProfile = null, minHeight = 0, , , holes = []], buildingIndex) => {
@@ -2200,6 +2189,9 @@ export async function startWebGLScene(canvas, status) {
             return roofY + roofRise * factor;
           };
           roofPositions.push(a[0], surfaceY(a), a[1], b[0], surfaceY(b), b[1], c[0], surfaceY(c), c[1]);
+          for (let vertex = 0; vertex < 3; vertex += 1) {
+            roofElevationColors.push(colour.r, colour.g, colour.b);
+          }
         }
       }
     });
@@ -2213,13 +2205,15 @@ export async function startWebGLScene(canvas, status) {
     wallGeometry.computeVertexNormals();
     const roofGeometry = new THREE.BufferGeometry();
     roofGeometry.setAttribute('position', new THREE.Float32BufferAttribute(roofPositions, 3));
+    roofGeometry.setAttribute('color', new THREE.Float32BufferAttribute(roofElevationColors, 3));
+    roofGeometry.userData.elevationColors = new Float32Array(roofElevationColors);
     roofGeometry.computeVertexNormals();
     const wallMaterial = new THREE.MeshPhongMaterial({
       color: COLORS.wall, vertexColors: true, side: THREE.DoubleSide,
       specular: 0x343a3b, shininess: 20,
     });
     const roofMaterial = new THREE.MeshPhongMaterial({
-      color: COLORS.roof, side: THREE.DoubleSide,
+      color: COLORS.roof, vertexColors: false, side: THREE.DoubleSide,
       specular: 0x3a3832, shininess: 15,
     });
     const walls = new THREE.Mesh(wallGeometry, wallMaterial);
@@ -2258,6 +2252,51 @@ export async function startWebGLScene(canvas, status) {
   let detailedRoofGeometrySource = null;
   let simplifiedRoofGeometrySource = null;
   let buildingWallGeometrySource = null;
+
+  function makeBuildingRoofColorLookup() {
+    const cellSize = 48;
+    const cells = new Map();
+    const keyFor = (column, row) => `${column}:${row}`;
+    const colors = data.buildings.map(building => elevationColour(Number(building[1]) || 0));
+    const footprintAreas = data.buildings.map(building => {
+      const ring = building?.[2] || [];
+      if (!ring.length) return Infinity;
+      const xs = ring.map(point => point[0]), zs = ring.map(point => point[1]);
+      return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...zs) - Math.min(...zs));
+    });
+    for (let index = 0; index < data.buildings.length; index += 1) {
+      const ring = data.buildings[index]?.[2];
+      if (!ring?.length) continue;
+      const minX = Math.min(...ring.map(point => point[0]));
+      const maxX = Math.max(...ring.map(point => point[0]));
+      const minZ = Math.min(...ring.map(point => point[1]));
+      const maxZ = Math.max(...ring.map(point => point[1]));
+      for (let column = Math.floor(minX / cellSize); column <= Math.floor(maxX / cellSize); column += 1) {
+        for (let row = Math.floor(minZ / cellSize); row <= Math.floor(maxZ / cellSize); row += 1) {
+          const key = keyFor(column, row);
+          if (!cells.has(key)) cells.set(key, []);
+          cells.get(key).push(index);
+        }
+      }
+    }
+    for (const candidates of cells.values()) {
+      candidates.sort((a, b) => Number(Boolean(data.buildings[b]?.[6])) - Number(Boolean(data.buildings[a]?.[6]))
+        || footprintAreas[a] - footprintAreas[b]);
+    }
+    const fallback = new THREE.Color(COLORS.roof);
+    return (x, z) => {
+      const candidates = cells.get(keyFor(Math.floor(x / cellSize), Math.floor(z / cellSize))) || [];
+      for (const index of candidates) {
+        const building = data.buildings[index];
+        const ring = building?.[2];
+        const holes = building?.[13] || [];
+        if (ring?.length >= 3 && pointInRing(x, z, ring) && !holes.some(hole => pointInRing(x, z, hole))) {
+          return colors[index];
+        }
+      }
+      return fallback;
+    };
+  }
 
   function makeDetailedRoofSurface() {
     if (!roofSurfaceBuffer || roofSurfaceBuffer.byteLength < 8) return null;
@@ -2323,12 +2362,22 @@ export async function startWebGLScene(canvas, status) {
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const roofColorAt = makeBuildingRoofColorLookup();
+    const elevationColors = new Float32Array(vertexCount * 3);
+    for (let vertex = 0; vertex < vertexCount; vertex += 1) {
+      const color = roofColorAt(sourcePositions[vertex * 3], sourcePositions[vertex * 3 + 2]);
+      elevationColors[vertex * 3] = color.r;
+      elevationColors[vertex * 3 + 1] = color.g;
+      elevationColors[vertex * 3 + 2] = color.b;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(elevationColors, 3));
+    geometry.userData.elevationColors = elevationColors;
     const displayIndices = ArrayBuffer.isView(visibleIndices) ? visibleIndices : new Uint32Array(visibleIndices);
     geometry.setIndex(new THREE.BufferAttribute(displayIndices, 1));
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
     const material = new THREE.MeshPhongMaterial({
-      color: COLORS.roof, side: THREE.DoubleSide,
+      color: COLORS.roof, vertexColors: false, side: THREE.DoubleSide,
       specular: 0x3a3832, shininess: 15,
     });
     const mesh = new THREE.Mesh(geometry, material);
@@ -3772,184 +3821,6 @@ export async function startWebGLScene(canvas, status) {
     }
   }
 
-  async function loadGroundcoverInventory() {
-    const summary = document.querySelector('#groundcover-summary');
-    const status = document.querySelector('#groundcover-status');
-    const areas = document.querySelector('#groundcover-areas');
-    const caveat = document.querySelector('#groundcover-caveat');
-    if (summary) summary.hidden = false;
-    if (groundcoverLoaded) return;
-    if (groundcoverLoading) return groundcoverLoading;
-    groundcoverLoading = (async () => {
-      if (status) status.textContent = 'Loading mapped surface coverage…';
-      try {
-        const response = await fetch(`${windApi}/groundcover`, { requestKey: 'groundcover-inventory' });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-        const palette = {
-          paved: { color: 0xe8ad61 }, vegetated: { color: 0x5ecb91 }, water: { color: 0x54c3e1 },
-        };
-        for (const category of payload.categories || []) {
-          const style = palette[category.category];
-          if (!style) continue;
-          const positions = [], indices = [];
-          let vertexCount = 0;
-          const appendTriangle = (a, b, c) => {
-            const edgeLength = Math.max(
-              Math.hypot(b[0] - a[0], b[1] - a[1]),
-              Math.hypot(c[0] - b[0], c[1] - b[1]),
-              Math.hypot(a[0] - c[0], a[1] - c[1]),
-            );
-            const divisions = clamp(Math.ceil(edgeLength / 8), 1, 48);
-            const rows = [];
-            for (let row = 0; row <= divisions; row += 1) {
-              const rowIndices = [];
-              for (let column = 0; column <= divisions - row; column += 1) {
-                const wb = column / divisions, wc = row / divisions, wa = 1 - wb - wc;
-                const x = a[0] * wa + b[0] * wb + c[0] * wc;
-                const z = a[1] * wa + b[1] * wb + c[1] * wc;
-                rowIndices.push(vertexCount++);
-                positions.push(x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.mappedCoverage.lift, z);
-              }
-              rows.push(rowIndices);
-            }
-            for (let row = 0; row < divisions; row += 1) {
-              for (let column = 0; column < divisions - row; column += 1) {
-                indices.push(rows[row][column], rows[row][column + 1], rows[row + 1][column]);
-                if (column + row < divisions - 1) {
-                  indices.push(rows[row][column + 1], rows[row + 1][column + 1], rows[row + 1][column]);
-                }
-              }
-            }
-          };
-          for (const polygon of category.polygons || []) {
-            const outer = polygon[0] || [];
-            if (outer.length < 3) continue;
-            let triangulated;
-            try { triangulated = triangulateRings(outer, polygon.slice(1)); }
-            catch { continue; }
-            for (const face of triangulated.faces) {
-              appendTriangle(triangulated.vertices[face[0]], triangulated.vertices[face[1]], triangulated.vertices[face[2]]);
-            }
-          }
-          if (!indices.length) continue;
-          const geometry = new THREE.BufferGeometry();
-          geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-          geometry.setIndex(indices);
-          geometry.computeVertexNormals();
-          const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
-            color: style.color, transparent: true, opacity: 0.76,
-            roughness: 0.96, metalness: 0, side: THREE.DoubleSide,
-            depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3,
-          }));
-          setSceneLayer(mesh, 'mappedCoverage');
-          mesh.name = `groundcover-${category.category}`;
-          layerGroups.groundcover.add(mesh);
-        }
-        if (status) status.textContent = `${Number(payload.coverage_percent || 0).toFixed(1)}% of the mapped terrain footprint has a classified polygon (${(Number(payload.mapped_area_m2 || 0) / 10000).toFixed(1)} ha).`;
-        if (areas) areas.replaceChildren(...(payload.categories || []).map(category => {
-          const row = document.createElement('div');
-          row.className = `groundcover-area ${category.category}`;
-          const name = document.createElement('span'); name.textContent = category.label;
-          const area = document.createElement('b'); area.textContent = `${(Number(category.area_m2 || 0) / 10000).toFixed(1)} ha`;
-          row.append(name, area); return row;
-        }));
-        if (caveat) caveat.textContent = `${payload.source}. ${payload.caveat}`;
-        groundcoverLoaded = true;
-      } catch (error) {
-        if (status) status.textContent = `Surface inventory unavailable · ${error.message || 'try again later'}`;
-      } finally {
-        groundcoverLoading = null;
-        requestRender();
-      }
-    })();
-    return groundcoverLoading;
-  }
-
-  function updateRunoffSummary() {
-    const rainfallOutput = document.querySelector('#runoff-rainfall-value');
-    const volume = document.querySelector('#runoff-volume');
-    if (rainfallOutput) rainfallOutput.textContent = `${runoffRainfallDepthMm} mm`;
-    if (!runoffMetadata || !volume) return;
-    const grossVolume = Number(runoffMetadata.mapped_paved_area_m2 || 0) * runoffRainfallDepthMm / 1000;
-    volume.textContent = `${grossVolume.toLocaleString('en-ZA', { maximumFractionDigits: 0 })} m³ gross rainfall on mapped pavement under the stated 100% runoff assumption.`;
-  }
-
-  async function loadRunoffScreening() {
-    const summary = document.querySelector('#runoff-summary');
-    const status = document.querySelector('#runoff-status');
-    const caveat = document.querySelector('#runoff-caveat');
-    if (summary) summary.hidden = false;
-    if (runoffLoaded) return;
-    if (runoffLoading) return runoffLoading;
-    runoffLoading = (async () => {
-      if (status) status.textContent = 'Loading mapped-pavement flow paths…';
-      try {
-        const response = await fetch(`${windApi}/runoff/screening`, { requestKey: 'runoff-screening' });
-        const metadata = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(metadata.detail || `HTTP ${response.status}`);
-        const assetResponse = await fetch(`${metadata.asset_url}?v=${metadata.asset_cache_key || metadata.asset_sha256}`);
-        if (!assetResponse.ok) throw new Error(`flow asset HTTP ${assetResponse.status}`);
-        const buffer = await assetResponse.arrayBuffer();
-        const headerSize = 36, recordSize = 8;
-        if (buffer.byteLength < headerSize || String.fromCharCode(...new Uint8Array(buffer, 0, 8)) !== 'CTFLOW01') {
-          throw new Error('flow asset header is invalid');
-        }
-        const header = new DataView(buffer, 0, headerSize);
-        const width = header.getUint32(8, true), height = header.getUint32(12, true);
-        const resolution = header.getFloat32(16, true);
-        const minX = header.getFloat32(20, true), minZ = header.getFloat32(24, true);
-        const threshold = header.getFloat32(28, true), count = header.getUint32(32, true);
-        if (headerSize + count * recordSize !== buffer.byteLength
-          || width !== Number(metadata.grid?.width) || height !== Number(metadata.grid?.height)
-          || count !== Number(metadata.record_count)) throw new Error('flow asset dimensions do not match its manifest');
-
-        const positions = new Float32Array(count * 3);
-        const colors = new Float32Array(count * 3);
-        const records = new DataView(buffer, headerSize);
-        let maximumArea = threshold;
-        for (let index = 0; index < count; index += 1) maximumArea = Math.max(maximumArea, records.getUint32(index * recordSize + 4, true));
-        const lowColor = new THREE.Color(0x2475e5);
-        const middleColor = new THREE.Color(0x27cbd1);
-        const highColor = new THREE.Color(0xff7958);
-        const color = new THREE.Color();
-        for (let index = 0; index < count; index += 1) {
-          const offset = index * recordSize;
-          const row = records.getUint16(offset, true), column = records.getUint16(offset + 2, true);
-          const area = records.getUint32(offset + 4, true);
-          const x = minX + (column + 0.5) * resolution;
-          const z = minZ + (row + 0.5) * resolution;
-          positions.set([x, terrainSurfaceHeightAt(x, z) + SCENE_LAYERS.runoff.lift, z], index * 3);
-          const blend = clamp(Math.log(Math.max(1, area / threshold)) / Math.log(Math.max(1.01, maximumArea / threshold)), 0, 1);
-          if (blend < 0.58) color.copy(lowColor).lerp(middleColor, blend / 0.58);
-          else color.copy(middleColor).lerp(highColor, (blend - 0.58) / 0.42);
-          colors.set([color.r, color.g, color.b], index * 3);
-        }
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        const points = new THREE.Points(geometry, new THREE.PointsMaterial({
-          size: 5.5, sizeAttenuation: true, vertexColors: true, transparent: true,
-          opacity: 0.92, depthWrite: false,
-        }));
-        points.name = 'mapped-pavement-runoff-concentration';
-        setSceneLayer(points, 'runoff');
-        layerGroups.runoff.add(points);
-        runoffMetadata = metadata;
-        runoffLoaded = true;
-        if (status) status.textContent = `${Number(metadata.record_count).toLocaleString()} flow cells · ${(Number(metadata.mapped_paved_area_m2) / 10000).toFixed(1)} ha mapped pavement · ${Number(metadata.mapped_paved_coverage_percent).toFixed(1)}% of valid terrain.`;
-        if (caveat) caveat.textContent = `${metadata.method} ${metadata.runoff_assumption} ${metadata.limitations}`;
-        updateRunoffSummary();
-      } catch (error) {
-        if (status) status.textContent = `Runoff screen unavailable · ${error.message || 'try again later'}`;
-      } finally {
-        runoffLoading = null;
-        requestRender();
-      }
-    })();
-    return runoffLoading;
-  }
-
   function buildCyclingLayer() {
     if (cyclingLoaded) return;
     cyclingLoaded = true;
@@ -5121,12 +4992,15 @@ export async function startWebGLScene(canvas, status) {
   let buildingDrawTransparencyEnabled = false;
   function setBuildingAppearance(mode) {
     const coloured = mode === 'elevation';
-    for (const mesh of [buildingMeshes.walls]) {
-      const values = coloured ? mesh.geometry.userData.elevationColors : mesh.geometry.userData.appearanceColors;
+    for (const mesh of [buildingMeshes.walls, buildingMeshes.roofs, buildingMeshes.surface].filter(Boolean)) {
+      const values = coloured ? mesh.geometry.userData.elevationColors : null;
       if (values) mesh.geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
-      mesh.material.vertexColors = Boolean(values);
-      mesh.material.color.setHex(values ? 0xffffff : COLORS.wall);
-      mesh.material.needsUpdate = true;
+      for (const material of [mesh.material, mesh.userData.normalMaterial, mesh.userData.sunMaterial].filter(Boolean)) {
+        material.vertexColors = Boolean(values);
+        const isSunMaterial = material === mesh.userData.sunMaterial;
+        material.color.setHex(values || isSunMaterial ? 0xffffff : (mesh.userData.normalColor ?? COLORS.wall));
+        material.needsUpdate = true;
+      }
     }
     requestRender();
   }
@@ -6062,9 +5936,7 @@ export async function startWebGLScene(canvas, status) {
     const analysisView = Boolean(shadowState.enabled || viewshedState.active || heatToggle?.checked || windToggle?.checked);
     for (const mesh of groundSurfaceMeshes) mesh.visible = !analysisView;
     for (const mesh of pavementOverrideMeshes) mesh.visible = !analysisView || viewshedState.active;
-    if (analysisView) layerGroups.groundcover.visible = false;
     if (analysisView) layerGroups.cycling.visible = false;
-    if (analysisView) layerGroups.runoff.visible = false;
   }
 
   function setViewshedContextMaterials(enabled) {
@@ -6124,28 +5996,26 @@ export async function startWebGLScene(canvas, status) {
   const sectionLayerProfiles = {
     analysis: {
       terrain: true, water: false, grass: false, railways: false,
-      paths: false, roads: false, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
+      paths: false, roads: false, cycling: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
     traffic: {
       terrain: true, water: false, grass: false, railways: false,
-      paths: false, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
+      paths: false, roads: true, cycling: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
     transport: {
       terrain: true, water: false, grass: false, railways: true,
-      paths: false, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
+      paths: false, roads: true, cycling: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
     viewshed: {
       terrain: true, water: false, grass: false, railways: false,
-      paths: true, roads: true, groundcover: false, cycling: false, runoff: false, cityFurniture: true, publicRealm: true, buildings: true, trees: true,
+      paths: true, roads: true, cycling: false, cityFurniture: true, publicRealm: true, buildings: true, trees: true,
     },
   };
 
   function applySectionLayerProfile(name) {
     if (name === 'tools') {
       if (!shadowState.enabled && !heatToggle?.checked && !windToggle?.checked && !viewshedState.active) {
-        layerGroups.groundcover.visible = Boolean(savedVisibility.groundcover);
         layerGroups.cycling.visible = Boolean(savedVisibility.cycling);
-        layerGroups.runoff.visible = Boolean(savedVisibility.runoff);
       }
       return;
     }
@@ -6960,7 +6830,6 @@ export async function startWebGLScene(canvas, status) {
       setHeatMode(false);
       heatGroup.visible = false;
       layerGroups.terrain.visible = true;
-      layerGroups.groundcover.visible = false;
       layerGroups.cycling.visible = false;
       layerGroups.grass.visible = false;
       layerGroups.railways.visible = false;
@@ -7041,10 +6910,6 @@ export async function startWebGLScene(canvas, status) {
       input.checked = group.visible;
       document.querySelector(`[data-legend-layer="${input.dataset.layer}"]`)
         ?.classList.toggle('is-hidden', !group.visible);
-      if (input.dataset.layer === 'groundcover') {
-        const summary = document.querySelector('#groundcover-summary');
-        if (summary) summary.hidden = !group.visible;
-      }
       if (input.dataset.layer === 'cycling') {
         const summary = document.querySelector('#cycling-summary');
         if (summary) summary.hidden = !group.visible;
@@ -16228,20 +16093,10 @@ export async function startWebGLScene(canvas, status) {
         savedVisibility[event.target.dataset.layer] = group.visible;
       }
     }
-    if (event.target.dataset.layer === 'groundcover') {
-      const summary = document.querySelector('#groundcover-summary');
-      if (summary) summary.hidden = !event.target.checked;
-      if (event.target.checked) void loadGroundcoverInventory();
-    }
     if (event.target.dataset.layer === 'cycling') {
       const summary = document.querySelector('#cycling-summary');
       if (summary) summary.hidden = !event.target.checked;
       if (event.target.checked) buildCyclingLayer();
-    }
-    if (event.target.dataset.layer === 'runoff') {
-      const summary = document.querySelector('#runoff-summary');
-      if (summary) summary.hidden = !event.target.checked;
-      if (event.target.checked) void loadRunoffScreening();
     }
     if (event.target.dataset.layer === 'publicRealm') {
       layerGroups.cityFurniture.visible = event.target.checked;
@@ -16255,11 +16110,6 @@ export async function startWebGLScene(canvas, status) {
     refreshTransportVehicleLayers();
     requestRender();
   }));
-
-  document.querySelector('#runoff-rainfall')?.addEventListener('input', event => {
-    runoffRainfallDepthMm = clamp(Number(event.target.value) || 25, 5, 100);
-    updateRunoffSummary();
-  });
 
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
   heatStreetMapToggle?.addEventListener('change', event => {

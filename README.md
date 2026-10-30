@@ -32,14 +32,13 @@ completed simulation arrays or drawn traffic closures.
   panel also runs a matched baseline/proposal clear-sky direct-sun comparison
   for edited building geometry, reporting paired ground-cell means and a
   difference map. Viewshed and current shadows update with edits; the wind
-  wake remains a visual screening overlay. UTCI/Tmrt, annual comfort, runoff,
-  traffic and route outputs remain on baseline geometry until recalculated or
-  solved for the proposal. See [docs/DESIGN_COUPLING.md](docs/DESIGN_COUPLING.md).
+  wake remains a visual screening overlay. UTCI/Tmrt, annual comfort, traffic
+  and route outputs remain on baseline geometry until recalculated or solved
+  for the proposal. See [docs/DESIGN_COUPLING.md](docs/DESIGN_COUPLING.md).
   The panel also displays mapped shade-deficit maps plus the app's fixed-temperature heat-priority
   screen for nearby heat zones. Satellite surface
   temperature remains a fixed baseline, and traffic still uses its baseline
-  geometry. The surface inventory reports
-  mapped coverage only; unmapped ground and infiltration remain unknown.
+  geometry. Runoff is not currently exposed as a map layer.
   A separate mapped-cycleway layer highlights dedicated OpenStreetMap links
   and reports network proximity groups; it does not rate cycling safety or
   imply that other roads are unavailable to cyclists.
@@ -96,11 +95,7 @@ clearly at both city and street scales.
 python scripts/build_hybrid_dem.py
 python scripts/build_hybrid_buildings.py
 python scripts/build_scene.py
-python scripts/build_runoff_screening.py
 ```
-
-The optional terrain-only stormwater screen is documented in
-[`docs/RUNOFF_SCREENING.md`](docs/RUNOFF_SCREENING.md).
 
 `build_hybrid_dem.py` retains every valid 2025 LiDAR cell, then fills only the
 Company's Garden supplement with locally calibrated 30 m SRTM. The supplement

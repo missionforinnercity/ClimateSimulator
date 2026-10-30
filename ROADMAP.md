@@ -25,7 +25,7 @@ not be presented as observed activity, measured exposure or validated benefits.
 
 | Work item | Next gate |
 | --- | --- |
-| **Drainage-aware runoff validation** | Add documented rainfall events, infiltration and drainage connectivity, then compare the terrain-only screen with observed ponding or an authoritative study before flood-depth or benefit claims. |
+| **Drainage-aware runoff validation** | Rebuild a runoff screen around documented rainfall events, infiltration and drainage connectivity, then compare it with observed ponding or an authoritative study before flood-depth or benefit claims. |
 | **Bioswale and rain-garden comparisons** | Revisit proposed polygons after a reviewable drainage method and local runoff parameters exist. The former intervention editor has been removed. |
 | **Acoustic comfort** | Acquire traffic and fleet observations, then document and validate a sound propagation method; relative SUMO edge-noise emissions alone are insufficient. |
 | **Cycling reachability** | Acquire a connected, checked cycling-cost network and actual bike-share or scooter hubs before 5/10-minute isochrones. Keep mapped cycleway gaps separate from a safety ranking. |

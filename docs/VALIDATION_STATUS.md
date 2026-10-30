@@ -57,6 +57,6 @@ See [wind validation](WIND_VALIDATION.md),
 [thermal validation](THERMAL_VALIDATION.md),
 [thermal climatology](THERMAL_CLIMATOLOGY.md),
 [traffic validation](TRAFFIC_VALIDATION.md),
-[walking routes](WALKING_ROUTES.md), and
-[runoff screening](RUNOFF_SCREENING.md) for the field schemas and domain
-limitations.
+[walking routes](WALKING_ROUTES.md), and the
+[data validation checklist](DATA_VALIDATION_CHECKLIST.md) for field schemas and
+domain limitations.

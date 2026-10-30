@@ -70,9 +70,6 @@ def main():
             page.wait_for_function("() => document.querySelector('#cycling-status')?.textContent.includes('mapped links')")
             assert "connected groups" in page.locator("#cycling-status").inner_text()
             assert "not a safety" in page.locator("#cycling-caveat").inner_text()
-            page.locator('[data-layer="groundcover"]').check()
-            page.wait_for_function("() => document.querySelector('#groundcover-status')?.textContent.includes('unavailable')")
-            page.locator('[data-layer="groundcover"]').uncheck()
             page.locator('[data-layer="cycling"]').uncheck()
             def camera_state():
                 return page.evaluate("""() => new Promise(resolve => {

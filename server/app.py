@@ -44,8 +44,6 @@ from .field import (
 )
 from .heat import (CANOPY_ASSET_PATH, HEAT_METRICS, HEAT_METRIC_METADATA, HEAT_SOURCE_PATH,
                    SCENE_PATH as HEAT_SCENE_PATH, design_shade_comparison, heat_zones)
-from .groundcover import mapped_groundcover
-from .runoff import runoff_screening_manifest
 from .sunlight import (
     SunlightAnalysisCancelled,
     _analysis_cancelled,
@@ -910,28 +908,6 @@ def heat_design_comparison(payload: DesignHeatPayload) -> dict[str, Any]:
     except Exception as error:
         LOGGER.exception("design heat comparison failed")
         raise HTTPException(status_code=503, detail=f"design heat comparison unavailable: {error}") from error
-
-
-@app.get("/api/groundcover")
-def groundcover_inventory() -> dict[str, Any]:
-    try:
-        return mapped_groundcover()
-    except (OSError, ValueError, KeyError) as error:
-        raise HTTPException(status_code=503, detail="Mapped ground-cover inventory is unavailable") from error
-
-
-@app.get("/api/runoff/screening")
-def runoff_screening() -> dict[str, Any]:
-    try:
-        return runoff_screening_manifest()
-    except FileNotFoundError as error:
-        raise HTTPException(status_code=503, detail="Runoff screening asset is unavailable") from error
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        LOGGER.exception("Runoff screening metadata is invalid")
-        raise HTTPException(status_code=503, detail="Runoff screening asset is unavailable") from error
-    except Exception as error:
-        LOGGER.exception("Mapped ground-cover inventory failed")
-        raise HTTPException(status_code=503, detail="Mapped ground-cover inventory is unavailable") from error
 
 
 @app.get("/api/sunlight/building-surfaces")
