@@ -544,15 +544,22 @@ export async function startWebGLScene(canvas, status) {
   scene.add(viewshedState.group);
   const viewshedStatus = document.querySelector('#viewshed-status');
   const viewshedPickButton = document.querySelector('#viewshed-pick');
-  const viewshedShape = document.querySelector('#viewshed-shape');
-  const viewshedHeading = document.querySelector('#viewshed-heading');
+  const viewshedShapeButtons = [...document.querySelectorAll('[data-viewshed-shape]')];
+  const viewshedPlanControl = document.querySelector('#viewshed-plan-control');
+  const viewshedHeadingHit = document.querySelector('#viewshed-heading-hit');
+  const viewshedConeSector = document.querySelector('#viewshed-cone-sector');
+  const viewshedFullSector = document.querySelector('#viewshed-full-sector');
+  const viewshedDirectionLine = document.querySelector('#viewshed-direction-line');
+  const viewshedSpreadHandleA = document.querySelector('#viewshed-spread-handle-a');
+  const viewshedSpreadHandleB = document.querySelector('#viewshed-spread-handle-b');
+  const viewshedRadiusHandle = document.querySelector('#viewshed-radius-handle');
   const viewshedHeadingValue = document.querySelector('#viewshed-heading-value');
-  const viewshedSpread = document.querySelector('#viewshed-spread');
   const viewshedSpreadValue = document.querySelector('#viewshed-spread-value');
-  const viewshedHeight = document.querySelector('#viewshed-height');
   const viewshedHeightValue = document.querySelector('#viewshed-height-value');
-  const viewshedRadius = document.querySelector('#viewshed-radius');
   const viewshedRadiusValue = document.querySelector('#viewshed-radius-value');
+  const viewshedHeightControl = document.querySelector('#viewshed-height-control');
+  const viewshedHeightMarker = document.querySelector('#viewshed-height-marker');
+  const viewshedHeightGuide = document.querySelector('#viewshed-height-guide');
   const viewshedPersonButton = document.querySelector('#viewshed-person');
   let viewshedPersonCamera = null;
   let viewshedBuildingIndex = null;
@@ -871,9 +878,7 @@ export async function startWebGLScene(canvas, status) {
     viewshedState.point = null;
     if (viewshedPersonButton) viewshedPersonButton.disabled = true;
     viewshedState.group.visible = false;
-    if (viewshedStatus) viewshedStatus.textContent = viewshedState.active
-      ? 'Click the terrain, a roof, or a building face to place the observer.'
-      : 'Select Pick viewpoint, then click the map.';
+    if (viewshedStatus) viewshedStatus.textContent = '';
     requestRender();
   }
 
@@ -928,13 +933,11 @@ export async function startWebGLScene(canvas, status) {
       : observerGround + eyeHeight;
     if (wallPlacement && !placement.headingInitialized) {
       viewshedState.heading = ((Math.round((Math.atan2(normal[0], -normal[2]) * 180 / Math.PI) / 5) * 5) % 360 + 360) % 360;
-      if (viewshedHeading) viewshedHeading.value = String(Math.min(355, viewshedState.heading));
-      if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${viewshedState.heading}° · ${compassLabel(viewshedState.heading)}`;
+      renderViewshedControls();
     } else if (onBuilding && !placement.headingInitialized) {
       const focusHeading = Math.atan2(cameraState.target.x - x, -(cameraState.target.z - z)) * 180 / Math.PI;
       viewshedState.heading = (Math.round((focusHeading + 360) / 5) * 5) % 360;
-      if (viewshedHeading) viewshedHeading.value = String(Math.min(355, viewshedState.heading));
-      if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${viewshedState.heading}° · ${compassLabel(viewshedState.heading)}`;
+      renderViewshedControls();
     }
     const observerBuildings = viewshedBuildingsAt(x, z);
     if (!onBuilding && observerBuildings.some(building => observerY >= building.ground && observerY < building.top)) {
@@ -5427,7 +5430,6 @@ export async function startWebGLScene(canvas, status) {
   const heatTimeControl = document.querySelector('#heat-time-control');
   const heatThermalControls = document.querySelector('#heat-thermal-controls');
   const heatScreeningControls = document.querySelector('#heat-screening-controls');
-  const heatForecastHint = document.querySelector('#heat-forecast-hint');
   const heatLayerHelp = document.querySelector('#heat-layer-help');
   const heatInspectButton = document.querySelector('#heat-inspect-place');
   const heatInspectResult = document.querySelector('#heat-inspect-result');
@@ -5469,17 +5471,21 @@ export async function startWebGLScene(canvas, status) {
   const heatProvenance = document.querySelector('#heat-provenance');
   const heatEnergy = document.querySelector('#heat-energy');
   const heatEnergySummary = document.querySelector('#heat-energy-summary');
-  const heatLegendMin = document.querySelector('#heat-legend-min');
-  const heatLegendMax = document.querySelector('#heat-legend-max');
+  const heatMapLegend = document.querySelector('#heat-map-legend');
+  const heatMapHistogram = document.querySelector('#heat-map-histogram');
+  const heatMapGradient = document.querySelector('#heat-map-gradient');
+  const heatMapScale = document.querySelector('.heat-map-scale');
+  const heatMapRangeLow = document.querySelector('#heat-map-range-low');
+  const heatMapRangeHigh = document.querySelector('#heat-map-range-high');
   const heatSummary = document.querySelector('#heat-summary');
   const heatComfortKpis = document.querySelector('#heat-comfort-kpis');
   const heatKpiScope = document.querySelector('#heat-kpi-scope');
   const heatKpiMethod = document.querySelector('#heat-kpi-method');
   const heatKpiShareHeading = document.querySelector('#heat-kpi-share-heading');
   const heatKpiCells = {
-    cold: [document.querySelector('#heat-kpi-cold-share'), document.querySelector('#heat-kpi-cold-hours')],
-    comfort: [document.querySelector('#heat-kpi-comfort-share'), document.querySelector('#heat-kpi-comfort-hours')],
-    heat: [document.querySelector('#heat-kpi-heat-share'), document.querySelector('#heat-kpi-heat-hours')],
+    cold: document.querySelector('#heat-kpi-cold-share'),
+    comfort: document.querySelector('#heat-kpi-comfort-share'),
+    heat: document.querySelector('#heat-kpi-heat-share'),
   };
   const heatAverage = document.querySelector('#heat-average');
   const heatPriorityArea = document.querySelector('#heat-priority-area');
@@ -5487,15 +5493,11 @@ export async function startWebGLScene(canvas, status) {
   const heatAverageLabel = document.querySelector('#heat-average-label');
   const heatMaximumLabel = document.querySelector('#heat-maximum-label');
   const heatExplorer = document.querySelector('#heat-explorer');
-  const heatDistribution = document.querySelector('#heat-distribution');
   const heatDistributionCount = document.querySelector('#heat-distribution-count');
-  const heatExplorerNote = document.querySelector('#heat-explorer-note');
   const heatHotStreets = document.querySelector('#heat-hot-streets');
   const heatCoolStreets = document.querySelector('#heat-cool-streets');
   const heatHotStreetsTitle = document.querySelector('#heat-hot-streets-title');
   const heatCoolStreetsTitle = document.querySelector('#heat-cool-streets-title');
-  const heatSurfaceSummary = document.querySelector('#heat-surface-summary');
-  const heatSurfaceTypes = document.querySelector('#heat-surface-types');
   const heatStreetMapToggle = document.querySelector('#heat-street-map-toggle');
   const heatStreetMapStatus = document.querySelector('#heat-street-map-status');
   const sunToggle = document.querySelector('#sun-toggle');
@@ -5517,7 +5519,6 @@ export async function startWebGLScene(canvas, status) {
   const sunInstantControl = document.querySelector('#sun-instant-control');
   const sunWindowControls = document.querySelector('#sun-window-controls');
   const sunDateTimeHeading = document.querySelector('#sun-date-time-heading');
-  const sunHoursMethod = document.querySelector('#sun-hours-method');
   const sunStartTime = document.querySelector('#sun-start-time');
   const sunEndTime = document.querySelector('#sun-end-time');
   const sunStepTime = document.querySelector('#sun-step-time');
@@ -5822,6 +5823,11 @@ export async function startWebGLScene(canvas, status) {
   let heatMesh = null;
   let heatRange = null;
   let heatPayload = null;
+  const heatDisplayFilterUniform = { value: new THREE.Vector2(-1e20, 1e20) };
+  let heatLegendDomain = null;
+  let heatLegendMetricKey = '';
+  let heatFilterFractions = [0, 1];
+  let heatLegendReady = false;
   let heatStreetRankings = [];
   let selectedHeatStreet = '';
   let selectedHeatStreetLocation = null;
@@ -6960,6 +6966,21 @@ export async function startWebGLScene(canvas, status) {
     return color.setHex(stops[lower][1]).lerp(new THREE.Color(stops[upper][1]), amount);
   }
 
+  function heatFilteredMaterial(options = {}) {
+    const material = new THREE.MeshBasicMaterial(options);
+    material.onBeforeCompile = shader => {
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float heatValue;\nvarying float vHeatValue;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHeatValue = heatValue;');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vHeatValue;\nuniform vec2 heatDisplayRange;')
+        .replace('void main() {', 'void main() {\n  if (vHeatValue < heatDisplayRange.x || vHeatValue > heatDisplayRange.y) discard;');
+      shader.uniforms.heatDisplayRange = heatDisplayFilterUniform;
+    };
+    material.customProgramCacheKey = () => 'heat-display-value-filter-v1';
+    return material;
+  }
+
   function buildRooftopHeatMesh(payload, range, featureValue = feature => feature.value, geometrySource = detailedRoofGeometrySource) {
     if (!geometrySource?.positions?.length) return null;
     const cellSize = 80;
@@ -7009,6 +7030,7 @@ export async function startWebGLScene(canvas, status) {
     };
     const positions = [];
     const colors = [];
+    const heatValues = [];
     const meshIndices = [];
     const vertexMap = new Map();
     const source = geometrySource.positions;
@@ -7038,6 +7060,7 @@ export async function startWebGLScene(canvas, status) {
           const color = heatColor(vertexValue, range.min, range.max, payload.metric);
           positions.push(source[vertex * 3], source[vertex * 3 + 1], source[vertex * 3 + 2]);
           colors.push(color.r, color.g, color.b);
+          heatValues.push(vertexValue);
         }
         meshIndices.push(mapped);
       }
@@ -7046,8 +7069,9 @@ export async function startWebGLScene(canvas, status) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute('heatValue', new THREE.Float32BufferAttribute(heatValues, 1));
     geometry.setIndex(meshIndices);
-    return new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    return new THREE.Mesh(geometry, heatFilteredMaterial({
       vertexColors: true, transparent: true, opacity: 0.9, side: THREE.DoubleSide,
       depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
     }));
@@ -7116,6 +7140,7 @@ export async function startWebGLScene(canvas, status) {
     }
     const positions = [];
     const colors = [];
+    const heatValues = [];
     const toVectorRing = ring => {
       const points = ring.map(([x, z]) => new THREE.Vector2(x, z));
       if (points.length > 1 && points[0].equals(points[points.length - 1])) points.pop();
@@ -7140,6 +7165,7 @@ export async function startWebGLScene(canvas, status) {
               : terrainHeightAt(point.x, point.y) + 0.48;
             positions.push(point.x, y, point.y);
             colors.push(color.r, color.g, color.b);
+            heatValues.push(Number(feature.value));
           }
         }
       }
@@ -7147,7 +7173,8 @@ export async function startWebGLScene(canvas, status) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    heatMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    geometry.setAttribute('heatValue', new THREE.Float32BufferAttribute(heatValues, 1));
+    const materialOptions = {
       vertexColors: true,
       transparent: true,
       opacity: 0.86,
@@ -7161,7 +7188,10 @@ export async function startWebGLScene(canvas, status) {
       // rather than with the underlying (actually complete) zone data.
       polygonOffset: true,
       polygonOffsetFactor: -1,
-    }));
+    };
+    const material = payload.metric === 'cumulative_sun_hours'
+      ? new THREE.MeshBasicMaterial(materialOptions) : heatFilteredMaterial(materialOptions);
+    heatMesh = new THREE.Mesh(geometry, material);
     heatGroup.add(heatMesh);
   }
 
@@ -7169,6 +7199,174 @@ export async function startWebGLScene(canvas, status) {
     if (value == null) return '—';
     const decimals = Number(metadata.decimals ?? 1);
     return `${Number(value).toFixed(decimals)}${metadata.unit || ''}`;
+  }
+
+  function heatColorRange(payload) {
+    return payload?.thermal ? payload.range : payload?.color_range || payload?.range || heatRange;
+  }
+
+  function heatColorPosition(value, payload, range) {
+    const metric = payload.metric;
+    if (metric === 'sky_view_factor') return clamp(Number(value) / 100, 0, 1);
+    if (payload.climatology && metric === 'utci_c') {
+      return clamp((Number(value) - UTCI_COLOR_MIN) / (UTCI_COLOR_MAX - UTCI_COLOR_MIN), 0, 1);
+    }
+    if (metric === 'utci_delta_c') {
+      const limit = Math.max(Math.abs(Number(range.min)), Math.abs(Number(range.max)), 0.5);
+      return clamp((Number(value) + limit) / (2 * limit), 0, 1);
+    }
+    if (payload.thermal && metric === 'utci_c' && Array.isArray(range.percentiles)) {
+      return percentileColorPosition(Number(value), range.percentiles);
+    }
+    return clamp((Number(value) - Number(range.min)) / Math.max(Number(range.max) - Number(range.min), 1e-6), 0, 1);
+  }
+
+  function heatLegendValueAt(position, payload, range) {
+    const t = clamp(position, 0, 1);
+    if (payload.metric === 'sky_view_factor') return t * 100;
+    if (payload.climatology && payload.metric === 'utci_c') {
+      return UTCI_COLOR_MIN + (UTCI_COLOR_MAX - UTCI_COLOR_MIN) * t;
+    }
+    if (payload.metric === 'utci_delta_c') {
+      const limit = Math.max(Math.abs(Number(range.min)), Math.abs(Number(range.max)), 0.5);
+      return -limit + 2 * limit * t;
+    }
+    if (payload.thermal && payload.metric === 'utci_c' && Array.isArray(range.percentiles)) {
+      const scaled = t * (range.percentiles.length - 1);
+      const low = Math.floor(scaled), high = Math.min(range.percentiles.length - 1, low + 1);
+      return Number(range.percentiles[low])
+        + (Number(range.percentiles[high]) - Number(range.percentiles[low])) * (scaled - low);
+    }
+    return Number(range.min) + (Number(range.max) - Number(range.min)) * t;
+  }
+
+  function heatLegendColorAt(position, payload, range) {
+    const t = clamp(position, 0, 1);
+    if (payload.metric === 'sky_view_factor') return skyViewFactorColor(t);
+    if (payload.climatology && payload.metric === 'utci_c') {
+      const value = UTCI_COLOR_MIN + (UTCI_COLOR_MAX - UTCI_COLOR_MIN) * t;
+      return heatColor(value, UTCI_COLOR_MIN, UTCI_COLOR_MAX, 'utci_absolute_c');
+    }
+    if (payload.thermal && payload.metric === 'utci_c' && Array.isArray(range.percentiles)) {
+      const scaled = t * (range.percentiles.length - 1);
+      const low = Math.floor(scaled), high = Math.min(range.percentiles.length - 1, low + 1);
+      const value = Number(range.percentiles[low])
+        + (Number(range.percentiles[high]) - Number(range.percentiles[low])) * (scaled - low);
+      return heatColor(value, range.min, range.max, payload.metric, range.percentiles);
+    }
+    if (payload.metric === 'utci_delta_c') {
+      const limit = Math.max(Math.abs(Number(range.min)), Math.abs(Number(range.max)), 0.5);
+      return heatColor(-limit + 2 * limit * t, range.min, range.max, payload.metric);
+    }
+    return heatColor(Number(range.min) + (Number(range.max) - Number(range.min)) * t,
+      range.min, range.max, payload.metric);
+  }
+
+  function updateHeatLegendFilter() {
+    if (!heatLegendDomain || !heatMapRangeLow || !heatMapRangeHigh) return;
+    const maxSlider = Number(heatMapRangeHigh.max) || 1000;
+    const gap = 2;
+    let low = clamp(Number(heatMapRangeLow.value), 0, maxSlider - gap);
+    let high = clamp(Number(heatMapRangeHigh.value), gap, maxSlider);
+    if (low > high - gap) {
+      if (document.activeElement === heatMapRangeLow) low = high - gap;
+      else high = low + gap;
+    }
+    heatMapRangeLow.value = String(low);
+    heatMapRangeHigh.value = String(high);
+    const lowFraction = low / maxSlider;
+    const highFraction = high / maxSlider;
+    heatFilterFractions = [lowFraction, highFraction];
+    const { payload, range, metadata, dataMin, dataMax } = heatLegendDomain;
+    const selectedLow = lowFraction <= 0 ? dataMin : heatLegendValueAt(lowFraction, payload, range);
+    const selectedHigh = highFraction >= 1 ? dataMax : heatLegendValueAt(highFraction, payload, range);
+    heatDisplayFilterUniform.value.set(
+      lowFraction <= 0 ? -1e20 : selectedLow,
+      highFraction >= 1 ? 1e20 : selectedHigh,
+    );
+    heatMapScale?.style.setProperty('--heat-low-percent', `${(lowFraction * 100).toFixed(2)}%`);
+    heatMapScale?.style.setProperty('--heat-high-percent', `${(highFraction * 100).toFixed(2)}%`);
+    heatMapRangeLow.setAttribute('aria-valuetext', `Minimum visible value ${formatHeatValue(selectedLow, metadata)}`);
+    heatMapRangeHigh.setAttribute('aria-valuetext', `Maximum visible value ${formatHeatValue(selectedHigh, metadata)}`);
+    if (heatMapHistogram) {
+      const bars = [...heatMapHistogram.children];
+      bars.forEach((bar, index) => {
+        const center = (index + 0.5) / Math.max(1, bars.length);
+        bar.classList.toggle('outside-range', center < lowFraction || center > highFraction);
+      });
+    }
+    requestRender();
+  }
+
+  function renderHeatMapLegend(payload, metadata, sourceValues) {
+    if (!heatMapLegend || !payload || !sourceValues.length) {
+      heatLegendReady = false;
+      heatLegendDomain = null;
+      if (heatMapLegend) heatMapLegend.hidden = true;
+      heatDisplayFilterUniform.value.set(-1e20, 1e20);
+      return;
+    }
+    const values = [...sourceValues].filter(Number.isFinite);
+    if (!values.length) {
+      heatLegendReady = false;
+      heatLegendDomain = null;
+      heatMapLegend.hidden = true;
+      return;
+    }
+    const sortedValues = [...values].sort((a, b) => a - b);
+    const dataMin = sortedValues[0], dataMax = sortedValues.at(-1);
+    const metricKey = `${payload.metric}:${payload.climatology ? 'climate' : 'map'}`;
+    if (metricKey !== heatLegendMetricKey) {
+      heatFilterFractions = [0, 1];
+      heatLegendMetricKey = metricKey;
+    }
+    const range = heatColorRange(payload);
+    if (!range) {
+      heatLegendReady = false;
+      heatLegendDomain = null;
+      heatMapLegend.hidden = true;
+      return;
+    }
+    heatLegendDomain = { payload, range, metadata, dataMin, dataMax };
+    heatLegendReady = true;
+    const areas = payload.thermal ? null : (payload.features || [])
+      .filter(feature => feature?.value != null && Number.isFinite(Number(feature.value)));
+    const areaWeighted = Boolean(areas?.some(feature => Number.isFinite(Number(feature.area_m2)) && Number(feature.area_m2) > 0));
+    if (heatMapGradient) {
+      const stops = Array.from({ length: 17 }, (_, index) => {
+        const position = index / 16;
+        return `#${heatLegendColorAt(position, payload, range).getHexString()} ${(position * 100).toFixed(1)}%`;
+      });
+      heatMapGradient.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
+    }
+    const binCount = 56;
+    const bins = new Float64Array(binCount);
+    const weights = areas?.map(feature => {
+      const area = Number(feature.area_m2);
+      return areaWeighted && Number.isFinite(area) && area > 0 ? area : 1;
+    });
+    values.forEach((value, sourceIndex) => {
+      const index = Math.min(binCount - 1, Math.floor(heatColorPosition(value, payload, range) * binCount));
+      bins[index] += weights?.[sourceIndex] ?? 1;
+    });
+    const peak = Math.max(1, ...bins);
+    if (heatMapHistogram) {
+      const fragment = document.createDocumentFragment();
+      bins.forEach((count, index) => {
+        const bar = document.createElement('span');
+        bar.style.height = `${Math.max(count ? 4 : 0, count / peak * 100)}%`;
+        bar.style.background = `#${heatLegendColorAt((index + 0.5) / binCount, payload, range).getHexString()}`;
+        fragment.append(bar);
+      });
+      heatMapHistogram.replaceChildren(fragment);
+    }
+    if (heatMapRangeLow && heatMapRangeHigh) {
+      const maxSlider = Number(heatMapRangeHigh.max) || 1000;
+      heatMapRangeLow.value = String(Math.round(heatFilterFractions[0] * maxSlider));
+      heatMapRangeHigh.value = String(Math.round(heatFilterFractions[1] * maxSlider));
+    }
+    updateHeatLegendFilter();
+    heatMapLegend.hidden = !heatToggle?.checked;
   }
 
   function utciCategory(value) {
@@ -7189,24 +7387,22 @@ export async function startWebGLScene(canvas, status) {
     const temporal = ['pedestrian_priority_score', 'shade_deficit_score'].includes(metric);
     if (heatLayerHelp) {
       const explanations = {
-        utci_c: 'Outdoor heat stress combines air, humidity, wind and radiant temperature. Experimental model estimate, not a street observation.',
         tmrt_c: 'Mean radiant temperature estimates the combined radiant load from sun and surrounding surfaces; it is one UTCI input, not air temperature.',
         sky_view_factor: 'SOLWEIG sky-view factor from the prepared 2 m city surface. Higher values indicate more open sky; lower values indicate greater obstruction from buildings, terrain and canopy.',
         pedestrian_priority_score: 'Screening rank: 70% fixed Summer 2025–26 surface-heat baseline + 30% shade deficit at the selected date and time. Not a health-risk score.',
         pedestrian_heat_exposure_c: 'Satellite-derived exposure proxy in °C. It is not UTCI, PET, air temperature or a measured pedestrian exposure.',
         shade_deficit_score: 'Relative lack of mapped shade at the selected date and time. It does not measure surface temperature or health risk.',
-        heat_model_lst_c: 'Modelled land-surface temperature from the Summer 2025–26 product; it is not air temperature.',
         rooftop_temperature_c: 'Land-surface temperature screened onto mapped roofs. It is not a measured roof-membrane temperature.',
       };
-      heatLayerHelp.textContent = explanations[metric] || (forecast ? 'Outdoor comfort from air, humidity, wind and radiant heat.' : 'Satellite heat and mapped shade · separate from UTCI.');
+      heatLayerHelp.textContent = explanations[metric] || (forecast ? '' : 'Satellite heat and mapped shade · separate from UTCI.');
+      heatLayerHelp.hidden = !heatLayerHelp.textContent;
     }
-    if (heatThermalControls) heatThermalControls.hidden = !forecast && !staticSurface;
+    if (heatThermalControls) heatThermalControls.hidden = !forecast;
     if (heatThermalControls?.firstElementChild) heatThermalControls.firstElementChild.hidden = staticSurface;
     if (heatScreeningControls) heatScreeningControls.hidden = !temporal;
     if (heatDateControl) heatDateControl.hidden = !temporal;
     if (heatTimeControl) heatTimeControl.hidden = !temporal;
     if (heatPeriodControl) heatPeriodControl.hidden = !forecast;
-    if (heatForecastHint) heatForecastHint.hidden = !forecast || climate || staticSurface;
     if (heatClimateControls) heatClimateControls.hidden = !climate;
     if (heatClimateSeasonControl) heatClimateSeasonControl.hidden = !climate || heatClimateAggregate?.value !== 'season';
     if (heatClimateMonth?.parentElement) heatClimateMonth.parentElement.hidden = !climate || heatClimateAggregate?.value !== 'month';
@@ -7370,6 +7566,7 @@ export async function startWebGLScene(canvas, status) {
     const vertexCount = vertexColumns * vertexRows;
     const positions = new Float32Array(vertexCount * 3);
     const colors = new Float32Array(vertexCount * 3);
+    const heatValues = new Float32Array(vertexCount);
     for (let row = 0; row < vertexRows; row += 1) for (let column = 0; column < vertexColumns; column += 1) {
       const index = row * vertexColumns + column, offset = index * 3;
       const x = Math.min(maxX, minX + Math.min(grid.width, column * stride) * resolution);
@@ -7379,6 +7576,7 @@ export async function startWebGLScene(canvas, status) {
       positions[offset + 2] = z;
       const fallback = displayValues[Math.min(row, rows - 1) * columns + Math.min(column, columns - 1)];
       const value = cornerValue(row, column, fallback);
+      heatValues[index] = value;
       const color = payload.climatology && metric === 'utci_c'
         ? heatColor(value, UTCI_COLOR_MIN, UTCI_COLOR_MAX, 'utci_absolute_c')
         : metric === 'sky_view_factor'
@@ -7391,8 +7589,9 @@ export async function startWebGLScene(canvas, status) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('heatValue', new THREE.BufferAttribute(heatValues, 1));
     geometry.setIndex(new THREE.BufferAttribute(thermalGridIndices(grid, stride, rows, columns), 1));
-    heatMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+    heatMesh = new THREE.Mesh(geometry, heatFilteredMaterial({
       vertexColors: true, transparent: true, opacity: 0.88, side: THREE.DoubleSide,
       depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1,
     }));
@@ -7506,11 +7705,15 @@ export async function startWebGLScene(canvas, status) {
     const ids = { cold: 'cold_stress', comfort: 'no_thermal_stress', heat: 'heat_stress' };
     for (const [key, id] of Object.entries(ids)) {
       const item = bandById.get(id);
-      const [shareNode, hoursNode] = heatKpiCells[key] || [];
-      if (shareNode) shareNode.textContent = item?.area_time_share_pct == null
-        ? '—' : `${Number(item.area_time_share_pct).toFixed(1)}%`;
-      if (hoursNode) hoursNode.textContent = hoursAvailable && item?.equivalent_hours_per_mapped_cell != null
-        ? `${Number(item.equivalent_hours_per_mapped_cell).toLocaleString()} h` : '—';
+      const shareNode = heatKpiCells[key];
+      const rawShare = item?.area_time_share_pct == null ? null : Number(item.area_time_share_pct);
+      const share = Number.isFinite(rawShare) ? clamp(rawShare, 0, 100) : 0;
+      if (shareNode) {
+        shareNode.style.setProperty('--share', `${share.toFixed(1)}%`);
+        shareNode.setAttribute('aria-valuenow', share.toFixed(1));
+        shareNode.setAttribute('aria-valuetext', rawShare == null ? 'No area share available' : `${share.toFixed(1)} percent area share`);
+        shareNode.title = rawShare == null ? 'Area share unavailable' : `${share.toFixed(1)}% area share`;
+      }
     }
     if (heatKpiScope) heatKpiScope.textContent = scope;
     if (heatKpiMethod) heatKpiMethod.textContent = method;
@@ -7569,8 +7772,6 @@ export async function startWebGLScene(canvas, status) {
       }
     }
     const range = thermalClimatology.color_ranges?.[metric] || thermalClimatology.color_range || { min: -10, max: 50 };
-    const legendGradient = document.querySelector('.heat-gradient');
-    if (legendGradient) legendGradient.style.background = metric === 'utci_c' ? utciAbsolutePalette().gradient : '';
     const displayManifest = sourceValues.length === 1 ? thermalClimatology : {
       ...thermalClimatology, channels: [channel],
     };
@@ -7592,8 +7793,6 @@ export async function startWebGLScene(canvas, status) {
     if (heatMaximumLabel) heatMaximumLabel.textContent = metric === 'utci_c' ? 'P90 UTCI' : 'P90 Tmrt';
     if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'Area UTCI ≥ 26°C';
     heatSummary.hidden = false;
-    heatLegendMin.textContent = metric === 'utci_c' ? `≤ ${UTCI_COLOR_MIN}°C` : `${Number(range.min).toFixed(0)}°C`;
-    heatLegendMax.textContent = metric === 'utci_c' ? `≥ ${UTCI_COLOR_MAX}°C` : `${Number(range.max).toFixed(0)}°C`;
     const localHour = `${hour.toString().padStart(2, '0')}:00`;
     const periodLabel = aggregate === 'annual' ? 'Annual composite' : aggregate === 'season'
       ? `${selectedSeason[0].toUpperCase()}${selectedSeason.slice(1)} mean` : sourceFrames[0].month_name;
@@ -7621,8 +7820,6 @@ export async function startWebGLScene(canvas, status) {
     renderHeatExplorer(heatPayload, channel);
     if (heatWeatherInputs) heatWeatherInputs.hidden = true;
     if (heatEnergy) heatEnergy.hidden = true;
-    const legendHelp = document.querySelector('#heat-legend-help');
-    if (legendHelp) legendHelp.textContent = 'The same temperature scale is used for every month and hour. Masked cells are blended for map continuity; point values and summaries use calculated cells only.';
     if (heatProvenance) heatProvenance.textContent = `Historical reanalysis composite · not a live forecast or observed street-level UTCI · ${thermalClimatology.validation_status.replaceAll('_', ' ')}.`;
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'heat', metadata: {
       description: `${periodLabel}, ${localHour} SAST · ERA5 ${thermalClimatology.baseline.start_year}–${thermalClimatology.baseline.end_year} climate composite`,
@@ -7729,10 +7926,6 @@ export async function startWebGLScene(canvas, status) {
         hotspot_area_m2: highVisibilityCells * Number(manifest.grid.resolution_m) ** 2,
         hotspot_area_pct: highVisibilityCells / validCells * 100 }, channel);
       renderHeatExplorer(heatPayload, channel);
-      const legend = document.querySelector('.heat-gradient');
-      if (legend) legend.style.background = 'linear-gradient(90deg, #943440, #ebaf4d 50%, #47b3d1)';
-      heatLegendMin.textContent = '0% · obstructed';
-      heatLegendMax.textContent = '100% · open';
       heatStatus.textContent = 'SOLWEIG sky-view factor · static surface model';
       heatForecastLabel.textContent = 'Static surface';
       if (heatProvenance) heatProvenance.textContent = `SOLWEIG sky-view factor · ${manifest.grid.resolution_m} m surface grid · higher values mean a larger visible sky hemisphere. Static geometry product reused by the hourly thermal runs.`;
@@ -7797,8 +7990,6 @@ export async function startWebGLScene(canvas, status) {
     const percentile = fraction => sampleValues[Math.round((sampleValues.length - 1) * fraction)];
     const percentiles = Array.from({ length: 81 }, (_, index) => percentile(0.1 + index / 100));
     const range = { min: percentiles[0], max: percentiles.at(-1), percentiles };
-    const legendGradient = document.querySelector('.heat-gradient');
-    if (legendGradient) legendGradient.style.background = metric === 'utci_c' ? utciPalette(range.min, range.max).gradient : '';
     heatPayload = { thermal: true, manifest: thermalManifest, values, metric, range };
     thermalBaselinePayload = heatPayload;
     thermalScenarioPayload = null;
@@ -7820,16 +8011,9 @@ export async function startWebGLScene(canvas, status) {
         { id: 'no_thermal_stress', area_time_share_pct: noStressCells / validCells * 100 },
         { id: 'heat_stress', area_time_share_pct: heatStressCells / validCells * 100 },
       ], `Selected forecast hour · ${new Date(frame.valid_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })} SAST`,
-      'Spatial area share for this modeled hour only; no period-hours estimate is inferred from the single frame.');
+      '');
     } else if (heatComfortKpis) heatComfortKpis.hidden = true;
     renderHeatExplorer(heatPayload, channel);
-    if (metric === 'utci_c') {
-      heatLegendMin.textContent = `P10 ${formatHeatValue(range.min, channel)}`;
-      heatLegendMax.textContent = `P90 ${formatHeatValue(range.max, channel)}`;
-    } else {
-      heatLegendMin.textContent = `P10 ${formatHeatValue(range.min, channel)}`;
-      heatLegendMax.textContent = `P90 ${formatHeatValue(range.max, channel)}`;
-    }
     const validDate = new Date(frame.valid_at);
     heatForecastLabel.textContent = `${validDate.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} SAST`;
     const forcing = frame.forcing || {};
@@ -7837,7 +8021,7 @@ export async function startWebGLScene(canvas, status) {
     const refreshFailure = thermalManifest.refresh?.state === 'failed'
       ? ` · latest refresh failed during ${String(thermalManifest.refresh.phase || 'model execution').replaceAll('_', ' ')}`
       : '';
-    heatStatus.textContent = `${metric === 'utci_c' ? 'UTCI' : 'Tmrt'} · ${thermalManifest.stale ? 'stale forecast' : hasWeatherWarnings ? 'forecast inputs need checking' : 'model forecast · not observed'}${refreshFailure}`;
+    heatStatus.textContent = `${metric === 'utci_c' ? 'UTCI' : 'Tmrt'} · ${thermalManifest.stale ? 'stale forecast' : 'model forecast · not observed'}${refreshFailure}`;
     const inputs = forcing.inputs || {};
     const weatherInputs = document.querySelector('#heat-weather-inputs');
     if (weatherInputs) {
@@ -7892,7 +8076,7 @@ export async function startWebGLScene(canvas, status) {
         ? ' · Low-confidence model estimate: forecast inputs have quality warnings, and no CBD street observation is available. Do not treat its heat-stress category as observed local conditions. UTCI includes modeled sun and wind; it is not air temperature.'
       : ` · mean ${utciCategory(mean)}, peak ${utciCategory(maximum)}. UTCI is a sun-and-wind comfort index, not air temperature. The colour range adapts to this hour; compare numeric values across hours.`
       : '';
-    heatProvenance.textContent = `${thermalManifest.validation_status.replaceAll('_', ' ')} · Weather ${sources}${station}${qualitySummary} · Radiation ${radiationSource}${thermalManifest.latest_observation_at && !forcing.station?.id ? ' · remote proxy checks through ' + new Date(thermalManifest.latest_observation_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : ''} · run ${generated} SAST${inputSummary}${resultContext}`;
+    if (heatProvenance) heatProvenance.textContent = `${thermalManifest.validation_status.replaceAll('_', ' ')} · Weather ${sources}${station}${qualitySummary} · Radiation ${radiationSource}${thermalManifest.latest_observation_at && !forcing.station?.id ? ' · remote proxy checks through ' + new Date(thermalManifest.latest_observation_at).toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg' }) : ''} · run ${generated} SAST${inputSummary}${resultContext}`;
     if (metric === 'utci_c') {
       if (heatAverageLabel) heatAverageLabel.textContent = hasWeatherWarnings ? 'Mean UTCI · low confidence' : `Mean UTCI · ${utciCategory(mean)}`;
       if (heatMaximumLabel) heatMaximumLabel.textContent = hasWeatherWarnings ? 'Peak UTCI · low confidence' : `Peak UTCI · ${utciCategory(maximum)}`;
@@ -7994,13 +8178,10 @@ export async function startWebGLScene(canvas, status) {
 
   function showThermalScenarioDifference() {
     if (!thermalScenarioPayload) return;
-    heatPayload = thermalScenarioPayload;
+    heatPayload = { ...thermalScenarioPayload, metric_label: 'UTCI difference' };
     heatRange = thermalScenarioPayload.range;
-    buildThermalMesh(thermalScenarioPayload);
-    const gradient = document.querySelector('.heat-gradient');
-    if (gradient) gradient.style.background = 'linear-gradient(90deg,#1769aa,#f3f0df,#c73532)';
-    heatLegendMin.textContent = `−${Math.abs(thermalScenarioPayload.range.min).toFixed(1)}°C`;
-    heatLegendMax.textContent = `+${Math.abs(thermalScenarioPayload.range.max).toFixed(1)}°C`;
+    buildThermalMesh(heatPayload);
+    renderHeatExplorer(heatPayload, { unit: '°C', decimals: 1 });
     if (heatAverageLabel) heatAverageLabel.textContent = 'Mean UTCI change';
     if (heatMaximumLabel) heatMaximumLabel.textContent = 'Largest change';
     const s = thermalScenarioSummary;
@@ -8011,7 +8192,7 @@ export async function startWebGLScene(canvas, status) {
     if (heatAverageLabel) heatAverageLabel.textContent = 'Mean UTCI change';
     if (heatMaximumLabel) heatMaximumLabel.textContent = 'Max reduction';
     if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'Hot area reduced';
-    heatStatus.textContent = 'Intervention UTCI difference · experimental shade screening estimate';
+    heatStatus.textContent = 'Intervention UTCI difference · shade screening estimate';
   }
 
   function showThermalBaseline() {
@@ -8019,19 +8200,16 @@ export async function startWebGLScene(canvas, status) {
     heatPayload = thermalBaselinePayload;
     heatRange = thermalBaselinePayload.range;
     buildThermalMesh(thermalBaselinePayload);
-    const gradient = document.querySelector('.heat-gradient');
-    if (gradient) gradient.style.background = utciPalette(heatRange.min, heatRange.max).gradient;
-    heatLegendMin.textContent = `P10 ${heatRange.min.toFixed(1)}°C`;
-    heatLegendMax.textContent = `P90 ${heatRange.max.toFixed(1)}°C`;
+    renderHeatExplorer(thermalBaselinePayload, thermalChannel(thermalBaselinePayload.manifest, thermalBaselinePayload.metric));
     if (heatAverageLabel) heatAverageLabel.textContent = 'Mean UTCI';
     if (heatMaximumLabel) heatMaximumLabel.textContent = 'Peak UTCI';
     if (heatPriorityArea?.nextElementSibling) heatPriorityArea.nextElementSibling.textContent = 'UTCI ≥ 32°C';
-    heatStatus.textContent = 'Experimental modelled UTCI forecast · not observed';
+    heatStatus.textContent = 'Modelled UTCI forecast · not observed';
   }
 
   function heatDistributionValues(payload, metadata) {
     if (!payload?.thermal) return (payload?.features || [])
-      .map(feature => Number(feature.value)).filter(Number.isFinite);
+      .map(feature => feature?.value == null ? Number.NaN : Number(feature.value)).filter(Number.isFinite);
     const manifest = payload.manifest;
     const grid = manifest?.grid;
     if (!grid || !payload.values) return [];
@@ -8194,7 +8372,7 @@ export async function startWebGLScene(canvas, status) {
       heatStreetGroup.visible = false;
       return;
     }
-    const positions = [], colors = [], indices = [];
+    const positions = [], colors = [], heatValues = [], indices = [];
     let paintedRoadSegments = 0;
     for (const road of data.roads || []) {
       const roadName = road?.[3]?.name;
@@ -8221,6 +8399,7 @@ export async function startWebGLScene(canvas, status) {
         for (const [x, z] of [[x1 + nx, z1 + nz], [x1 - nx, z1 - nz], [x2 + nx, z2 + nz], [x2 - nx, z2 - nz]]) {
           positions.push(x, terrainHeightAt(x, z) + yOffset, z);
           colors.push(color.r, color.g, color.b);
+          heatValues.push(value);
         }
         indices.push(base, base + 1, base + 2, base + 2, base + 1, base + 3);
       }
@@ -8229,8 +8408,9 @@ export async function startWebGLScene(canvas, status) {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setAttribute('heatValue', new THREE.Float32BufferAttribute(heatValues, 1));
       geometry.setIndex(indices);
-      const surface = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      const surface = new THREE.Mesh(geometry, heatFilteredMaterial({
         vertexColors: true, transparent: true, opacity: 0.98, side: THREE.DoubleSide,
         depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2,
       }));
@@ -8246,39 +8426,27 @@ export async function startWebGLScene(canvas, status) {
   }
 
   function renderHeatExplorer(payload, metadata = {}) {
-    if (!heatExplorer || !heatDistribution || !heatHotStreets || !heatCoolStreets) return;
-    const values = heatDistributionValues(payload, metadata).sort((a, b) => a - b);
+    if (!heatExplorer || !heatHotStreets || !heatCoolStreets) return;
+    const values = heatDistributionValues(payload, metadata);
     if (!values.length) {
-      heatDistribution.replaceChildren();
+      renderHeatMapLegend(payload, metadata, values);
       if (heatDistributionCount) heatDistributionCount.textContent = '—';
       for (const list of [heatHotStreets, heatCoolStreets]) {
         const item = document.createElement('li');
         item.textContent = 'Street rankings are unavailable for this layer.';
         list.replaceChildren(item);
       }
-      if (heatExplorerNote) heatExplorerNote.textContent = 'No heat samples are available for this selection.';
-      if (heatSurfaceSummary) heatSurfaceSummary.hidden = true;
       heatExplorer.hidden = false;
       return;
     }
-    const percentile = fraction => values[Math.round((values.length - 1) * fraction)];
-    const unit = metadata.unit || '';
-    const stats = [
-      ['Lowest', values[0]], ['P25', percentile(0.25)], ['Median', percentile(0.5)],
-      ['P75', percentile(0.75)], ['Highest', values.at(-1)],
-    ];
-    heatDistribution.replaceChildren(...stats.map(([label, value]) => {
-      const cell = document.createElement('span');
-      const title = document.createElement('small'); title.textContent = label;
-      const number = document.createElement('b'); number.textContent = `${Number(value).toFixed(metadata.decimals ?? 1)}${unit}`;
-      cell.append(title, number); return cell;
-    }));
+    renderHeatMapLegend(payload, metadata, values);
     if (heatDistributionCount) heatDistributionCount.textContent = payload.thermal
       ? `${values.length.toLocaleString()} grid samples` : `${values.length.toLocaleString()} mapped zones`;
     const rankings = rankHeatStreets(payload, metadata);
     heatStreetRankings = rankings;
     buildHeatStreetOverlay();
     const rankingTitles = {
+      sky_view_factor: ['Most open sky', 'Most obstructed sky'],
       shade_deficit_score: ['Largest shade deficit', 'Smallest shade deficit'],
       pedestrian_priority_score: ['Highest heat + shade priority', 'Lowest heat + shade priority'],
       pedestrian_heat_exposure_c: ['Highest exposure proxy', 'Lowest exposure proxy'],
@@ -8326,30 +8494,6 @@ export async function startWebGLScene(canvas, status) {
     };
     renderList(heatHotStreets, rankings);
     renderList(heatCoolStreets, rankings, true);
-    if (heatExplorerNote) heatExplorerNote.textContent = payload.thermal
-      ? `Street averages sample the ${payload.manifest.grid.resolution_m} m ${payload.climatology ? 'climate' : 'forecast'} grid along mapped street lines; they are model estimates, not street sensors.`
-      : 'Satellite zones are grouped by street; unmatched source labels are assigned to the nearest OSM street line. Values describe surface heat, not air temperature.';
-
-    if (heatSurfaceSummary && heatSurfaceTypes) {
-      const totals = new Map();
-      for (const feature of payload.features || []) {
-        const raw = feature.surface_type || feature.properties?.surface_type;
-        if (!raw) continue;
-        const name = ({ 'Soil/Dirt': 'Bare / soil', Impervious: 'Built / paved', Grass: 'Vegetation', Tree: 'Vegetation', Water: 'Water' })[raw] || raw;
-        totals.set(name, (totals.get(name) || 0) + Number(feature.area_m2 || 0));
-      }
-      heatSurfaceSummary.hidden = payload.thermal || !totals.size;
-      if (!payload.thermal && totals.size) {
-        const totalArea = [...totals.values()].reduce((sum, area) => sum + area, 0) || 1;
-        heatSurfaceTypes.replaceChildren(...[...totals].sort((a, b) => b[1] - a[1]).map(([name, area]) => {
-          const row = document.createElement('div'); row.className = 'heat-surface-type-row';
-          const label = document.createElement('span'); label.textContent = name;
-          const bar = document.createElement('i'); bar.style.width = `${(area / totalArea * 100).toFixed(1)}%`;
-          const amount = document.createElement('b'); amount.textContent = `${(area / totalArea * 100).toFixed(0)}%`;
-          row.append(label, bar, amount); return row;
-        }));
-      }
-    }
     heatExplorer.hidden = false;
   }
 
@@ -8403,29 +8547,19 @@ export async function startWebGLScene(canvas, status) {
     heatStreetRankings = [];
     clearHeatStreetOverlay();
     heatStreetGroup.visible = false;
+    heatLegendReady = false;
+    if (heatMapLegend) heatMapLegend.hidden = true;
     if (heatExplorer) {
       heatExplorer.hidden = false;
-      if (heatDistribution) heatDistribution.replaceChildren();
       if (heatDistributionCount) heatDistributionCount.textContent = 'Loading…';
-      if (heatExplorerNote) heatExplorerNote.textContent = 'Updating street rankings for the selected layer…';
       for (const list of [heatHotStreets, heatCoolStreets]) {
         if (!list) continue;
         const item = document.createElement('li');
         item.textContent = 'Updating…';
         list.replaceChildren(item);
       }
-      if (heatSurfaceSummary) heatSurfaceSummary.hidden = true;
     }
     syncHeatTemporalControls(metric);
-    const legendGradient = document.querySelector('.heat-gradient');
-    if (legendGradient) legendGradient.style.background = '';
-    const legendHelp = document.querySelector('#heat-legend-help');
-    if (legendHelp) {
-      legendHelp.hidden = metric !== 'utci_c';
-      legendHelp.textContent = heatPeriod?.value === 'climatology'
-        ? 'One colour scale across all periods.'
-        : 'Colours show differences within this hour; compare values across hours.';
-    }
     const weatherInputs = document.querySelector('#heat-weather-inputs');
     if (weatherInputs) weatherInputs.hidden = true;
     for (const id of ['heat-radiation-timing', 'heat-radiation-audit']) {
@@ -8472,13 +8606,6 @@ export async function startWebGLScene(canvas, status) {
       renderHeatExplorer(payload, payload.metric_metadata);
       const range = payload.color_range || payload.range;
       heatRange = range;
-      const scale = payload.color_scale || {};
-      heatLegendMin.textContent = range
-        ? `${scale.bottom_band_label || 'Bottom 10%'} ≤ ${formatHeatValue(range.min, payload.metric_metadata)}`
-        : 'Bottom 10%';
-      heatLegendMax.textContent = range
-        ? `${scale.top_band_label || 'Top 10%'} ≥ ${formatHeatValue(range.max, payload.metric_metadata)}`
-        : 'Top 10%';
       const rawWindow = payload.window?.label;
       const window = rawWindow === 'summer_2025_2026' ? 'Summer 2025–26' : rawWindow || 'Summer 2025–26';
       const scenarioMinutes = Number(payload.scenario?.minutes ?? 720);
@@ -8488,16 +8615,19 @@ export async function startWebGLScene(canvas, status) {
     } catch (error) {
       if (loadToken !== heatLoadToken) return;
       if (['utci_c', 'tmrt_c'].includes(metric)) {
-        heatPayload = null;
         if (heatPeriod?.value === 'climatology') thermalClimatology = null;
         else thermalManifest = null;
         if (heatProvenance) heatProvenance.textContent = 'No model output has been published for this layer.';
-        for (const object of heatGroup.children) disposeObject(object);
-        heatGroup.clear();
-        analysisGroupMode = null;
       }
+      heatPayload = null;
+      for (const object of heatGroup.children) disposeObject(object);
+      heatGroup.clear();
+      analysisGroupMode = null;
+      heatDisplayFilterUniform.value.set(-1e20, 1e20);
+      heatLegendDomain = null;
+      heatLegendReady = false;
       renderHeatSummary(null);
-      if (heatExplorerNote) heatExplorerNote.textContent = `Street rankings unavailable: ${error.message}`;
+      if (heatMapLegend) heatMapLegend.hidden = true;
       for (const list of [heatHotStreets, heatCoolStreets]) {
         if (!list) continue;
         const item = document.createElement('li');
@@ -8870,7 +9000,6 @@ export async function startWebGLScene(canvas, status) {
     if (sunWindowControls) sunWindowControls.hidden = !cumulative;
     if (sunDateTimeHeading) sunDateTimeHeading.textContent = cumulative ? 'Date & analysis window' : 'Date & time';
     if (sunHoursLegend) sunHoursLegend.hidden = !cumulative;
-    if (sunHoursMethod) sunHoursMethod.hidden = !cumulative;
     if (sunCompare) sunCompare.hidden = !cumulative;
     if (!cumulative) {
       sunCompareSwitch.hidden = true;
@@ -8925,6 +9054,7 @@ export async function startWebGLScene(canvas, status) {
       }
     }
     heatGroup.visible = enabled && analysisGroupMode === 'heat';
+    if (heatMapLegend) heatMapLegend.hidden = !(enabled && heatPayload && heatLegendReady);
     heatStreetGroup.visible = Boolean(enabled && heatStreetRankings.length
       && (heatStreetMapToggle?.checked || selectedHeatStreet));
     document.body.classList.toggle('heat-mode', enabled);
@@ -12639,7 +12769,7 @@ export async function startWebGLScene(canvas, status) {
         : 'solved domain';
       if (windModeBadge) windModeBadge.textContent = coverage?.fraction >= 0.99 ? 'CFD · FULL CBD' : 'CFD · PILOT';
       windDirectionPresets.forEach(button => button.classList.toggle('active', Number(button.dataset.windDirection) === windState.direction));
-      windStatus.textContent = `${windState.designGeometryDirty ? 'Baseline geometry · ' : ''}OpenFOAM ${solver.version} · ${windState.cfdGroundHeight.toFixed(1)} m · ${coverageLabel}`;
+      windStatus.textContent = '';
       dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'wind', metadata: {
         description: `${cfdCase.label} · ${coverageLabel} · ${manifest.validation_status || 'unvalidated'}. Native spacing ${manifest.spacing_foam_m.join(' × ')} m.`,
         solver, direction: manifest.direction_deg_from, validation: manifest.validation_status, spacing: manifest.spacing_foam_m,
@@ -14832,10 +14962,8 @@ export async function startWebGLScene(canvas, status) {
     viewshedState.active = false;
     viewshedState.pickMode = false;
     viewshedState.shape = 'full';
-    viewshedState.radius = Math.min(1200, Math.max(150, bounds.size_m / Math.sqrt(2)));
-    if (viewshedShape) viewshedShape.value = 'full';
-    if (viewshedRadius) viewshedRadius.value = String(Math.round(viewshedState.radius / 50) * 50);
-    if (viewshedRadiusValue) viewshedRadiusValue.textContent = `${Math.round(viewshedState.radius)} m`;
+    viewshedState.radius = Math.max(150, Math.min(1200, bounds.size_m / Math.sqrt(2)));
+    renderViewshedControls();
     let metadata = null;
     const captureResult = event => {
       if (event.detail?.tool === 'viewshed') metadata = event.detail.metadata;
@@ -15968,7 +16096,7 @@ export async function startWebGLScene(canvas, status) {
       const point = buildingPlacement ? null : pointerGround(event);
       if (buildingPlacement) buildViewshed(buildingPlacement.x, buildingPlacement.z, buildingPlacement);
       else if (point) buildViewshed(point.x, point.z, { kind: 'terrain' });
-      else if (viewshedStatus) viewshedStatus.textContent = 'Click the terrain, a roof, or a building face to place the observer.';
+      else if (viewshedStatus) viewshedStatus.textContent = 'No observer point was selected.';
       clickCandidate = null;
       drag = null;
       requestRender();
@@ -16112,6 +16240,16 @@ export async function startWebGLScene(canvas, status) {
   }));
 
   heatToggle?.addEventListener('change', event => setHeatMode(event.target.checked));
+  heatMapRangeLow?.addEventListener('input', updateHeatLegendFilter);
+  heatMapRangeHigh?.addEventListener('input', updateHeatLegendFilter);
+  heatMapRangeLow?.addEventListener('pointerdown', () => {
+    heatMapRangeLow.style.zIndex = '5';
+    if (heatMapRangeHigh) heatMapRangeHigh.style.zIndex = '3';
+  });
+  heatMapRangeHigh?.addEventListener('pointerdown', () => {
+    heatMapRangeHigh.style.zIndex = '5';
+    if (heatMapRangeLow) heatMapRangeLow.style.zIndex = '3';
+  });
   heatStreetMapToggle?.addEventListener('change', event => {
     if (event.target.checked && heatToggle && !heatToggle.checked) {
       heatToggle.checked = true;
@@ -16578,16 +16716,6 @@ export async function startWebGLScene(canvas, status) {
     updateWindBox();
     windPanel?.classList.add('cfd-active');
     if (windModeBadge) windModeBadge.textContent = mode === 'comfort' ? 'CFD · COMFORT (PARTIAL)' : mode === 'pollution' ? 'CFD · DISPERSION SCREEN' : 'CFD · FULL CBD';
-    const windModeHelp = document.querySelector('#wind-mode-help');
-    if (windModeHelp) windModeHelp.textContent = mode === 'comfort'
-      ? 'Combines available solved directions with Cape Town’s wind rose. Unsolved directions are excluded, so coverage is partial.'
-      : mode === 'pollution'
-        ? 'Choose a traffic period and wind direction, then run the plume screen.'
-        : 'Inspect one solved wind direction. The full-CBD OpenFOAM result loads automatically and animates pedestrian-level flow.';
-    const directionHint = windDirectionControls?.querySelector('.wind-cfd-hint');
-    if (directionHint) directionHint.textContent = mode === 'pollution'
-      ? 'The city plume uses road-level SUMO emissions and this steady OpenFOAM flow and turbulence field.'
-      : 'Comfort uses all 16 solved sectors. Direction view offers the eight main compass points. Results are exploratory and unvalidated.';
     if (windFlowlinesVisible) windFlowlinesVisible.disabled = mode !== 'direction';
     if (windVolumeVisible) windVolumeVisible.disabled = mode !== 'direction';
     if (mode === 'comfort' && windState.volumeVisible) {
@@ -16623,12 +16751,8 @@ export async function startWebGLScene(canvas, status) {
     }
     const legacyLegend = document.querySelector('.wind-legend-scale');
     const legacyInspect = document.querySelector('.wind-map-tools');
-    const windCompareCard = document.querySelector('.wind-compare-card');
-    const windValidationCard = document.querySelector('.wind-validation-card');
     if (legacyLegend) legacyLegend.hidden = mode === 'pollution';
     if (legacyInspect) legacyInspect.hidden = mode === 'pollution';
-    if (windCompareCard) windCompareCard.hidden = mode === 'pollution';
-    if (windValidationCard) windValidationCard.hidden = mode === 'pollution';
     if (mode === 'pollution' && windResults) windResults.hidden = true;
     syncPollutionView();
     if (pollutionLegend) pollutionLegend.hidden = mode !== 'pollution';
@@ -16859,9 +16983,6 @@ export async function startWebGLScene(canvas, status) {
     if (windFlowBoxHeightRow) windFlowBoxHeightRow.hidden = !windState.volumeVisible;
     if (windState.field && windState.analysisMode !== 'comfort') resetWindParticles();
     updateWindBox();
-    windStatus.textContent = windState.volumeVisible
-      ? `Flowlines seed through ${windState.flowBoxHeight} m of box height.`
-      : 'Flowlines seed at pedestrian height only.';
     requestRender();
   });
   windFlowBoxHeight?.addEventListener('input', event => {
@@ -17191,7 +17312,7 @@ export async function startWebGLScene(canvas, status) {
     viewshedPickButton?.setAttribute('aria-pressed', String(viewshedState.pickMode));
     if (viewshedState.active) {
       canvas.style.cursor = 'crosshair';
-      if (viewshedStatus && !viewshedState.point) viewshedStatus.textContent = 'Click the terrain, a roof, or a building face to place the observer.';
+      if (viewshedStatus && !viewshedState.point) viewshedStatus.textContent = '';
     } else if (!placeInspectorPickMode && !groundPickHandler) canvas.style.cursor = '';
     syncGroundSurfaceMaterials();
     requestRender();
@@ -17705,7 +17826,7 @@ export async function startWebGLScene(canvas, status) {
     viewshedState.active = true;
     viewshedState.pickMode = true;
     viewshedPickButton?.setAttribute('aria-pressed', 'true');
-    if (viewshedStatus) viewshedStatus.textContent = 'Click the terrain, a roof, or a building face to place the observer.';
+    if (viewshedStatus) viewshedStatus.textContent = '';
     canvas.style.cursor = 'crosshair';
     applySectionLayerProfile('viewshed');
     setViewshedContextMaterials(true);
@@ -17781,35 +17902,162 @@ export async function startWebGLScene(canvas, status) {
       if (viewshedState.point) buildViewshed(viewshedState.point.x, viewshedState.point.z, viewshedState.point.placement);
     }, 120);
   };
-  viewshedRadius?.addEventListener('input', () => {
-    viewshedState.radius = Number(viewshedRadius.value) || 500;
-    if (viewshedRadiusValue) viewshedRadiusValue.textContent = `${viewshedState.radius} m`;
-    refreshViewshed();
-  });
   const compassLabel = bearing => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(bearing / 45) % 8];
-  viewshedShape?.addEventListener('change', () => {
-    viewshedState.shape = viewshedShape.value === 'full' ? 'full' : 'cone';
-    refreshViewshed();
-  });
-  viewshedHeading?.addEventListener('input', () => {
-    viewshedState.heading = Number(viewshedHeading.value) || 0;
-    if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${viewshedState.heading}° · ${compassLabel(viewshedState.heading)}`;
-    if (viewshedPersonCamera) {
+  const planPoint = (svg, event) => {
+    const matrix = svg?.getScreenCTM?.();
+    if (matrix && typeof DOMPoint === 'function') {
+      const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+      return { x: point.x, y: point.y };
+    }
+    const rect = svg.getBoundingClientRect();
+    const viewBox = svg.viewBox.baseVal;
+    return { x: (event.clientX - rect.left) / rect.width * viewBox.width, y: (event.clientY - rect.top) / rect.height * viewBox.height };
+  };
+  const compassPoint = (bearing, radius) => {
+    const angle = (bearing - 90) * Math.PI / 180;
+    return { x: 120 + Math.cos(angle) * radius, y: 120 + Math.sin(angle) * radius };
+  };
+  const setControlPoint = (element, bearing, radius) => {
+    const point = compassPoint(bearing, radius);
+    element?.setAttribute('cx', point.x.toFixed(2));
+    element?.setAttribute('cy', point.y.toFixed(2));
+  };
+  function renderViewshedControls() {
+    const heading = ((Math.round(viewshedState.heading / 5) * 5) % 360 + 360) % 360;
+    const spread = Math.max(20, Math.min(120, Math.round(viewshedState.spread / 5) * 5));
+    const radius = Math.max(150, Math.min(1200, viewshedState.radius));
+    const eyeHeight = Math.max(1.7, Math.min(80, Math.round((viewshedState.eyeHeight - 1.7) / 0.3) * 0.3 + 1.7));
+    viewshedState.heading = heading;
+    viewshedState.spread = spread;
+    viewshedState.eyeHeight = Number(eyeHeight.toFixed(1));
+    const radiusPx = 20 + ((radius - 150) / 1050) * 68;
+    const start = compassPoint(heading - spread / 2, radiusPx);
+    const end = compassPoint(heading + spread / 2, radiusPx);
+    const center = compassPoint(heading, radiusPx);
+    viewshedConeSector?.setAttribute('d', `M120 120 L${start.x.toFixed(2)} ${start.y.toFixed(2)} A${radiusPx.toFixed(2)} ${radiusPx.toFixed(2)} 0 0 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)} Z`);
+    viewshedFullSector?.setAttribute('r', radiusPx.toFixed(2));
+    viewshedDirectionLine?.setAttribute('x2', center.x.toFixed(2));
+    viewshedDirectionLine?.setAttribute('y2', center.y.toFixed(2));
+    setControlPoint(viewshedSpreadHandleA, heading - spread / 2, radiusPx);
+    setControlPoint(viewshedSpreadHandleB, heading + spread / 2, radiusPx);
+    setControlPoint(viewshedRadiusHandle, heading + 180, radiusPx);
+    if (viewshedHeadingValue) viewshedHeadingValue.textContent = `${heading}° · ${compassLabel(heading)}`;
+    if (viewshedSpreadValue) viewshedSpreadValue.textContent = `${spread}°`;
+    if (viewshedRadiusValue) viewshedRadiusValue.textContent = `${Math.round(radius)} m`;
+    viewshedHeadingHit?.setAttribute('aria-valuenow', String(Math.min(355, heading)));
+    viewshedHeadingHit?.setAttribute('aria-valuetext', `${heading} degrees, ${compassLabel(heading)}`);
+    for (const handle of [viewshedSpreadHandleA, viewshedSpreadHandleB]) {
+      handle?.setAttribute('aria-valuenow', String(spread));
+      handle?.setAttribute('aria-valuetext', `${spread} degrees`);
+    }
+    viewshedRadiusHandle?.setAttribute('aria-valuenow', String(Math.round(radius)));
+    viewshedRadiusHandle?.setAttribute('aria-valuetext', `${Math.round(radius)} metres`);
+    const heightY = 136 - ((viewshedState.eyeHeight - 1.7) / 78.3) * 116;
+    viewshedHeightMarker?.setAttribute('transform', `translate(0 ${heightY.toFixed(2)})`);
+    viewshedHeightGuide?.setAttribute('d', `M44 ${heightY.toFixed(2)}h145`);
+    viewshedHeightControl?.setAttribute('aria-valuenow', viewshedState.eyeHeight.toFixed(1));
+    viewshedHeightControl?.setAttribute('aria-valuetext', `${viewshedState.eyeHeight.toFixed(1)} metres`);
+    if (viewshedHeightValue) viewshedHeightValue.textContent = `${viewshedState.eyeHeight.toFixed(1)} m`;
+    const full = viewshedState.shape === 'full';
+    if (viewshedConeSector) viewshedConeSector.style.display = full ? 'none' : '';
+    if (viewshedFullSector) viewshedFullSector.hidden = !full;
+    if (viewshedDirectionLine) viewshedDirectionLine.style.display = full ? 'none' : '';
+    for (const handle of [viewshedSpreadHandleA, viewshedSpreadHandleB]) {
+      if (!handle) continue;
+      handle.style.display = full ? 'none' : '';
+      handle.setAttribute('aria-disabled', String(full));
+      handle.setAttribute('tabindex', full ? '-1' : '0');
+    }
+    for (const button of viewshedShapeButtons) button.setAttribute('aria-pressed', String(button.dataset.viewshedShape === viewshedState.shape));
+  }
+  function changedViewshedControl({ headingChanged = false } = {}) {
+    renderViewshedControls();
+    if (headingChanged && viewshedPersonCamera) {
       updateCamera();
       requestRender();
     }
     refreshViewshed();
+  }
+  const normalizeHeading = value => (Math.round(value / 5) * 5 % 360 + 360) % 360;
+  function updatePlanControl(kind, event) {
+    const point = planPoint(viewshedPlanControl, event);
+    const dx = point.x - 120;
+    const dy = point.y - 120;
+    const bearing = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+    if (kind === 'radius') {
+      const radiusPx = Math.hypot(dx, dy);
+      viewshedState.radius = Math.max(150, Math.min(1200, Math.round((radiusPx - 20) / 68 * 1050 / 50) * 50 + 150));
+    } else if (kind === 'spread') {
+      const signedOffset = ((bearing - viewshedState.heading + 540) % 360) - 180;
+      viewshedState.spread = Math.max(20, Math.min(120, Math.round((Math.abs(signedOffset) * 2) / 5) * 5));
+    } else {
+      viewshedState.heading = normalizeHeading(bearing);
+    }
+    changedViewshedControl({ headingChanged: kind === 'heading' });
+  }
+  function updateHeightControl(event) {
+    const point = planPoint(viewshedHeightControl, event);
+    const height = 1.7 + ((136 - point.y) / 116) * 78.3;
+    viewshedState.eyeHeight = Number((1.7 + Math.round((height - 1.7) / 0.3) * 0.3).toFixed(1));
+    changedViewshedControl();
+  }
+  let viewshedControlDrag = null;
+  viewshedPlanControl?.addEventListener('pointerdown', event => {
+    if (event.button !== undefined && event.button !== 0) return;
+    const id = event.target?.id;
+    const kind = id === 'viewshed-radius-handle' ? 'radius'
+      : (id === 'viewshed-spread-handle-a' || id === 'viewshed-spread-handle-b') && viewshedState.shape === 'cone' ? 'spread' : 'heading';
+    viewshedControlDrag = { pointerId: event.pointerId, kind };
+    viewshedPlanControl.setPointerCapture?.(event.pointerId);
+    updatePlanControl(kind, event);
+    event.preventDefault();
   });
-  viewshedSpread?.addEventListener('input', () => {
-    viewshedState.spread = Number(viewshedSpread.value) || 60;
-    if (viewshedSpreadValue) viewshedSpreadValue.textContent = `${viewshedState.spread}°`;
-    refreshViewshed();
+  viewshedPlanControl?.addEventListener('pointermove', event => {
+    if (viewshedControlDrag?.pointerId === event.pointerId) updatePlanControl(viewshedControlDrag.kind, event);
   });
-  viewshedHeight?.addEventListener('input', () => {
-    viewshedState.eyeHeight = Number(viewshedHeight.value) || 1.7;
-    if (viewshedHeightValue) viewshedHeightValue.textContent = `${viewshedState.eyeHeight.toFixed(1)} m`;
-    refreshViewshed();
+  const finishViewshedDrag = event => {
+    if (viewshedControlDrag?.pointerId === event.pointerId) viewshedControlDrag = null;
+  };
+  viewshedPlanControl?.addEventListener('pointerup', finishViewshedDrag);
+  viewshedPlanControl?.addEventListener('pointercancel', finishViewshedDrag);
+  viewshedPlanControl?.addEventListener('keydown', event => {
+    const id = event.target?.id;
+    const increase = ['ArrowRight', 'ArrowUp'].includes(event.key);
+    const decrease = ['ArrowLeft', 'ArrowDown'].includes(event.key);
+    if (!increase && !decrease && !['Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    if (id === 'viewshed-radius-handle') {
+      viewshedState.radius = event.key === 'Home' ? 150 : event.key === 'End' ? 1200 : viewshedState.radius + (increase ? 50 : -50);
+    } else if (id === 'viewshed-spread-handle-a' || id === 'viewshed-spread-handle-b') {
+      viewshedState.spread = event.key === 'Home' ? 20 : event.key === 'End' ? 120 : viewshedState.spread + (increase ? 5 : -5);
+    } else {
+      viewshedState.heading = event.key === 'Home' ? 0 : event.key === 'End' ? 355 : viewshedState.heading + (increase ? 5 : -5);
+    }
+    changedViewshedControl({ headingChanged: id === 'viewshed-heading-hit' });
   });
+  viewshedHeightControl?.addEventListener('pointerdown', event => {
+    if (event.button !== undefined && event.button !== 0) return;
+    viewshedControlDrag = { pointerId: event.pointerId, kind: 'height' };
+    viewshedHeightControl.setPointerCapture?.(event.pointerId);
+    updateHeightControl(event);
+    event.preventDefault();
+  });
+  viewshedHeightControl?.addEventListener('pointermove', event => {
+    if (viewshedControlDrag?.pointerId === event.pointerId && viewshedControlDrag.kind === 'height') updateHeightControl(event);
+  });
+  viewshedHeightControl?.addEventListener('pointerup', finishViewshedDrag);
+  viewshedHeightControl?.addEventListener('pointercancel', finishViewshedDrag);
+  viewshedHeightControl?.addEventListener('keydown', event => {
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    viewshedState.eyeHeight = event.key === 'Home' ? 1.7 : event.key === 'End' ? 80 : viewshedState.eyeHeight + (event.key === 'ArrowUp' ? 0.3 : -0.3);
+    changedViewshedControl();
+  });
+  for (const button of viewshedShapeButtons) button.addEventListener('click', () => {
+    viewshedState.shape = button.dataset.viewshedShape === 'full' ? 'full' : 'cone';
+    changedViewshedControl();
+  });
+  renderViewshedControls();
   viewshedPickButton?.addEventListener('click', () => {
     viewshedState.active = true;
     viewshedState.pickMode = true;
@@ -17817,7 +18065,7 @@ export async function startWebGLScene(canvas, status) {
     viewshedPickButton.setAttribute('aria-pressed', 'true');
     if (viewshedStatus) viewshedStatus.textContent = viewshedState.point
       ? 'Click the map to move the observer and recalculate.'
-      : 'Click the terrain, a roof, or a building face to place the observer.';
+      : '';
   });
   viewshedPersonButton?.addEventListener('click', () => setViewshedPersonView(!viewshedPersonCamera));
   document.querySelector('#viewshed-clear')?.addEventListener('click', clearViewshedResult);

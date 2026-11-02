@@ -30,8 +30,6 @@ Each route also reports street evidence separately from its exposure objectives:
 
 Each path is sampled by 100 synthetic walkers with speeds drawn once from a seeded uniform range of 4.0–5.6 km/h. The same speed assigned to a walker is reused on every route. The agent job reports each walker's sun minutes, UTCI heat load, mean 1.5 m wind, and data coverage, plus P50/P90 route summaries and a representative cumulative exposure trace with map coordinates. The browser shows the routes first, then adds the cohort distributions and a replay of one representative walker when that job completes. These agents are independent; they do not represent demographic vulnerability, crowding, or interactions between people.
 
-## Traffic context and limits
+## Limits
 
-The optional traffic action starts the existing five-minute citywide SUMO/HBEFA emissions job for the selected time period. It sums modeled road NOx on named streets used by the returned paths and remains separate from route ranking. This is a synthetic road-emissions source estimate, not pedestrian pollutant concentration or personal dose.
-
-The first version only covers the current CBD scene. OSM access tags can be incomplete; mapped steps are included, and there is no wheelchair-accessibility claim. Thermal values are forecast/model products rather than street observations. If thermal or traffic data is missing, the API reports its coverage state instead of blocking pedestrian routing.
+The first version only covers the current CBD scene. OSM access tags can be incomplete; mapped steps are included, and there is no wheelchair-accessibility claim. Thermal values are forecast/model products rather than street observations. If thermal data is missing, the API reports its coverage state instead of blocking pedestrian routing.

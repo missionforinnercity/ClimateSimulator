@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=116">
+    <link rel="stylesheet" href="/style.css?v=129">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -59,6 +59,15 @@
       <button id="map-fit" type="button" aria-label="Fit city to map" title="Fit city to map">⌂</button>
       <button id="map-street-names" type="button" aria-label="Toggle street names" aria-pressed="true" title="Street names show when zoomed to street level">Aa</button>
     </div>
+    <section id="heat-map-legend" class="heat-map-legend" aria-label="Heat map legend and value filter" hidden>
+      <div id="heat-map-histogram" class="heat-map-histogram" aria-hidden="true"></div>
+      <div class="heat-map-scale">
+        <div id="heat-map-gradient" class="heat-map-gradient" aria-hidden="true"></div>
+        <div id="heat-map-selected-range" class="heat-map-selected-range" aria-hidden="true"></div>
+        <input id="heat-map-range-low" class="heat-map-range heat-map-range-low" type="range" min="0" max="1000" value="0" aria-label="Minimum visible heat value">
+        <input id="heat-map-range-high" class="heat-map-range heat-map-range-high" type="range" min="0" max="1000" value="1000" aria-label="Maximum visible heat value">
+      </div>
+    </section>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
     <div id="transport-stop-card" class="transport-stop-card" role="dialog" aria-label="Stop details" hidden></div>
     <div id="traffic-draw-popup" class="traffic-draw-popup" role="dialog" aria-labelledby="traffic-draw-popup-title" hidden>
@@ -213,6 +222,7 @@
             <button type="button" data-heat-view-group="current" aria-pressed="true">Now · UTCI</button>
             <button type="button" data-heat-view-group="history" aria-pressed="false">Seasonal UTCI</button>
             <button type="button" data-heat-view-group="screening" aria-pressed="false">Satellite overview</button>
+            <button type="button" data-heat-quick-field="sky_view_factor" aria-pressed="false">Sky view factor</button>
           </div>
           <div class="heat-spin-selector">
             <button id="heat-spin" class="heat-spin-wheel" type="button" aria-label="Advance to the next heat layer">
@@ -240,7 +250,7 @@
               </optgroup>
             </select>
           </label>
-          <p id="heat-layer-help" class="heat-legend-help">Outdoor comfort from air, humidity, wind and radiant heat.</p>
+          <p id="heat-layer-help" class="heat-legend-help" hidden></p>
         </div>
         <section id="heat-thermal-controls" class="compact-section heat-control-card">
           <b>Time period</b>
@@ -253,7 +263,6 @@
           <label id="heat-forecast-control">Model time <span id="heat-forecast-label">—</span>
             <input id="heat-forecast-time" type="range" min="0" max="24" step="1" value="0" disabled>
           </label>
-          <p id="heat-forecast-hint" class="method-note">Model estimate · not a street observation.</p>
           <div id="heat-climate-controls" class="heat-climate-controls" hidden>
             <b>Climate profile</b>
             <p class="heat-legend-help">ERA5 climate composite · 2016–2025.</p>
@@ -313,34 +322,22 @@
           <section id="heat-comfort-kpis" class="heat-comfort-kpis" aria-label="Thermal comfort area and time indicators" hidden>
             <b>Thermal comfort KPIs</b>
             <small id="heat-kpi-scope"></small>
-            <table class="heat-kpi-grid" aria-label="Area-time shares by UTCI stress band">
-              <thead><tr><th scope="col">UTCI band</th><th id="heat-kpi-share-heading" scope="col">Area-time share</th><th scope="col">Equivalent hours per mapped cell</th></tr></thead>
+            <table class="heat-kpi-grid" aria-label="Thermal comfort share by UTCI stress band">
+              <thead><tr><th scope="col">UTCI band</th><th id="heat-kpi-share-heading" scope="col">Area share</th></tr></thead>
               <tbody>
-                <tr><th scope="row">Cold stress · &lt; 9°C</th><td id="heat-kpi-cold-share">—</td><td id="heat-kpi-cold-hours">—</td></tr>
-                <tr><th scope="row">No thermal stress · 9–&lt;26°C</th><td id="heat-kpi-comfort-share">—</td><td id="heat-kpi-comfort-hours">—</td></tr>
-                <tr><th scope="row">Heat stress · ≥ 26°C</th><td id="heat-kpi-heat-share">—</td><td id="heat-kpi-heat-hours">—</td></tr>
+                <tr><th scope="row">Cold stress · &lt; 9°C</th><td><div id="heat-kpi-cold-share" class="heat-kpi-slider" role="meter" aria-label="Cold stress area share" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></td></tr>
+                <tr><th scope="row">No thermal stress · 9–&lt;26°C</th><td><div id="heat-kpi-comfort-share" class="heat-kpi-slider" role="meter" aria-label="No thermal stress area share" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></td></tr>
+                <tr><th scope="row">Heat stress · ≥ 26°C</th><td><div id="heat-kpi-heat-share" class="heat-kpi-slider" role="meter" aria-label="Heat stress area share" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i></i></div></td></tr>
               </tbody>
             </table>
             <small id="heat-kpi-method"></small>
           </section>
           <section id="heat-explorer" class="heat-explorer" aria-label="Heat distribution and street rankings">
-            <div class="heat-explorer-heading"><b>Heat distribution</b><small id="heat-distribution-count">—</small></div>
+            <div class="heat-explorer-heading"><b>Street rankings</b><small id="heat-distribution-count">—</small></div>
             <div class="heat-rankings">
               <section><b id="heat-hot-streets-title">Hottest streets</b><ol id="heat-hot-streets"></ol></section>
               <section><b id="heat-cool-streets-title">Coolest streets</b><ol id="heat-cool-streets"></ol></section>
             </div>
-            <div id="heat-distribution" class="heat-distribution"></div>
-            <div class="heat-distribution-scale" aria-hidden="true"><i></i></div>
-            <p id="heat-explorer-note" class="heat-explorer-note"></p>
-            <section id="heat-surface-summary" class="heat-surface-summary" hidden>
-              <b>Satellite surface types</b><div id="heat-surface-types"></div>
-            </section>
-            <details class="heat-street-advanced">
-              <summary>Advanced · street heat map</summary>
-              <p>Paint OpenStreetMap street lines with the selected satellite or UTCI layer. UTCI uses model-grid samples along each named street.</p>
-              <label><input id="heat-street-map-toggle" type="checkbox"> Show street heat map on model</label>
-              <p id="heat-street-map-status" role="status">Choose a heat layer to color mapped streets.</p>
-            </details>
           </section>
           <div class="heat-actions">
             <button id="heat-inspect-place" type="button">Inspect a place</button>
@@ -348,28 +345,10 @@
           </div>
           <p id="heat-inspect-result" class="heat-action-result" role="status" hidden></p>
           <div id="heat-comparison" class="heat-comparison" role="status" hidden></div>
-          <div class="heat-gradient"></div>
-          <div class="heat-legend-labels"><span id="heat-legend-min">Lower</span><span id="heat-legend-max">Higher</span></div>
-          <p id="heat-legend-help" class="heat-legend-help" hidden>Colours show relative differences within this hour.</p>
-          <details class="compact-about heat-evidence"><summary>Model details</summary>
-            <p id="heat-weather-inputs" class="heat-weather-inputs" hidden></p>
-            <p id="heat-provenance" class="method-note"></p>
-            <p id="heat-radiation-timing" class="heat-legend-help" hidden></p>
-            <details id="heat-radiation-audit" class="compact-about" hidden><summary>Radiation diagnostics</summary><p id="heat-radiation-audit-summary"></p></details>
-            <details id="heat-energy" class="compact-about" hidden><summary>Energy &amp; water balance</summary><p id="heat-energy-summary">—</p></details>
-          </details>
         </div>
-        <details class="compact-about thermal-validation-import">
-          <summary>Attach thermal validation to report</summary>
-          <p>Import the JSON produced by <code>scripts/validate_thermal_observations.py</code> and the exact CSV it scored. The CSV hash must match. The report embeds the paired rows and the archive includes the referenced run frames when they are still available.</p>
-          <label>Thermal validation JSON <input id="thermal-validation-result-file" type="file" accept=".json,application/json"></label>
-          <label>Scored observation CSV <input id="thermal-validation-source-file" type="file" accept=".csv,text/csv"></label>
-          <button id="thermal-validation-attach" class="secondary" type="button">Attach to climate report</button>
-          <p id="thermal-validation-import-status" class="method-note" role="status">No thermal observation score attached.</p>
-        </details>
         <details class="panel-method">
           <summary>Method &amp; limitations</summary>
-          <p>Near-live UTCI and mean radiant temperature (Tmrt) combine weather inputs with mapped urban geometry and surface response. They are model estimates for the selected forecast frame, not street measurements. Missing or stale thermal coverage is reported separately from the map and should not be read as comfortable conditions.</p>
+          <p>Near-live UTCI and mean radiant temperature (Tmrt) combine weather inputs with mapped urban geometry and surface response. Forecast and shade-intervention results are experimental model estimates for the selected frame, not street measurements. Missing or stale thermal coverage is reported separately from the map and should not be read as comfortable conditions.</p>
           <p>The historical profile uses ERA5 reanalysis composites for 2016–2025. Weather is averaged by month and South African local hour before the local surface and shade model is run; the result represents a composite climate condition, not a reconstructed day or the average of hourly UTCI observations.</p>
           <p>Satellite-era surface-temperature layers are a separate screening product from UTCI. Shade-priority and shade-deficit views combine their fixed summer baseline with the selected date and time and mapped building/canopy shadows. They do not estimate a new UTCI value for that date. Results cover valid mapped cells only.</p>
         </details>
@@ -481,15 +460,12 @@
         <button id="sun-generate" type="button">Generate shadows</button>
         <progress id="sun-progress" class="sun-progress" max="100" hidden aria-label="Sun-hours calculation progress"></progress>
         <p id="sun-status" class="sun-status">Loading current Cape Town shadows…</p>
-        <p class="sun-help">Mapped lamp positions use municipal records; pole heights are inferred from support type and wattage, not measured.</p>
         <div id="sun-hours-legend" class="sun-hours-legend" hidden>
           <div class="sun-energy-gradient"></div>
           <div class="heat-legend-labels"><span id="sun-hours-min">Least sun</span><span id="sun-hours-max">Most sun</span></div>
         </div>
         <button id="sun-inspect" class="secondary" type="button" hidden>Inspect a surface</button>
         <p id="sun-inspect-result" class="sun-help" role="status" hidden></p>
-        <details id="sun-hours-method" class="sun-advanced"><summary>Sun-hours map guide</summary><p>Sun hours are accumulated direct sun, not total daylight or solar energy. A brighter cell means more sampled time in direct sun within the chosen window. Compare different dates using the same area and time window to explore seasonal change. Results use mapped buildings and canopies; roofs are simplified planes. Clouds, diffuse and reflected light are not included, and rough LiDAR roof detail is not treated as engineering-grade solar geometry.</p></details>
-        <p class="sun-note">Planning-level comparison · not measured radiation</p>
         <div id="sun-scenario-editor-host" class="scenario-editor-host">
           <details id="scenario-design-editor" class="scenario-workspace scenario-design-editor">
             <summary>Try a design · updates live</summary>
@@ -559,19 +535,16 @@
           <summary>Method &amp; limitations</summary>
           <p>Shadow views calculate the sun position for Cape Town at the chosen local date and time, then project clear-sky direct-light geometry against mapped buildings and tree canopies. The diagram and map show geometric sun and shade; cloud cover, diffuse sky light and reflected light are not part of this calculation.</p>
           <p>Sun-hours studies sample direct sunlight across the selected time window and add the sunlit time for each selected ground, roof or façade surface. The study area, time step and surface resolution trade detail for calculation time. Use the same area, surfaces and time settings when comparing dates or design options. The result is not total daylight duration or solar-energy yield.</p>
-          <p>Building massing and roof surfaces are simplified from available mapped footprints and height sources; detailed roof obstructions and small structures may be missing. Municipal lamp positions use recorded locations with support heights inferred from type and wattage, not field measurements. Treat comparisons as planning-level geometry, not engineering-grade radiation analysis.</p>
+          <p>These are exploratory modelled comparisons, not measured radiation or engineering-grade solar analysis. Building massing and roof surfaces are simplified from mapped footprints and height sources; detailed roof obstructions and small structures may be missing.</p>
         </details>
       </section>
       <section id="menu-wind" class="wind-panel cfd-active menu-section" data-menu-panel="wind" role="tabpanel" aria-label="Wind simulation controls" hidden>
         <div class="wind-heading"><span>Wind <b class="wind-mode-badge">CFD · FULL CBD</b></span><label class="wind-switch"><input id="wind-toggle" type="checkbox"> Show map</label></div>
-        <p class="wind-intro">Explore moving pedestrian wind fields and traffic pollution.</p>
         <div class="wind-analysis-tabs" role="group" aria-label="Wind analysis mode">
           <button class="active" type="button" data-wind-lens="direction" aria-pressed="true">By direction</button>
           <button type="button" data-wind-lens="comfort" aria-pressed="false">Wind comfort</button>
           <button type="button" data-wind-lens="pollution" aria-pressed="false">Pollutant dispersal</button>
         </div>
-        <p class="wind-mode-help" id="wind-mode-help">Combines available solved directions with Cape Town's wind rose to screen pedestrian comfort.</p>
-
         <div class="wind-control-section" data-wind-direction-controls hidden>
           <b>Wind direction</b>
           <div class="wind-compass-presets" aria-label="Solved OpenFOAM directions">
@@ -580,7 +553,6 @@
             <button type="button" data-wind-direction="180">S</button><button type="button" data-wind-direction="225">SW</button>
             <button type="button" data-wind-direction="270">W</button><button type="button" data-wind-direction="315">NW</button>
           </div>
-          <p class="wind-cfd-hint">Comfort weights the solved directional fields. Direct observation scoring is available in Check against measurements when you have matched pedestrian and upstream readings. Results remain exploratory until holdout and mesh-sensitivity gates pass.</p>
           <!-- The presets above drive WebGL direction selection. These hidden
                inputs retain the detailed direction and forcing values used
                by scenario links and the WebGL wind model. -->
@@ -762,7 +734,6 @@
             </label>
             <button id="wind-slice-reset" class="secondary" type="button">Reset full slice</button>
           </div>
-          <p class="wind-cfd-hint" id="wind-cfd-view-hint">Terrain-following CFD · pressure on Façades.</p>
         </details>
 
         <details id="wind-flow-box-controls" class="wind-control-section" hidden open>
@@ -772,7 +743,7 @@
           <label class="wind-size-control">Box size
             <input id="wind-size" type="range" min="100" max="1200" step="25" value="300">
           </label>
-          <div id="wind-volume-row" class="wind-appearance-row"><span>3D volume <small>seeds through the box height below, not just ground level</small></span><label class="wind-inline-switch"><input id="wind-volume-visible" type="checkbox"> Visible</label></div>
+          <div id="wind-volume-row" class="wind-appearance-row"><span>3D volume</span><label class="wind-inline-switch"><input id="wind-volume-visible" type="checkbox"> Visible</label></div>
           <label id="wind-flow-box-height-row" class="wind-size-control" hidden>Box height <span id="wind-flow-box-height-value">80</span> m
             <input id="wind-flow-box-height" type="range" min="20" max="220" step="10" value="80">
           </label>
@@ -783,7 +754,6 @@
           <label>Animation speed <span id="wind-animation-speed-value">100%</span>
             <input id="wind-animation-speed" type="range" min="25" max="200" step="25" value="100">
           </label>
-          <p class="wind-cfd-hint">Drag this box directly in the scene (or use the handle to resize); flowlines seed and stay inside it, sampled live from the OpenFOAM volume.</p>
         </details>
 
         <div id="wind-climate-controls" class="wind-control-section" hidden>
@@ -818,7 +788,7 @@
             <section><b>High-wind spots</b><ol id="wind-hot-areas"></ol></section>
             <section><b>Windiest streets</b><ol id="wind-hot-streets"></ol></section>
           </div>
-          <p id="wind-focus-status" class="wind-explorer-note" role="status">Click a ranked result to highlight it on the map.</p>
+          <p id="wind-focus-status" class="wind-explorer-note" role="status"></p>
           <p id="wind-explorer-note" class="wind-explorer-note"></p>
         </section>
         <button id="wind-report" class="wind-report-button secondary" type="button" disabled hidden>Generate detailed wind report</button>
@@ -833,68 +803,76 @@
           <button id="wind-inspect-toggle" class="secondary" type="button" aria-pressed="false">Inspect a place</button>
           <p id="wind-inspect-result" role="status" hidden>Click a point on the map to inspect wind speed and comfort.</p>
         </div>
-        <details class="wind-tool-card wind-compare-card">
-          <summary id="wind-compare-title">Compare scenarios</summary>
-          <p>Save a result, change direction or period, then run it again. Comfort compares activity classes; direction compares pedestrian speeds.</p>
-          <div class="wind-tool-actions"><button id="wind-save-baseline" class="secondary" type="button" disabled>Save current baseline</button><button id="wind-clear-baseline" class="secondary" type="button" hidden>Clear baseline</button></div>
-          <p id="wind-compare-status" class="wind-tool-status" role="status">Run a wind study to start a comparison.</p>
-          <div id="wind-comparison-result" class="wind-comparison-result" hidden></div>
-        </details>
-
-        <details class="wind-tool-card wind-validation-card">
-          <summary>Check against measurements</summary>
-          <p>For a direct OpenFOAM score, record the timezone-aware measurement time, pedestrian and upstream sensor heights, averaging period, and simultaneous pedestrian/reference wind. Assign the entire held-out site or time block one split_group; a group cannot appear in both calibration and holdout. Coordinates are viewer-local metres (x east, z south-positive). The steady CFD inlet has no vertical profile, so it does not correct for different sensor heights.</p>
-          <label>Model to score <select id="wind-validation-target"><option value="openfoam">OpenFOAM pedestrian field</option><option value="screening">Screening proxy (diagnostic only)</option></select></label>
-          <label>Observation CSV <input id="wind-observation-file" type="file" accept=".csv,text/csv"></label>
-          <label>Or paste observations <textarea id="wind-observation-json" rows="4" placeholder='[{"id":"S1","site_name":"Church Square","x":-40,"z":-20,"speed_mps":4.8,"height_m":2,"reference_speed_mps":8,"reference_direction_deg":135,"reference_height_m":10,"averaging_period_s":600,"split":"holdout","split_group":"site:church-square"}]'></textarea></label>
-          <div class="wind-validation-scenario">
-            <label>Reference wind (screening only) <span><input id="wind-validation-speed" type="number" min="0" max="50" step="0.1" value="10"> m/s</span></label>
-            <label>Wind direction <select id="wind-validation-direction"><option value="0">N · 0°</option><option value="22.5">NNE · 22.5°</option><option value="45">NE · 45°</option><option value="67.5">ENE · 67.5°</option><option value="90">E · 90°</option><option value="112.5">ESE · 112.5°</option><option value="135" selected>SE · 135°</option><option value="157.5">SSE · 157.5°</option><option value="180">S · 180°</option><option value="202.5">SSW · 202.5°</option><option value="225">SW · 225°</option><option value="247.5">WSW · 247.5°</option><option value="270">W · 270°</option><option value="292.5">WNW · 292.5°</option><option value="315">NW · 315°</option><option value="337.5">NNW · 337.5°</option></select></label>
-            <label>Domain width <span><input id="wind-validation-size" type="number" min="100" max="1200" step="50" value="500"> m</span></label>
-            <label>Centre x <input id="wind-validation-center-x" type="number" step="10" value="0"></label>
-            <label>Centre z <input id="wind-validation-center-z" type="number" step="10" value="0"></label>
-          </div>
-          <button id="wind-validate-button" class="secondary" type="button">Compare measurements</button>
-          <p id="wind-validation-status" class="wind-tool-status" role="status">OpenFOAM scoring requires per-row split, pedestrian height, and concurrent upstream speed and direction. Keep holdout sites or periods untouched.</p>
-          <div id="wind-validation-result" class="wind-validation-result" hidden></div>
-        </details>
-
         <details class="panel-method wind-method">
           <summary>Method &amp; limitations</summary>
           <p>Direction view displays the available full-CBD steady RANS k–ε OpenFOAM case for the selected wind direction. Pedestrian speed is sampled from the CFD volume at the selected terrain-following height; vertical velocity, pressure and turbulence are solved around the mapped buildings. A direction is selectable only when its converted case is available.</p>
-          <p>The animated heat map transports speed colours through the horizontal CFD velocity field, with local turbulence energy shaping the colour variation. These moving colours are visual tracers and do not solve changing wind speeds. Turn motion off to read the mean-speed map; inspected values and statistics always use the solved mean field. Comfort combines available solved directions using the ERA5 wind rose and Weibull exceedance. Missing sectors are excluded rather than interpolated or treated as calm.</p>
-          <p>Measurement checks sample the selected CFD volume at supplied observation locations. Only matched sectors and the declared calibration/holdout groups are scored. Inlet scaling uses concurrent upstream wind speed but does not simulate changing atmospheric stability or transient turbulence. The wind cases have not passed domain and mesh sensitivity or local field-validation gates, so these outputs are exploratory and not suitable for certification.</p>
+          <p>The animated heat map transports speed colours through the horizontal CFD velocity field, with local turbulence energy shaping the colour variation. These moving colours are visual tracers and do not solve changing wind speeds. Turn motion off to read the mean-speed map; inspected values and statistics always use the solved mean field. In 3D volume mode, flowlines sample the selected flow box through its configured height. Comfort combines available solved directions using the ERA5 wind rose and Weibull exceedance. Missing sectors are excluded rather than interpolated or treated as calm.</p>
+          <p>These CFD fields are exploratory and unvalidated. They have not passed domain and mesh sensitivity or local field-validation gates, so they are not suitable for certification. The steady inlet does not simulate changing atmospheric stability or transient turbulence.</p>
           <p>Pollutant dispersal combines modelled road NOx and exhaust PMx as a mass-weighted tracer, then estimates near-ground residence through one steady wind field with a random walk using turbulence inferred from k and epsilon. Colours are relative residence within the scenario, not measured concentration or health risk; synthetic traffic demand and isotropic turbulence assumptions limit interpretation.</p>
         </details>
       </section>
       <section id="menu-viewshed" class="viewshed-panel menu-section" data-menu-panel="viewshed" role="tabpanel" aria-label="3D viewshed controls" hidden>
-        <div class="viewshed-heading"><span>3D viewshed</span><span class="viewshed-badge">Line of sight</span></div>
-        <p class="viewshed-intro">Click terrain, a roof, or a building face to place the observer. Alt-click to pick ground beneath an elevated building. White roads and street details provide context; vehicles are hidden.</p>
-        <label class="viewshed-control">View shape
-          <select id="viewshed-shape"><option value="cone" selected>3D cone</option><option value="full">Full 360°</option></select>
-        </label>
-        <label class="viewshed-control">Heading <output id="viewshed-heading-value">0° · N</output>
-          <input id="viewshed-heading" type="range" min="0" max="355" step="5" value="0">
-        </label>
-        <label class="viewshed-control">Horizontal spread <output id="viewshed-spread-value">60°</output>
-          <input id="viewshed-spread" type="range" min="20" max="120" step="5" value="60">
-        </label>
-        <label class="viewshed-control">Observer height <output id="viewshed-height-value">1.7 m</output>
-          <input id="viewshed-height" type="range" min="1.7" max="80" step="0.3" value="1.7">
-        </label>
-        <label class="viewshed-control">View radius <output id="viewshed-radius-value">500 m</output>
-          <input id="viewshed-radius" type="range" min="150" max="1200" step="50" value="500">
-        </label>
-        <div class="viewshed-legend"><span><i class="viewshed-visible-swatch"></i>Visible ground</span><span><i class="viewshed-hidden-swatch"></i>Hidden ground</span></div>
-        <button id="viewshed-pick" type="button" aria-pressed="false">Pick viewpoint on map</button>
-        <button id="viewshed-person" class="secondary" type="button" aria-pressed="false" disabled>View from observer</button>
-        <button id="viewshed-clear" class="secondary" type="button">Clear viewshed</button>
-        <p id="viewshed-status" class="viewshed-status" role="status" aria-live="polite">Select Pick viewpoint, then click the map.</p>
+        <div class="viewshed-heading"><span>3D viewshed</span></div>
+        <div class="viewshed-shape-toggle" role="group" aria-label="View shape">
+          <button type="button" data-viewshed-shape="cone" aria-pressed="true"><span class="viewshed-shape-icon viewshed-shape-cone-icon" aria-hidden="true"></span>Directional cone</button>
+          <button type="button" data-viewshed-shape="full" aria-pressed="false"><span class="viewshed-shape-icon viewshed-shape-full-icon" aria-hidden="true"></span>Full 360°</button>
+        </div>
+        <div class="viewshed-graphic-grid">
+          <section class="viewshed-graphic-card" aria-label="Direction and range controls">
+            <div class="viewshed-graphic-heading"><span>Direction &amp; range</span><div class="viewshed-legend"><span><i class="viewshed-visible-swatch"></i>Visible</span><span><i class="viewshed-hidden-swatch"></i>Screened</span></div><output id="viewshed-heading-value">0° · N</output></div>
+            <svg id="viewshed-plan-control" class="viewshed-plan-control" viewBox="0 0 240 240" role="group" aria-label="Compass and viewing range. Drag the dial to change direction, the side handles to change cone width, and the range handle to change distance.">
+              <circle class="viewshed-range-ring" cx="120" cy="120" r="88"></circle>
+              <circle class="viewshed-range-ring" cx="120" cy="120" r="66"></circle>
+              <circle class="viewshed-range-ring" cx="120" cy="120" r="44"></circle>
+              <circle class="viewshed-range-ring" cx="120" cy="120" r="22"></circle>
+              <path class="viewshed-compass-axis" d="M120 25v190M25 120h190M53 53l134 134M187 53L53 187"></path>
+              <g class="viewshed-dial-marks" aria-hidden="true"><text x="120" y="18">N</text><text x="222" y="124">E</text><text x="120" y="235">S</text><text x="18" y="124">W</text></g>
+              <circle id="viewshed-heading-hit" class="viewshed-heading-hit" cx="120" cy="120" r="106" role="slider" tabindex="0" aria-label="Heading" aria-valuemin="0" aria-valuemax="355" aria-valuenow="0" aria-valuetext="0 degrees, north"></circle>
+              <path id="viewshed-cone-sector" class="viewshed-cone-sector" d=""></path>
+              <circle id="viewshed-full-sector" class="viewshed-full-sector" cx="120" cy="120" r="36" hidden></circle>
+              <line id="viewshed-direction-line" class="viewshed-direction-line" x1="120" y1="120" x2="120" y2="70"></line>
+              <circle class="viewshed-observer-dot" cx="120" cy="120" r="5"></circle>
+              <circle id="viewshed-spread-handle-a" class="viewshed-adjust-handle viewshed-spread-handle" cx="104" cy="77" r="9" role="slider" tabindex="0" aria-label="Cone width" aria-valuemin="20" aria-valuemax="120" aria-valuenow="60" aria-valuetext="60 degrees"></circle>
+              <circle id="viewshed-spread-handle-b" class="viewshed-adjust-handle viewshed-spread-handle" cx="136" cy="77" r="9" role="slider" tabindex="0" aria-label="Cone width" aria-valuemin="20" aria-valuemax="120" aria-valuenow="60" aria-valuetext="60 degrees"></circle>
+              <circle id="viewshed-radius-handle" class="viewshed-adjust-handle viewshed-radius-handle" cx="120" cy="92" r="10" role="slider" tabindex="0" aria-label="Viewing radius" aria-valuemin="150" aria-valuemax="1200" aria-valuenow="500" aria-valuetext="500 metres"></circle>
+            </svg>
+            <div class="viewshed-graphic-readouts"><span>Spread <output id="viewshed-spread-value">60°</output></span><span>Radius <output id="viewshed-radius-value">500 m</output></span></div>
+            <p class="viewshed-control-hint">Drag to aim · edge handles set spread · rear handle sets radius.</p>
+          </section>
+          <section class="viewshed-graphic-card viewshed-height-card" aria-label="Observer height control">
+            <div class="viewshed-graphic-heading"><span>Observer height</span><output id="viewshed-height-value">1.7 m</output></div>
+            <svg id="viewshed-height-control" class="viewshed-height-control" viewBox="0 0 240 156" role="slider" tabindex="0" aria-orientation="vertical" aria-label="Observer height above the selected surface" aria-valuemin="1.7" aria-valuemax="80" aria-valuenow="1.7" aria-valuetext="1.7 metres">
+              <title>Drag vertically or use the up and down arrow keys to adjust in 0.3 metre steps.</title>
+              <path class="viewshed-height-grid" d="M40 20h174M40 49h174M40 78h174M40 107h174M40 136h174"></path>
+              <path class="viewshed-height-axis" d="M40 20v116"></path>
+              <text class="viewshed-height-label" x="31" y="23">80 m</text>
+              <text class="viewshed-height-label" x="31" y="52">60</text>
+              <text class="viewshed-height-label" x="31" y="81">40</text>
+              <text class="viewshed-height-label" x="31" y="110">20</text>
+              <text class="viewshed-height-label" x="31" y="139">1.7</text>
+              <path class="viewshed-height-building" d="M119 136V74h26V50h22v86z"></path>
+              <path class="viewshed-height-building-windows" d="M126 83h5m8 0h-5m-8 10h5m8 0h-5m8-33h5m8 0h-5m8 10h5m-5 10h5m-5 10h5m-5 10h5m-5 10h5"></path>
+              <path id="viewshed-height-guide" class="viewshed-height-guide" d="M44 133h145"></path>
+              <g id="viewshed-height-marker" class="viewshed-height-marker" transform="translate(0 133)">
+                <circle cx="184" cy="0" r="9"></circle><path d="M184-4v8m-4-4h8"></path>
+              </g>
+              <circle id="viewshed-height-hit" class="viewshed-height-hit" cx="184" cy="78" r="70"></circle>
+            </svg>
+          </section>
+        </div>
+        <div class="viewshed-actions">
+          <button id="viewshed-pick" type="button" aria-pressed="false">Pick viewpoint on map</button>
+          <div class="viewshed-secondary-actions">
+            <button id="viewshed-person" class="secondary" type="button" aria-pressed="false" disabled>View from observer</button>
+            <button id="viewshed-clear" class="secondary" type="button">Clear viewshed</button>
+          </div>
+        </div>
+        <p id="viewshed-status" class="viewshed-status" role="status" aria-live="polite"></p>
         <div id="viewshed-scenario-editor-host" class="scenario-editor-host"></div>
         <details class="panel-method viewshed-method">
-          <summary>Method &amp; coverage</summary>
-          <p>The observer is placed on the selected terrain, roof or building face at the chosen eye height. For each visible ground sample within the selected radius and viewing shape, the tool tests the sightline against the mapped terrain triangles and mapped building base-to-top massing. Heading and horizontal spread set the cone direction and width; full 360° removes the directional limit.</p>
-          <p>Green ground is visible from the observer and red ground is blocked by terrain or a mapped building. White trees and street details provide scene context but do not block the line-of-sight calculation. Small structures, unmapped objects, sub-grid terrain detail and atmospheric refraction are not represented, so this is a coverage screen rather than a surveyed sightline assessment.</p>
+          <summary>Method &amp; limitations</summary>
+          <p>This is a screening estimate of mapped line-of-sight visibility from one observer point at the selected eye height. Use Pick viewpoint on map to place or move the observer; Alt-click can target terrain below buildings. For each ground sample within the selected radius and viewing shape, it tests the sightline against mapped terrain triangles and mapped building base-to-top massing. Heading and horizontal spread set the cone direction and width; full 360° removes the directional limit.</p>
+          <p>Green ground is visible from the observer and red ground is blocked by terrain or a mapped building. White trees and street details provide scene context but do not block the line-of-sight calculation. Small structures, unmapped objects, sub-grid terrain detail and atmospheric refraction are not represented. Visible share is the percent of valid sampled ground cells with a clear sightline.</p>
         </details>
       </section>
       <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
@@ -902,8 +880,7 @@
           <div><span class="transport-kicker">MOVE CAPE TOWN</span><strong>Public transport</strong></div>
           <label class="transport-show-switch"><input id="transport-toggle" type="checkbox" checked><span>Network on</span></label>
         </div>
-        <div class="transport-data-banner"><i aria-hidden="true"></i><span><b>Schedule-powered simulation</b><small id="transport-data-source">Loading PRASA + MyCiTi data…</small></span><em>NOT LIVE</em></div>
-        <p class="transport-intro">Explore scheduled bus and rail service across the CBD. Select a route or click a stop for modelled departures.</p>
+        <div class="transport-data-banner"><i aria-hidden="true"></i><span><b>Timetabled services</b><small id="transport-data-source">Loading PRASA + MyCiTi data…</small></span><em>NOT LIVE</em></div>
         <div class="transport-mode-tabs" role="group" aria-label="Transport modes">
           <button class="active" type="button" data-transport-mode="both" aria-pressed="true"><span aria-hidden="true">⌘</span> Network</button>
           <button type="button" data-transport-mode="bus" aria-pressed="false"><span aria-hidden="true">▰</span> Bus</button>
@@ -931,9 +908,8 @@
             <label class="transport-chip"><input id="transport-routes-toggle" type="checkbox" checked> Lines</label>
             <label class="transport-chip"><input id="transport-stops-toggle" type="checkbox" checked> Stops</label>
           </div>
-          <details class="transport-map-key"><summary>Map key &amp; data confidence</summary>
+          <details class="transport-map-key"><summary>Map key</summary>
             <div class="transport-key-items"><span><i class="transport-key-bus"></i>MyCiTi route</span><span><i class="transport-key-rail"></i>Rail corridor</span><span><i class="transport-key-track"></i>Mapped track</span><span><i class="transport-key-stop"></i>Stop / station</span></div>
-            <p>MyCiTi times are interpolated from supplied weekday timetable endpoints. PRASA times use the supplied CSV where matched; unmatched corridors use a planning cadence. Vehicle positions are schedule-derived estimates, never live GPS.</p>
           </details>
           <div class="transport-status-row"><p id="transport-status" class="transport-status" aria-live="polite">Loading scheduled services…</p><button id="transport-next-rail" type="button" hidden>Show next train →</button></div>
         </section>
@@ -941,7 +917,7 @@
         <details class="transport-event-planner">
           <summary><span><i>02</i><b>Event access planner</b></span><em>Test last-mile capacity</em></summary>
           <div class="transport-event-body">
-            <p class="transport-planner-hint">Estimate whether scheduled services connect nearby stops to an event, and where extra service may be needed. Results are planning proxies, not a live capacity check.</p>
+            <p class="transport-planner-hint">Compare scheduled service with estimated event demand.</p>
             <div class="transport-section transport-event-basics">
               <label>Event name<input id="transport-event-name" type="text" value="Cape Town evening event" maxlength="80"></label>
               <div class="transport-control-grid">
@@ -974,9 +950,8 @@
         <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a></div>
         <details class="panel-method">
           <summary>Method &amp; limitations</summary>
-          <p>Bus and rail geometry follows mapped routes, stops, stations and track assets. MyCiTi movement uses supplied weekday timetable endpoints; Metrorail uses the supplied directional schedule CSV where a corridor matches, with a labelled planning cadence on unmatched corridors. The model clock advances through these schedules and vehicles move along their mapped service geometry at assumed speeds of 18 km/h for buses and 40 km/h for rail.</p>
-          <p>Vehicle counts and positions are schedule-derived estimates, not live GPS or confirmed arrivals. Service alerts are linked for reference but are not applied to the simulation. Check the operator before making a trip.</p>
-          <p>The event planner uses the selected venue, walking catchment, arrival buffer, dispersal window, attendance and mode share to compare scheduled movements with a simple capacity allowance of 60 places per bus movement and 800 per train movement. This is planning arithmetic, not vehicle allocation, observed passenger demand or a live capacity check.</p>
+          <p>Mapped routes and supplied MyCiTi/PRASA schedules drive vehicle positions. MyCiTi times are interpolated; unmatched rail uses an estimated cadence. Assumed speeds: 18 km/h for buses and 40 km/h for rail.</p>
+          <p>Event access uses the venue, walk shed, timing, attendance and mode share. Schedules are not live GPS; service alerts are not applied. Capacity assumes 60 places per bus and 800 per train departure, not occupancy or allocated service. Planner grades are not operator ratings; routes are not accessibility-certified.</p>
         </details>
       </section>
       <section id="menu-walking" class="walking-panel menu-section" data-menu-panel="walking" role="tabpanel" aria-label="Climate-aware walking routes" hidden>
@@ -993,16 +968,11 @@
         <div class="walking-actions"><button id="walking-find" type="button" disabled>Compare routes <span aria-hidden="true">→</span></button><button id="walking-clear" class="secondary" type="button">Clear</button></div>
         <p id="walking-status" class="walking-status" aria-live="polite">Pick a start and destination on the map.</p>
         <div id="walking-results" class="walking-results" hidden></div>
-        <details class="walking-traffic-context"><summary>Road-emissions context <span>Optional SUMO run</span></summary>
-          <p>Run a separate synthetic traffic sample for the selected time. This reports road-source NOx on named route streets; it is not pedestrian pollution concentration or dose and does not affect route ranking.</p>
-          <button id="walking-traffic-run" class="secondary" type="button" disabled>Run road-emissions context</button>
-          <p id="walking-traffic-status" class="walking-status" aria-live="polite">Available after route comparison.</p>
-        </details>
         <details class="panel-method walking-method">
-          <summary>Method &amp; coverage</summary>
-          <p>Routes use the checked-in OpenStreetMap pedestrian network, with explicitly prohibited ways and motorways filtered. Each endpoint is snapped to its nearest directed walkable segment; picks more than 50 m from the network are rejected. Segments without explicit foot-access, pedestrian-way or sidewalk evidence remain available but are flagged as uncertain, and mapped steps are included.</p>
-          <p>The tool compares separate objectives: fastest estimated walking time, least direct-sun walking time, and lowest cumulative UTCI heat load when thermal coverage is available. Routing uses an estimated 4.8 km/h walking speed. Shade is sampled along each path at its expected traversal time in five-minute bins; UTCI and pedestrian wind use the nearest complete hourly forecast frame within 30 minutes. Missing or stale thermal data removes the heat-ranked alternative but leaves other route options available.</p>
-          <p>Matched route cohorts show 100 synthetic walkers with seeded speeds from 4.0–5.6 km/h, using the same speed for each person across alternatives. They are not a demographic model and do not include crowding or interactions. Street evidence reports mapped crossings, lighting, sidewalk and width tags; missing tags remain unknown. These indicators do not establish safety or wheelchair accessibility.</p>
+          <summary>Method &amp; limitations</summary>
+          <p>Routes use the checked-in CBD OpenStreetMap pedestrian network. Explicitly prohibited ways and motorways are filtered; each endpoint snaps to its nearest directed walkable segment and picks more than 50 m away are rejected. Segments without foot-access, pedestrian-way or sidewalk evidence remain available but are flagged as uncertain. Mapped steps are included.</p>
+          <p>The tool compares fastest estimated walking time, least direct-sun time and lowest cumulative UTCI heat load when coverage allows. Walking time assumes 4.8 km/h. Shade is sampled along each route in five-minute bins; UTCI and pedestrian wind use the nearest complete hourly forecast frame within 30 minutes. Missing or stale thermal data removes the heat-ranked alternative while leaving other routes available.</p>
+          <p>Each route has a matched cohort of 100 synthetic walkers with seeded speeds from 4.0–5.6 km/h, using the same speed for each person across alternatives. Walkers are not a demographic or crowd model. Street evidence reports mapped crossings, lighting, sidewalk and width tags; missing tags remain unknown. Forecasts are not street observations, and the results do not establish safety or wheelchair accessibility.</p>
         </details>
       </section>
       <section id="menu-traffic" class="traffic-panel menu-section" data-menu-panel="traffic" role="tabpanel" aria-label="Traffic simulation controls" hidden>
@@ -1025,7 +995,7 @@
           </div>
           <p id="traffic-live-status" class="traffic-status">Loading live traffic…</p>
           <div id="traffic-live-metrics" class="current-metrics" hidden></div>
-          <p class="traffic-data-note">TomTom speed samples · map context only; closure outcomes below are simulated.</p>
+          <p class="traffic-data-note">TomTom speeds provide context; closures are simulated.</p>
         </div>
 
         <div class="traffic-card compact-section">
@@ -1105,11 +1075,10 @@
           </details>
         </div>
         <details id="traffic-calibration-details" class="panel-method traffic-calibration-details">
-          <summary>Method &amp; validation <span id="traffic-calibration-badge">Checking…</span></summary>
+          <summary>Method &amp; limitations <span id="traffic-calibration-badge">Checking…</span></summary>
           <p id="traffic-calibration-status">Checking available traffic observations…</p>
-          <p>Each comparison runs a baseline SUMO scenario and a paired scenario with the selected mapped lane, street or one-way closure. Both use the same time period, demand assumptions and random seeds so the difference isolates the scenario within the model. The interface reports trip completion, queues, speed and emissions alongside validity checks; incomplete or overloaded runs withhold impact claims.</p>
-          <p>Demand, origin–destination movements, signal behaviour and fleet composition are model assumptions unless explicitly calibrated with observations. TomTom speed samples help identify live street patterns and peak timing, but do not provide vehicle counts. Demand remains synthetic until observed counts are configured. A small or stable modelled change is not evidence of no real-world effect.</p>
-          <p>Use the output to screen options. Validate a preferred design with held-out vehicle counts, turning movements, travel times and queue observations from a different period than the calibration data.</p>
+          <p>Each closure is compared with a SUMO baseline using the same period, demand and random seeds. Incomplete or overloaded runs withhold impact claims.</p>
+          <p>Demand, routes, signals and fleet are assumptions unless calibrated. TomTom speeds are context, not vehicle counts. This is not a calibrated forecast or closure approval; emissions and noise are modelled, not measured. Report reliability gates apply.</p>
           <a href="/docs#traffic" class="traffic-data-link">Calibration and validation notes <span aria-hidden="true">↗</span></a>
         </details>
       </section>
@@ -1139,7 +1108,6 @@
             <div><b id="transport-event-cover">—</b><span>nominal return places / estimated trips</span></div>
           </div>
           <div id="transport-event-recommendation" class="transport-event-recommendation"></div>
-          <p class="transport-grade-note">Assessment labels summarize this model’s assumptions; they are not operator service ratings.</p>
         </section>
         <section class="transport-result-supply" aria-label="Service supply">
           <h3>Service supply</h3>
@@ -1190,6 +1158,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-173"></script>
+    <script type="module" src="/app.js?v=experience-181"></script>
 </body>
 </html>

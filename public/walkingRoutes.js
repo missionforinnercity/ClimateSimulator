@@ -117,8 +117,6 @@ export function setupWalkingRoutes() {
   const results = panel.querySelector('#walking-results');
   const find = panel.querySelector('#walking-find');
   const clear = panel.querySelector('#walking-clear');
-  const trafficButton = panel.querySelector('#walking-traffic-run');
-  const trafficStatus = panel.querySelector('#walking-traffic-status');
   const endpoints = { origin: null, destination: null };
   const defaults = localDateTime();
   dateInput.value = defaults.date;
@@ -129,7 +127,6 @@ export function setupWalkingRoutes() {
   let requestToken = 0;
   let replayFrame = 0;
   let replayStart = 0;
-  let trafficToken = 0;
   const stopReplay = () => {
     if (replayFrame) cancelAnimationFrame(replayFrame);
     replayFrame = 0;
@@ -138,14 +135,11 @@ export function setupWalkingRoutes() {
   };
   const invalidateResult = message => {
     requestToken += 1;
-    trafficToken += 1;
     cancelRequests('walking');
     stopReplay();
     routePayload = null;
     results.replaceChildren();
     results.hidden = true;
-    trafficButton.disabled = true;
-    trafficStatus.textContent = 'Available after route comparison.';
     status.textContent = message;
     dispatchEvent(new CustomEvent('climate-walking-routes-clear'));
     refreshEndpoints();
@@ -198,7 +192,6 @@ export function setupWalkingRoutes() {
     invalidateResult('Building route alternatives and sampling shade, UTCI and wind…');
     const token = ++requestToken;
     find.disabled = true;
-    trafficButton.disabled = true;
     const requestedDate = dateInput.value;
     const requestedTime = timeInput.value;
     try {
@@ -217,7 +210,6 @@ export function setupWalkingRoutes() {
       activeRoute = payload.routes?.some(route => route.id === 'fastest') ? 'fastest' : payload.routes?.[0]?.id;
       render(payload);
       dispatchEvent(new CustomEvent('climate-walking-routes', { detail: payload }));
-      trafficButton.disabled = false;
       const start = payload.origin?.snap_distance_m;
       const finish = payload.destination?.snap_distance_m;
       const thermal = payload.conditions?.thermal;
@@ -225,7 +217,6 @@ export function setupWalkingRoutes() {
         ? `UTCI ${number(thermal.channel_coverage.utci_c?.coverage_percent, 0, '%')}, wind ${number(thermal.channel_coverage.wind_1p5m_mps?.coverage_percent, 0, '%')} coverage`
         : `thermal coverage ${thermal?.status || 'unavailable'}`;
       status.textContent = `${payload.routes?.length || 0} route alternatives · snapped ${number(start, 0, ' m')} / ${number(finish, 0, ' m')} · ${coverage}. Walkers are calculating separately.`;
-      trafficStatus.textContent = 'Optional synthetic road-emissions context; it does not change route scores.';
       if (payload.agent_job_id) void pollAgents(payload.agent_job_id, token);
       else status.textContent += ' Matched walker service is busy.';
     } catch (error) {
@@ -322,54 +313,5 @@ export function setupWalkingRoutes() {
     refreshEndpoints();
   });
 
-  trafficButton.addEventListener('click', async () => {
-    if (!routePayload) return;
-    const token = ++trafficToken;
-    trafficButton.disabled = true;
-    const hour = Number(routePayload.departure_at.slice(11, 13));
-    const scenario = hour >= 6 && hour < 10 ? 'am_peak' : hour >= 10 && hour < 14 ? 'midday'
-      : hour >= 14 && hour < 19 ? 'pm_peak' : 'evening';
-    trafficStatus.textContent = `Starting the optional 5-minute ${scenario.replace('_', ' ')} citywide SUMO/HBEFA run…`;
-    try {
-      const startResponse = await fetch(`${API}/traffic/emissions-preview/jobs`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario, duration_min: 5, demand_multiplier: 1, seed: 240917 }),
-        timeoutMs: 15000,
-      });
-      const started = await startResponse.json();
-      if (token !== trafficToken || !routePayload) return;
-      const startedAt = Date.now();
-      let job;
-      do {
-        await new Promise(resolve => setTimeout(resolve, 1100));
-        const poll = await fetch(`${API}/traffic/emissions-preview/jobs/${encodeURIComponent(started.job_id)}`, { timeoutMs: 15000 });
-        job = await poll.json();
-        if (token !== trafficToken || !routePayload) return;
-        if (job.status !== 'complete' && Date.now() - startedAt > 180000) throw new Error('Traffic context run timed out. Routes remain available.');
-        if (job.status !== 'complete') trafficStatus.textContent = `Traffic context run ${job.status} · ${Number(job.elapsed_s || 0).toFixed(0)} s`;
-      } while (job.status !== 'complete');
-      const roads = job.result?.road_emissions || [];
-      const byName = new Map();
-      roads.forEach(road => {
-        const name = String(road.road_name || '').trim();
-        const key = name.toLocaleLowerCase();
-        const aggregate = byName.get(key) || { road_name: name, nox_g: 0 };
-        aggregate.nox_g += Number(road.nox_g || 0);
-        byName.set(key, aggregate);
-      });
-      const used = new Set(routePayload.routes.flatMap(route => route.street_names || []).map(name => name.trim().toLocaleLowerCase()));
-      const matched = [...used].map(name => byName.get(name)).filter(Boolean);
-      const total = matched.reduce((sum, road) => sum + Number(road.nox_g || 0), 0);
-      const names = matched.slice().sort((a, b) => Number(b.nox_g) - Number(a.nox_g)).slice(0, 6)
-        .map(road => `${escape(road.road_name)} ${number(road.nox_g, 4, ' g NOx')}`).join(' · ');
-      trafficStatus.textContent = matched.length
-        ? `Whole-CBD ${scenario.replace('_', ' ')} model · ${number(total, 4, ' g NOx')} summed on ${matched.length} named route streets. ${names}. Road-source estimate only; not pedestrian concentration or dose.`
-        : `Whole-CBD ${scenario.replace('_', ' ')} model completed, but no route street names matched its SUMO edges. This is not pedestrian concentration or dose.`;
-    } catch (error) {
-      if (token === trafficToken) trafficStatus.textContent = `Road-emissions context unavailable: ${error.message}. Route results remain available.`;
-    } finally {
-      trafficButton.disabled = token !== trafficToken || !routePayload;
-    }
-  });
   refreshEndpoints();
 }

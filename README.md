@@ -65,8 +65,7 @@ completed simulation arrays or drawn traffic closures.
   GPS.
 - **Walking routes:** Compare fastest, lower-sun and (when thermal coverage is
   available) lower-heat CBD walks using OSM footways, mapped shade, UTCI and
-  pedestrian wind. Matched synthetic walker cohorts are included per path;
-  traffic NOx remains separate road-source context. See
+  pedestrian wind. Matched synthetic walker cohorts are included per path. See
   [walking route method and limits](docs/WALKING_ROUTES.md).
 
 Scientific status and coverage matter: the OpenFOAM wind cases are exploratory,
@@ -159,15 +158,10 @@ Comfort offers versioned Lawson-LDDC-style screening and Davenport 1972 hourly-
 mean criteria, with thresholds, source, averaging basis and gust treatment
 carried into results. The formal Lawson LDDC gust-equivalent-mean/safety option
 is listed as unavailable until its gust inputs are supported. See
-[docs/WIND_VALIDATION.md](docs/WIND_VALIDATION.md) for criterion definitions
-and limits. **Check against measurements** can score the converted OpenFOAM
-pedestrian field when supplied with local observations, including a predeclared
-site/period holdout group; no local CBD campaign observations have been
-provided yet, so the fields remain unvalidated. A scored run can be retained in
-the climate report with its uploaded/pasted source, residuals and matched CFD,
-terrain and scene asset hashes, then packaged with
-`scripts/archive_climate_report.py`.
-Case generation, result refresh and validation requirements are documented in
+[docs/WIND_VALIDATION.md](docs/WIND_VALIDATION.md) for criterion definitions,
+scoring API requirements and limits. No local CBD campaign observations have
+been provided, so the CFD fields remain exploratory and unvalidated. Case
+generation, result refresh and validation requirements are documented in
 [docs/OPENFOAM.md](docs/OPENFOAM.md).
 
 The semantic model gives each object a stable `identifier` and version-specific

@@ -19,32 +19,31 @@ const EVIDENCE = {
     legend: 'Shade deficit is percent of a zone not shaded; lower is more shade. Priority score is /100 and is a screening rank, not a health-risk measure.',
   },
   walking: {
-    status: 'Modelled · CBD only', method: 'OSM pedestrian graph routing with mapped building/canopy shade and hourly UTCI/pedestrian wind where available. One hundred seeded matched synthetic walkers are sampled per route.',
-    sources: 'Checked-in OSM XML, mapped city geometry, and the published thermal forecast. Optional NOx context is a separate SUMO/HBEFA road-source estimate.',
+    status: 'Modelled · CBD only', method: 'Routes use the checked-in OpenStreetMap pedestrian network with mapped buildings and canopy. Shade is sampled along each route; UTCI and pedestrian wind use the nearest complete hourly forecast frame when available. Each route also receives a matched cohort of 100 synthetic walkers.',
+    sources: 'Checked-in OSM XML, mapped city geometry, and the published thermal forecast.',
     supports: 'Compare estimated walking time, direct sun, modelled heat load, and pedestrian wind across route alternatives.',
-    limits: 'OSM foot-access attributes can be incomplete; forecast layers are not street observations. Steps remain in the graph, and no wheelchair-accessibility, personal dose, or crowd-interaction claim is made.',
-    legend: 'Minutes are estimated at 4.8 km/h. Heat load is cumulative UTCI above 26°C. Road NOx is not pedestrian concentration or dose.',
+    limits: 'OSM access and sidewalk tags can be incomplete; forecast layers are not street observations. Mapped steps remain in the network. Walkers are synthetic and do not model crowds or demographics; results do not establish safety or wheelchair accessibility.',
+    legend: 'Walking time assumes 4.8 km/h. Heat load is cumulative UTCI above 26°C. Missing street tags remain unknown.',
   },
   sun: {
-    status: 'Modelled · Exploratory', method: 'Solar geometry, mapped building/canopy shadows, and clear-sky direct-sun sampling.',
+    method: 'Exploratory modelled estimates use solar geometry, mapped building/canopy shadows, and clear-sky direct-sun sampling.',
     sources: 'Mapped hybrid building geometry and canopy; 2025 LiDAR terrain. Roof shapes and coarse terrain contain inferred geometry.',
     supports: 'Compare direct sunlight and shade at a selected date, time, and area.',
-    limits: 'Not measured irradiance, PV yield, diffuse/reflected light, or a certified daylight assessment.',
+    limits: 'These are exploratory modelled comparisons, not measured irradiance, PV yield, diffuse/reflected light, or a certified daylight assessment.',
     legend: 'Hours (h) show sampled direct sun in the chosen time window. More sun is not always better; the intended use and season matter.',
   },
   wind: {
-    status: 'Exploratory · Unvalidated', method: 'The selected-square report uses a multi-direction wind comfort screen. The live 3D wind view can show solved OpenFOAM fields where available.',
+    method: 'The selected-square report uses a multi-direction wind comfort screen. The live 3D wind view displays solved OpenFOAM fields where available.',
     sources: 'Seasonal ERA5 wind patterns and mapped terrain and buildings inform the area comfort screen. ERA5 is regional context, not a street measurement.',
     supports: 'Inspect possible exposed areas, flow patterns, and questions for a validated wind study.',
-    limits: 'The comfort map is an exploratory planning estimate, not measured street conditions or certified wind-safety evidence. Field measurements are needed for high-stakes design.',
+    limits: 'Wind fields are exploratory and unvalidated, not measured street conditions or certified wind-safety evidence. They have not passed domain, mesh-sensitivity or local field-validation gates.',
     legend: 'The map groups locations by suitable outdoor activity. A category is not a guarantee of safety or comfort for every person.',
   },
   viewshed: {
-    status: 'Screening · mapped line of sight',
-    method: 'Ground visibility is sampled from one selected observer point against mapped terrain and building massing.',
+    method: 'This screening tool estimates mapped line-of-sight visibility from one observer point against mapped terrain and building massing.',
     sources: 'Mapped terrain and building footprints/heights; trees and small unmapped objects do not block the calculation.',
     supports: 'Identify visible and screened ground within the selected distance and viewing direction.',
-    limits: 'A planning screen, not a surveyed sightline. Sub-grid terrain, unmapped structures and atmospheric refraction are not represented.',
+    limits: 'This is not a surveyed sightline. Sub-grid terrain, unmapped structures, trees and atmospheric refraction are not represented.',
     legend: 'Visible share is the portion of valid sampled ground cells with a clear line of sight.',
   },
   wind_validation: {
@@ -64,17 +63,17 @@ const EVIDENCE = {
     legend: 'Residual sign is model minus observed. Preserve the source CSV and do not tune against holdout groups.',
   },
   traffic: {
-    status: 'Exploratory · Modelled', method: 'Paired SUMO baseline and closure runs with a synthetic representative fleet.',
+    method: 'SUMO compares a closure run with a paired baseline using the same demand and random seeds.',
     sources: 'OSM/SUMO network, mapped signal settings, synthetic demand. Provider traffic freshness is shown separately.',
     supports: 'Explore rerouting trade-offs for a specified closure and demand assumption.',
-    limits: 'Not a calibrated traffic forecast, measured emissions/noise, or an operational closure approval. Existing report reliability gates still apply.',
+    limits: 'Results are not a calibrated traffic forecast or closure approval. Emissions and noise are modelled, not measured; report reliability gates still apply.',
     legend: 'Vehicle speed uses km/h. Diversion gains/losses refer to modelled traffic relative to the same baseline; colour alone is not a recommendation.',
   },
   transport: {
-    status: 'Scheduled proxy · Inferred', method: 'Timetable-derived vehicle positions, walking catchments, and event access estimates.',
+    method: 'Timetable-based vehicle positions and event access estimates use mapped routes, stops and walking catchments.',
     sources: 'MyCiTi and matched PRASA schedules; unmatched services are estimates. Source dates and service validity depend on the delivered timetable.',
     supports: 'Discuss event timing, connected areas, and additional scheduled services with operators.',
-    limits: 'Not live GPS, actual occupancy, guaranteed service, or accessible-route certification. Capacity assumes 60 bus / 800 train places per departure.',
+    limits: 'Positions are not live GPS or confirmed arrivals. Capacity is a proxy, not occupancy or guaranteed service; routes are not accessibility-certified. Assumes 60 bus / 800 train places per departure.',
     legend: 'Departures are scheduled services; places are nominal capacity. Coverage compares scheduled capacity to an assumed event-demand proxy.',
   },
 };
@@ -123,7 +122,7 @@ export function setupExplorerExperience() {
   const feedback = el('p', '', 'experience-feedback'); feedback.setAttribute('role', 'status');
   const actions = el('div', undefined, 'experience-actions');
   workspace.append(actions, feedback);
-  root.prepend(workspace);
+  ($('#menu-tools') || root).prepend(workspace);
   const notify = text => { feedback.textContent = text; };
 
   function capture() {
@@ -179,6 +178,8 @@ export function setupExplorerExperience() {
   }
 
   for (const [tool, evidence] of Object.entries(EVIDENCE)) {
+    if (tool === 'heat' || tool === 'walking' || tool === 'sun' || tool === 'viewshed' || tool === 'wind'
+      || tool === 'traffic' || tool === 'transport') continue;
     const panel = $(`#menu-${tool}`);
     if (!panel) continue;
     const card = el('section', undefined, 'evidence-card'); card.setAttribute('aria-label', `${tool} evidence`);
@@ -581,7 +582,6 @@ export function setupExplorerExperience() {
   generateReportButton.addEventListener('click', generateAreaReport);
 
   const hints = {
-    'wind-cfd-ground-height': 'Sampling height above local terrain; this does not change the solved CFD mesh.',
     'wind-stability': 'Screening atmospheric profile. The existing CFD cases use neutral inlet assumptions.',
     'traffic-demand': 'Multiplier on synthetic demand, not an observed vehicle count.',
     'traffic-seed-count': 'Repeats the paired open/closed simulation and reports the median plus its range.',

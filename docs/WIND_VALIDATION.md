@@ -28,33 +28,6 @@ digitized, georeferenced dataset plus documented sensor height/exposure and
 matching CFD geometry/forcing. Even then, it would be an event-specific
 external check, not a replacement for a new campaign or a separate holdout.
 
-## Wind panel workflow
-
-The wind panel opens on the comfort screen. Results show sitting/standing
-share first; resolved model-cell coverage, solved wind-hour coverage, ERA5
-hourly archive coverage and model status sit under **Evidence, coverage &
-assumptions**. Direction mode reports the solved pedestrian-height CFD speed
-field and can be compared with another direction. Comfort results can be
-compared across periods. Comparisons use the same analysis type and show a
-cell difference map only when both grids have matching geometry and valid
-cells.
-
-**Compare scenarios** keeps a baseline in the current browser session. It is
-not a saved study package. **Check against measurements** has separate targets.
-**OpenFOAM pedestrian field** samples the selected converted CFD volume
-directly; **Screening proxy** continues to call `/api/wind/validate` and is
-diagnostic only. OpenFOAM scoring calls `/api/wind/validate-openfoam` and
-requires at least three rows with `split=calibration` or `split=holdout`,
-`split_group`, viewer-local `x,z`, pedestrian `speed_mps` and `height_m`, plus
-simultaneous upstream `reference_speed_mps`, `reference_direction_deg` and
-`reference_height_m`. A timezone-aware ISO 8601 `observed_at` and
-`averaging_period_s` are required so the measurement time and averaging window
-are explicit. Optional `wind_direction_deg`, `site_name`, sensor calibration,
-`sensor_id`, `sensor_model`, `calibration_date` and notes are retained in the
-paired report when supplied. The report hashes the normalized observation
-payload, OpenFOAM volume manifest/fields/mask, terrain DEM and scene manifest.
-The reference direction must be within 11.25° of the selected solved case.
-
 For a joint wind/thermal field campaign, use
 [`cbd_validation_campaign_template.csv`](cbd_validation_campaign_template.csv).
 Enter one row per pedestrian site and synchronized averaging window. In this
@@ -201,10 +174,9 @@ python scripts/build_wind_design_case.py proposal.json --solve --workers 4
 
 The first command writes a candidate scene for review. `--solve` exports a new
 OpenFOAM case, meshes and solves it, converts the result to browser assets, and
-registers the solved proposal in `public/assets/cfd/design-cases.json`. In the
-Wind panel, save the baseline, load the proposed design, and compare pedestrian
-speed for the same direction. The candidate and baseline use the same solver
-and forcing settings; different geometry requires a new mesh and solve.
+registers the solved proposal in `public/assets/cfd/design-cases.json`. The
+candidate and baseline use the same solver and forcing settings; different
+geometry requires a new mesh and solve.
 
 ## WindNinja reference cases
 

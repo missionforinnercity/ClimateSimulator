@@ -1,5 +1,5 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=40';
-import { setupWalkingRoutes } from './walkingRoutes.js?v=3';
+import { setupExplorerExperience } from './explorerExperience.js?v=48';
+import { setupWalkingRoutes } from './walkingRoutes.js?v=4';
 import { scopedFetch as fetch } from './requestClient.js';
 
 const canvas = document.querySelector('#scene');
@@ -67,9 +67,10 @@ function setupMenuNavigation() {
     } else if (name === 'walking') {
       context = `Walking routes · ${inputValue('#walking-date') || 'Select date'} · ${inputValue('#walking-time') || 'Select time'}`;
     } else if (name === 'viewshed') {
-      const shape = document.querySelector('#viewshed-shape')?.selectedOptions[0]?.textContent || '3D cone';
-      const heading = inputValue('#viewshed-heading') || '0';
-      context = `${shape} · ${heading}° heading · ${inputValue('#viewshed-radius') || 500} m range`;
+      const shape = document.querySelector('[data-viewshed-shape][aria-pressed="true"]')?.textContent.trim() || 'Directional cone';
+      const heading = textValue('#viewshed-heading-value') || '0° · N';
+      const radius = textValue('#viewshed-radius-value') || '500 m';
+      context = `${shape} · ${heading} heading · ${radius} range`;
     }
     panelContextValue.textContent = context;
   };
@@ -185,10 +186,11 @@ function setupMenuNavigation() {
     const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
     updatePanelContext(current);
   });
-  ['#heat-forecast-label', '#heat-climate-month-label', '#heat-climate-hour-label', '#sun-time-value', '#transport-time-value'].forEach(selector => {
+  ['#heat-forecast-label', '#heat-climate-month-label', '#heat-climate-hour-label', '#sun-time-value', '#transport-time-value', '#viewshed-heading-value', '#viewshed-radius-value'].forEach(selector => {
     const node = document.querySelector(selector);
     if (node) contextTextObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
+  document.querySelectorAll('[data-viewshed-shape]').forEach(button => contextTextObserver.observe(button, { attributes: true, attributeFilter: ['aria-pressed'] }));
   document.querySelectorAll('[data-wind-lens]').forEach(button => button.addEventListener('click', () => {
     if (tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget === 'wind') updateSceneMode('wind');
   }));
@@ -205,21 +207,28 @@ function setupHeatViewSelector() {
   const wheel = document.querySelector('#heat-spin');
   const output = document.querySelector('#heat-spin-value');
   const groups = [...document.querySelectorAll('[data-heat-view-group]')];
+  const quickFields = [...document.querySelectorAll('[data-heat-quick-field]')];
   if (!metric || !wheel || !output) return;
   const options = {
-    current: ['utci_c', 'tmrt_c'],
+    current: ['utci_c', 'tmrt_c', 'sky_view_factor'],
     history: ['utci_c', 'tmrt_c'],
     screening: ['heat_model_lst_c', 'pedestrian_priority_score', 'pedestrian_heat_exposure_c', 'shade_deficit_score', 'rooftop_temperature_c'],
   };
   const labels = Object.fromEntries([...metric.options].map(option => [option.value, option.textContent.trim()]));
-  let activeGroup = metric.value.startsWith('utci') || metric.value === 'tmrt_c' ? 'current' : 'screening';
+  let activeGroup = metric.value.startsWith('utci') || ['tmrt_c', 'sky_view_factor'].includes(metric.value) ? 'current' : 'screening';
   let selectionTimer = null;
   const groupForMetric = value => options.screening.includes(value) ? 'screening'
-    : period?.value === 'climatology' ? 'history' : 'current';
+    : value === 'sky_view_factor' ? 'current'
+      : period?.value === 'climatology' ? 'history' : 'current';
   const refresh = () => {
     output.textContent = labels[metric.value] || 'Heat view';
     groups.forEach(button => {
       const selected = button.dataset.heatViewGroup === activeGroup;
+      button.setAttribute('aria-pressed', String(selected));
+      button.classList.toggle('active', selected);
+    });
+    quickFields.forEach(button => {
+      const selected = button.dataset.heatQuickField === metric.value;
       button.setAttribute('aria-pressed', String(selected));
       button.classList.toggle('active', selected);
     });
@@ -243,6 +252,12 @@ function setupHeatViewSelector() {
     const allowed = options[activeGroup];
     if (!allowed.includes(metric.value)) selectMetric(allowed[0]);
     else if (periodChanged) period.dispatchEvent(new Event('change', { bubbles: true }));
+    refresh();
+  }));
+  quickFields.forEach(button => button.addEventListener('click', () => {
+    activeGroup = 'current';
+    if (period) period.value = 'forecast';
+    selectMetric(button.dataset.heatQuickField);
     refresh();
   }));
   const spin = direction => {
@@ -435,7 +450,7 @@ async function loadScene() {
   try {
     if (!window.WebGL2RenderingContext) throw new Error('WebGL 2 is unavailable');
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=321');
+    const module = await import('./webglRenderer.js?v=330');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (error) {
@@ -735,6 +750,7 @@ function setupWindResults() {
     });
   };
   const renderComparison = () => {
+    if (!compareResult || !compareStatus) return;
     if (!baseline || !latestField) {
       compareResult.hidden = true;
       compareStatus.textContent = baseline ? 'Baseline saved. Run another study to compare.' : 'Run a wind study to start a comparison.';
@@ -973,71 +989,10 @@ function setupWindResults() {
     finally { validationButton.disabled = false; }
   });
 
-  const thermalValidationAttach = document.querySelector('#thermal-validation-attach');
-  const thermalValidationStatus = document.querySelector('#thermal-validation-import-status');
-  thermalValidationAttach?.addEventListener('click', async () => {
-    thermalValidationAttach.disabled = true;
-    try {
-      const resultFile = document.querySelector('#thermal-validation-result-file')?.files?.[0];
-      const sourceFile = document.querySelector('#thermal-validation-source-file')?.files?.[0];
-      if (!resultFile || !sourceFile) throw new Error('Choose both the thermal validation JSON and the CSV it scored.');
-      if (resultFile.size > 20_000_000 || sourceFile.size > 10_000_000) throw new Error('Validation JSON must be ≤20 MB and observations CSV ≤10 MB.');
-      const validation = JSON.parse(await resultFile.text());
-      if (validation.schema !== 'conditions-thermal-observation-validation/1') throw new Error('This is not a supported thermal observation-validation report.');
-      if (!validation.run_id || !validation.provenance?.manifest_sha256 || !Array.isArray(validation.pairs) || !validation.pairs.length) {
-        throw new Error('The thermal report needs a run ID, manifest hash, and at least one paired row.');
-      }
-      const sourceBytes = await sourceFile.arrayBuffer();
-      const sourceHash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', sourceBytes))]
-        .map(value => value.toString(16).padStart(2, '0')).join('');
-      if (sourceHash !== validation.provenance.observations_sha256) throw new Error('The selected CSV hash does not match the validation report.');
-      const frameHashes = validation.provenance.frame_sha256_by_id || {};
-      const frames = [...new Map(validation.pairs.map(pair => [pair.frame_id, {
-        id: pair.frame_id, valid_at: pair.frame_at, sha256: pair.frame_sha256 || frameHashes[pair.frame_id],
-      }])).values()];
-      if (frames.some(frame => !frame.id || !frame.sha256)) throw new Error('A paired model frame is missing its hash. Re-run validation with a current thermal report.');
-      const sourceBytesArray = new Uint8Array(sourceBytes);
-      const base64Chunks = [];
-      for (let index = 0; index < sourceBytesArray.length; index += 0x8000) {
-        base64Chunks.push(String.fromCharCode(...sourceBytesArray.subarray(index, index + 0x8000)));
-      }
-      const sourceInput = {
-        format: 'base64', filename: sourceFile.name, data: btoa(base64Chunks.join('')),
-        sha256: sourceHash,
-      };
-      const metrics = validation.metrics_by_split || {};
-      dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'thermal_validation', metadata: {
-        clientOnly: true,
-        description: `Thermal observation score · ${validation.validation_status.replaceAll('_', ' ')} · ${validation.paired_count} paired rows · diagnostic, not validated.`,
-        run_id: validation.run_id,
-        validation_status: validation.validation_status,
-        provenance: validation.provenance,
-        validation: {
-          paired_count: validation.paired_count, excluded_count: validation.excluded_count,
-          counts_by_split: validation.counts_by_split, metrics_by_split: validation.metrics_by_split,
-          metrics_model_minus_observed: validation.metrics_model_minus_observed,
-        },
-        kpis: {
-          holdout_air_temp_mae_c: metrics.holdout?.air_temp_2m_c?.mae,
-          holdout_relative_humidity_mae_pct: metrics.holdout?.relative_humidity_pct?.mae,
-          holdout_tmrt_mae_c: metrics.holdout?.tmrt_c?.mae,
-          holdout_wind_mae_mps: metrics.holdout?.wind_10m_mps?.mae,
-          holdout_utci_mae_c: metrics.holdout?.utci_c?.mae,
-        },
-        result_data: { ...validation, source_input: sourceInput },
-      } } }));
-      thermalValidationStatus.textContent = `Attached ${validation.paired_count} paired rows from ${sourceFile.name} to the next climate report export.`;
-    } catch (error) {
-      thermalValidationStatus.textContent = error.message || 'Could not attach thermal validation report.';
-    } finally {
-      thermalValidationAttach.disabled = false;
-    }
-  });
-
   const invalidate = () => {
     results.hidden = true;
     if (explorer) explorer.hidden = true;
-    if (focusStatus) focusStatus.textContent = 'Click a ranked result to highlight it on the map.';
+    if (focusStatus) focusStatus.textContent = '';
     dispatchEvent(new CustomEvent('climate-wind-focus-clear'));
     latestField = null;
     if (reportButton) reportButton.disabled = true;
@@ -1053,7 +1008,7 @@ function setupWindResults() {
       ? `${Math.round(field.direction_deg)}° direction`
       : `${field.direction_count || '—'} sectors · partial`;
     explorerNote.textContent = directional
-      ? `Street averages sample the ${Math.round(field.direction_deg)}° OpenFOAM pedestrian field at ${field.height_m.toFixed(1)} m.`
+      ? ''
       : `Wind-rose-weighted mean speed among solved directions at ${field.height_m.toFixed(1)} m · ${(Number(field.coverage_fraction || 0) * 100).toFixed(1)}% of seasonal wind hours covered.`;
     const renderList = (target, items, emptyMessage) => {
       target.replaceChildren();
@@ -1087,7 +1042,7 @@ function setupWindResults() {
   };
   document.querySelector('#wind-simulate')?.addEventListener('click', () => {
     if (!explorer) return;
-    if (focusStatus) focusStatus.textContent = 'Click a ranked result to highlight it on the map.';
+    if (focusStatus) focusStatus.textContent = '';
     dispatchEvent(new CustomEvent('climate-wind-focus-clear'));
     explorer.hidden = false;
     explorerCount.textContent = 'Loading…';
