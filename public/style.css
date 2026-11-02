@@ -15,7 +15,7 @@
   --accent-pale: #b5edf1;
 }
 
-.menu-tabs { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.menu-tabs { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .scenario-editor-host { display: grid; gap: 8px; margin-top: 8px; }
 .scenario-design-editor { display: grid; gap: 9px; margin: 0; padding: 9px 10px; border-color: var(--line-light); background: var(--shell-deep); }
 .scenario-design-editor > summary { cursor: pointer; color: var(--ink); font-size: 12px; font-weight: 700; }
@@ -396,7 +396,7 @@ button, select, input { font: inherit; }
 .place-name { color: var(--quiet); font-size: 10px; }
 .panel-toggle { display: none; }
 
-.menu-tabs { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); padding: 0 5px; }
+.menu-tabs { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); padding: 0 5px; }
 .menu-tab {
   position: relative;
   width: auto;
@@ -647,9 +647,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
   color: #e6fff8;
   font-size: 9px;
 }
-.traffic-live-card { border-color: #36534d; background: linear-gradient(145deg, #26332f, #242b29); }
 .traffic-output-card { border-color: #5a512e; }
-.traffic-live-actions { display: flex; align-items: center; gap: 5px; }
 .icon-button {
   width: 24px;
   min-height: 24px;
@@ -1788,7 +1786,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .transport-coverage-chart b { color: var(--ink); font-size: 20px; line-height: 1; }
 .transport-coverage-chart span { margin-top: 3px; color: #888; font-size: 6px; text-transform: uppercase; }
 .transport-event-recommendation { padding: 9px 10px; border-left: 2px solid #d59a49; background: #463c31; color: #d8c8b2; font-size: 9px; line-height: 1.5; }
-.transport-event-recommendation.good { border-color: #37b98e; background: #31453f; color: #bfe1d6; }
+.transport-event-recommendation.good { border-color: #8f7e98; background: #353139; color: #d1c9d5; }
 .transport-result-supply h3, .transport-result-actions h3 { margin: 0 0 9px; color: #ddd; font-size: 10px; }
 .transport-event-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
 .transport-event-metrics span { display: grid; gap: 2px; padding: 8px 4px; background: #3b3b3b; text-align: center; }
@@ -1800,16 +1798,16 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .transport-supply-chart i { height: 7px; overflow: hidden; border-radius: 4px; background: #444; }
 .transport-supply-chart i b { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .45s ease; }
 .transport-supply-chart > div:last-child i b { background: #d99aba; }
-.transport-origin-details { margin-top: 9px; color: #999; font-size: 7px; }
-.transport-origin-details summary { cursor: pointer; }
-.transport-event-area-list { margin: 7px 0 0; color: #92928e; font-size: 8px; line-height: 1.5; }
+.transport-stop-details { margin-top: 9px; color: #999; font-size: 7px; }
+.transport-stop-details summary { cursor: pointer; }
+.transport-event-stop-list { margin: 7px 0 0; color: #92928e; font-size: 8px; line-height: 1.5; }
 .transport-event-actions { display: grid; gap: 5px; max-height: 142px; overflow: auto; padding-right: 3px; }
 .transport-action { display: grid; gap: 3px; padding: 7px 8px; border-left: 2px solid #777; background: #383838; }
 .transport-action b { color: #ddddd9; font-size: 9px; font-weight: 650; }
 .transport-action span { color: #9a9a96; font-size: 8px; line-height: 1.45; }
 .transport-action[data-priority="high"] { border-color: #d9584f; }
 .transport-action[data-priority="medium"] { border-color: #d59a49; }
-.transport-action[data-priority="good"] { border-color: #37b98e; }
+.transport-action[data-priority="good"] { border-color: #8f7e98; }
 .transport-service-details { border-top: 1px solid #454545; }
 .transport-service-details > summary { padding: 9px 14px; color: #aaa; cursor: pointer; font-size: 8px; }
 .transport-event-services { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; padding: 0 14px 12px; }
@@ -1885,10 +1883,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .traffic-view-toggles input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 .traffic-card { padding: 10px 0; }
-.traffic-live-card,
 .traffic-output-card { border-color: #414141; background: transparent; }
 .traffic-card-heading { font-size: 10px; letter-spacing: .02em; }
-.traffic-live-actions { gap: 6px; }
 .icon-button { border: 0; background: #484848; color: #cfcfcc; }
 .traffic-control-grid { gap: 3px; }
 .traffic-duration-label output { color: #d7d7d3; }
@@ -1961,11 +1957,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .traffic-card-heading { min-height: 22px; color: #e7eeeb; font-size: 11px; letter-spacing: 0; }
 .traffic-card-heading > span { gap: 8px; }
 .traffic-card-heading b { width: 20px; height: 20px; background: #244c43; color: #b6e5d9; font-size: 10px; }
-.traffic-live-card { border-color: #315248; background: linear-gradient(135deg, #1b2b26, #171e1c 78%); }
-.traffic-live-actions .freshness { max-width: 150px; color: #9bc9bc; font-size: 8px; text-align: right; }
-.traffic-live-actions .freshness.stale { color: #e2bd7a; }
-.traffic-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #54d4a8; box-shadow: 0 0 0 3px #54d4a81b; }
-.traffic-data-note { margin: -2px 0 0; color: #92a39d; font-size: 9px; line-height: 1.4; }
 .traffic-control-grid { gap: 8px; }
 .traffic-panel label { color: #bdc9c4; font-size: 10px; }
 .traffic-panel select { min-height: 35px; margin-top: 5px; border-color: #394943; border-radius: 6px; background: #111715; font-size: 10px; }
@@ -2104,7 +2095,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media (pointer: coarse) {
   button, .streetview-link, .transport-service-link, .compact-about summary,
   .help summary, .wind-method summary, .sun-advanced summary,
-  .traffic-map-key summary, .transport-origin-details summary,
+  .traffic-map-key summary, .transport-stop-details summary,
   .transport-service-details > summary, .transport-event-planner > summary {
     min-height: 44px;
   }
@@ -2527,13 +2518,13 @@ select, input[type="date"], input[type="number"] {
   .heat-layer-section, .heat-results-section, .heat-control-card, .heat-screening-controls,
   .wind-data-banner, .wind-analysis-tabs, .wind-cfd-controls, .wind-flow-box-controls,
   .wind-status, .wind-results span, .wind-metric-card,
-  .traffic-card, .traffic-live-card, .traffic-view-toggles, .traffic-closure-choice,
+  .traffic-card, .traffic-view-toggles, .traffic-closure-choice,
   .traffic-selection-status, .traffic-selection-list li, .traffic-actions button.secondary,
   .traffic-output-card, .traffic-uncertainty, .traffic-results span, .traffic-report-button,
   .transport-data-banner, .transport-mode-tabs, .transport-simulator, .transport-live-board,
   .transport-event-planner, .transport-venue-label
 ) { border-color: #4c4c4c; background-color: #30302e; }
-.panel .menu-section:not(.sun-panel) :is(.wind-data-banner, .traffic-live-card, .traffic-card, .transport-simulator, .transport-event-planner) {
+.panel .menu-section:not(.sun-panel) :is(.wind-data-banner, .traffic-card, .transport-simulator, .transport-event-planner) {
   background: linear-gradient(145deg, #343330, #292826);
 }
 .panel .menu-section:not(.sun-panel) :is(
@@ -2543,12 +2534,12 @@ select, input[type="date"], input[type="number"] {
   .transport-analyse, .transport-playback #transport-play
 ) { border-color: #74716b; background: #55534e; color: #f1efea; }
 .panel .menu-section:not(.sun-panel) :is(
-  .wind-data-banner i, .traffic-live-dot, .traffic-live-actions .freshness,
+  .wind-data-banner i,
   .traffic-kicker, .traffic-duration-label output, .traffic-quality-pill,
   .traffic-calibration-details summary span, .traffic-data-link, .transport-data-banner > i,
   .transport-live-board strong, .transport-status-row button
 ) { border-color: #74716b; color: #d6d3cc; }
-.panel .menu-section:not(.sun-panel) :is(.wind-data-banner i, .traffic-live-dot, .transport-data-banner > i) { background: #aaa69d; box-shadow: none; }
+.panel .menu-section:not(.sun-panel) :is(.wind-data-banner i, .transport-data-banner > i) { background: #aaa69d; box-shadow: none; }
 .panel .menu-section:not(.sun-panel) :is(.traffic-quality-pill, .transport-status-row button) { background: #41403d; }
 .panel .menu-section:not(.sun-panel) :is(.traffic-actions #traffic-run:hover, .traffic-closure-choice button.active:hover, .transport-analyse:hover, .transport-playback #transport-play:hover) { background: #65625c; }
 .panel .menu-section:not(.sun-panel) button.active,
@@ -2566,7 +2557,7 @@ select, input[type="date"], input[type="number"] {
 .panel .menu-section:not(.sun-panel) :is(
   .wind-mode-help, .wind-tool-card, .wind-validation-card, .heat-spin-selector,
   .heat-spin-controls button, .heat-spin-wheel, .heat-loading-state,
-  .traffic-data-note, .traffic-uncertainty, .transport-map-controls .transport-chip
+  .traffic-uncertainty, .transport-map-controls .transport-chip
 ) { border-color: #4c4c4c; background: #30302e; color: #dedbd3; }
 .panel .menu-section:not(.sun-panel) .heat-spin-wheel { background: linear-gradient(90deg, transparent, #55534e 50%, transparent); }
 .panel .menu-section:not(.sun-panel) .heat-loading-state span { background: linear-gradient(90deg, #77746d, #c0bdb5); }
@@ -2661,7 +2652,7 @@ select, input[type="date"], input[type="number"] {
   background: #303030;
   color: #c2c2c2;
 }
-.panel .menu-section:not(.sun-panel) :is(.wind-intro, .heat-legend-help, .traffic-data-note, .method-note, .transport-status) { color: #aaa; }
+.panel .menu-section:not(.sun-panel) :is(.wind-intro, .heat-legend-help, .method-note, .transport-status) { color: #aaa; }
 .panel .menu-section:not(.sun-panel) :is(details, .tool-disclosure) { border-color: #484848; border-radius: 3px; }
 .panel .menu-section:not(.sun-panel) :is(details > summary, .tool-disclosure > summary) { padding-top: 7px; padding-bottom: 7px; }
 .panel .menu-section:not(.sun-panel) :is(.heat-spin-selector, .wind-mode-help, .traffic-uncertainty, .transport-live-board) {
@@ -2794,7 +2785,6 @@ select, input[type="date"], input[type="number"] {
   border-radius: 3px;
   background: #2a2a2a;
 }
-#menu-traffic .traffic-live-card { gap: 5px; background: #292929; }
 #menu-traffic .traffic-card-heading {
   min-height: 19px;
   color: #e0e0e0;
@@ -2812,18 +2802,11 @@ select, input[type="date"], input[type="number"] {
   color: #eee;
   font-size: 9px;
 }
-#menu-traffic .traffic-live-dot { width: 6px; height: 6px; background: #aaa; box-shadow: none; }
-#menu-traffic .traffic-live-actions { align-items: center; }
-#menu-traffic .traffic-live-actions .freshness { color: #bdbdbd; font-size: 8px; }
-#menu-traffic .traffic-data-note { margin: 0; color: #999; font-size: 8px; line-height: 1.35; }
 #menu-traffic :is(.traffic-control-grid, .traffic-closure-choice, .traffic-actions) { gap: 5px; }
 #menu-traffic :is(label, .traffic-duration-label) { display: grid; gap: 4px; color: #bcbcbc; font-size: 9px; }
 #menu-traffic select { width: 100%; min-height: 30px; margin: 0; padding: 5px 7px; border-color: #505050; border-radius: 3px; background: #292929; color: #e0e0e0; font-size: 9px; text-align: left; }
-#menu-traffic .traffic-card:has(#traffic-control-model) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
-#menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-card-heading,
-#menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-control-grid { grid-column: 1 / -1; }
 #menu-traffic .traffic-control-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-#menu-traffic .traffic-card:has(#traffic-control-model) .traffic-control-grid label:last-child { grid-column: 1 / -1; }
+#menu-traffic .traffic-duration-label { grid-column: 1 / -1; }
 #menu-traffic .traffic-duration-label output { color: #e0e0e0; font-size: 9px; }
 #menu-traffic .traffic-duration-label input { grid-column: 1 / -1; width: 100%; margin: 0; }
 #menu-traffic .traffic-closure-choice button {
@@ -2859,10 +2842,8 @@ select, input[type="date"], input[type="number"] {
 #menu-traffic .traffic-calibration-details summary span { color: #aaa; }
 #menu-traffic .traffic-calibration-details p { color: #a9a9a9; font-size: 9px; }
 @media (max-width: 420px) {
-  #menu-traffic .traffic-card:has(#traffic-control-model) { grid-template-columns: 1fr; }
-  #menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-card-heading,
-  #menu-traffic .traffic-card:has(#traffic-control-model) > .traffic-control-grid,
-  #menu-traffic .traffic-card:has(#traffic-control-model) .traffic-control-grid label:last-child { grid-column: auto; }
+  #menu-traffic .traffic-control-grid { grid-template-columns: 1fr; }
+  #menu-traffic .traffic-duration-label { grid-column: auto; }
 }
 
 /* Transport: reduce the always-open control stack and keep evidence close to results. */
@@ -2873,13 +2854,13 @@ select, input[type="date"], input[type="number"] {
 #menu-transport .transport-event-planner { margin: 0; border-color: #454545; border-radius: 6px; background: #292929; }
 #menu-transport .transport-event-planner > summary { min-height: 40px; padding: 9px 10px; }
 #menu-transport .transport-event-planner summary em { font-size: 8px; }
-#menu-transport .transport-planner-hint { margin: 9px 0 2px; padding: 8px 9px; border-left: 2px solid #7e9a91; background: #303633; color: #c1cbc6; font-size: 9px; line-height: 1.45; }
+#menu-transport .transport-planner-hint { margin: 9px 0 2px; padding: 8px 9px; border-left: 2px solid #b9aebe; background: #353238; color: #d0c9d2; font-size: 9px; line-height: 1.45; }
 #menu-transport .transport-map-key { padding: 6px 8px; border: 1px solid #414141; border-radius: 4px; background: #252525; }
 #menu-transport .transport-map-key summary { color: #bcbcb8; cursor: pointer; font-size: 8px; }
 #menu-transport .transport-key-items { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 8px 0 3px; color: #c4c4bf; font-size: 8px; }
 #menu-transport .transport-key-items span { display: flex; align-items: center; gap: 6px; }
-#menu-transport .transport-key-items i { display: inline-block; width: 15px; height: 3px; border-radius: 2px; background: #88b8aa; }
-#menu-transport .transport-key-items .transport-key-rail { background: #c49aa9; }
+#menu-transport .transport-key-items i { display: inline-block; width: 15px; height: 3px; border-radius: 2px; background: #d08dae; }
+#menu-transport .transport-key-items .transport-key-rail { background: #9a86c8; }
 #menu-transport .transport-key-items .transport-key-track { height: 1px; background: #999; }
 #menu-transport .transport-key-items .transport-key-stop { width: 7px; height: 7px; border: 1px solid #e8e8e2; border-radius: 50%; background: #888; }
 #menu-transport .transport-map-key p { margin: 5px 0 2px; color: #999; font-size: 8px; line-height: 1.45; }
@@ -2891,8 +2872,8 @@ select, input[type="date"], input[type="number"] {
 .transport-capacity-breakdown span:last-child b { color: #e4c88c; }
 .transport-result-overview { align-content: center; }
 .transport-card-routes { display: flex; flex-wrap: wrap; gap: 4px; }
-.transport-card-route { min-width: 34px; min-height: 26px; padding: 3px 7px; border: 1px solid #56645f; border-radius: 3px; background: #303936; color: #d4e2dc; font-size: 8px; }
-.transport-card-route:hover { border-color: #9ab5a9; background: #3a4842; }
+.transport-card-route { min-width: 34px; min-height: 26px; padding: 3px 7px; border: 1px solid #665568; border-radius: 3px; background: #37313a; color: #e0d6e5; font-size: 8px; }
+.transport-card-route:hover { border-color: #ad93b5; background: #453b49; }
 @media (max-width: 620px) {
   .transport-grade-note { grid-column: auto; }
   .transport-result-overview { grid-template-columns: 76px 1fr; }
@@ -3247,7 +3228,7 @@ html, body, #app { background: #171717; }
   border-color: #a997af;
   background: #6a5d6d;
 }
-.panel .menu-section :is(.tool-section, .compact-section, .traffic-card, .traffic-live-card, .traffic-output-card, .heat-context, .heat-summary span, .wind-data-banner, .wind-cfd-controls, .wind-tool-card, .wind-explorer, .walking-route-card, .walking-street-context, .transport-simulator, .transport-event-planner, .pollution-legend) {
+.panel .menu-section :is(.tool-section, .compact-section, .traffic-card, .traffic-output-card, .heat-context, .heat-summary span, .wind-data-banner, .wind-cfd-controls, .wind-tool-card, .wind-explorer, .walking-route-card, .walking-street-context, .transport-simulator, .transport-event-planner, .pollution-legend) {
   border-color: #414141;
   background-color: #303030;
   box-shadow: none;
@@ -3517,7 +3498,7 @@ html, body, #app { background: #171717; }
   background: #30302e;
   box-shadow: none;
 }
-#explorer-panel-body .menu-section :is(.current-panel, .traffic-live-card, .wind-data-banner, .transport-simulator, .transport-event-planner) {
+#explorer-panel-body .menu-section :is(.current-panel, .wind-data-banner, .transport-simulator, .transport-event-planner) {
   background: #30302e;
 }
 #explorer-panel-body .menu-section :is(.heat-summary span, .wind-results span, .traffic-results span, .transport-live-board, .current-metrics > div) {
@@ -3538,10 +3519,10 @@ html, body, #app { background: #171717; }
   background: #30302e;
   color: #c7c4bd;
 }
-#explorer-panel-body .menu-section :is(.traffic-kicker, .walking-kicker, .design-kicker, .traffic-calibration-details summary span, .traffic-data-link, .traffic-duration-label output, .traffic-quality-pill, .transport-live-board strong, .wind-data-banner i, .traffic-live-dot, .transport-data-banner > i) {
+#explorer-panel-body .menu-section :is(.traffic-kicker, .walking-kicker, .design-kicker, .traffic-calibration-details summary span, .traffic-data-link, .traffic-duration-label output, .traffic-quality-pill, .transport-live-board strong, .wind-data-banner i, .transport-data-banner > i) {
   color: #cbc8c0;
 }
-#explorer-panel-body .menu-section :is(.wind-data-banner i, .traffic-live-dot, .transport-data-banner > i) {
+#explorer-panel-body .menu-section :is(.wind-data-banner i, .transport-data-banner > i) {
   background: #aaa69e;
   box-shadow: none;
 }
@@ -3566,7 +3547,7 @@ html, body, #app { background: #171717; }
   background: #30302e;
   color: #d4d1ca;
 }
-#explorer-panel-body .menu-section :is(.massing-status, .design-export-status, .design-sun-delta, .walking-route-agents, .walking-trace polyline, .walking-trace svg circle, .traffic-live-actions .freshness.is-ready) {
+#explorer-panel-body .menu-section :is(.massing-status, .design-export-status, .design-sun-delta, .walking-route-agents, .walking-trace polyline, .walking-trace svg circle) {
   border-color: #5b5954;
   color: #d2cfc8 !important;
 }
@@ -3599,6 +3580,75 @@ html, body, #app { background: #171717; }
 #explorer-panel-body .menu-section .evidence-card a { color: #d5d2cb; }
 #explorer-panel-body .menu-section :is(.transport-service-link, #transport-event-pick) { background: #343432; }
 #explorer-panel-body .menu-section .transport-service-link:hover { background: #444340; }
+
+/* Retained styles for the hidden timetable simulation runtime scaffold. */
+#transport-runtime-controls[hidden] { display: none !important; }
+#menu-transport .transport-intro,
+#menu-transport .transport-data-quality,
+#menu-transport .transport-simulator-note { margin: 0 1px 7px; color: #aaa; font-size: 9px; line-height: 1.45; }
+#menu-transport .transport-data-quality { margin: -5px 1px 2px; }
+#menu-transport .transport-data-banner { margin-bottom: 7px; }
+#menu-transport .transport-mode-tabs { margin-bottom: 2px; }
+#menu-transport .transport-simulator { gap: 0; padding: 0; overflow: hidden; }
+#menu-transport .transport-secondary-summary { display: flex; justify-content: space-between; align-items: center; min-height: 40px; padding: 9px 10px; color: #ddd; cursor: pointer; list-style: none; }
+#menu-transport .transport-secondary-summary::-webkit-details-marker { display: none; }
+#menu-transport .transport-secondary-summary::after { color: var(--accent-pale); content: "+"; font-size: 14px; }
+#menu-transport .transport-simulator[open] .transport-secondary-summary { border-bottom: 1px solid #454545; }
+#menu-transport .transport-simulator[open] .transport-secondary-summary::after { content: "−"; }
+#menu-transport .transport-secondary-summary span { color: #ddd; font-size: 10px; font-weight: 650; }
+#menu-transport .transport-secondary-summary em { margin-left: auto; margin-right: 8px; color: #92908f; font-size: 8px; font-style: normal; }
+#menu-transport .transport-simulator-content { display: grid; gap: 7px; padding: 9px; }
+#menu-transport .transport-live-pulse { display: none; }
+#menu-transport .transport-event-planner { border-color: #514b53; background: #2e2c30; }
+#menu-transport .transport-event-planner > summary { min-height: 42px; padding: 10px; }
+#menu-transport .transport-event-planner summary em { color: #b6aeb8; font-size: 8px; }
+#menu-transport .transport-planner-hint { margin: 9px 0 2px; padding: 8px 9px; border-left: 2px solid var(--accent-pale); background: #353238; color: #d0c9d2; font-size: 9px; line-height: 1.45; }
+#menu-transport .transport-range-label { align-self: center; margin: 0; color: #a9a5ac; font-size: 8px; line-height: 1.4; }
+#menu-transport .transport-method-details { border: 1px solid #48444a; border-radius: 5px; background: #29282b; }
+#menu-transport .transport-method-details > summary { padding: 9px 10px; color: #c6bec8; cursor: pointer; font-size: 9px; }
+#menu-transport .transport-method-details > div { padding: 0 10px 8px; }
+#menu-transport .transport-method-details p { margin: 7px 0 0; color: #a9a5aa; font-size: 8px; line-height: 1.5; }
+#menu-transport .transport-key-items i { background: #d08dae; }
+#menu-transport .transport-key-items .transport-key-rail { background: #9a86c8; }
+#menu-transport .transport-card-route { border-color: #665568; background: #37313a; color: #e0d6e5; }
+#menu-transport .transport-card-route:hover { border-color: #ad93b5; background: #453b49; }
+#transport-event-results .transport-results-header-actions > span,
+#transport-event-results .transport-results-header-actions > span[data-grade="covered"],
+#transport-event-results .transport-results-header-actions > span[data-grade="action-needed"],
+#transport-event-results .transport-results-header-actions > span[data-grade="limited"] { border: 1px solid #645766; background: #3c3540; color: #e0d4e5; }
+#transport-event-results .transport-result-overview { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 9px; }
+#transport-event-results .transport-demand-cases h3,
+#transport-event-results .transport-lastmile h3 { margin: 0 0 5px; color: #ddd; font-size: 10px; }
+#transport-event-results .transport-demand-cases > p,
+#transport-event-results .transport-lastmile > p { margin: 0 0 7px; color: #a9a5aa; font-size: 8px; line-height: 1.45; }
+#transport-event-results .transport-demand-table-wrap { overflow-x: auto; border: 1px solid #4b464d; border-radius: 4px; }
+#transport-event-results .transport-demand-table { width: 100%; min-width: 390px; border-collapse: collapse; background: #2c2a2e; font-size: 8px; text-align: left; }
+#transport-event-results .transport-demand-table th,
+#transport-event-results .transport-demand-table td { padding: 6px 5px; border-bottom: 1px solid #454148; color: #c9c4ca; white-space: nowrap; }
+#transport-event-results .transport-demand-table thead th { color: #b9aebe; font-size: 7px; font-weight: 650; }
+#transport-event-results .transport-demand-table tbody tr:last-child th,
+#transport-event-results .transport-demand-table tbody tr:last-child td { border-bottom: 0; }
+#transport-event-results .transport-demand-table tbody th { color: #e0d9e3; font-weight: 650; }
+#transport-event-results .transport-capacity-note,
+#transport-event-results .transport-result-provenance,
+#transport-event-results .transport-lastmile > small { display: block; margin: 7px 0 0; color: #969198; font-size: 7px; line-height: 1.45; }
+#transport-event-results .transport-event-recommendation,
+#transport-event-results .transport-event-recommendation.good { border-left-color: var(--accent-pale); background: #353139; color: #d1c9d5; }
+#transport-event-results .transport-action[data-priority="good"] { border-color: #8f7e98; }
+#transport-event-results .transport-action[data-priority="high"] { border-color: #d17d86; }
+#transport-event-results .transport-action[data-priority="medium"] { border-color: #bd9a70; }
+#transport-event-results .transport-result-actions { display: grid; align-content: start; gap: 7px; }
+#transport-event-results .transport-lastmile { padding: 8px; border: 1px solid #49444c; border-radius: 4px; background: #302d33; }
+#transport-event-results .transport-lastmile-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+#transport-event-results .transport-lastmile-actions button { min-height: 29px; padding: 5px 7px; border: 1px solid #66566b; border-radius: 4px; background: #413844; color: #e0d6e5; font-size: 8px; }
+#transport-event-results .transport-lastmile-actions button:hover:not(:disabled) { border-color: #aa93b2; background: #514656; }
+#transport-event-results .transport-lastmile-actions button:disabled { opacity: .45; }
+#transport-event-results .transport-result-provenance { margin: 0; padding: 8px 12px 10px; border-top: 1px solid #454148; }
+#transport-event-results .transport-service-row strong { color: #c6b4d0; }
+@media (max-width: 620px) {
+  #transport-event-results .transport-lastmile-actions { grid-template-columns: 1fr; }
+  #transport-event-results .transport-demand-table { min-width: 390px; }
+}
 .panel-footer button,
 .panel-footer button.secondary {
   border-color: #53524f;

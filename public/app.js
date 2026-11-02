@@ -1,5 +1,5 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=48';
-import { setupWalkingRoutes } from './walkingRoutes.js?v=4';
+import { setupExplorerExperience } from './explorerExperience.js?v=49';
+import { setupWalkingRoutes } from './walkingRoutes.js?v=6';
 import { scopedFetch as fetch } from './requestClient.js';
 
 const canvas = document.querySelector('#scene');
@@ -18,7 +18,7 @@ function setupMenuNavigation() {
   const panelBody = document.querySelector('#explorer-panel-body');
   if (!tabs.length || !panels.length) return;
 
-  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', walking: 'WALK ROUTES', sun: 'SUNLIGHT', viewshed: '3D VIEWSHED', wind: 'WIND FLOW', traffic: 'TRAFFIC', transport: 'TRANSIT' };
+  const toolLabels = { tools: 'CITY MODEL', heat: 'URBAN HEAT', walking: 'WALK ROUTES', sun: 'SUNLIGHT', viewshed: '3D VIEWSHED', wind: 'WIND FLOW', traffic: 'TRAFFIC' };
   const selectedLabel = selector => document.querySelector(`${selector} option:checked`)?.textContent.trim() || '';
   const inputValue = selector => document.querySelector(selector)?.value?.trim() || '';
   const textValue = selector => document.querySelector(selector)?.textContent.trim() || '';
@@ -62,8 +62,6 @@ function setupMenuNavigation() {
         : [lens, direction, season].filter(Boolean).join(' · ');
     } else if (name === 'traffic') {
       context = `${selectedLabel('#traffic-scenario') || 'Street simulation'} · ${selectedLabel('#traffic-demand') || 'Current demand'}`;
-    } else if (name === 'transport') {
-      context = `${selectedLabel('#transport-service-day') || 'Weekday'} · ${textValue('#transport-time-value') || 'Service timetable'}`;
     } else if (name === 'walking') {
       context = `Walking routes · ${inputValue('#walking-date') || 'Select date'} · ${inputValue('#walking-time') || 'Select time'}`;
     } else if (name === 'viewshed') {
@@ -105,7 +103,6 @@ function setupMenuNavigation() {
     if (name === 'sun') modeDetail = `Solar view · ${active ? 'visible' : 'hidden'}`;
     if (name === 'wind') modeDetail = `${document.querySelector('[data-wind-lens].active')?.textContent.trim() || 'Direction'} · ${active ? 'visible' : 'hidden'}`;
     if (name === 'traffic') modeDetail = `Street simulation · ${active ? 'visible' : 'hidden'}`;
-    if (name === 'transport') modeDetail = `Bus + rail network · ${active ? 'visible' : 'hidden'}`;
     sceneModeDetail.textContent = modeDetail;
     document.querySelector('.scene-mode')?.classList.toggle('is-active', active);
   };
@@ -163,7 +160,7 @@ function setupMenuNavigation() {
     });
   });
 
-  ['heat-toggle', 'sun-toggle', 'wind-toggle', 'traffic-toggle', 'transport-toggle', 'heat-metric'].forEach(id => {
+  ['heat-toggle', 'sun-toggle', 'wind-toggle', 'traffic-toggle', 'heat-metric'].forEach(id => {
     document.querySelector(`#${id}`)?.addEventListener('change', () => {
       const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
       updateSceneMode(current);
@@ -186,7 +183,7 @@ function setupMenuNavigation() {
     const current = tabs.find(tab => tab.classList.contains('active'))?.dataset.menuTarget || 'tools';
     updatePanelContext(current);
   });
-  ['#heat-forecast-label', '#heat-climate-month-label', '#heat-climate-hour-label', '#sun-time-value', '#transport-time-value', '#viewshed-heading-value', '#viewshed-radius-value'].forEach(selector => {
+  ['#heat-forecast-label', '#heat-climate-month-label', '#heat-climate-hour-label', '#sun-time-value', '#viewshed-heading-value', '#viewshed-radius-value'].forEach(selector => {
     const node = document.querySelector(selector);
     if (node) contextTextObserver.observe(node, { childList: true, characterData: true, subtree: true });
   });
@@ -450,7 +447,7 @@ async function loadScene() {
   try {
     if (!window.WebGL2RenderingContext) throw new Error('WebGL 2 is unavailable');
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=330');
+    const module = await import('./webglRenderer.js?v=333');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (error) {

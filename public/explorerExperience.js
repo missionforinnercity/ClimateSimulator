@@ -69,13 +69,6 @@ const EVIDENCE = {
     limits: 'Results are not a calibrated traffic forecast or closure approval. Emissions and noise are modelled, not measured; report reliability gates still apply.',
     legend: 'Vehicle speed uses km/h. Diversion gains/losses refer to modelled traffic relative to the same baseline; colour alone is not a recommendation.',
   },
-  transport: {
-    method: 'Timetable-based vehicle positions and event access estimates use mapped routes, stops and walking catchments.',
-    sources: 'MyCiTi and matched PRASA schedules; unmatched services are estimates. Source dates and service validity depend on the delivered timetable.',
-    supports: 'Discuss event timing, connected areas, and additional scheduled services with operators.',
-    limits: 'Positions are not live GPS or confirmed arrivals. Capacity is a proxy, not occupancy or guaranteed service; routes are not accessibility-certified. Assumes 60 bus / 800 train places per departure.',
-    legend: 'Departures are scheduled services; places are nominal capacity. Coverage compares scheduled capacity to an assumed event-demand proxy.',
-  },
 };
 const $ = selector => document.querySelector(selector);
 function el(tag, text, className) {
@@ -179,7 +172,7 @@ export function setupExplorerExperience() {
 
   for (const [tool, evidence] of Object.entries(EVIDENCE)) {
     if (tool === 'heat' || tool === 'walking' || tool === 'sun' || tool === 'viewshed' || tool === 'wind'
-      || tool === 'traffic' || tool === 'transport') continue;
+      || tool === 'traffic') continue;
     const panel = $(`#menu-${tool}`);
     if (!panel) continue;
     const card = el('section', undefined, 'evidence-card'); card.setAttribute('aria-label', `${tool} evidence`);
@@ -583,9 +576,6 @@ export function setupExplorerExperience() {
 
   const hints = {
     'wind-stability': 'Screening atmospheric profile. The existing CFD cases use neutral inlet assumptions.',
-    'traffic-demand': 'Multiplier on synthetic demand, not an observed vehicle count.',
-    'traffic-seed-count': 'Repeats the paired open/closed simulation and reports the median plus its range.',
-    'transport-event-share': 'Assumed proportion of attendees using public transport; actual behaviour is unknown.',
     'sun-surface-resolution': 'Coarser grids run faster and cannot resolve fine details.',
   };
   for (const [id, text] of Object.entries(hints)) {
@@ -606,7 +596,7 @@ export function setupExplorerExperience() {
     if (tool && !applying) { cancelRequests(tool); markDirty(tool); }
   }, true);
   document.addEventListener('click', event => {
-    if (!event.target.closest('[data-sun-mode], [data-wind-lens], [data-wind-direction], [data-transport-mode]')) return;
+    if (!event.target.closest('[data-sun-mode], [data-wind-lens], [data-wind-direction]')) return;
     const tool = event.target.closest('[data-menu-panel]')?.dataset.menuPanel;
     if (tool) markDirty(tool);
   }, true);
@@ -730,8 +720,6 @@ export function setupExplorerExperience() {
   addEventListener('keydown', event => {
     if (event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
     dispatchEvent(new CustomEvent('climate-streetview-mode', { detail: { enabled: false } }));
-    const close = $('#transport-results-close');
-    if (!$('#transport-event-results')?.hidden) { close?.click(); $('#transport-event-analyse')?.focus(); }
   });
   refresh();
 }

@@ -55,7 +55,10 @@ def main():
             page.locator(".explorer-guide").get_by_role("button", name="Dismiss guide").click()
             if args.axe:
                 page.add_script_tag(path=args.axe)
-            for tool in ["heat", "sun", "wind", "traffic", "transport", "tools"]:
+            assert page.locator('[data-menu-target="transport"]').count() == 0
+            assert page.locator("#transport-runtime-controls").is_hidden()
+            page.wait_for_function("() => document.querySelector('#transport-status')?.textContent.includes('schedule-derived, not live GPS')")
+            for tool in ["heat", "sun", "wind", "traffic", "tools"]:
                 print(f"Checking {label}: {tool}", flush=True)
                 page.locator(f'[data-menu-target="{tool}"]').click()
                 assert page.locator(f"#menu-{tool}").is_visible()
@@ -102,7 +105,7 @@ def main():
                 assert after_drag["elevation"] > before_drag["elevation"], (label, before_drag, after_drag)
             page.evaluate("document.querySelector('[data-menu-target=tools]').focus()")
             page.keyboard.press("End")
-            assert page.locator('[data-menu-target="transport"]').get_attribute("aria-selected") == "true"
+            assert page.locator('[data-menu-target="traffic"]').get_attribute("aria-selected") == "true"
             page.keyboard.press("Home")
             assert page.locator('[data-menu-target="tools"]').get_attribute("aria-selected") == "true"
             page.locator("#scene").focus()

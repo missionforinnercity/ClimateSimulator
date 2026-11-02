@@ -53,10 +53,6 @@ const FRIENDLY_LABELS = {
   wind_stability: 'Atmospheric stability assumption', wind_comfort_criterion: 'Wind comfort guide',
   traffic_scenario: 'Traffic scenario', traffic_demand: 'Traffic demand assumption', traffic_seed_count: 'Simulation repeats',
   traffic_control_model: 'Traffic signal assumption', traffic_duration: 'Traffic study period',
-  transport_event_date: 'Event date', transport_event_start: 'Event starts', transport_event_end: 'Event ends',
-  transport_event_attendance: 'Expected attendance', transport_event_walk: 'Walking distance considered',
-  transport_event_buffer: 'Nearby service window', transport_event_dispersal: 'Dispersal period',
-  transport_event_share: 'Expected public transport share',
 };
 
 function labelFor(key) {

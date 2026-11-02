@@ -4,7 +4,7 @@ import { createWindSurfaceMaterial } from './windSurfaceMotion.js?v=6';
 import { scopedFetch as fetch, assertManifest, cancelRequests, createAnalysisId } from './requestClient.js';
 import { attachSceneExperience } from './sceneExperience.js';
 import { CAMERA_MAX_DISTANCE, CAMERA_MIN_DISTANCE, CAMERA_MIN_ELEVATION, orbitFromDrag, panFromDrag } from './cameraControls.js';
-import { createTransportLayer } from './transportLayer.js?v=33';
+import { createTransportLayer } from './transportLayer.js?v=36';
 import { attachPlaceInspector } from './placeInspector.js?v=3';
 import { createDesignMassing } from './designMassing.js?v=14';
 import { rayFootprintIntervals, addVerticalOccluder, blockedByVerticalOccluder, terrainRayDistances, viewshedRingDistances } from './viewshedMath.js';
@@ -5631,10 +5631,6 @@ export async function startWebGLScene(canvas, status) {
   const pollutionTimeEndpoints = document.querySelector('#pollution-time-endpoints');
   const trafficToggle = document.querySelector('#traffic-toggle');
   const trafficRestrictionsToggle = document.querySelector('#traffic-restrictions-toggle');
-  const trafficFreshness = document.querySelector('#traffic-freshness');
-  const trafficRefresh = document.querySelector('#traffic-refresh');
-  const trafficLiveStatus = document.querySelector('#traffic-live-status');
-  const trafficLiveMetrics = document.querySelector('#traffic-live-metrics');
   const trafficDuration = document.querySelector('#traffic-duration');
   const trafficDurationValue = document.querySelector('#traffic-duration-value');
   const trafficScenario = document.querySelector('#traffic-scenario');
@@ -6006,10 +6002,6 @@ export async function startWebGLScene(canvas, status) {
     },
     traffic: {
       terrain: true, water: false, grass: false, railways: false,
-      paths: false, roads: true, cycling: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
-    },
-    transport: {
-      terrain: true, water: false, grass: false, railways: true,
       paths: false, roads: true, cycling: false, cityFurniture: false, publicRealm: false, buildings: true, trees: true,
     },
     viewshed: {
@@ -6904,7 +6896,7 @@ export async function startWebGLScene(canvas, status) {
   function syncLayerControls() {
     const activePanel = document.querySelector('[data-menu-target].active')?.dataset.menuTarget;
     const waterDisabled = Boolean(shadowState.enabled || heatGroup.visible || windGroup.visible || trafficGroup.visible
-      || ['heat', 'sun', 'wind', 'walking', 'traffic', 'transport'].includes(activePanel));
+      || ['heat', 'sun', 'wind', 'walking', 'traffic'].includes(activePanel));
     layerGroups.water.visible = waterDisabled ? false : Boolean(savedVisibility.water);
     document.querySelectorAll('[data-layer]').forEach(input => {
       const group = layerGroups[input.dataset.layer];
@@ -10264,7 +10256,7 @@ export async function startWebGLScene(canvas, status) {
     // Ambient cars are a street-scale detail. Keep the fleet dormant at the
     // full-city view, where individual cars cannot be read, and avoid posing
     // thousands of instances on every map redraw while zoomed out.
-    group.visible = activeTool !== 'transport' && activeTool !== 'viewshed' && layerGroups.roads.visible
+    group.visible = activeTool !== 'viewshed' && layerGroups.roads.visible
       && cameraState.distance <= ambientTrafficAnimationDistance;
     if (ambientTraffic.signalGroup) ambientTraffic.signalGroup.visible = group.visible;
     if (!group.visible) {
@@ -11358,23 +11350,11 @@ export async function startWebGLScene(canvas, status) {
     return trafficState.roadsLoadPromise;
   }
 
-  async function loadTrafficLive(force) {
-    if (!trafficLiveStatus) return;
-    trafficLiveStatus.textContent = force ? 'Refreshing live traffic…' : 'Loading live traffic…';
-    if (trafficRefresh) trafficRefresh.disabled = true;
+  async function loadTrafficLive() {
     try {
-      const response = await fetch(`${windApi}/traffic/live${force ? '?refresh=true' : ''}`);
+      const response = await fetch(`${windApi}/traffic/live`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
-      if (trafficFreshness) {
-        const fetchedAt = payload.fetched_at ? new Date(payload.fetched_at) : null;
-        const timeLabel = fetchedAt && Number.isFinite(fetchedAt.getTime())
-          ? fetchedAt.toLocaleString('en-ZA', { timeZone: 'Africa/Johannesburg', dateStyle: 'short', timeStyle: 'short' })
-          : '';
-        trafficFreshness.textContent = `${payload.stale ? 'Cached' : 'Live'}${timeLabel ? ` · ${timeLabel}` : ''}`;
-        trafficFreshness.classList.toggle('stale', Boolean(payload.stale));
-      }
-      const level = (payload.congestion_level || 'unknown').replace(/_/g, ' ');
       trafficState.liveRoads = payload.sampled_roads || [];
       ambientTraffic.speedByName.clear();
       const speedSamplesByName = new Map();
@@ -11395,23 +11375,8 @@ export async function startWebGLScene(canvas, status) {
       // frame, so rebuilding here would only respawn every car on refresh.
       requestRender();
       buildLiveRoadClosures(trafficState.liveRoads);
-      const liveClosures = trafficState.liveRoads.filter(road => road.road_closure).length;
-      trafficLiveStatus.textContent = `${level} congestion · ${payload.sampled_count}/${payload.requested_count} roads sampled`
-        + (liveClosures ? ` · ${liveClosures} live ${liveClosures === 1 ? 'closure' : 'closures'}` : '')
-        + (payload.warning ? ` · ${payload.warning}` : '');
-      if (trafficLiveMetrics) {
-        trafficLiveMetrics.hidden = false;
-        trafficLiveMetrics.innerHTML = `
-          <span><b>${Math.round((payload.average_speed_ratio || 0) * 100)}%</b>Avg speed vs free-flow</span>
-          <span><b>${level}</b>Congestion level</span>`;
-      }
-      if (force && trafficScenario?.value === 'live') {
-        invalidateTrafficResult('Live conditions changed · run the comparison again.');
-      }
-    } catch (error) {
-      trafficLiveStatus.textContent = `Live traffic unavailable (${error.message})`;
-    } finally {
-      if (trafficRefresh) trafficRefresh.disabled = false;
+    } catch {
+      // Keep the synthetic traffic layer available when the live feed is offline.
     }
   }
 
@@ -17202,10 +17167,6 @@ export async function startWebGLScene(canvas, status) {
     invalidateTrafficResult('One-way conversion changed · run the comparison again.');
   });
   trafficFlipDirection?.addEventListener('click', flipTrafficDirection);
-  trafficRefresh?.addEventListener('click', () => {
-    void loadTrafficRoads();
-    void loadTrafficLive(true);
-  });
   trafficDrawLane?.addEventListener('click', () => beginTrafficDrawing('lane'));
   trafficDrawRoad?.addEventListener('click', () => beginTrafficDrawing('full'));
   trafficDrawOneWay?.addEventListener('click', () => beginTrafficDrawing('oneway'));
@@ -17339,12 +17300,10 @@ export async function startWebGLScene(canvas, status) {
     }
     if (name === 'traffic') {
       if (!trafficState.networkEdges.length) void loadTrafficRoads();
-      void loadTrafficLive(false);
+      void loadTrafficLive();
       void loadTrafficCalibrationStatus();
     }
-    if (name === 'transport') void ensureTransportLayer();
     transportLayer?.setSceneVisible(name !== 'viewshed');
-    transportLayer?.setPanelActive(name === 'transport');
     // Tools is a utility panel, not its own exclusive visualization — switch
     // away from whatever layer (heat/sun/wind/traffic) is active only when
     // moving to a tab that has one, so opening Tools to reach a shared
@@ -17754,10 +17713,9 @@ export async function startWebGLScene(canvas, status) {
     if (tool === 'wind') void simulateWind();
     if (tool === 'traffic') {
       void loadTrafficRoads();
-      void loadTrafficLive(false);
+      void loadTrafficLive();
       void loadTrafficCalibrationStatus();
     }
-    if (tool === 'transport') void ensureTransportLayer();
   });
   fitScene({ intro: true });
   setWindAnalysisMode(windState.analysisMode);
@@ -17799,7 +17757,7 @@ export async function startWebGLScene(canvas, status) {
   }, 300000);
   if (trafficState.sceneActive) {
     void loadTrafficRoads();
-    void loadTrafficLive(false);
+    void loadTrafficLive();
     void loadTrafficCalibrationStatus();
   }
   async function ensureTransportLayer() {
@@ -17812,12 +17770,11 @@ export async function startWebGLScene(canvas, status) {
     }).then(layer => {
       transportLayer = layer;
       layer.setSceneVisible(!viewshedState.active);
-      layer.setPanelActive(document.querySelector('[data-menu-target].active')?.dataset.menuTarget === 'transport');
       requestRender();
       return layer;
     }).catch(error => {
       const transportStatus = document.querySelector('#transport-status');
-      if (transportStatus) transportStatus.textContent = `Transport unavailable (${error.message}). Reopen this tab to retry.`;
+      if (transportStatus) transportStatus.textContent = `Background transit simulation unavailable (${error.message}).`;
     }).finally(() => { transportLoading = null; });
     return transportLoading;
   }
@@ -17835,7 +17792,6 @@ export async function startWebGLScene(canvas, status) {
     setSunMaterials(true);
     document.body.classList.add('viewshed-mode');
   }
-  if (initialPanel === 'transport') await ensureTransportLayer();
   if (initialPanel === 'wind') {
     openWindWithDefaultCase();
   }

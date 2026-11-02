@@ -2,15 +2,12 @@ import { scopedFetch as fetch } from './requestClient.js';
 
 const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
-// Planning constants. Every one of these is an assumption, not an observation,
-// and the panel says so wherever a number derived from them is shown.
+// Planning speeds and nominal places are assumptions, not observations.
 const WALK_SPEED_M_PER_MIN = 80;       // 4.8 km/h, the usual pedestrian planning speed.
 const BUS_SPEED_M_PER_MIN = 300;       // 18 km/h in mixed CBD traffic.
 const RAIL_SPEED_M_PER_MIN = 667;      // 40 km/h approaching a terminus.
-// Nominal scheduled capacity per departure, not a measured or validated
-// occupancy figure: no real ridership/occupancy data is used anywhere here.
-// Treat every derived "coverage" or "capacity gap" number as an event-demand
-// proxy for planning discussion, and verify it with the operator.
+// Nominal places per departure for what-if arithmetic. No passenger loading or
+// occupancy data is used here.
 const BUS_PLACES_PER_DEPARTURE = 60;
 const RAIL_PLACES_PER_DEPARTURE = 800;
 
@@ -277,19 +274,24 @@ export async function createTransportLayer({
     'transport-toggle', 'transport-routes-toggle', 'transport-stops-toggle',
     'transport-route', 'transport-time', 'transport-time-value', 'transport-play', 'transport-speed',
     'transport-vehicle-count', 'transport-status', 'transport-fit', 'transport-now', 'transport-next-rail',
-    'transport-service-day', 'transport-data-source',
+    'transport-service-day', 'transport-data-source', 'transport-data-quality', 'transport-method-provenance',
     'transport-event-name', 'transport-event-date', 'transport-event-start', 'transport-event-end',
     'transport-event-venue', 'transport-event-pick', 'transport-event-venue-label',
     'transport-event-walk', 'transport-event-buffer', 'transport-event-dispersal',
-    'transport-event-share', 'transport-event-share-value',
+    'transport-event-share', 'transport-event-share-value', 'transport-event-range', 'transport-event-range-label',
     'transport-event-attendance', 'transport-event-attendance-value', 'transport-event-analyse',
-    'transport-event-results', 'transport-event-grade', 'transport-event-areas',
-    'transport-event-arrivals', 'transport-event-returns', 'transport-event-cover',
-    'transport-demand-value', 'transport-capacity-value', 'transport-gap-value',
-    'transport-coverage-chart', 'transport-arrival-bar', 'transport-return-bar',
+    'transport-event-results', 'transport-event-grade', 'transport-event-stop-count',
+    'transport-event-arrivals', 'transport-event-returns',
+    'transport-low-share', 'transport-low-demand', 'transport-low-supply',
+    'transport-central-share', 'transport-central-demand', 'transport-central-supply',
+    'transport-high-share', 'transport-high-demand', 'transport-high-supply', 'transport-capacity-assumptions',
+    'transport-bus-capacity-value', 'transport-rail-capacity-value', 'transport-service-directions',
+    'transport-arrival-bar', 'transport-return-bar',
     'transport-results-close', 'transport-results-title',
     'transport-event-recommendation', 'transport-event-actions',
-    'transport-event-services', 'transport-event-area-list',
+    'transport-event-services', 'transport-event-stop-list',
+    'transport-result-provenance', 'transport-lastmile-summary',
+    'transport-lastmile-arrival', 'transport-lastmile-dispersal',
     'transport-stop-card',
   ].map(id => [id, document.querySelector(`#${id}`)]));
   if (!elements['transport-toggle']) return { update: () => false, active: () => false };
@@ -402,17 +404,36 @@ export async function createTransportLayer({
     : Infinity;
   const distanceToHub = network => Math.min(...hubWalkTargets.map(target => networkDistance(network, target)), Infinity);
 
-  const dayKey = date => date.getDay() === 0 ? 'sunday' : date.getDay() === 6 ? 'saturday' : 'weekday';
-  const dayLabel = date => date.getDay() === 0 ? 'Sunday service' : date.getDay() === 6 ? 'Saturday service' : 'Weekday service';
+  const capeTownDateParts = date => Object.fromEntries(new Intl.DateTimeFormat('en-ZA', {
+    timeZone: 'Africa/Johannesburg', weekday: 'long', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  const capeTownISODate = date => {
+    const parts = capeTownDateParts(date);
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  };
+  const capeTownMinute = date => {
+    const parts = capeTownDateParts(date);
+    return Number(parts.hour) * 60 + Number(parts.minute);
+  };
+  const dayKey = date => {
+    const weekday = capeTownDateParts(date).weekday;
+    return weekday === 'Sunday' ? 'sunday' : weekday === 'Saturday' ? 'saturday' : 'weekday';
+  };
+  const dayLabel = date => ({ sunday: 'Sunday service', saturday: 'Saturday service', weekday: 'Weekday service' })[dayKey(date)];
+  const busScheduleAvailable = date => dayKey(date) === 'weekday';
   const scheduledRailTimes = (rail, date = state?.serviceDate || new Date()) => {
-    const schedule = rail.schedule?.[dayKey(date)];
+    const scheduleKey = dayKey(date);
+    const hasPublishedDay = Object.hasOwn(rail.schedule || {}, scheduleKey);
+    const schedule = rail.schedule?.[scheduleKey];
     const fallback = rail.fallbackDepartures || rail.departures || [];
-    const outbound = schedule?.outboundDepartures?.length ? schedule.outboundDepartures : fallback;
-    const inbound = schedule?.inboundArrivals?.length ? schedule.inboundArrivals : fallback;
-    return { outbound, inbound, published: Boolean(schedule?.outboundDepartures?.length || schedule?.inboundArrivals?.length) };
+    const outbound = hasPublishedDay ? (schedule?.outboundDepartures || []) : fallback;
+    const inbound = hasPublishedDay ? (schedule?.inboundArrivals || []) : fallback;
+    return { outbound, inbound, published: hasPublishedDay };
   };
 
-  const routeColors = [0x00a7d9, 0xe33f3f, 0x08a45b, 0xf0b735, 0x8d5da7, 0xe56e2e];
+  const routeColors = [0x42a5d0, 0xd85d78, 0x9673c4, 0xe0a653, 0xb66f9b, 0x7189bd];
+  const railColors = ['#b96e9b', '#7f77bd', '#4f97bf', '#d39352', '#ab6277', '#7889bd', '#ce7b91', '#a17cc2', '#d0a34c'];
   const colorForRoute = route => routeColors[[...route.number].reduce((sum, character) => sum + character.charCodeAt(0), 0) % routeColors.length];
 
   // Each bus route direction is placed on its longest visible run, and the run
@@ -482,7 +503,7 @@ export async function createTransportLayer({
     // Retain the established timetable presentation speed on short CBD lines.
     rail._duration = rail._metric ? Math.max(4, rail._metric.length / RAIL_SPEED_M_PER_MIN) : 1;
     rail._label = `Rail · ${rail.name}`;
-    rail._color = rail.color;
+    rail._color = railColors[data.rail.indexOf(rail) % railColors.length];
   }
 
   // Timetable geometry is simplified and can omit parallel platform tracks.
@@ -534,6 +555,7 @@ export async function createTransportLayer({
   }
 
   function stopDepartures(stopId, fromMinute, limit = 6) {
+    if (!busScheduleAvailable(state.serviceDate)) return [];
     const times = [];
     for (const { route, fraction } of routesByStop.get(stopId) || []) {
       for (const trip of route.trips) {
@@ -640,11 +662,12 @@ export async function createTransportLayer({
   const now = new Date();
   const state = {
     enabled: elements['transport-toggle'].checked, playing: true,
-    minute: clamp(now.getHours() * 60 + now.getMinutes(), 0, 1439), serviceDate: now,
+    minute: clamp(capeTownMinute(now), 0, 1439), serviceDate: now,
     lastFrame: performance.now(), mode: 'both', picking: false,
     ambientDisplay: false, panelActive: false, sceneVisible: true, movingVehicles: 0,
     eventRouteIds: new Set(), eventRailIds: new Set(),
     servedStopIds: new Set(), venue: null, analysis: null,
+    lastMileAccess: null, sourceProvenance: '',
     busPool: [], trainPool: [],
   };
 
@@ -786,7 +809,7 @@ export async function createTransportLayer({
             const offset = shared ? (seen - (shareCount - 1) / 2) * 1.2 : 0;
             const elevation = 0.38 + (shared ? seen * 0.012 : 0);
             const width = state.mode === 'train' ? (shared ? 0.42 : 0.72) : (featured ? 0.86 : 0.52);
-            addRibbon(line, rail.color, width, featured ? 0.94 : 0.24, elevation, routeGroup, offset);
+            addRibbon(line, rail._color, width, featured ? 0.94 : 0.24, elevation, routeGroup, offset);
           }
         });
       }
@@ -833,7 +856,8 @@ export async function createTransportLayer({
 
   function rebuildVehicles() {
     state.services = [
-      ...(state.mode === 'train' ? [] : selectedRoutes().map(route => ({ service: route, kind: 'bus' }))),
+      ...(state.mode === 'train' || !busScheduleAvailable(state.serviceDate)
+        ? [] : selectedRoutes().map(route => ({ service: route, kind: 'bus' }))),
       ...activeRail().flatMap(rail => {
         const times = scheduledRailTimes(rail, state.serviceDate);
         return rail._metrics.flatMap((metric, metricIndex) => {
@@ -930,6 +954,14 @@ export async function createTransportLayer({
       + `${used.train || !nextRail ? '' : ` · next rail ${minuteLabel(nextRail.time)}`} · schedule-derived, not live GPS.`;
   }
 
+  function updateTransportQuality(date = state.serviceDate) {
+    if (!elements['transport-data-quality']) return;
+    const dayNote = busScheduleAvailable(date)
+      ? 'Weekday MyCiTi tables are applied; public holidays are not identified.'
+      : 'Weekend MyCiTi schedules are not supplied, so buses are omitted from the animation and event estimate.';
+    elements['transport-data-quality'].textContent = `${dayNote} Service alerts and live vehicle positions are not included. Transfers and minibus-taxi services are outside this model.`;
+  }
+
   function populateControls() {
     const routeNumbers = [...new Set(data.routes.map(route => route.number))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     elements['transport-route'].innerHTML = '<option value="all">All CBD services</option>'
@@ -945,17 +977,24 @@ export async function createTransportLayer({
       elements['transport-event-venue'].value = civic.id;
       setVenue({ id: civic.id, name: civic.name, point: civic.point, source: 'stop' });
     }
-    elements['transport-event-date'].value = now.toLocaleDateString('en-CA');
+    elements['transport-event-date'].value = capeTownISODate(now);
     elements['transport-time'].value = String(state.minute);
     elements['transport-time-value'].textContent = minuteLabel(state.minute);
     elements['transport-service-day'].textContent = dayLabel(state.serviceDate);
+    const busPublished = data.routes.filter(route => route.confidence === 'timetable').length;
+    const railPublished = data.rail.filter(rail => rail.confidence === 'published-timetable').length;
+    const effective = data.prasaEffectiveDate
+      ? new Date(`${data.prasaEffectiveDate}T12:00:00Z`).toLocaleDateString('en-ZA', {
+        timeZone: 'Africa/Johannesburg', day: 'numeric', month: 'short', year: 'numeric',
+      })
+      : 'date not supplied';
+    state.sourceProvenance = `MyCiTi weekday PDFs: ${busPublished}/${data.routes.length} route directions have extracted timetable times; ${data.routes.length - busPublished} use estimated cadence. Source effective date not supplied. PRASA CSV effective ${effective}: ${railPublished}/${data.rail.length} corridors have matched published times.`;
     if (elements['transport-data-source']) {
-      const effective = data.prasaEffectiveDate
-        ? new Date(`${data.prasaEffectiveDate}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' })
-        : 'date not supplied';
-      const published = data.rail.filter(rail => rail.confidence === 'published-timetable').length;
-      elements['transport-data-source'].textContent = `PRASA CSV effective ${effective} · ${published}/${data.rail.length} rail corridors matched`;
+      elements['transport-data-source'].textContent = `MyCiTi ${busPublished}/${data.routes.length} weekday directions · source date not supplied · PRASA ${railPublished}/${data.rail.length} corridors · effective ${effective}`;
     }
+    if (elements['transport-method-provenance']) elements['transport-method-provenance'].textContent = state.sourceProvenance;
+    updateTransportQuality(state.serviceDate);
+    updateDemandRangeSummary();
   }
 
   const timeValue = value => {
@@ -963,9 +1002,18 @@ export async function createTransportLayer({
     return hour * 60 + minute;
   };
 
+  function updateDemandRangeSummary() {
+    const share = Number(elements['transport-event-share'].value) || 45;
+    const spread = Number(elements['transport-event-range'].value) || 10;
+    elements['transport-event-range-label'].textContent = `What-if public-transport shares: lower ${Math.max(0, share - spread)}% · central ${share}% · higher ${Math.min(100, share + spread)}%. This is a sensitivity range, not a confidence interval.`;
+  }
+
   function setVenue(venue) {
     state.venue = venue;
     state.walkNetwork = null;
+    state.analysis = null;
+    state.lastMileAccess = null;
+    elements['transport-event-results'].hidden = true;
     elements['transport-event-venue-label'].textContent = venue
       ? `${venue.name} · ${Math.round(venue.point[0])}, ${Math.round(venue.point[1])} m`
       : 'No venue set';
@@ -1064,22 +1112,37 @@ export async function createTransportLayer({
     const dispersal = Number(elements['transport-event-dispersal'].value);
     const radius = Number(elements['transport-event-walk'].value);
     const attendance = Number(elements['transport-event-attendance'].value);
-    const modeShare = Number(elements['transport-event-share'].value) / 100;
-    const eventDate = new Date(`${elements['transport-event-date'].value}T12:00:00`);
-    const weekend = eventDate.getDay() === 0 || eventDate.getDay() === 6;
+    const centralShare = Number(elements['transport-event-share'].value) / 100;
+    const rangePoints = Number(elements['transport-event-range'].value) || 10;
+    const lowShare = Math.max(0, centralShare * 100 - rangePoints) / 100;
+    const highShare = Math.min(100, centralShare * 100 + rangePoints) / 100;
+    const eventDateValue = elements['transport-event-date'].value;
+    const eventDate = new Date(`${eventDateValue}T12:00:00Z`);
+    if (!eventDateValue || Number.isNaN(eventDate.getTime())) {
+      elements['transport-event-venue-label'].textContent = 'Select a valid event date first.';
+      return;
+    }
     const arrivalFrom = start - buffer;
     const returnUntil = end + dispersal;
+    const firstServiceDayOffset = Math.floor(arrivalFrom / 1440);
+    const lastServiceDayOffset = Math.floor(returnUntil / 1440);
+    const serviceDays = [];
+    for (let offset = firstServiceDayOffset; offset <= lastServiceDayOffset; offset += 1) {
+      const date = new Date(eventDate);
+      date.setUTCDate(date.getUTCDate() + offset);
+      serviceDays.push({ date, offset });
+    }
+    const weekend = serviceDays.some(({ date }) => !busScheduleAvailable(date));
     const walkNetwork = state.walkNetwork || walkNetworkFrom(venue.point);
     const distanceToStop = stop => networkDistance(walkNetwork, stopWalkTargets.get(stop.id));
 
     state.eventRouteIds.clear();
     state.eventRailIds.clear();
     state.servedStopIds.clear();
-    const connectedAreas = new Set();
+    const directNames = new Set();
     const services = [];
 
     const nearbyStops = data.stops.filter(stop => distanceToStop(stop) <= radius);
-    for (const stop of nearbyStops) state.servedStopIds.add(stop.id);
     const nearbyStopIds = new Set(nearbyStops.map(stop => stop.id));
 
     for (const route of data.routes) {
@@ -1087,49 +1150,57 @@ export async function createTransportLayer({
         .filter(entry => nearbyStopIds.has(entry.id))
         .sort((a, b) => distanceToStop(stopById.get(a.id)) - distanceToStop(stopById.get(b.id)))[0];
       if (!boarding) continue;
-      const times = route.trips.map(([tripStart, tripEnd]) => tripStart + boarding.fraction * (tripEnd - tripStart));
+      const dailyTimes = route.trips.map(([tripStart, tripEnd]) => tripStart + boarding.fraction * (tripEnd - tripStart));
+      const times = serviceDays.flatMap(({ date, offset }) => busScheduleAvailable(date)
+        ? dailyTimes.map(time => time + offset * 1440)
+        : []);
       const arrivals = times.filter(time => time >= arrivalFrom && time <= start);
       const returns = times.filter(time => time >= end && time <= returnUntil);
-      const lastOverall = Math.max(...times);
-      if (!arrivals.length && !returns.length && lastOverall < end) continue;
+      const lastOverall = Math.max(...times.filter(time => time <= returnUntil), -Infinity);
+      if (!arrivals.length && !returns.length && (lastOverall < end || lastOverall > returnUntil)) continue;
       state.eventRouteIds.add(route.id);
-      const origins = (route.timetableStops || []).map(cleanAreaName).filter(name => name.length > 2);
-      for (const name of origins) connectedAreas.add(name);
+      if (arrivals.length || returns.length) state.servedStopIds.add(boarding.id);
+      const routeStops = (route.timetableStops || []).map(cleanAreaName).filter(name => name.length > 2);
+      for (const name of routeStops) directNames.add(name);
       services.push({
         id: route.id, kind: 'bus', label: route._label, detail: route.direction,
         color: route._color, arrivals: arrivals.length, returns: returns.length,
-        lastOverall, places: BUS_PLACES_PER_DEPARTURE, headway: medianHeadway(times),
-        origins: origins.length, confidence: route.confidence,
+        lastOverall, places: BUS_PLACES_PER_DEPARTURE, headway: medianHeadway(dailyTimes),
+        directNames: routeStops.length, confidence: route.confidence,
         stopId: boarding.id, walk: distanceToStop(stopById.get(boarding.id)),
       });
     }
 
-    // Every Metrorail corridor terminates at Cape Town station. If the venue is
-    // inside the walk catchment of that station, the whole rail network is an
-    // origin catchment for the event, not only the corridors drawn in scene.
-    // Measure through the walking graph to the best mapped public entrance,
-    // rather than to the station's centre point or a circular buffer.
+    // Mapped Metrorail corridors use Cape Town station as their CBD connection.
+    // The planner counts direct corridor names only; it does not find transfers
+    // or establish an end-to-end itinerary from every station.
     const hubWalk = distanceToHub(walkNetwork);
     const railInCatchment = hubWalk <= radius;
     if (railInCatchment) {
-      state.servedStopIds.add(hubStation.id);
       for (const rail of data.rail) {
-        const railTimes = scheduledRailTimes(rail, eventDate);
-        const arrivals = railTimes.inbound.filter(time => time >= arrivalFrom && time <= start);
-        const returns = railTimes.outbound.filter(time => time >= end && time <= returnUntil);
-        const lastOverall = Math.max(...railTimes.outbound, 0);
-        if (!arrivals.length && !returns.length && lastOverall < end) continue;
+        const railDays = serviceDays.map(({ date, offset }) => ({
+          ...scheduledRailTimes(rail, date), offset,
+        }));
+        const inboundTimes = railDays.flatMap(day => day.inbound.map(time => time + day.offset * 1440));
+        const outboundTimes = railDays.flatMap(day => day.outbound.map(time => time + day.offset * 1440));
+        const typicalOutboundDay = railDays.find(day => day.outbound.length)?.outbound || [];
+        const arrivals = inboundTimes.filter(time => time >= arrivalFrom && time <= start);
+        const returns = outboundTimes.filter(time => time >= end && time <= returnUntil);
+        const lastOverall = Math.max(...outboundTimes.filter(time => time <= returnUntil), -Infinity);
+        if (!arrivals.length && !returns.length && (lastOverall < end || lastOverall > returnUntil)) continue;
         state.eventRailIds.add(rail.id);
-        const origins = (rail.stationIds || [])
+        if (arrivals.length || returns.length) state.servedStopIds.add(hubStation.id);
+        const stations = (rail.stationIds || [])
           .map(id => railStationById.get(id))
           .filter(station => station && !station.inView)
-          .map(station => cleanAreaName(station.name));
-        for (const name of origins) connectedAreas.add(name);
+          .map(station => cleanAreaName(station.name))
+          .filter(name => name.length > 2);
+        for (const name of stations) directNames.add(name);
         services.push({
-          id: rail.id, kind: 'rail', label: rail._label, detail: `${origins.length} stations`,
-          color: rail.color, arrivals: arrivals.length, returns: returns.length,
-          lastOverall, places: RAIL_PLACES_PER_DEPARTURE, headway: medianHeadway(railTimes.outbound),
-          origins: origins.length, confidence: railTimes.published ? 'published-timetable' : 'planning-estimate',
+          id: rail.id, kind: 'rail', label: rail._label, detail: `${stations.length} stations`,
+          color: rail._color, arrivals: arrivals.length, returns: returns.length,
+          lastOverall, places: RAIL_PLACES_PER_DEPARTURE, headway: medianHeadway(typicalOutboundDay),
+          directNames: stations.length, confidence: railDays.some(day => day.published) ? 'published-timetable' : 'planning-estimate',
           stopId: hubStation.id, walk: hubWalk,
         });
       }
@@ -1137,67 +1208,81 @@ export async function createTransportLayer({
 
     const arrivals = services.reduce((sum, service) => sum + service.arrivals, 0);
     const returns = services.reduce((sum, service) => sum + service.returns, 0);
-    const publicTransportTrips = Math.round(attendance * modeShare);
-    const returnPlaces = services.reduce((sum, service) => sum + service.returns * service.places, 0);
+    const demandCases = [
+      { key: 'low', share: lowShare },
+      { key: 'central', share: centralShare },
+      { key: 'high', share: highShare },
+    ].map(item => ({ ...item, trips: Math.round(attendance * item.share) }));
+    const centralDemand = demandCases.find(item => item.key === 'central').trips;
+    const highDemand = demandCases.find(item => item.key === 'high').trips;
+    const busReturnPlaces = services.filter(service => service.kind === 'bus')
+      .reduce((sum, service) => sum + service.returns * BUS_PLACES_PER_DEPARTURE, 0);
+    const railReturnPlaces = services.filter(service => service.kind === 'rail')
+      .reduce((sum, service) => sum + service.returns * RAIL_PLACES_PER_DEPARTURE, 0);
+    const returnPlaces = busReturnPlaces + railReturnPlaces;
     const arrivalPlaces = services.reduce((sum, service) => sum + service.arrivals * service.places, 0);
-    const coverage = publicTransportTrips ? clamp(returnPlaces / publicTransportTrips, 0, 1) : 1;
-    const capacityGap = Math.max(0, publicTransportTrips - returnPlaces);
+    const centralGap = Math.max(0, centralDemand - returnPlaces);
+    const highGap = Math.max(0, highDemand - returnPlaces);
 
     // A service only helps dispersal if it still runs once the crowd has
     // walked out, so the test is against the end of the dispersal window.
     const lateServices = services
-      .filter(service => service.lastOverall < returnUntil)
+      .filter(service => Number.isFinite(service.lastOverall) && service.lastOverall < returnUntil)
       .map(service => ({
         ...service,
         shortfall: returnUntil - service.lastOverall,
         extraTrips: Math.max(1, Math.round((returnUntil - service.lastOverall) / Math.max(service.headway, 10))),
       }))
-      .sort((a, b) => b.origins - a.origins || b.shortfall - a.shortfall);
+      .sort((a, b) => b.directNames - a.directNames || b.shortfall - a.shortfall);
 
     const actions = [];
     if (lateServices.length) {
       const railLate = lateServices.filter(service => service.kind === 'rail');
       const busLate = lateServices.filter(service => service.kind === 'bus');
       if (railLate.length) actions.push({
-        priority: 'high',
-        title: `Extend ${railLate.length} rail corridor${railLate.length === 1 ? '' : 's'} to ${minuteLabel(returnUntil)}`,
+        priority: 'medium',
+        title: `Discuss possible rail extensions to ${minuteLabel(returnUntil)}`,
         body: `${railLate.slice(0, 4).map(service => service.label.replace('Rail · ', '')).join(', ')}`
           + `${railLate.length > 4 ? ` and ${railLate.length - 4} more` : ''}. `
           + `Last modelled departure is ${minuteLabel(Math.max(...railLate.map(service => service.lastOverall)))}; `
-          + `about ${railLate.reduce((sum, service) => sum + service.extraTrips, 0)} extra trips in total. `
-          + `These carry the largest origin catchments (${railLate.reduce((sum, service) => sum + service.origins, 0)} stations).`,
+          + `the current headway implies about ${railLate.reduce((sum, service) => sum + service.extraTrips, 0)} additional `
+          + `trips across these corridors. This is a schedule-based discussion prompt; an operator must confirm feasibility.`,
       });
       if (busLate.length) actions.push({
-        priority: 'high',
-        title: `Extend ${busLate.length} MyCiTi route direction${busLate.length === 1 ? '' : 's'} to ${minuteLabel(returnUntil)}`,
+        priority: 'medium',
+        title: `Discuss possible MyCiTi extensions to ${minuteLabel(returnUntil)}`,
         body: `Target first: ${busLate.slice(0, 5).map(service => service.label.replace('MyCiTi ', '')).join(', ')}`
           + `${busLate.length > 5 ? ` (+${busLate.length - 5})` : ''}. `
-          + `About ${busLate.reduce((sum, service) => sum + service.extraTrips, 0)} extra bus trips at current headways.`,
+          + `The current headways imply about ${busLate.reduce((sum, service) => sum + service.extraTrips, 0)} additional trips. `
+          + `These timetable estimates do not establish operator availability or vehicle capacity.`,
       });
     }
-    if (capacityGap > 0) actions.push({
-      priority: capacityGap > publicTransportTrips * 0.4 ? 'high' : 'medium',
-      title: `Nominal scheduled capacity is short by about ${capacityGap.toLocaleString('en-ZA')} places`,
-      body: `Return services in the ${dispersal}-minute dispersal window supply roughly `
-        + `${returnPlaces.toLocaleString('en-ZA')} nominal scheduled places against an event-demand proxy of `
-        + `${publicTransportTrips.toLocaleString('en-ZA')} public-transport trips (${Math.round(modeShare * 100)}% of `
-        + `${attendance.toLocaleString('en-ZA')} attendees). No real occupancy or ridership data is used; verify with `
-        + `the operator before committing resources. That is ${Math.ceil(capacityGap / RAIL_PLACES_PER_DEPARTURE)} extra `
-        + `train sets or ${Math.ceil(capacityGap / BUS_PLACES_PER_DEPARTURE)} extra bus departures at nominal capacity.`,
+    if (services.length && highGap > 0) actions.push({
+      priority: centralGap > 0 ? 'high' : 'medium',
+      title: centralGap > 0
+        ? 'Central and higher demand cases exceed the post-event place proxy'
+        : 'Higher demand case exceeds the post-event place proxy',
+      body: `The higher case estimates ${highDemand.toLocaleString('en-ZA')} public-transport trips against `
+        + `${returnPlaces.toLocaleString('en-ZA')} nominal scheduled places in the post-event window. `
+        + `At the assumed ${BUS_PLACES_PER_DEPARTURE} places per bus or ${RAIL_PLACES_PER_DEPARTURE} per train, the `
+        + `${highGap.toLocaleString('en-ZA')}-place difference is arithmetically similar to `
+        + `${Math.ceil(highGap / BUS_PLACES_PER_DEPARTURE)} bus departures or `
+        + `${Math.ceil(highGap / RAIL_PLACES_PER_DEPARTURE)} train departures. Those are not interchangeable services, `
+        + `allocated vehicles, spare seats, or an operator recommendation.`,
     });
-    if (arrivalPlaces < publicTransportTrips) actions.push({
+    if (arrivals > 0 && arrivalPlaces < centralDemand) actions.push({
       priority: 'medium',
-      title: 'Arrival window is tighter than the crowd',
-      body: `The ${buffer}-minute pre-event window supplies about ${arrivalPlaces.toLocaleString('en-ZA')} nominal `
-        + `scheduled places. Open doors earlier or advertise a longer arrival spread so demand is not concentrated `
-        + `in the last 30 minutes.`,
+      title: 'Compare a wider arrival window',
+      body: `The ${buffer}-minute pre-event window contains ${arrivalPlaces.toLocaleString('en-ZA')} nominal scheduled `
+        + `places against ${centralDemand.toLocaleString('en-ZA')} central-case trips. This comparison does not model `
+        + `crowd arrival profiles; an operator can check whether opening doors earlier would help.`,
     });
     if (!railInCatchment && hubStation) actions.push({
       priority: 'medium',
       title: 'Rail is outside the walk catchment',
       body: `The nearest mapped entrance to ${hubStation.name} is ${Math.round(hubWalk)} m from the venue `
         + `(about ${Math.round(hubWalk / WALK_SPEED_M_PER_MIN)} min walk), beyond the ${radius} m catchment. `
-        + `A shuttle or a signed walking route from the station would connect the whole rail network to this venue.`,
+        + `Check whether a better pedestrian connection or a separately planned shuttle is practical.`,
     });
     const unservedStops = nearbyStops.filter(stop => !(routesByStop.get(stop.id) || []).length);
     if (unservedStops.length) actions.push({
@@ -1208,53 +1293,63 @@ export async function createTransportLayer({
     });
     if (weekend) actions.push({
       priority: 'medium',
-      title: 'Confirm weekend MyCiTi operations',
-      body: 'PRASA weekend times are selected from the supplied CSV, but the encoded MyCiTi tables are weekday schedules. '
-        + 'Treat bus availability as an optimistic upper bound and confirm it with the operator.',
+      title: 'Weekend MyCiTi access is not assessed',
+      body: 'The supplied MyCiTi tables are weekday-only. Bus movements are omitted here; this result cannot establish '
+        + 'that weekend buses are absent or available. Confirm the selected service date with the operator.',
+    });
+    if (!services.length) actions.push({
+      priority: 'medium',
+      title: 'No direct service movement was found in this screen',
+      body: weekend
+        ? 'Weekend MyCiTi schedules are not supplied and no matched Metrorail movement fell in the selected windows. This is missing or limited model evidence, not proof that no service runs.'
+        : 'No matched direct MyCiTi or Metrorail movement fell in the selected windows. Transfers, minibus taxis and other services are outside this screen, so check the full operator timetable.',
     });
     if (!actions.length) actions.push({
-      priority: 'good',
-      title: 'No intervention indicated by the modelled supply',
-      body: `Scheduled operations cover arrival and the ${dispersal}-minute dispersal window, and nominal scheduled `
-        + 'capacity clears the event-demand proxy. This is an uncalibrated planning proxy, not a real occupancy '
-        + 'measurement or an allocation guarantee — confirm with the operator.',
+      priority: 'low',
+      title: 'No gap appeared in this selected timetable scenario',
+      body: `Mapped service movements were found in the selected arrival and dispersal windows. Their nominal places `
+        + `are at least the higher demand case under the selected assumptions. This does not show spare seats, `
+        + `operational capacity or guaranteed service.`,
     });
-
-    const grade = !services.length ? 'Limited'
-      : actions.some(action => action.priority === 'high') ? 'Action needed'
-      : actions.some(action => action.priority === 'medium') ? 'Review' : 'Covered';
 
     elements['transport-event-results'].hidden = false;
     dispatchEvent(new CustomEvent('climate-analysis-result', { detail: { tool: 'transport', metadata: {
-      description: `${arrivals} scheduled arrivals, ${returns} scheduled returns; ${Math.round(coverage * 100)}% nominal capacity coverage. Not measured occupancy.`,
-      arrivals, returns, coverage, date: elements['transport-event-date'].value, clientOnly: true,
-      kpis: { scheduled_arrivals: arrivals, scheduled_returns: returns, nominal_capacity_coverage_pct: coverage * 100 },
+      description: `${arrivals} timetable-derived stop movements before the event and ${returns} after it. These are not direction-aware itineraries; nominal places and attendee demand are assumptions.`,
+      arrivals, returns, date: eventDateValue, clientOnly: true,
+      kpis: {
+        stop_movements_before_event: arrivals, stop_movements_after_event: returns,
+        lower_case_estimated_trips: demandCases[0].trips,
+        central_case_estimated_trips: demandCases[1].trips,
+        higher_case_estimated_trips: demandCases[2].trips,
+        nominal_return_places: returnPlaces,
+      },
     } } }));
-    elements['transport-event-areas'].textContent = String(connectedAreas.size);
+    elements['transport-event-stop-count'].textContent = String(directNames.size);
     elements['transport-event-arrivals'].textContent = String(arrivals);
     elements['transport-event-returns'].textContent = String(returns);
-    elements['transport-event-cover'].textContent = `${Math.round(coverage * 100)}%`;
-    elements['transport-demand-value'].textContent = publicTransportTrips.toLocaleString('en-ZA');
-    elements['transport-capacity-value'].textContent = returnPlaces.toLocaleString('en-ZA');
-    elements['transport-gap-value'].textContent = capacityGap
-      ? `${capacityGap.toLocaleString('en-ZA')} short` : 'No gap in proxy';
-    elements['transport-coverage-chart'].style.setProperty('--coverage', `${Math.round(coverage * 360)}deg`);
     const largestServiceCount = Math.max(arrivals, returns, 1);
     elements['transport-arrival-bar'].style.width = `${Math.round(arrivals / largestServiceCount * 100)}%`;
     elements['transport-return-bar'].style.width = `${Math.round(returns / largestServiceCount * 100)}%`;
-    elements['transport-results-title'].textContent = elements['transport-event-name'].value.trim() || 'Your transport plan';
-    elements['transport-event-grade'].textContent = grade;
-    elements['transport-event-grade'].dataset.grade = grade.toLowerCase().replace(' ', '-');
+    elements['transport-results-title'].textContent = elements['transport-event-name'].value.trim() || 'Scheduled access estimate';
+    elements['transport-event-grade'].textContent = 'Screening estimate';
+    elements['transport-bus-capacity-value'].textContent = busReturnPlaces.toLocaleString('en-ZA');
+    elements['transport-rail-capacity-value'].textContent = railReturnPlaces.toLocaleString('en-ZA');
+    elements['transport-service-directions'].textContent = String(services.length);
+    elements['transport-capacity-assumptions'].textContent = `Nominal places from post-event stop movements: ${returnPlaces.toLocaleString('en-ZA')} (${busReturnPlaces.toLocaleString('en-ZA')} bus at ${BUS_PLACES_PER_DEPARTURE}/departure + ${railReturnPlaces.toLocaleString('en-ZA')} rail at ${RAIL_PLACES_PER_DEPARTURE}/departure). These assumptions are not measured loads or spare seats.`;
+    for (const item of demandCases) {
+      const label = item.key === 'low' ? 'low' : item.key === 'high' ? 'high' : 'central';
+      elements[`transport-${label}-share`].textContent = `${Math.round(item.share * 100)}%`;
+      elements[`transport-${label}-demand`].textContent = item.trips.toLocaleString('en-ZA');
+      const nominalDifference = item.trips - returnPlaces;
+      elements[`transport-${label}-supply`].textContent = `${returnPlaces.toLocaleString('en-ZA')} / ${item.trips.toLocaleString('en-ZA')}`
+        + (nominalDifference > 0 ? ` · ${nominalDifference.toLocaleString('en-ZA')} fewer nominal places` : ' · no nominal shortfall');
+    }
 
     const recommendation = elements['transport-event-recommendation'];
-    recommendation.classList.toggle('good', grade === 'Covered');
+    recommendation.classList.remove('good');
     recommendation.textContent = !services.length
-      ? `No scheduled service was found within ${radius} m along the walking network in the selected windows. `
-        + 'Plan dedicated shuttles from the nearest served hub and verify transfer options before publishing travel advice.'
-      : `${services.length} service direction${services.length === 1 ? '' : 's'} reach this venue, connecting `
-        + `${connectedAreas.size} named origin areas. Nominal scheduled return capacity covers ${Math.round(coverage * 100)}% `
-        + `of the event-demand proxy of ${publicTransportTrips.toLocaleString('en-ZA')} public-transport trips in the `
-        + `${dispersal}-minute dispersal window. This is a planning proxy, not measured occupancy — verify with the operator.`;
+      ? `No direct service direction matched this screen. Transfers, minibus taxis and other services are outside its scope${weekend ? '; weekend MyCiTi schedules are also unavailable' : ''}.`
+      : `${services.length} direct service direction${services.length === 1 ? '' : 's'} were assessed; ${arrivals} timetable-derived stop movements fall before the event and ${returns} after it. These are not direction-aware or transfer-aware itineraries. The ${directNames.size} names below are stops or stations on those corridors.`;
 
     elements['transport-event-actions'].innerHTML = actions.map(action => `
       <div class="transport-action" data-priority="${action.priority}">
@@ -1262,28 +1357,72 @@ export async function createTransportLayer({
       </div>`).join('');
 
     const displayServices = [...services].sort((a, b) =>
-      (b.kind === 'rail') - (a.kind === 'rail') || b.origins - a.origins || b.returns - a.returns);
+      (b.kind === 'rail') - (a.kind === 'rail') || b.directNames - a.directNames || b.returns - a.returns);
     elements['transport-event-services'].innerHTML = displayServices.slice(0, 12).map(service => `
       <div class="transport-service-row">
         <i style="background:${colorHex(service.color)}"></i>
-        <div><b>${escapeHtml(service.label)}</b><span>${service.arrivals} in · ${service.returns} out · ${Math.round(service.walk)} m walk · ${escapeHtml(String(service.confidence).replaceAll('-', ' '))}</span></div>
-        <strong>last ${minuteLabel(service.lastOverall)}</strong>
+        <div><b>${escapeHtml(service.label)}</b><span>${service.arrivals} before · ${service.returns} after · ${Math.round(service.walk)} m walk · ${service.kind === 'bus' ? (service.confidence === 'timetable' ? 'weekday timetable · stop times interpolated' : 'estimated cadence') : (service.confidence === 'published-timetable' ? 'matched PRASA timetable' : 'estimated cadence')}</span></div>
+        <strong>${Number.isFinite(service.lastOverall) ? `last ${minuteLabel(service.lastOverall)}` : 'no return time matched'}</strong>
       </div>`).join('');
 
-    const areaNames = [...connectedAreas].sort((a, b) => a.localeCompare(b));
-    elements['transport-event-area-list'].textContent = areaNames.length
-      ? `Origins reachable without a transfer: ${areaNames.slice(0, 24).join(' · ')}`
-        + `${areaNames.length > 24 ? ` · +${areaNames.length - 24} more` : ''}. `
-        + `Walk catchment follows the mapped pedestrian/street network for ${radius} m (about ${Math.round(radius / WALK_SPEED_M_PER_MIN)} min).`
-      : 'No direct origin areas were resolved for this point.';
+    const directStopNames = [...directNames].sort((a, b) => a.localeCompare(b));
+    elements['transport-event-stop-list'].textContent = directStopNames.length
+      ? `Stop names and rail stations on matched direct service directions: ${directStopNames.slice(0, 24).join(' · ')}`
+        + `${directStopNames.length > 24 ? ` · +${directStopNames.length - 24} more` : ''}. `
+        + `The ${radius} m catchment uses the mapped walking network (about ${Math.round(radius / WALK_SPEED_M_PER_MIN)} min). `
+        + `No transfer or complete-trip search is performed.`
+      : 'No direct stop or station names were resolved for this point.';
+
+    const lastMileFor = direction => {
+      const movement = direction === 'arrival' ? 'arrivals' : 'returns';
+      const nearestService = services
+        .filter(service => service[movement] > 0 && service.stopId && Number.isFinite(service.walk))
+        .sort((a, b) => a.walk - b.walk)[0];
+      if (!nearestService || !venue.point) return null;
+      const source = nearestService.kind === 'rail'
+        ? hubWalkTargets.reduce((best, target) => !best || networkDistance(walkNetwork, target) < networkDistance(walkNetwork, best) ? target : best, null)
+        : stopById.get(nearestService.stopId);
+      if (!source?.point) return null;
+      return {
+        origin: { x: Number(source.point[0]), z: Number(source.point[1]) },
+        destination: { x: Number(venue.point[0]), z: Number(venue.point[1]) },
+        originLabel: nearestService.kind === 'rail'
+          ? 'Closest mapped Cape Town Station entrance'
+          : `Closest stop with a matched ${direction === 'arrival' ? 'pre-event' : 'post-event'} movement · ${source.name}`,
+        destinationLabel: `Event venue · ${venue.name}`,
+        walk: nearestService.walk,
+        date: eventDateValue,
+        start, end,
+      };
+    };
+    state.lastMileAccess = {
+      arrival: lastMileFor('arrival'),
+      dispersal: lastMileFor('dispersal'),
+    };
+    elements['transport-lastmile-arrival'].disabled = !state.lastMileAccess.arrival;
+    elements['transport-lastmile-dispersal'].disabled = !state.lastMileAccess.dispersal;
+    const accessSummary = [
+      state.lastMileAccess.arrival && `Arrival: ${state.lastMileAccess.arrival.originLabel} · about ${Math.round(state.lastMileAccess.arrival.walk)} m`,
+      state.lastMileAccess.dispersal && `Dispersal: ${state.lastMileAccess.dispersal.originLabel} · about ${Math.round(state.lastMileAccess.dispersal.walk)} m`,
+    ].filter(Boolean);
+    elements['transport-lastmile-summary'].textContent = accessSummary.length
+      ? `${accessSummary.join('. ')}. These are walk checks from stops or a station entrance with matched movements, not connected itineraries.`
+      : 'No arrival or return movement matched a nearby stop or station to seed a last-mile walk check.';
+
+    const weekendSourceNote = weekend
+      ? ' Any Saturday/Sunday part of the service window omits MyCiTi because weekend tables are not supplied; matched PRASA day schedules are used.'
+      : ' Weekday MyCiTi tables are used; public-holiday calendars are not represented.';
+    elements['transport-result-provenance'].textContent = `${state.sourceProvenance}${weekendSourceNote} No live alerts, transfers, minibus-taxi services, or observed passenger loads are included.`;
 
     state.analysis = { services, actions, returnUntil, radius };
-    state.serviceDate = eventDate;
+    state.serviceDate = serviceDays[0]?.date || eventDate;
     elements['transport-service-day'].textContent = dayLabel(state.serviceDate);
-    state.minute = clamp(arrivalFrom % 1440, 0, 1439);
+    updateTransportQuality(state.serviceDate);
+    state.minute = ((arrivalFrom % 1440) + 1440) % 1440;
     state.playing = false;
     renderPlayButton();
     rebuildMap();
+    rebuildVehicles();
     drawVenue();
     // frameBounds works off the box diagonal, so a square the size of the
     // catchment would sit the camera far enough out to lose the stop markers.
@@ -1320,7 +1459,7 @@ export async function createTransportLayer({
       body = `
         <p class="transport-card-meta">Metrorail station · ${linked.length} corridor${linked.length === 1 ? '' : 's'} terminate here${accessDetail}</p>
         <ul class="transport-card-list">${linked.slice(0, 9).map(rail => `
-          <li><i style="background:${colorHex(rail.color)}"></i>${escapeHtml(rail.name)}
+          <li><i style="background:${colorHex(rail._color)}"></i>${escapeHtml(rail.name)}
           <em>${scheduledRailTimes(rail).published ? 'published' : 'estimated'} · next ${minuteLabel(scheduledRailTimes(rail).outbound.find(time => time >= state.minute) ?? scheduledRailTimes(rail).outbound[0] ?? 0)}</em></li>`).join('')}</ul>
         <p class="transport-card-note">Times use ${dayLabel(state.serviceDate).toLowerCase()} from the supplied schedule dataset. Positions are not live.</p>`;
     } else {
@@ -1333,8 +1472,8 @@ export async function createTransportLayer({
         ${upcoming.length ? `<ul class="transport-card-list">${upcoming.map(entry => `
           <li><i style="background:${colorHex(entry.route._color)}"></i>${escapeHtml(entry.route.number)}
           <em>${minuteLabel(entry.time)} · ${Math.round(entry.wait)} min</em></li>`).join('')}</ul>`
-          : '<p class="transport-card-note">No timetable departures are modelled at this stop.</p>'}
-        <p class="transport-card-note">Departures are interpolated from supplied weekday trip endpoints, from the model clock at ${minuteLabel(state.minute)}.</p>`;
+          : `<p class="transport-card-note">${busScheduleAvailable(state.serviceDate) ? 'No timetable departures are modelled at this stop.' : 'Weekend MyCiTi schedules are not supplied; departures are omitted.'}</p>`}
+        <p class="transport-card-note">${busScheduleAvailable(state.serviceDate) ? `Departures are interpolated from supplied weekday trip endpoints, from the model clock at ${minuteLabel(state.minute)}.` : 'This stop card does not show weekend MyCiTi departures.'}</p>`;
     }
     card.innerHTML = `
       <button class="transport-card-close" type="button" aria-label="Close">×</button>
@@ -1365,7 +1504,7 @@ export async function createTransportLayer({
   }
 
   addScenePickHandler?.(({ raycaster, event }) => {
-    if (!state.enabled || !group.visible) return false;
+    if (!state.enabled || !state.panelActive || !group.visible) return false;
     const hit = raycaster.intersectObjects(stopGroup.children, false)[0];
     if (!hit?.object.userData.pick) {
       hideStopCard();
@@ -1442,11 +1581,13 @@ export async function createTransportLayer({
     requestRender();
   });
   elements['transport-now'].addEventListener('click', () => {
+    invalidateEventAnalysis();
     state.serviceDate = new Date();
-    state.minute = state.serviceDate.getHours() * 60 + state.serviceDate.getMinutes();
+    state.minute = capeTownMinute(state.serviceDate);
     state.playing = true;
-    elements['transport-event-date'].value = state.serviceDate.toLocaleDateString('en-CA');
+    elements['transport-event-date'].value = capeTownISODate(state.serviceDate);
     elements['transport-service-day'].textContent = dayLabel(state.serviceDate);
+    updateTransportQuality(state.serviceDate);
     renderPlayButton();
     rebuildVehicles();
     requestRender();
@@ -1460,10 +1601,11 @@ export async function createTransportLayer({
     requestRender();
   });
   elements['transport-event-date'].addEventListener('change', () => {
-    const chosen = new Date(`${elements['transport-event-date'].value}T12:00:00`);
+    const chosen = new Date(`${elements['transport-event-date'].value}T12:00:00Z`);
     if (Number.isNaN(chosen.getTime())) return;
     state.serviceDate = chosen;
     elements['transport-service-day'].textContent = dayLabel(chosen);
+    updateTransportQuality(chosen);
     rebuildVehicles();
   });
   elements['transport-event-attendance'].addEventListener('input', () => {
@@ -1471,8 +1613,48 @@ export async function createTransportLayer({
   });
   elements['transport-event-share'].addEventListener('input', () => {
     elements['transport-event-share-value'].textContent = `${elements['transport-event-share'].value}%`;
+    updateDemandRangeSummary();
   });
+  elements['transport-event-range'].addEventListener('change', updateDemandRangeSummary);
   elements['transport-event-analyse'].addEventListener('click', analyseEvent);
+  const invalidateEventAnalysis = () => {
+    elements['transport-event-results'].hidden = true;
+    state.analysis = null;
+    state.lastMileAccess = null;
+    elements['transport-lastmile-arrival'].disabled = true;
+    elements['transport-lastmile-dispersal'].disabled = true;
+  };
+  for (const id of [
+    'transport-event-name', 'transport-event-date', 'transport-event-start', 'transport-event-end',
+    'transport-event-venue', 'transport-event-walk', 'transport-event-buffer', 'transport-event-dispersal',
+    'transport-event-share', 'transport-event-range', 'transport-event-attendance',
+  ]) {
+    const control = elements[id];
+    control?.addEventListener('input', invalidateEventAnalysis);
+    control?.addEventListener('change', invalidateEventAnalysis);
+  }
+  const dateTimeForMinute = (dateValue, minute) => {
+    const day = new Date(`${dateValue}T12:00:00Z`);
+    day.setUTCDate(day.getUTCDate() + Math.floor(minute / 1440));
+    return { date: day.toISOString().slice(0, 10), time: minuteLabel(minute) };
+  };
+  const requestLastMile = direction => {
+    const access = state.lastMileAccess?.[direction];
+    if (!access) return;
+    const minutesToVenue = Math.ceil(access.walk / WALK_SPEED_M_PER_MIN);
+    const departureMinute = direction === 'arrival' ? access.start - minutesToVenue : access.end;
+    const departure = dateTimeForMinute(access.date, departureMinute);
+    const arriving = direction === 'arrival';
+    dispatchEvent(new CustomEvent('climate-transport-walk-request', { detail: {
+      origin: arriving ? access.origin : access.destination,
+      destination: arriving ? access.destination : access.origin,
+      originLabel: arriving ? access.originLabel : access.destinationLabel,
+      destinationLabel: arriving ? access.destinationLabel : access.originLabel,
+      date: departure.date, time: departure.time,
+    } }));
+  };
+  elements['transport-lastmile-arrival'].addEventListener('click', () => requestLastMile('arrival'));
+  elements['transport-lastmile-dispersal'].addEventListener('click', () => requestLastMile('dispersal'));
   elements['transport-results-close'].addEventListener('click', () => {
     elements['transport-event-results'].hidden = true;
   });

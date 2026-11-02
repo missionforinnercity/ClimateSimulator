@@ -36,7 +36,6 @@
         <a href="#viewshed">3D viewshed</a>
         <a href="#wind">Wind analysis</a>
         <a href="#traffic">Traffic &amp; closures</a>
-        <a href="#transport">Public transport</a>
         <a href="#city-model">City model &amp; terrain</a>
       </div>
       <div class="docs-side-group">
@@ -342,55 +341,6 @@
         <div class="caveat-box"><strong>Purpose-built for comparing interventions.</strong> Use paired scenarios to understand direction and relative scale of network effects, identify diversion routes and refine staging options. Confirm selected schemes with observed counts and operational analysis before implementation.</div>
 
         <div class="doc-links"><a href="/app?tool=traffic">Open in Conditions →</a></div>
-      </section>
-
-      <section class="tool-doc" id="transport">
-        <div class="tool-doc-head">
-          <div class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="3.5" width="14" height="15" rx="3"/><path d="M8 7h8M7.5 12.5h9M8 18.5l-1 2m9-2 1 2"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/></svg></div>
-          <h2>Public transport</h2>
-          <span class="status-chip screening">Schedule-based planning</span>
-        </div>
-        <p class="dek">Timetable-derived MyCiTi buses and Metrorail trains, network routes, and an event-access planner.</p>
-
-        <div class="doc-subhead">Quick workflow</div>
-        <ol class="workflow">
-          <li>Choose Network, Bus or Rail and select a route or corridor.</li>
-          <li>Scrub or play model time; click a stop or station for scheduled service details.</li>
-          <li>For an event, set its date, attendance and start/end times.</li>
-          <li>Select a hub or pick a venue on the map, set walking and service-window assumptions, then run access analysis.</li>
-        </ol>
-        <div class="doc-subhead">Controls and outputs</div>
-        <div class="reference-table" role="table" aria-label="Public transport controls and outputs">
-          <div class="reference-row reference-head" role="row"><span>Control</span><span>Meaning</span></div>
-          <div class="reference-row" role="row"><b>Model time</b><span>Interpolates vehicles along mapped route shapes from supplied timetable endpoints. Playback can run at ¼×, 1× or 5×.</span></div>
-          <div class="reference-row" role="row"><b>Lines and stops</b><span>Filters the network map; clicking a stop shows matched routes and upcoming modelled departures.</span></div>
-          <div class="reference-row" role="row"><b>Event demand</b><span>Attendance multiplied by the selected public-transport mode share to create a transparent planning scenario.</span></div>
-          <div class="reference-row" role="row"><b>Walk shed</b><span>400, 800 or 1,200 m routed over the mapped walking/street network at 4.8 km/h.</span></div>
-          <div class="reference-row" role="row"><b>Service windows</b><span>Counts arrivals before the event and return departures during the selected dispersal period.</span></div>
-          <div class="reference-row" role="row"><b>Access result</b><span>Connected origin areas, arrival/return counts, scheduled-capacity coverage proxy, service list, grade and ranked interventions.</span></div>
-        </div>
-
-        <div class="doc-subhead">What it shows</div>
-        <p>
-          Adds 3D vehicles positioned from schedule interpolation, bold
-          network-map routes, a neutral rail track layer, clickable stops/stations, an
-          accelerated service clock, and event-access planning. Set an event venue from the
-          hub list or by clicking the map; with a date, time window, walking catchment,
-          dispersal window, attendance and mode share, the panel reports connected origin
-          areas, arrival/return service counts, how much of an event-demand proxy the return
-          services' scheduled capacity covers, and ranked corridor interventions.
-        </p>
-
-        <div class="doc-subhead">Data &amp; method</div>
-        <ul>
-          <li>PRASA and MyCiTi schedules provide weekday and weekend service patterns along matched routes and corridors.</li>
-          <li>Scheduled capacity uses clear per-departure assumptions of 60 places for a bus and 800 for a train.</li>
-          <li>Walking access follows the mapped pedestrian and street network, including a public-entrance route for Cape Town Station.</li>
-        </ul>
-
-        <div class="caveat-box"><strong>A clear view of scheduled access.</strong> Vehicle movement represents timetable-based service rather than live tracking. Use the event analysis to identify strong connections, return-service gaps and priority conversations with transport operators.</div>
-
-        <div class="doc-links"><a href="/app?tool=transport">Open in Conditions →</a></div>
       </section>
 
       <section class="tool-doc" id="city-model">

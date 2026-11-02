@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#1d1d1d">
   <title>Cape Town CBD Conditions</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='29' fill='%232bd89b'/%3E%3Ccircle cx='32' cy='32' r='23' fill='%2318201d'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%232bd89b' stroke-width='3'/%3E%3C/svg%3E">
-    <link rel="stylesheet" href="/style.css?v=129">
+    <link rel="stylesheet" href="/style.css?v=132">
 </head>
 <body aria-busy="true">
   <div id="startup-loader" class="startup-loader" role="status" aria-live="polite" aria-label="Loading Cape Town climate model">
@@ -69,7 +69,7 @@
       </div>
     </section>
     <div id="wind-box-guide" hidden aria-hidden="true">wind analysis box</div>
-    <div id="transport-stop-card" class="transport-stop-card" role="dialog" aria-label="Stop details" hidden></div>
+    <div id="transport-stop-card" class="transport-stop-card" hidden inert aria-hidden="true"></div>
     <div id="traffic-draw-popup" class="traffic-draw-popup" role="dialog" aria-labelledby="traffic-draw-popup-title" hidden>
       <div class="traffic-draw-popup-heading">
         <span id="traffic-draw-popup-title">Edit road closure</span>
@@ -119,10 +119,6 @@
           <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-traffic" data-menu-target="traffic" title="Traffic simulation">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-2.2c0-.8.5-1.5 1.3-1.8l1.4-.5 1.6-3.1c.3-.6.9-.9 1.5-.9h5.1c.7 0 1.3.4 1.6 1l1.3 3 1 .3c.7.2 1.2.9 1.2 1.7V14"/><path d="M4 14h16v3H4zM7 9.5h10M7 17v1.5m10-1.5v1.5"/><circle cx="7.5" cy="14" r="1"/><circle cx="16.5" cy="14" r="1"/></svg>
             <span>Traffic</span>
-          </button>
-          <button class="menu-tab" type="button" role="tab" aria-selected="false" aria-controls="menu-transport" data-menu-target="transport" title="Public transport">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.5" width="14" height="15" rx="3"/><path d="M8 7h8M7.5 12.5h9M8 18.5l-1 2m9-2 1 2"/><circle cx="8.5" cy="15.5" r="1"/><circle cx="15.5" cy="15.5" r="1"/></svg>
-            <span>Transit</span>
           </button>
         </nav>
       </header>
@@ -875,23 +871,28 @@
           <p>Green ground is visible from the observer and red ground is blocked by terrain or a mapped building. White trees and street details provide scene context but do not block the line-of-sight calculation. Small structures, unmapped objects, sub-grid terrain detail and atmospheric refraction are not represented. Visible share is the percent of valid sampled ground cells with a clear sightline.</p>
         </details>
       </section>
-      <section id="menu-transport" class="transport-panel menu-section" data-menu-panel="transport" role="tabpanel" aria-label="Public transport controls" hidden>
+      <!-- Internal controls required by the background timetable vehicle simulation. This UI stays hidden. -->
+      <div id="transport-runtime-controls" class="transport-panel" hidden inert aria-hidden="true">
         <div class="transport-heading">
-          <div><span class="transport-kicker">MOVE CAPE TOWN</span><strong>Public transport</strong></div>
+          <div><span class="transport-kicker">MOVE CAPE TOWN</span><strong>Transit access</strong></div>
           <label class="transport-show-switch"><input id="transport-toggle" type="checkbox" checked><span>Network on</span></label>
         </div>
-        <div class="transport-data-banner"><i aria-hidden="true"></i><span><b>Timetabled services</b><small id="transport-data-source">Loading PRASA + MyCiTi data…</small></span><em>NOT LIVE</em></div>
+        <p class="transport-intro">Screen CBD event access using scheduled MyCiTi and Metrorail service. This is a planning screen, not a journey planner or live service.</p>
+        <div class="transport-data-banner"><i aria-hidden="true"></i><span><b>Timetable screening</b><small id="transport-data-source">Loading PRASA + MyCiTi data…</small></span><em>NOT LIVE</em></div>
+        <p id="transport-data-quality" class="transport-data-quality">Schedule dates and operating updates are checked below. Transfers and minibus-taxi services are not modelled.</p>
         <div class="transport-mode-tabs" role="group" aria-label="Transport modes">
           <button class="active" type="button" data-transport-mode="both" aria-pressed="true"><span aria-hidden="true">⌘</span> Network</button>
           <button type="button" data-transport-mode="bus" aria-pressed="false"><span aria-hidden="true">▰</span> Bus</button>
           <button type="button" data-transport-mode="train" aria-pressed="false"><span aria-hidden="true">═</span> Rail</button>
         </div>
 
-        <section class="transport-simulator" aria-labelledby="transport-simulator-title">
-          <div class="transport-section-title"><div><span>01</span><b id="transport-simulator-title">Network simulator</b></div><em id="transport-service-day">Weekday service</em></div>
+        <details class="transport-simulator">
+          <summary class="transport-secondary-summary"><span>Explore the service map</span><em id="transport-service-day">Weekday service</em></summary>
+          <div class="transport-simulator-content">
+          <p class="transport-simulator-note">Animate timetable-derived estimates and inspect mapped routes, stops and stations. Positions are not live.</p>
           <div class="transport-live-board">
-            <div><small>MODEL TIME</small><strong id="transport-time-value">08:00</strong></div>
-            <div><small>VEHICLES IN VIEW</small><strong id="transport-vehicle-count">0</strong></div>
+            <div><small>MODEL CLOCK</small><strong id="transport-time-value">08:00</strong></div>
+            <div><small>SCHEDULE ESTIMATES IN VIEW</small><strong id="transport-vehicle-count">0</strong></div>
             <span class="transport-live-pulse" aria-hidden="true"></span>
           </div>
           <label class="transport-timeline"><span><b>00:00</b><b>12:00</b><b>23:59</b></span>
@@ -912,16 +913,17 @@
             <div class="transport-key-items"><span><i class="transport-key-bus"></i>MyCiTi route</span><span><i class="transport-key-rail"></i>Rail corridor</span><span><i class="transport-key-track"></i>Mapped track</span><span><i class="transport-key-stop"></i>Stop / station</span></div>
           </details>
           <div class="transport-status-row"><p id="transport-status" class="transport-status" aria-live="polite">Loading scheduled services…</p><button id="transport-next-rail" type="button" hidden>Show next train →</button></div>
-        </section>
+          </div>
+        </details>
 
-        <details class="transport-event-planner">
-          <summary><span><i>02</i><b>Event access planner</b></span><em>Test last-mile capacity</em></summary>
+        <details class="transport-event-planner" open>
+          <summary><span><i>01</i><b>Event access screening</b></span><em>Venue · time · scheduled service</em></summary>
           <div class="transport-event-body">
-            <p class="transport-planner-hint">Compare scheduled service with estimated event demand.</p>
+            <p class="transport-planner-hint">Screen scheduled service near an event and compare low, central and high attendance scenarios. Counts are stop-time movements, not complete trips; transfers and observed passenger loads are not included.</p>
             <div class="transport-section transport-event-basics">
               <label>Event name<input id="transport-event-name" type="text" value="Cape Town evening event" maxlength="80"></label>
               <div class="transport-control-grid">
-                <label>Date<input id="transport-event-date" type="date" value="2026-08-14"></label>
+                <label>Date<input id="transport-event-date" type="date" value=""></label>
                 <label>Attendance<input id="transport-event-attendance" type="range" min="100" max="20000" step="100" value="2000"><output id="transport-event-attendance-value" for="transport-event-attendance">2,000</output></label>
               </div>
               <div class="transport-control-grid">
@@ -942,18 +944,27 @@
                 <label>Dispersal<select id="transport-event-dispersal"><option value="60">60 min</option><option value="90" selected>90 min</option><option value="120">120 min</option></select></label>
                 <label>Mode share <output id="transport-event-share-value" for="transport-event-share">45%</output><input id="transport-event-share" type="range" min="5" max="95" step="5" value="45"></label>
               </div>
+              <div class="transport-control-grid">
+                <label>Demand scenario spread<select id="transport-event-range"><option value="10" selected>±10 percentage points</option><option value="20">±20 percentage points</option></select></label>
+                <p id="transport-event-range-label" class="transport-range-label">Lower and higher cases vary the selected mode share. This is a what-if range, not a confidence interval.</p>
+              </div>
               <button id="transport-event-analyse" class="transport-analyse" type="button"><span>Run access analysis</span><b aria-hidden="true">→</b></button>
             </div>
           </div>
         </details>
 
-        <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a></div>
-        <details class="panel-method">
-          <summary>Method &amp; limitations</summary>
-          <p>Mapped routes and supplied MyCiTi/PRASA schedules drive vehicle positions. MyCiTi times are interpolated; unmatched rail uses an estimated cadence. Assumed speeds: 18 km/h for buses and 40 km/h for rail.</p>
-          <p>Event access uses the venue, walk shed, timing, attendance and mode share. Schedules are not live GPS; service alerts are not applied. Capacity assumes 60 places per bus and 800 per train departure, not occupancy or allocated service. Planner grades are not operator ratings; routes are not accessibility-certified.</p>
+        <details class="transport-method-details">
+          <summary>Sources, coverage &amp; limitations</summary>
+          <div>
+            <p id="transport-method-provenance">Loading source coverage…</p>
+            <p>MyCiTi source tables are weekday only. Their stop times are interpolated from trip endpoints; some route directions use an estimated cadence. Weekend service days are excluded because weekend schedules are not supplied. Windows crossing midnight use each calendar service day's schedule. Public holidays use the weekday table because no holiday calendar is modelled.</p>
+            <p>PRASA timetable times are used where matched; unmatched corridors use an estimated cadence. Windows crossing midnight use the schedule for each calendar service day. Movement counts are departures at nearby stops, not direction-aware end-to-end trips. No live vehicle positions, disruptions, transfers, fares, minibus-taxi services, passenger counts or accessibility assessment are included.</p>
+            <p>Nominal places per departure (60 per bus, 800 per train) are rough assumptions. They do not measure spare seats or operator capacity. Treat possible extra departures as questions for the operator, not service recommendations.</p>
+          </div>
         </details>
-      </section>
+
+        <div class="transport-links"><a class="transport-service-link" href="https://x.com/MetrorailWC" target="_blank" rel="noopener noreferrer">Service updates <span>↗</span></a></div>
+      </div>
       <section id="menu-walking" class="walking-panel menu-section" data-menu-panel="walking" role="tabpanel" aria-label="Climate-aware walking routes" hidden>
         <div class="walking-heading"><div><span class="walking-kicker">PEDESTRIAN ROUTING</span><strong>Walk the CBD</strong></div><span class="walking-network-badge">OSM network</span></div>
         <p class="walking-intro">Compare the fastest route with cooler, shadier options.</p>
@@ -985,19 +996,6 @@
           <label class="traffic-restrictions-switch"><input id="traffic-restrictions-toggle" type="checkbox" checked> Street status</label>
         </div>
 
-        <div class="traffic-card traffic-live-card compact-section">
-          <div class="traffic-card-heading">
-            <span><i class="traffic-live-dot"></i>Observed street conditions</span>
-            <div class="traffic-live-actions">
-              <span id="traffic-freshness" class="freshness">Not loaded</span>
-              <button id="traffic-refresh" class="icon-button" type="button" aria-label="Refresh live traffic" title="Refresh live traffic">↻</button>
-            </div>
-          </div>
-          <p id="traffic-live-status" class="traffic-status">Loading live traffic…</p>
-          <div id="traffic-live-metrics" class="current-metrics" hidden></div>
-          <p class="traffic-data-note">TomTom speeds provide context; closures are simulated.</p>
-        </div>
-
         <div class="traffic-card compact-section">
           <div class="traffic-card-heading"><span><b>1</b> Traffic conditions</span></div>
           <div class="traffic-control-grid">
@@ -1018,16 +1016,16 @@
                 <option value="5">5 · higher confidence</option>
               </select>
             </label>
+            <label>Junctions
+              <select id="traffic-control-model">
+                <option value="signalized" selected>Mapped signals</option>
+                <option value="priority">Priority</option>
+              </select>
+            </label>
+            <label class="traffic-duration-label">Duration <output id="traffic-duration-value" for="traffic-duration">10 min</output>
+              <input id="traffic-duration" type="range" min="5" max="20" step="5" value="10">
+            </label>
           </div>
-          <label>Junctions
-            <select id="traffic-control-model">
-              <option value="signalized" selected>Mapped signals</option>
-              <option value="priority">Priority</option>
-            </select>
-          </label>
-          <label class="traffic-duration-label">Duration <output id="traffic-duration-value" for="traffic-duration">10 min</output>
-            <input id="traffic-duration" type="range" min="5" max="20" step="5" value="10">
-          </label>
         </div>
 
         <div class="traffic-card compact-section">
@@ -1097,41 +1095,63 @@
         </details>
       </footer>
     </aside>
-    <section id="transport-event-results" class="transport-event-results transport-results-tray" aria-labelledby="transport-results-title" hidden>
+    <section id="transport-event-results" class="transport-event-results transport-results-tray" aria-labelledby="transport-results-title" hidden inert aria-hidden="true">
       <header class="transport-results-header">
-        <div><small>EVENT ACCESS ANALYSIS</small><h2 id="transport-results-title">Your transport plan</h2></div>
+        <div><small>EVENT ACCESS SCREENING</small><h2 id="transport-results-title">Scheduled access estimate</h2></div>
         <div class="transport-results-header-actions"><span id="transport-event-grade">—</span><button id="transport-results-close" type="button" aria-label="Close analysis results">×</button></div>
       </header>
       <div class="transport-results-grid">
-        <section class="transport-result-overview" aria-label="Overall result">
-          <div class="transport-coverage-chart" id="transport-coverage-chart" style="--coverage:0deg">
-            <div><b id="transport-event-cover">—</b><span>nominal return places / estimated trips</span></div>
+        <section class="transport-result-overview" aria-label="Event demand scenarios">
+          <div class="transport-demand-cases">
+            <h3>Demand sensitivity</h3>
+            <p>Each case compares estimated attendee trips with the same nominal scheduled places. This is a what-if calculation, not measured occupancy.</p>
+            <div class="transport-demand-table-wrap">
+              <table class="transport-demand-table">
+                <thead><tr><th scope="col">Case</th><th scope="col">PT share</th><th scope="col">Est. trips</th><th scope="col">Nominal places vs. trips</th></tr></thead>
+                <tbody>
+                  <tr><th scope="row">Lower</th><td id="transport-low-share">—</td><td id="transport-low-demand">—</td><td id="transport-low-supply">—</td></tr>
+                  <tr><th scope="row">Central</th><td id="transport-central-share">—</td><td id="transport-central-demand">—</td><td id="transport-central-supply">—</td></tr>
+                  <tr><th scope="row">Higher</th><td id="transport-high-share">—</td><td id="transport-high-demand">—</td><td id="transport-high-supply">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p id="transport-capacity-assumptions" class="transport-capacity-note"></p>
           </div>
           <div id="transport-event-recommendation" class="transport-event-recommendation"></div>
         </section>
-        <section class="transport-result-supply" aria-label="Service supply">
-          <h3>Service supply</h3>
+        <section class="transport-result-supply" aria-label="Stop movements and nominal places">
+          <h3>Stop movements</h3>
           <div class="transport-event-metrics">
-            <span><b id="transport-event-areas">—</b><i>Direct origin areas</i></span>
-            <span><b id="transport-event-arrivals">—</b><i>Arrivals before start</i></span>
-            <span><b id="transport-event-returns">—</b><i>Returns after event</i></span>
+            <span><b id="transport-event-stop-count">—</b><i>Direct stop / station names</i></span>
+            <span><b id="transport-event-arrivals">—</b><i>Stop movements before start</i></span>
+            <span><b id="transport-event-returns">—</b><i>Stop movements after end</i></span>
           </div>
-          <div class="transport-capacity-breakdown" aria-label="Return capacity calculation">
-            <span>Estimated event trips <b id="transport-demand-value">—</b></span>
-            <span>Nominal return places <b id="transport-capacity-value">—</b></span>
-            <span>Indicative gap <b id="transport-gap-value">—</b></span>
+          <div class="transport-capacity-breakdown" aria-label="Post-event nominal places calculation">
+            <span>Bus places after event · assumption <b id="transport-bus-capacity-value">—</b></span>
+            <span>Rail places after event · assumption <b id="transport-rail-capacity-value">—</b></span>
+            <span>Direct service directions <b id="transport-service-directions">—</b></span>
           </div>
           <div class="transport-supply-chart" aria-label="Arrival and return service comparison">
-            <div><span>Arrivals</span><i><b id="transport-arrival-bar"></b></i></div>
-            <div><span>Returns</span><i><b id="transport-return-bar"></b></i></div>
+            <div><span>Before event</span><i><b id="transport-arrival-bar"></b></i></div>
+            <div><span>After event</span><i><b id="transport-return-bar"></b></i></div>
           </div>
-          <details class="transport-origin-details"><summary>View connected areas</summary><p id="transport-event-area-list" class="transport-event-area-list"></p></details>
+          <details class="transport-stop-details"><summary>View stop and station names</summary><p id="transport-event-stop-list" class="transport-event-stop-list"></p></details>
         </section>
-        <section class="transport-result-actions" aria-label="Recommended actions">
-          <h3>What to do next</h3>
+        <section class="transport-result-actions" aria-label="Potential options for discussion">
+          <h3>Potential options to discuss</h3>
           <div id="transport-event-actions" class="transport-event-actions"></div>
+          <div class="transport-lastmile">
+            <h3>Climate-aware last mile</h3>
+            <p id="transport-lastmile-summary">Run the screening to identify a nearby stop with a modelled service.</p>
+            <div class="transport-lastmile-actions">
+              <button id="transport-lastmile-arrival" type="button" disabled>Check arrival walk</button>
+              <button id="transport-lastmile-dispersal" type="button" disabled>Check dispersal walk</button>
+            </div>
+            <small>Opens the walking tool to compare fastest, lower-sun and lower-heat options when forecast coverage allows.</small>
+          </div>
         </section>
       </div>
+      <p id="transport-result-provenance" class="transport-result-provenance"></p>
       <details class="transport-service-details">
         <summary>Service-by-service detail</summary>
         <div id="transport-event-services" class="transport-event-services"></div>
@@ -1158,6 +1178,6 @@
     </div>
     <article id="wind-report-document" class="traffic-report-document wind-report-document"></article>
   </dialog>
-    <script type="module" src="/app.js?v=experience-181"></script>
+    <script type="module" src="/app.js?v=experience-185"></script>
 </body>
 </html>

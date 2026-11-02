@@ -2,9 +2,11 @@
 
 Conditions is an interactive 3D urban climate and mobility explorer for central
 Cape Town. It combines a detailed city scene with tools for urban heat, sunlight,
-wind, traffic, public transport, and current weather. The browser app is served
-by a FastAPI backend for modelled conditions and bounded analysis jobs; several
-layers also work as a static-only viewer when their data assets are available.
+wind, traffic, and current weather. Timetable-derived MyCiTi buses and Metrorail
+trains continue moving through the scene as background simulation. The browser
+app is served by a FastAPI backend for modelled conditions and bounded analysis
+jobs; several layers also work as a static-only viewer when their data assets
+are available.
 
 The app includes evidence and provenance cards, keyboard map controls, and a
 report workspace with **Draw square area** and **Generate HTML report**. Drag
@@ -60,17 +62,17 @@ completed simulation arrays or drawn traffic closures.
 - **Traffic:** Draw road closures and compare paired SUMO runs, including
   routing, queue, emissions and report outputs. Demand is synthetic and
   exploratory.
-- **Public transport:** Animate timetable-derived MyCiTi and Metrorail services
-  and estimate event access. Vehicle positions are schedule estimates, not live
-  GPS.
+- **Transit simulation:** Watch timetable-derived MyCiTi buses and Metrorail
+  trains move through the CBD scene. Positions are estimates, not live GPS or
+  confirmed arrival times.
 - **Walking routes:** Compare fastest, lower-sun and (when thermal coverage is
   available) lower-heat CBD walks using OSM footways, mapped shade, UTCI and
   pedestrian wind. Matched synthetic walker cohorts are included per path. See
   [walking route method and limits](docs/WALKING_ROUTES.md).
 
 Scientific status and coverage matter: the OpenFOAM wind cases are exploratory,
-thermal outputs are experimental model estimates, and traffic and event-access
-figures depend on stated assumptions. See the validation and data-coverage
+thermal outputs are experimental model estimates, and traffic results depend on
+stated assumptions. See the validation and data-coverage
 documents linked below and in each feature section.
 
 Developer handoff: [architecture](docs/ARCHITECTURE.md),
@@ -360,32 +362,16 @@ binary/network, and the optional database connection. Request logs are
 structured JSON and include an `X-Request-ID`. `.env` is excluded from both Git
 and the Docker build context.
 
-## Public transport in Conditions
+## Transit simulation
 
-The Transport tab adds timetable-derived 3D MyCiTi buses and Metrorail trains,
-bold network-map routes, a neutral rail track layer, clickable
-stops and stations, an accelerated service clock, and event-access planning.
-
-Set the event venue either from the hub list or by clicking anywhere on the
-map ("Pick venue on map", Esc to cancel). With a date, time window, walking
-catchment, dispersal window, attendance and public-transport mode share, the
-panel reports connected origin areas, arrival and return service counts, how
-much of an event-demand proxy the return services' nominal scheduled capacity
-actually covers, and a ranked list of interventions: which corridors and
-route directions to extend and until when, how many extra trips that is, and
-how much nominal capacity is missing. Every capacity figure is a scheduled
-places-per-departure assumption (60 for a bus, 800 for a train), not measured
-or validated real occupancy data, so treat coverage and capacity-gap numbers
-as a planning proxy and verify them with the operator. Clicking a
-stop shows the routes calling there and the next modelled departures.
-
-Rail arrivals and departures use `data/transport/prasa_schedules.csv` for
-weekday and weekend service on matched corridors; unmatched service remains
-clearly labelled as an estimate. Vehicle positions are inferred from schedules
-and are not live GPS. Rebuild the
-compact transport asset with
-`python scripts/build_transport_asset.py`. Implementation notes, confidence
-rules, and the next development phase are in `docs/PUBLIC_TRANSPORT.md`.
+Timetable-derived MyCiTi buses and Metrorail trains animate as background
+vehicles in the city scene. Their positions are schedule estimates, not live
+GPS or confirmed arrivals. The animation uses the supplied weekday MyCiTi
+timetables where available and matched PRASA schedules; some directions and
+corridors use estimated cadence. Weekend MyCiTi buses are omitted because
+weekend tables are not supplied. Rebuild the compact vehicle asset with
+`python scripts/build_transport_asset.py`; see
+[`docs/TRANSIT_SIMULATION.md`](docs/TRANSIT_SIMULATION.md).
 
 ## Traffic and street status in Conditions
 

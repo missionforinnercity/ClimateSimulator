@@ -11,7 +11,7 @@
 | Requests | `public/requestClient.js` | Abort previous request with same key; bound request/body lifetime; retry only a small metadata GET allow-list |
 | Map interaction adapter | `public/sceneExperience.js` | Keyboard camera control, camera restore/capture, selected-location handoff |
 | 3D viewer | `public/webglRenderer.js` | Pinned Three.js, compact terrain/buildings, CFD sampling, wind analysis and OpenFOAM-driven pollutant dispersion overlays. Shared `SCENE_LAYERS` profiles assign render tiers and small terrain lifts to draped surfaces; depth testing handles real 3D occlusion. |
-| Transport | `public/transportLayer.js` | Timetable-derived vehicles and event access; no live GPS |
+| Transit simulation | `public/transportLayer.js` | Ambient timetable-derived vehicles; no live GPS or user-facing route planner |
 | API boundary | `server/app.py` | FastAPI validation, protected routes, bounded concurrency and rate history, request IDs |
 | Domain models | `server/heat.py`, `sunlight.py`, `field.py`, `traffic.py`, supporting modules | Existing scientific calculations; keep units, source dates, validation and coverage explicit |
 | Build/offline jobs | `scripts/build_*`, OpenFOAM export/conversion scripts | Generate assets from source records. Never hand-edit generated scene files |
