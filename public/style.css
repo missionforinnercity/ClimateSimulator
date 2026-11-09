@@ -3722,6 +3722,9 @@ html, body, #app { background: #171717; }
   color: #171715;
 }
 .report-workspace .experience-feedback { color: #d6d3cb; }
+.report-workspace .report-ai-option { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; }
+.report-workspace .report-ai-option input { width: auto; margin: 0; }
+.report-workspace .report-ai-help { display: block; margin: 5px 0 10px; color: #bbb8b0; font-size: 11px; line-height: 1.5; }
 
 @media (prefers-reduced-motion: reduce) {
   #explorer-panel-body .menu-section :is(button, .transport-service-link) { transition: none; }

@@ -1,3 +1,6 @@
+import { buildReportComparisons } from './reportInsights.js';
+import { renderReportEnrichment } from './reportPresentation.js';
+
 const CORE_SECTIONS = [
   ['heat', 'Heat', 'Mapped surface heat'],
   ['sun', 'Sunlight', 'Sunlight and shade'],
@@ -75,7 +78,7 @@ function safeInlineJson(value) {
 }
 
 export function buildClimateReportHtml(report) {
-  const safeJson = safeInlineJson(report);
+  const safeJson = safeInlineJson({ ...report, comparisons: buildReportComparisons(report) });
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -91,6 +94,8 @@ export function buildClimateReportHtml(report) {
     @media(max-width:700px){.toolbar{padding:10px 14px}.sheet{padding:0 14px}.cover{padding:32px 25px}.section{padding:21px 18px}.project-grid,.report-grid,.area-chart-grid,.area-map-grid{grid-template-columns:1fr}.section-heading{display:block}.section-heading p{margin-top:4px}.detail-list{grid-template-columns:1fr;gap:2px}.detail-list dd{margin-bottom:8px}.map-highlight-grid{grid-template-columns:1fr}}
     @media print{@page{size:A4;margin:14mm}body{background:white;font-size:11pt}.toolbar{display:none}.sheet{max-width:none;margin:0;padding:0}.cover{padding:28px 32px;box-shadow:none;print-color-adjust:exact;-webkit-print-color-adjust:exact}.section,.analysis-card,.other-card,.area-chart-card,.area-map-card{break-inside:avoid;box-shadow:none}.section{padding:20px}.analysis-card{padding:16px}.report-grid,.area-chart-grid,.area-map-grid{gap:10px}.section-heading h2{font-size:22px}.cover h1{font-size:38px}.analysis-card details[open]{break-inside:avoid}.map-frame img{max-height:360px}.area-data-table-wrap{max-height:none;overflow:visible}.area-data-table th{position:static}.report-footer{break-before:avoid}}
     .cover{background:linear-gradient(120deg,#1d1d1d,#363636 65%,#565656)}.toolbar button{background:#474747}.overview{border-left-color:#777}
+    .brief-lead{font-size:19px!important;line-height:1.4}.brief-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px}.brief-metric{padding:16px;border-radius:9px;background:#f1f3ef}.brief-metric span,.brief-metric strong,.brief-metric small{display:block}.brief-metric span{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em}.brief-metric strong{margin-top:5px;font-size:23px;line-height:1.2}.brief-metric small{margin-top:5px;color:var(--muted);font-size:11px}.priority-list{display:grid;gap:10px;margin:0;padding:0;list-style:none}.priority-list li{padding:15px 18px;border-left:3px solid #458b6d;border-radius:7px;background:#f2f5f1}.priority-list strong,.priority-list span{display:block}.priority-list strong{font-size:14px}.priority-list span{margin-top:3px;color:#52615b;font-size:13px}.section-kicker{margin:0 0 5px;color:#567867;font-size:10px;font-weight:800;letter-spacing:.13em;text-transform:uppercase}.report-section-toggle{display:block}.report-section-toggle>summary{cursor:pointer;font-family:Georgia,serif;font-size:24px;list-style:none}.report-section-toggle>summary::-webkit-details-marker{display:none}.report-section-toggle>summary:after{content:' +';float:right;font-family:Arial,sans-serif;font-size:21px}.report-section-toggle[open]>summary:after{content:' −'}.report-section-toggle>.area-map-grid,.report-section-toggle>.area-chart-grid{margin-top:18px}.plant-note{margin:12px 0 0;color:var(--muted);font-size:12px}
+    @media(max-width:900px){.brief-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:700px){.brief-grid{grid-template-columns:1fr}.brief-metric strong{font-size:20px}}@media print{.brief-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media print{
       html,body{background:#fff!important;color:#222!important;font-size:10pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
       .toolbar{display:none!important}.sheet{max-width:none;margin:0;padding:0}
@@ -99,11 +104,14 @@ export function buildClimateReportHtml(report) {
       .cover h1{color:#222;font-size:34px}.section{margin-top:8mm;padding:8mm;border:1px solid #c8c8c8;border-radius:0;background:#fff;box-shadow:none;break-inside:auto}
       .section-heading{break-after:avoid}.section-heading h2{font-size:19px}.area-map-grid{grid-template-columns:1fr;gap:7mm}
       .area-map-card,.area-chart-card,.analysis-card,.other-card{break-inside:avoid;border-color:#c8c8c8;box-shadow:none}
-      .area-map-svg{background:#f5f5f5}.map-highlight{background:#f2f2f2}.map-highlight-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .area-map-svg{background:#f5f5f5}.map-highlight{background:#f2f2f2}.map-highlight-grid,.brief-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .section,.area-map-card,.area-chart-card,.analysis-card,.other-card{print-color-adjust:exact;-webkit-print-color-adjust:exact}
       .area-data-table-wrap{max-height:none;overflow:visible}.area-data-table th{position:static;background:#eee}
       a{color:#222;text-decoration:none}.report-footer{color:#555}
     }
+    .ai-status{margin-top:14px!important;color:#66736f;font-size:12px!important}.evidence-chips{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 0;padding:0;list-style:none}.evidence-chips li{padding:5px 8px!important;border:1px solid #d3ddd5!important;border-radius:5px!important;background:#f1f5ef!important;color:#405e4e;font-size:11px;line-height:1.4}.insight-card{padding:18px;border:1px solid var(--line);border-radius:9px;background:#f9faf6;min-width:0;break-inside:avoid}.insight-card h3{margin:0;font-family:Georgia,serif;font-size:20px;font-weight:500}.insight-card p{margin:9px 0 0;color:#46584f;font-size:14px}.insight-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.place-chart-row{padding:12px 0;border-bottom:1px solid var(--line);break-inside:avoid}.place-chart-row>strong{font-size:14px}.place-bar-row{display:grid;grid-template-columns:150px minmax(80px,1fr) 35px;gap:12px;align-items:center;font-size:12px;margin-top:7px}.comparison-track{height:12px;background:#edf0e9;border-radius:4px;position:relative;overflow:hidden}.comparison-track i{display:block;position:absolute;top:0;height:100%;background:#367759;border-radius:3px}.comparison-track i.nearby{background:#b3c9b9}.place-bar-row b{text-align:right}.place-list{list-style:none;padding:0;margin:10px 0;font-size:13px}.place-list li{border-top:1px solid var(--line);padding:8px 0}.place-list small{display:block;color:var(--muted);margin-top:3px}.source-link{display:inline-block;margin-top:10px;color:var(--green);font-size:12px}.comparison-list{list-style:none;padding:0;margin:18px 0}.comparison-list li{display:grid;grid-template-columns:minmax(0,1fr) 70px;gap:6px 10px;margin-top:13px;align-items:center;break-inside:avoid}.comparison-label{grid-column:1/-1;font-size:12px;overflow-wrap:anywhere}.comparison-list strong{text-align:right;font-size:12px}.comparison-list .comparison-track{height:14px}#place-details{margin-top:18px}
+    @media(max-width:700px){.insight-grid{grid-template-columns:1fr}.place-bar-row{grid-template-columns:105px minmax(60px,1fr) 30px;gap:7px;font-size:11px}}
+    @media print{.insight-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ai-status{font-size:9pt!important}.comparison-track i,.evidence-chips li{print-color-adjust:exact;-webkit-print-color-adjust:exact}}
   </style>
 </head>
 <body>
@@ -115,12 +123,15 @@ export function buildClimateReportHtml(report) {
       <p class="cover-subtitle" id="report-subtitle"></p>
       <div class="cover-meta" id="report-meta"></div>
     </header>
-    <section class="section overview"><div class="section-heading"><h2>At a glance</h2><p>What this report contains</p></div><p id="overview-copy"></p></section>
-    <section class="section"><div class="section-heading"><h2>Selected square</h2><p>Map view centred on the selected area</p></div><div class="map-frame" id="map-frame"></div><p class="map-caption" id="map-caption"></p></section>
-    <section class="section"><div class="section-heading"><h2>Heat and seasonal wind comfort</h2><p>Multi-direction conditions across the selected square</p></div><div class="area-map-grid"><article class="area-map-card"><h3>Surface heat</h3><p>Mapped surface temperature by location</p><div id="heat-area-map"></div><div id="heat-street-findings"></div></article><article class="area-map-card"><h3>Seasonal wind comfort</h3><p>Where outdoor activity is more or less comfortable across solved wind directions</p><div id="wind-area-map"></div><div id="wind-street-findings"></div></article></div></section>
-    <section class="section"><div class="section-heading"><h2>Southeast and northwest wind studies</h2><p>Separate solved cases for Cape Town’s strong seasonal winds</p></div><div class="area-map-grid"><article class="area-map-card"><h3>Southeast wind · 135°</h3><p>Wind entering from the southeast</p><div id="wind-se-area-map"></div><div id="wind-se-street-findings"></div></article><article class="area-map-card"><h3>Northwest wind · 315°</h3><p>Wind entering from the northwest</p><div id="wind-nw-area-map"></div><div id="wind-nw-street-findings"></div></article></div></section>
-    <section class="section"><div class="section-heading"><h2>Charts for this square</h2><p>Every chart uses samples clipped to the selected area</p></div><div class="area-chart-grid" id="area-charts"></div><p class="area-scope-note">Heat and sunlight are weighted by mapped surface area. Wind comfort uses valid open-ground locations. Viewshed uses sampled ground points inside the square.</p></section>
+    <section class="section overview"><p class="section-kicker">Decision brief</p><div class="section-heading"><h2>What matters here</h2><p>For the selected square</p></div><p class="brief-lead" id="overview-copy"></p><div id="ai-overview-evidence"></div><div class="brief-grid" id="brief-metrics"></div><p class="ai-status" id="ai-status"></p></section>
+    <section class="section" id="ai-insights-section" hidden><div class="section-heading"><h2>What the findings suggest</h2><p>AI interpretation · evidence attached</p></div><div class="insight-grid" id="ai-insights"></div></section>
+    <section class="section"><div class="section-heading"><h2>Where to focus</h2><p>Questions for site review</p></div><ul class="priority-list" id="priority-list"></ul></section>
+    <section class="section"><div class="section-heading"><h2>Selected square</h2><p>Map view centred on the selected area</p></div><div class="map-frame" id="map-frame"></div><p class="map-caption" id="map-caption"></p><div id="site-context"></div><p class="plant-note" id="plant-note"></p></section>
+    <section class="section" id="place-section" hidden><div class="section-heading"><h2>Getting around and everyday amenities</h2><p>Mapped locations · City of Cape Town</p></div><div id="place-chart"></div><div class="insight-grid" id="place-details"></div><p class="map-caption" id="place-note"></p></section>
+    <section class="section"><div class="section-heading"><h2>Heat and pedestrian wind</h2><p>Mapped conditions across the selected square</p></div><div class="area-map-grid"><article class="area-map-card"><h3>Surface heat</h3><p>Mapped surface temperature by location</p><div id="heat-area-map"></div><div id="heat-street-findings"></div></article><article class="area-map-card"><h3 id="wind-map-title">Wind comfort</h3><p id="wind-map-subtitle"></p><div id="wind-area-map"></div><div id="wind-street-findings"></div></article></div></section>
     <section class="section"><div class="section-heading"><h2>Findings for this square</h2><p>Heat, sunlight, visibility and wind</p></div><div class="report-grid" id="core-results"></div></section>
+    <section class="section" id="directional-section"><details class="report-section-toggle"><summary>Explore wind from the southeast and northwest</summary><p class="map-caption">Separate modelled wind directions help locate places worth checking on site.</p><div class="area-map-grid"><article class="area-map-card"><h3>Southeast wind · 135°</h3><p>Wind entering from the southeast</p><div id="wind-se-area-map"></div><div id="wind-se-street-findings"></div></article><article class="area-map-card"><h3>Northwest wind · 315°</h3><p>Wind entering from the northwest</p><div id="wind-nw-area-map"></div><div id="wind-nw-street-findings"></div></article></div></details></section>
+    <section class="section" id="charts-section"><details class="report-section-toggle" open><summary>Patterns in the data</summary><p class="map-caption">Each chart uses samples inside the selected square.</p><div class="area-chart-grid" id="area-charts"></div><p class="area-scope-note">Heat and sunlight are weighted by mapped surface area. Wind comfort uses valid open-ground locations. Visibility uses sampled ground points.</p></details></section>
     <section class="section methods"><div class="section-heading"><h2>How to interpret the results</h2><p>Evidence and limits</p></div><div id="method-notes"></div></section>
     <footer class="report-footer"><strong>Conditions · Cape Town CBD</strong><br>Prepared from the results available in this browser session.</footer>
   </main>
@@ -173,8 +184,6 @@ export function buildClimateReportHtml(report) {
       card.append(make('p','finding',summaryText(item)));
       const facts=factsFor(key,item.summary||{},item);
       if(facts.length){const grid=make('div','facts');for(const [name,value]of facts){const box=make('div','fact');box.append(make('span','',name),make('strong','',value));grid.append(box)}card.append(grid)}
-      if(item.method)card.append(make('p','method-copy',item.method));
-      const evidence=d.evidence?.[key];if(evidence)card.append(make('p','method-copy',evidence.limits));
       makeDetails(card,item,key);return card;
     };
     const svgNode=(tag,attributes={},text)=>{const node=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value]of Object.entries(attributes))node.setAttribute(key,String(value));if(text!==undefined)node.textContent=text;return node};
@@ -218,12 +227,16 @@ export function buildClimateReportHtml(report) {
     const renderWindMap=(item,mapId='wind-area-map',findingsId='wind-street-findings')=>{const parent=$('#'+mapId),findings=$('#'+findingsId);parent.replaceChildren();findings.replaceChildren();if(!item||item.status!=='ready'){parent.append(make('div','area-map-unavailable',item?.message||'A wind map could not be produced for this square.'));return}const cells=item.cells||[];if(!cells.length){parent.append(make('div','area-map-unavailable','No valid wind cells were available inside this square.'));return}const svg=makeMapSvg(),categories=item.comfort_categories||[],colors=new Map(categories.map(category=>[Number(category.code),category.color||'#767b80'])),scaleX=mapPlot.width/(mapMaxX-mapMinX),scaleY=mapPlot.height/(mapMaxZ-mapMinZ);for(const cell of cells){const size=Number(cell.size_m)||Number(item.grid?.resolution_m)||12,point=mapPoint(cell.x,cell.z+size/2);const rect=svgNode('rect',{x:point.x-size*scaleX/2,y:point.y,width:size*scaleX+0.3,height:size*scaleY+0.3,fill:colors.get(Number(cell.category_code))||'#a9b1aa',stroke:'#fffefa','stroke-width':.4});const category=categories.find(entry=>Number(entry.code)===Number(cell.category_code));rect.append(svgNode('title',{},(category?.label||'Wind comfort')+' · '+(Number(cell.speed_mps)*3.6).toFixed(0)+' km/h modelled wind'));svg.append(rect)}appendRoadContext(svg,item);svg.append(svgNode('rect',{x:mapPlot.x,y:mapPlot.y,width:mapPlot.width,height:mapPlot.height,fill:'none',stroke:'#64716b','stroke-width':1.4}));appendNorthArrow(svg);parent.append(svg);const kpis=item.summary?.kpis||item.kpis||{},shares=kpis.comfort_class_share_pct||{};appendMapLegend(parent,categories.map(category=>{const key=String(category.key||category.label||category.code).toLowerCase().replaceAll(/[^a-z0-9]+/g,'_').replaceAll(/^_|_$/g,'');const share=Number(shares[key]);return{color:category.color||colors.get(Number(category.code)),label:category.label+(Number.isFinite(share)?' · '+share.toFixed(0)+'%':'')}}));const rankings=item.street_rankings||{},rankGrid=make('div','map-highlight-grid');const speedText=street=>(Number(street.mean_speed_mps)*3.6).toFixed(0)+' km/h modelled wind · '+street.dominant_category;appendHighlightList(rankGrid,'Most comfortable streets',rankings.best||[],street=>street.name+' · '+speedText(street));appendHighlightList(rankGrid,'Most exposed streets',rankings.worst||[],street=>street.name+' · '+speedText(street));findings.append(rankGrid,make('p','map-caption',item.method||'Streets are ranked by modelled comfort class and wind speed along mapped road segments inside the square.'))};
     const prependWindSpeedSummary=(item,findingsId)=>{if(item?.status!=='ready')return;const values=item.kpis||{},facts=[];if(Number.isFinite(Number(values.mean_speed_mps)))facts.push(['Average modelled wind',(Number(values.mean_speed_mps)*3.6).toFixed(1)+' km/h']);if(Number.isFinite(Number(values.p95_speed_mps)))facts.push(['Higher-end wind · 95th percentile',(Number(values.p95_speed_mps)*3.6).toFixed(1)+' km/h']);if(!facts.length)return;const grid=make('div','facts');for(const [label,value]of facts){const card=make('div','fact');card.append(make('span','',label),make('strong','',value));grid.append(card)}const parent=$('#'+findingsId);parent.insertBefore(grid,parent.firstChild)};
     const areaResults=d.areaAnalysis?.results||{};
+    const windFallback=areaResults.wind?.result_source==='single-direction-fallback';
+    $('#wind-map-title').textContent=windFallback?'Single-direction wind screen':'Seasonal wind comfort';
+    $('#wind-map-subtitle').textContent=windFallback?'One solved direction; this does not describe seasonal comfort.':'Comfort across available solved wind directions.';
     heatPercentileStops=weightedHeatPercentileStops(areaResults.heat?.samples);
     renderHeatMap(areaResults.heat,areaResults.wind);
     describeRelativeHeatColors(areaResults.heat);
     renderWindMap(areaResults.wind);
     prependWindSpeedSummary(areaResults.wind,'wind-street-findings');
     const directionalWind=areaResults.wind?.directional_studies||[];
+    if(!directionalWind.some(item=>item?.status==='ready'))$('#directional-section').hidden=true;
     renderWindMap(directionalWind.find(item=>item.key==='se'),'wind-se-area-map','wind-se-street-findings');
     renderWindMap(directionalWind.find(item=>item.key==='nw'),'wind-nw-area-map','wind-nw-street-findings');
     prependWindSpeedSummary(directionalWind.find(item=>item.key==='se'),'wind-se-street-findings');
@@ -231,12 +244,49 @@ export function buildClimateReportHtml(report) {
     document.title=(d.project?.name||'Climate area report');$('#report-title').textContent=d.project?.name||'Climate area report';$('#report-subtitle').textContent='A plain-language account of the climate conditions and visibility inside the selected square.';
     const meta=$('#report-meta');const addChip=(title,value)=>{if(!value)return;const chip=make('span','chip',title+' · '+value);meta.append(chip)};
     addChip('Study location',d.project?.location);if(d.areaAnalysis?.size_m)addChip('Square',Math.round(d.areaAnalysis.size_m)+' m × '+Math.round(d.areaAnalysis.size_m)+' m');addChip('Report created',fmtDate(d.generatedAt));
-    const readyCount=Object.values(areaResults).filter(item=>item?.status==='ready').length;
-    $('#overview-copy').textContent='This report brings together heat, sunlight, visibility and wind for the selected square. '+readyCount+' of 4 main analyses returned results, with separate southeast and northwest wind screens where solved cases are available. The maps highlight warmer surfaces and wind exposure; nearby streets are ranked to make the findings easier to act on.';
+    const readyCount=['heat','sun','viewshed','wind'].filter(key=>areaResults[key]?.status==='ready').length;
+    const squareMetres=Number(d.areaAnalysis?.size_m);
+    const areaText=Number.isFinite(squareMetres)&&squareMetres>0?Math.round(squareMetres)+' m square in the Cape Town CBD':'selected square in the Cape Town CBD';
+    $('#overview-copy').textContent='A focused look at '+areaText+'. '+readyCount+' of 4 climate and visibility topics have usable results. The findings below point to places for a closer site review; they are screening results, not measured conditions.';
+    const metricGrid=$('#brief-metrics');
+    const briefMetric=(title,value,scope)=>{const card=make('div','brief-metric');card.append(make('span','',title),make('strong','',value),make('small','',scope));metricGrid.append(card)};
+    const ready=key=>areaResults[key]?.status==='ready';
+    const kpi=(key,name)=>areaResults[key]?.summary?.kpis?.[name]??areaResults[key]?.kpis?.[name];
+    const hasKpi=(key,name)=>kpi(key,name)!=null&&Number.isFinite(Number(kpi(key,name)));
+    const studyDate=key=>areaResults[key]?.summary?.scenario?.date;
+    if(ready('heat')&&hasKpi('heat','average_surface_temperature_c'))briefMetric('Surface heat',display(kpi('heat','average_surface_temperature_c'),'average_surface_temperature_c','heat'),'Average mapped surface · '+(studyDate('heat')||'study date not recorded'));
+    if(ready('sun')&&hasKpi('sun','average_direct_sun_hours'))briefMetric('Direct sunlight',display(kpi('sun','average_direct_sun_hours'),'average_direct_sun_hours','sun'),'Mapped surfaces · '+(studyDate('sun')||'study date not recorded'));
+    if(ready('wind')&&hasKpi('wind','mean_speed_mps'))briefMetric('Pedestrian wind',display(kpi('wind','mean_speed_mps'),'mean_speed_mps','wind'),windFallback?'One modelled direction':'Modelled speed · '+(areaResults.wind.season||'study period not recorded'));
+    if(ready('viewshed')&&hasKpi('viewshed','visible_ground_pct'))briefMetric('Ground visible',display(kpi('viewshed','visible_ground_pct'),'visible_ground_pct','viewshed'),'From one observer point near the centre');
+    if(!metricGrid.childElementCount)briefMetric('Analysis status','No usable results','Review the availability notes below');
+    const priorities=$('#priority-list');
+    const priority=(title,detail)=>{const row=make('li','');row.append(make('strong','',title),make('span','',detail));priorities.append(row)};
+    if(ready('heat')){
+      const groups=new Map();
+      for(const sample of areaResults.heat.samples||[]){const name=String(sample.nearest_road_name||'').trim(),area=Number(sample.area_m2),value=Number(sample.value);if(!name||!Number.isFinite(area)||area<=0||!Number.isFinite(value))continue;const group=groups.get(name)||{area:0,total:0};group.area+=area;group.total+=area*value;groups.set(name,group)}
+      const hottest=[...groups].map(([name,group])=>({name,average:group.total/group.area})).sort((a,b)=>b.average-a.average)[0];
+      if(hottest)priority('Review mapped heat near '+hottest.name,hottest.average.toFixed(1)+' °C average mapped surface temperature nearby. Check shade and ground materials on site before deciding on changes.');
+      else priority('Check the warmest mapped surfaces','Use the heat map to choose locations for a shade and materials review.');
+    }
+    if(ready('wind')){const exposed=areaResults.wind.street_rankings?.worst?.[0];if(exposed?.name)priority('Check wind exposure on '+exposed.name,'This street ranks among the most exposed mapped streets in this square. Confirm conditions at pedestrian level before changing seating or planting.');else priority('Review pedestrian wind exposure','Use the wind map to locate exposed open-ground areas for a site visit.');}
+    if(!priorities.childElementCount)priority(readyCount?'Review the available findings':'Run the area studies again',readyCount?'Sunlight and visibility findings are presented below; no location-specific heat or wind priority could be identified.':'No topic returned a usable result for this square.');
+    $('#plant-note').textContent='Planting reference: the SANBI Indigenous Plant Checklist (2018, v1.3) is available for a future species review. It confirms national indigenous status only; this report cannot identify existing plants or verify which species suit this site. Local soil, water, space and maintenance information are needed before selecting plants.';
     const map=$('#map-frame');if(d.map?.status==='embedded'){const img=make('img');img.src=d.map.dataUrl;img.alt='Map view centred on the selected square';map.append(img);$('#map-caption').textContent=d.areaAnalysis?.size_m?'The outlined square is '+Math.round(d.areaAnalysis.size_m)+' metres on each side.':'Map view centred on the study area.'}else{$('#map-caption').textContent=d.map?.reason||'No map image was available when this report was created.';map.append(make('p','empty-state',d.map?.reason||'Map image unavailable.'))}
-    const charts=$('#area-charts');for(const [key,title]of ${JSON.stringify(CORE_SECTIONS.map(([key,title])=>[key,title]))})appendChart(charts,key,title,areaResults[key]);
+    if(d.siteContext?.status==='ready'&&Number.isFinite(Number(d.siteContext.canopy_cover_pct))){
+      const context=$('#site-context'),grid=make('div','brief-grid');
+      const canopy=make('div','brief-metric');canopy.append(make('span','','Mapped canopy cover'),make('strong','',Number(d.siteContext.canopy_cover_pct).toFixed(0)+'%'),make('small','','Approximate share of this square'));grid.append(canopy);
+      const area=make('div','brief-metric');area.append(make('span','','Selected area'),make('strong','',new Intl.NumberFormat('en-ZA',{maximumFractionDigits:1}).format(Number(d.areaAnalysis?.area_m2||0)/10000)+' ha'),make('small','','Drawn square, not a cadastral parcel'));grid.append(area);
+      context.append(grid,make('p','map-caption','Canopy cover comes from mapped footprint shapes sampled about every '+Number(d.siteContext.sample_spacing_m).toFixed(1)+' m. It is an estimate of mapped cover, not a current tree count or a species inventory.'));
+    }
+    const charts=$('#area-charts');for(const [key,title]of ${JSON.stringify(CORE_SECTIONS.map(([key,title])=>[key,title]))})if(areaResults[key]?.status==='ready'&&areaResults[key]?.chart)appendChart(charts,key,title,areaResults[key]);
+    if(d.siteContext?.status==='ready'&&d.siteContext.canopy_cover_pct!=null&&Number.isFinite(Number(d.siteContext.canopy_cover_pct))){const cover=Math.max(0,Math.min(100,Number(d.siteContext.canopy_cover_pct)));appendChart(charts,'canopy','Mapped canopy',{status:'ready',chart:{type:'share',title:'Mapped canopy across the square',axis_label:'Approximate coverage of mapped canopy footprints',segments:[{label:'Mapped canopy',value:cover,color:'#367759'},{label:'Not mapped as canopy',value:100-cover,color:'#d2d9ca'}]}})}
+    if(!charts.childElementCount)$('#charts-section').hidden=true;
     const cards=$('#core-results');for(const [key,title,subtitle]of ${JSON.stringify(CORE_SECTIONS)})cards.append(makeCard(key,title,subtitle,areaResults[key]));
     const methods=$('#method-notes');for(const key of ['heat','sun','viewshed','wind']){const evidence=d.evidence?.[key];if(!evidence)continue;const areaItem=areaResults[key];const details=make('details','');details.append(make('summary','',({heat:'Heat',sun:'Sunlight',viewshed:'Viewshed',wind:'Wind'}[key])+' · method and limits'));details.append(make('p','method-copy',[areaItem?.method||evidence.method,evidence.limits].filter(Boolean).join(' ')));methods.append(details)}
+    (${renderReportEnrichment.toString()})(d);
+    let printOpened=[];
+    addEventListener('beforeprint',()=>{printOpened=[...document.querySelectorAll('.report-section-toggle:not([open])')];for(const section of printOpened)section.open=true});
+    addEventListener('afterprint',()=>{for(const section of printOpened)section.open=false;printOpened=[]});
     $('#print-report').addEventListener('click',()=>window.print());
   })();
   </script>

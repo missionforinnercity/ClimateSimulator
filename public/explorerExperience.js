@@ -1,6 +1,7 @@
 import { CONTROL_IDS, MODES, validateScenario, readScenarioURL } from './scenarioState.js';
 import { cancelRequests } from './requestClient.js';
-import { buildClimateReportHtml } from './climateReport.js?v=10';
+import { buildClimateReportHtml } from './climateReport.js?v=11';
+import { buildReportFacts } from './reportInsights.js';
 
 const EVIDENCE = {
   heat: {
@@ -208,6 +209,12 @@ export function setupExplorerExperience() {
   const generateReportButton = el('button', 'Generate HTML report', 'primary');
   generateReportButton.type = 'button';
   actions.append(selectAreaButton, generateReportButton);
+  const aiOption = el('label', undefined, 'report-ai-option');
+  const aiEnabled = el('input'); aiEnabled.type = 'checkbox'; aiEnabled.checked = true;
+  aiOption.append(aiEnabled, document.createTextNode('Include AI interpretation'));
+  workspace.insertBefore(aiOption, actions);
+  const aiHelp = el('small', 'Gemini summarises this square’s figures and suggests questions for a site review. Selected result summaries are sent to Google.', 'report-ai-help');
+  workspace.insertBefore(aiHelp, actions);
   function reportEvidence() {
     return Object.fromEntries(Object.entries(resultMetadata).map(([tool, value]) => {
       const { settings, result_data: resultData, ...summary } = value;
@@ -494,6 +501,7 @@ export function setupExplorerExperience() {
     };
     selectAreaButton.disabled = true;
     generateReportButton.disabled = true;
+    aiEnabled.disabled = true;
     dispatchEvent(new CustomEvent('climate-report-area-lock'));
     addEventListener('climate-report-area-progress', progressListener);
     notify('Starting heat, sunlight, viewshed and wind comfort analysis inside the selected square…');
@@ -552,9 +560,27 @@ export function setupExplorerExperience() {
           area_m2: bounds.size_m * bounds.size_m,
           results: areaResults,
         },
+        siteContext: local.siteContext || { status: 'unavailable', message: 'Mapped canopy coverage was not available.' },
         results: reportEvidence(), evidence: EVIDENCE, map: captureMapImage(),
         limitations: 'The maps and charts summarize data sampled or clipped inside the selected square. Heat is mapped surface temperature, not air temperature. Wind comfort is an exploratory screen using seasonal patterns and mapped terrain and buildings; it is not measured or certified street-level evidence. Viewshed visibility is measured from an open point near the square centre. Read each topic’s method and limits before using the results.',
       };
+      notify(aiEnabled.checked ? 'Adding local amenities and writing the AI briefing…' : 'Adding local amenities…');
+      const enrichmentController = new AbortController();
+      const enrichmentTimeout = setTimeout(() => enrichmentController.abort(), 55000);
+      try {
+        const apiBase = (new URLSearchParams(location.search).get('windApi') || '/api').replace(/\/$/, '');
+        const response = await fetch(`${apiBase}/reports/enrich`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: enrichmentController.signal,
+          body: JSON.stringify({ bounds: report.studyArea.bounds, facts: buildReportFacts(report), include_ai: aiEnabled.checked }),
+        });
+        if (!response.ok) throw new Error('Report context unavailable');
+        report.enrichment = await response.json();
+      } catch {
+        report.enrichment = { ai: { status: aiEnabled.checked ? 'unavailable' : 'disabled', reason: 'AI interpretation was unavailable when this report was created.' },
+          placeContext: { status: 'unavailable', note: 'Local amenity data could not be loaded for this report.' } };
+      } finally {
+        clearTimeout(enrichmentTimeout);
+      }
       downloadBlob('conditions-climate-report.html', buildClimateReportHtml(report), 'text/html');
       const unavailable = Object.entries(areaResults).filter(([, result]) => result.status !== 'ready').map(([tool]) => tool);
       const directionalWindFallback = areaResults.wind.status === 'ready' && areaResults.wind.result_source === 'single-direction-fallback';
@@ -570,6 +596,7 @@ export function setupExplorerExperience() {
       dispatchEvent(new CustomEvent('climate-report-area-unlock'));
       selectAreaButton.disabled = false;
       generateReportButton.disabled = false;
+      aiEnabled.disabled = false;
     }
   }
   generateReportButton.addEventListener('click', generateAreaReport);

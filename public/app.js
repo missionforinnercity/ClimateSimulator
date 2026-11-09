@@ -1,4 +1,4 @@
-import { setupExplorerExperience } from './explorerExperience.js?v=49';
+import { setupExplorerExperience } from './explorerExperience.js?v=50';
 import { setupWalkingRoutes } from './walkingRoutes.js?v=6';
 import { scopedFetch as fetch } from './requestClient.js';
 
@@ -447,7 +447,7 @@ async function loadScene() {
   try {
     if (!window.WebGL2RenderingContext) throw new Error('WebGL 2 is unavailable');
     setStartupProgress(20, 'Loading 3D renderer');
-    const module = await import('./webglRenderer.js?v=333');
+    const module = await import('./webglRenderer.js?v=334');
     setStartupProgress(30, 'Building Cape Town model');
     await module.startWebGLScene(canvas, status);
   } catch (error) {

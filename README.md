@@ -12,9 +12,13 @@ The app includes evidence and provenance cards, keyboard map controls, and a
 report workspace with **Draw square area** and **Generate HTML report**. Drag
 across the map to select an area; the view zooms and centres on that square.
 Generating the report runs heat, sunlight, viewshed and wind analysis for the
-selected area, then downloads a polished, printable HTML report with a captured
-map, readable findings, charts and method notes. It contains only the selected
-square's heat, sunlight, viewshed and wind findings.
+selected area, then downloads a printable HTML report. A short decision brief
+leads with the available measures and named streets to review; maps, findings,
+charts and method notes follow. The selected-square page also estimates mapped
+canopy cover from footprint shapes on an approximately 2–5 m sampling grid. This is neither
+a tree count nor a species inventory. The included SANBI indigenous plant
+checklist is cited as a future planting reference, not as evidence that a
+species occurs in or suits the selected square.
 Result references state their retention limits; the report does not guarantee
 that every analysis can be replayed later. Shared settings links do not carry
 completed simulation arrays or drawn traffic closures.

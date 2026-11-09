@@ -9,6 +9,7 @@ import { attachPlaceInspector } from './placeInspector.js?v=3';
 import { createDesignMassing } from './designMassing.js?v=14';
 import { rayFootprintIntervals, addVerticalOccluder, blockedByVerticalOccluder, terrainRayDistances, viewshedRingDistances } from './viewshedMath.js';
 import { recordSourceResidence, summarizeSourceResidence } from './plumeAttribution.js';
+import { summarizeMappedCanopy } from './reportSiteContext.js';
 import { accumulateResidenceBins, advancePollutantStep, clipPolylineToValidSamples, clipReflectedSegmentWithinRange, clipSegmentToValidIntervals, combinedTrafficMassG, intersectIntervals, lagrangianTimeScale, normalizedMaskedInterpolationGradient, pollutantTimeStep, reflectNormalVelocityAtBoundary, reflectVelocityAtBoundary, segmentBuildingIntervals, segmentCellFractions, segmentPolygonSetIntervals, stratifiedFractions, stratifiedSampleTime, subtractIntervals } from './pollutantTransport.js';
 
 const COLORS = {
@@ -15256,6 +15257,9 @@ export async function startWebGLScene(canvas, status) {
     const { requestId, bounds } = event.detail || {};
     if (!requestId || !bounds) return;
     const results = {};
+    results.siteContext = canopyAsset.version === 1
+      ? summarizeMappedCanopy(bounds, canopyAsset.canopies)
+      : { status: 'unavailable', message: 'Mapped canopy data was not available.' };
     for (const tool of ['viewshed', 'wind']) {
       dispatchEvent(new CustomEvent('climate-report-area-progress', {
         detail: { requestId, tool, message: tool === 'viewshed' ? 'Calculating visibility inside the square…' : 'Preparing the wind comfort map…' },
@@ -15889,7 +15893,9 @@ export async function startWebGLScene(canvas, status) {
         cameraState.distance = clamp(cameraTouchGesture.distance * cameraTouchGesture.spacing / spacing, CAMERA_MIN_DISTANCE, CAMERA_MAX_DISTANCE);
         const dx = centerX - cameraTouchGesture.centerX;
         const dy = centerY - cameraTouchGesture.centerY;
-        const pan = panFromDrag(cameraTouchGesture.distance, dx, dy);
+        const pan = panFromDrag(
+          cameraTouchGesture.distance, dx, dy, canvas.clientHeight, camera.fov,
+        );
         const rightVector = new THREE.Vector3(Math.sin(cameraTouchGesture.azimuth), 0, -Math.cos(cameraTouchGesture.azimuth));
         const forwardVector = new THREE.Vector3(-Math.cos(cameraTouchGesture.azimuth), 0, -Math.sin(cameraTouchGesture.azimuth));
         cameraState.target.copy(cameraTouchGesture.target)
@@ -15957,7 +15963,7 @@ export async function startWebGLScene(canvas, status) {
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (drag.pan) {
-      const pan = panFromDrag(cameraState.distance, dx, dy);
+      const pan = panFromDrag(cameraState.distance, dx, dy, canvas.clientHeight, camera.fov);
       const rightVector = new THREE.Vector3(Math.sin(drag.azimuth), 0, -Math.cos(drag.azimuth));
       const forwardVector = new THREE.Vector3(-Math.cos(drag.azimuth), 0, -Math.sin(drag.azimuth));
       cameraState.target.copy(drag.target).addScaledVector(rightVector, pan.right).addScaledVector(forwardVector, pan.forward);

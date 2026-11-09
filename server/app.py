@@ -58,6 +58,7 @@ from .sunlight import (
 )
 from .solar import sun_position
 from .location import streetview_location
+from .report_enrichment import ReportEnrichmentPayload, enrich_report
 from .weather import current_weather
 from .thermal_products import (
     ThermalProductUnavailable,
@@ -160,6 +161,7 @@ app.add_middleware(GZipMiddleware, minimum_size=8192, compresslevel=1)
 
 LOGGER = logging.getLogger("conditions.requests")
 HEAVY_PATH_LIMITS = {
+    "/api/reports/enrich": 2,
     "/api/heat/zones": int(os.getenv("HEAT_CONCURRENCY", "2")),
     "/api/heat/design-comparison": int(os.getenv("HEAT_DESIGN_CONCURRENCY", "1")),
     "/api/sunlight/building-surfaces": int(os.getenv("SUNLIGHT_CONCURRENCY", "2")),
@@ -744,6 +746,14 @@ def thermal_energy(run_id: str | None = None) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ThermalProductUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.post("/api/reports/enrich")
+def report_enrichment(payload: ReportEnrichmentPayload):
+    try:
+        return enrich_report(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/location/streetview")
